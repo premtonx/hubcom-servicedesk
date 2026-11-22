@@ -1,5 +1,5 @@
 /**
- * Removes leftover GeistKB placeholder categories that older API boots
+ * Removes leftover Wissensdatenbank placeholder categories that older API boots
  * auto-inserted (Getting Started, Billing, …) when the collection was empty.
  * Categories that already have articles are left untouched.
  */

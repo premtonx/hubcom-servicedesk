@@ -262,7 +262,7 @@ async function indexKbArticle(tenantId: string, sourceId: string): Promise<void>
   });
 }
 
-/** GeistKB Document Library — chunk + embed an uploaded/synced document. */
+/** Wissensdatenbank Document Library — chunk + embed an uploaded/synced document. */
 async function indexKbDocument(tenantId: string, sourceId: string): Promise<void> {
   const doc = await getDocDirect('kb_documents', sourceId);
   if (!doc) {

@@ -134,7 +134,10 @@ const createLocalUserSchema = z.object({
   email: z.string().email("Invalid email format").transform(val => val.toLowerCase().trim()),
   name: z.string().min(1, "Name is required").max(100, "Name cannot exceed 100 characters"),
   role: z.enum(["admin", "agent", "team_lead", "customer"]),
-  authMethod: z.enum(["password", "sso"]).default("password")
+  authMethod: z.enum(["password", "sso"]).default("password"),
+  companyId: z.string().trim().max(128).optional().nullable(),
+  contactId: z.string().trim().max(128).optional().nullable(),
+  customerCompany: z.string().trim().max(200).optional().nullable(),
 });
 
 // Zod schema for updating a user's role
@@ -228,7 +231,7 @@ router.post("/users/create-local", authenticate, requireRole(["SYSTEM_ADMIN"]), 
       });
     }
 
-    const { email, name, role, authMethod } = validationResult.data;
+    const { email, name, role, authMethod, companyId, contactId, customerCompany } = validationResult.data;
 
     // Check if user already exists
     const queryResults = await getDocsDirect("users", [
@@ -258,6 +261,9 @@ router.post("/users/create-local", authenticate, requireRole(["SYSTEM_ADMIN"]), 
       isDeactivated: false,
       can_create_tickets: true,
       can_view_knowledgebase: true,
+      companyId: companyId || null,
+      contactId: contactId || null,
+      customerCompany: customerCompany || null,
       activationToken: rawActivationToken,
       activationTokenExpires,
       createdAt: new Date().toISOString(),
@@ -403,6 +409,13 @@ router.post("/users/:id/set-password", authenticate, requireRole(["SYSTEM_ADMIN"
     const userProfile = await getDocDirect("users", id);
     if (!userProfile) {
       return res.status(404).json({ error: "Not Found: No active user profile matched the provided ID." });
+    }
+
+    const method = String(userProfile.authMethod || "").toLowerCase();
+    if (method === "microsoft365" || method === "sso") {
+      return res.status(400).json({
+        error: "Das Passwort wird über Microsoft 365 verwaltet und kann hier nicht gesetzt werden.",
+      });
     }
 
     const passwordHash = await hashPassword(validationResult.data.password);

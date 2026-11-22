@@ -270,6 +270,7 @@ export default function TicketsPage() {
     status: 'any',
     priority: 'any',
     type: 'any',
+    category: 'any',
     source: 'any',
     sourceInfo: '',
     tags: 'any',
@@ -502,6 +503,14 @@ export default function TicketsPage() {
     }
     if (filters.type !== 'any') {
       result = result.filter(t => (t as any).type === filters.type);
+    }
+    if (filters.category !== 'any') {
+      result = result.filter(
+        (t) =>
+          t.categoryId === filters.category ||
+          t.categorySlug === filters.category ||
+          t.categoryName === filters.category,
+      );
     }
     if (filters.language !== 'any') {
       result = result.filter(t => (t as any).originalLanguage === filters.language);
@@ -1248,7 +1257,11 @@ export default function TicketsPage() {
     }
   };
 
-  const handleSendReply = async () => {
+  const handleSendReply = async (meta?: {
+    fromAddress?: string;
+    fromChannelId?: string;
+    cc?: string[];
+  }) => {
     if (!replyText.trim() || !selectedTicketId || !user) return;
     
     // Legal Guardrail Interceptor
@@ -1325,6 +1338,12 @@ export default function TicketsPage() {
 
     const tempId = `temp-${Date.now()}`;
     const now = new Date();
+    const toAddress =
+      selectedTicket?.customerEmail ||
+      selectedTicket?.from_email ||
+      (selectedTicket as any)?.contactEmail ||
+      (selectedTicket as any)?.requesterEmail ||
+      null;
     const optimisticMessage: Message = {
       id: tempId,
       ticketId: selectedTicketId,
@@ -1334,6 +1353,9 @@ export default function TicketsPage() {
       content: contentToSend,
       originalContent: originalContent,
       deliveryStatus: 'pending',
+      fromAddress: meta?.fromAddress || null,
+      toAddress,
+      cc: meta?.cc?.length ? meta.cc : null,
       createdAt: { toDate: () => now } as any
     };
 
@@ -1355,7 +1377,10 @@ export default function TicketsPage() {
         senderType: 'agent',
         senderName: user.displayName || user.email || 'Agent',
         content: contentToSend,
-        originalContent: originalContent
+        originalContent: originalContent,
+        fromAddress: meta?.fromAddress,
+        fromChannelId: meta?.fromChannelId,
+        cc: meta?.cc,
       });
       
       const persisted = result?.message;
@@ -1371,6 +1396,9 @@ export default function TicketsPage() {
                 id: persisted?.id || m.id,
                 deliveryStatus,
                 deliveryReason: result?.deliveryReason ?? null,
+                fromAddress: persisted?.fromAddress ?? m.fromAddress,
+                toAddress: persisted?.toAddress ?? m.toAddress,
+                cc: persisted?.cc ?? m.cc,
               }
             : m,
         ),

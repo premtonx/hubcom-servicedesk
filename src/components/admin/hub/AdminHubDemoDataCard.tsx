@@ -129,7 +129,7 @@ export function AdminHubDemoDataCard({ onChanged }: AdminHubDemoDataCardProps) {
       <p className="text-sm text-slate-500 mb-4">
         {t(
           'admin.demoData.body',
-          'Importiert realistische Tickets, GeistKB-Artikel, Vault-Secrets und Exchange-Transfers für Demos und Screenshots. Alle Einträge sind als Demo markiert und lassen sich sauber entfernen.',
+          'Importiert realistische Tickets, Wissensdatenbank-Artikel, Vault-Secrets und Exchange-Transfers für Demos und Screenshots. Alle Einträge sind als Demo markiert und lassen sich sauber entfernen.',
         )}
       </p>
 

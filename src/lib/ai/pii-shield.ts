@@ -1,5 +1,5 @@
 /**
- * PII Shield - Privacy Proxy Middleware for GeistDesk
+ * PII Shield - Privacy Proxy Middleware for Hubcom ServiceDesk
  * Scans for sensitive data patterns and redacts them.
  */
 

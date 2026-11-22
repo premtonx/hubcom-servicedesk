@@ -42,7 +42,8 @@ import {
   Sparkles
 } from 'lucide-react';
 import { getModuleConfig } from '../../lib/module-config';
-import { GeistDeskLogo } from '../ui/GeistDeskLogo';
+import { HubcomLogo } from '../ui/HubcomLogo';
+import { brandConfig } from '../../lib/brandConfig';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { cn } from '../../lib/utils';
 import { FlagIcon, languageToFlagCode } from '../ui/FlagIcon';
@@ -52,8 +53,8 @@ import { Link } from 'react-router-dom';
 
 const LOCAL_TEXTS = {
   de: {
-    platformSub: "Souveräne IT-Betriebsplattform",
-    headline: "Der Open-Source-Standard für sichere IT-Operationen",
+    platformSub: "IT-Service-Management von Hubcom - Citadelle AG",
+    headline: "Hubcom ServiceDesk — sicher, selbstgehostet, deutschsprachig",
     subheadlineBefore: "Vereinen Sie Helpdesk, Assets, Anmeldedaten, Wissen und KI-Orchestrierung in einer souveränen, selbstgehosteten Plattform. Behalten Sie ",
     yourData: "Ihre Daten",
     and: ", ",
@@ -67,7 +68,7 @@ const LOCAL_TEXTS = {
     piiShieldTitle: "KI-PII-Schutz",
     piiShieldSub: "Privacy by Design",
     sovereigntyTitle: "Souveränität durch Design",
-    sovereigntyDesc: "GeistDesk hält Ihre Operationen innerhalb Ihrer Infrastruktur mit lokaler Verarbeitung, verschlüsselter Speicherung und null externem Datenabfluss.",
+    sovereigntyDesc: "Hubcom ServiceDesk hält Ihre Operationen innerhalb Ihrer Infrastruktur mit lokaler Verarbeitung, verschlüsselter Speicherung und ohne externen Datenabfluss.",
     architectureCert: "Sicherheitsarchitektur zertifiziert",
     regulatedIndustries: "Für regulierte Branchen entwickelt",
     autofillDemo: "Demo-Zugang ausfüllen",
@@ -78,7 +79,7 @@ const LOCAL_TEXTS = {
     firstRunCta: "Administrator-Konto erstellen & Einrichtung starten",
     firstRunCtaSub: "Diese Instanz ist noch nicht eingerichtet. Legen Sie das erste Administratorkonto an.",
     welcomeTitle: "Willkommen zurück",
-    welcomeSub: "Sicherer Zugriff auf Ihre GeistDesk-Arbeitsumgebung",
+    welcomeSub: "Sicherer Zugriff auf Ihre Hubcom-ServiceDesk-Arbeitsumgebung",
     registerTitle: "Souveräne Zugangsdaten erstellen",
     registerSub: "Registrieren Sie einen sicheren Systemadministrator",
     emailLabel: "E-Mail-Adresse",
@@ -86,7 +87,7 @@ const LOCAL_TEXTS = {
     passwordPlaceholder: "Sicheres Passwort eingeben",
     forgotPassword: "Passwort vergessen?",
     rememberMe: "Für 30 Tage angemeldet bleiben",
-    signInBtn: "In GeistDesk einloggen",
+    signInBtn: "Bei Hubcom ServiceDesk anmelden",
     signUpBtn: "Registrieren & Einloggen",
     authenticating: "Operator wird authentifiziert...",
     registerSwitchIn: "Bereits registriert? Einloggen",
@@ -99,35 +100,35 @@ const LOCAL_TEXTS = {
     systemSecurity: "Systemsicherheit",
     systemStatusDesc: "Alle lokalen Knoten online & kryptografisch isoliert",
     piiShieldActive: "PII-Schutz aktiv",
-    phantomVaultReady: "Phantom Vault Bereit",
-    mlKemActive: "ML-KEM PQC Aktiv",
+    phantomVaultReady: "Tresor bereit",
+    mlKemActive: "ML-KEM PQC aktiv",
     auditLogging: "Audit-Protokollierung",
-    footerCopy: "© 2026 GeistDesk • Open Source (AGPLv3)",
+    footerCopy: `© ${brandConfig.copyrightYear} ${brandConfig.companyName}`,
     privacyPolicy: "Datenschutzrichtlinie",
     termsOfService: "Nutzungsbedingungen",
     helpdesk: "Helpdesk",
     helpdeskDesc: "Ticketing & Workflows",
     assets: "Assets",
     assetsDesc: "Hardware & Software",
-    phantomVault: "Phantom Vault",
+    phantomVault: "Tresor",
     phantomVaultDesc: "Sicherer Secret-Austausch",
     aiOrchestration: "KI-Orchestrierung",
     aiOrchestrationDesc: "Lokale KI mit PII-Schutz",
     toasts: {
       fillFields: "Bitte füllen Sie alle Sicherheitsfelder aus.",
-      accountCreated: "Mitarbeiterkonto erfolgreich erstellt. Willkommen bei GeistDesk.",
-      credentialsVerified: "Operator-Anmeldaten verifiziert. Zugriff gewährt.",
+      accountCreated: "Mitarbeiterkonto erfolgreich erstellt. Willkommen bei Hubcom ServiceDesk.",
+      credentialsVerified: "Operator-Anmeldedaten verifiziert. Zugriff gewährt.",
       authFailed: "Authentifizierungsversuch fehlgeschlagen. Bitte erneut versuchen.",
-      workspaceAuth: "Workspace autorisiert. Willkommen zurück bei GeistDesk.",
-      entraSession: "Enterprise SSO-Sitzung über Microsoft Entra ID validiert",
-      corporateSsoFailed: "Corporate SSO-Authentifizierung fehlgeschlagen",
+      workspaceAuth: "Arbeitsbereich autorisiert. Willkommen zurück bei Hubcom ServiceDesk.",
+      entraSession: "Enterprise-SSO-Sitzung über Microsoft Entra ID validiert",
+      corporateSsoFailed: "Corporate-SSO-Authentifizierung fehlgeschlagen",
       prefilled: "Mitarbeiter-Anmeldedaten vorbefüllt!",
       adService: "Die Passwort-Selbstbedienung wird über das Active Directory / Entra ID verwaltet. Bitte wenden Sie sich an Ihren Administrator.",
     }
   },
   en: {
-    platformSub: "Sovereign IT Operations Platform",
-    headline: "The Open-Source Standard for Secure IT Operations",
+    platformSub: "IT service management by Hubcom - Citadelle AG",
+    headline: "Hubcom ServiceDesk — secure, self-hosted operations",
     subheadlineBefore: "Unify helpdesk, assets, credentials, knowledge, and AI orchestration in a sovereign self-hosted platform. Keep ",
     yourData: "your data",
     and: ", ",
@@ -141,7 +142,7 @@ const LOCAL_TEXTS = {
     piiShieldTitle: "AI PII Shield",
     piiShieldSub: "Privacy by Design",
     sovereigntyTitle: "Sovereignty by Design",
-    sovereigntyDesc: "GeistDesk keeps your operations inside your infrastructure with local processing, encrypted storage and zero external data leakage.",
+    sovereigntyDesc: "Hubcom ServiceDesk keeps your operations inside your infrastructure with local processing, encrypted storage and zero external data leakage.",
     architectureCert: "Security Architecture Certified",
     regulatedIndustries: "Built for Regulated Industries",
     autofillDemo: "Autofill Auth Demo",
@@ -152,7 +153,7 @@ const LOCAL_TEXTS = {
     firstRunCta: "Create administrator account & start setup",
     firstRunCtaSub: "This instance is not initialized yet. Create the first administrator to continue.",
     welcomeTitle: "Welcome Back",
-    welcomeSub: "Secure access to your GeistDesk workspace",
+    welcomeSub: "Secure access to your Hubcom ServiceDesk workspace",
     registerTitle: "Create Sovereign Credentials",
     registerSub: "Register a secure system operator",
     emailLabel: "Email Address",
@@ -160,7 +161,7 @@ const LOCAL_TEXTS = {
     passwordPlaceholder: "Enter secure password",
     forgotPassword: "Forgot password?",
     rememberMe: "Remember me for 30 days",
-    signInBtn: "Sign In to GeistDesk",
+    signInBtn: "Sign In to Hubcom ServiceDesk",
     signUpBtn: "Register & Sign In",
     authenticating: "Authenticating operator...",
     registerSwitchIn: "Already matching security criteria? Sign In",
@@ -173,26 +174,26 @@ const LOCAL_TEXTS = {
     systemSecurity: "System Security",
     systemStatusDesc: "All local nodes online & cryptographically isolated",
     piiShieldActive: "PII Shield Active",
-    phantomVaultReady: "Phantom Vault Ready",
+    phantomVaultReady: "Vault Ready",
     mlKemActive: "ML-KEM PQC Active",
     auditLogging: "Audit Logging",
-    footerCopy: "© 2026 GeistDesk • Open Source (AGPLv3)",
+    footerCopy: `© ${brandConfig.copyrightYear} ${brandConfig.companyName}`,
     privacyPolicy: "Privacy Policy",
     termsOfService: "Terms of Service",
     helpdesk: "Helpdesk",
     helpdeskDesc: "Ticketing & Workflows",
     assets: "Assets",
     assetsDesc: "Hardware & Software",
-    phantomVault: "Phantom Vault",
+    phantomVault: "Vault",
     phantomVaultDesc: "Secure Secret Exchange",
     aiOrchestration: "AI Orchestration",
     aiOrchestrationDesc: "Local AI with PII Shield",
     toasts: {
       fillFields: "Please fill in all security fields.",
-      accountCreated: "Staff account created successfully. Welcome to GeistDesk.",
+      accountCreated: "Staff account created successfully. Welcome to Hubcom ServiceDesk.",
       credentialsVerified: "Staff credentials verified. Access granted.",
       authFailed: "Authentication attempt failed. Please try again.",
-      workspaceAuth: "Workspace authorized. Welcome back to GeistDesk.",
+      workspaceAuth: "Workspace authorized. Welcome back to Hubcom ServiceDesk.",
       entraSession: "Enterprise SSO session validated via Microsoft Entra ID",
       corporateSsoFailed: "Corporate SSO authentication failed",
       prefilled: "Staff operator credentials pre-filled!",
@@ -217,6 +218,7 @@ export default function LoginPage() {
   const { status: onboardingStatus } = useOnboardingStatus();
   const showFirstRunCta =
     onboardingStatus?.hasAdminUser !== true && onboardingStatus?.isInitialized !== true;
+  const [m365Configured, setM365Configured] = useState(false);
   
   // Safeguard language selection to 'de' or 'en'
   const activeLang = (language === 'de' || language === 'en') ? language : 'de';
@@ -231,6 +233,33 @@ export default function LoginPage() {
     };
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/auth/microsoft/status', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!alive) return;
+        setM365Configured(Boolean(data?.configured || data?.enabled));
+      })
+      .catch(() => {
+        if (!alive) return;
+        // Fallback: module_config SSO-Toggle
+        setM365Configured(Boolean(config.ssoEnabled && config.ssoClientId));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [config.ssoEnabled, config.ssoClientId]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get('error');
+    if (err) {
+      toast.error(decodeURIComponent(err));
+      window.history.replaceState({}, '', window.location.pathname);
+    }
   }, []);
 
   const handleEmailAuth = async (e: FormEvent) => {
@@ -270,23 +299,10 @@ export default function LoginPage() {
     }
   };
 
-  const handleMicrosoftLogin = async () => {
+  const handleMicrosoftLogin = () => {
+    // Echter OIDC-Redirect zu Entra ID (Authorization Code + PKCE).
     setLoading(true);
-    const provider = new OAuthProvider('microsoft.com');
-    if (config.ssoTenantId) {
-      provider.setCustomParameters({
-        tenant: config.ssoTenantId,
-      });
-    }
-    try {
-      await signInWithPopup(auth, provider);
-      toast.success(texts.toasts.entraSession);
-    } catch (error: any) {
-      console.error(error);
-      toast.error(error.message || texts.toasts.corporateSsoFailed);
-    } finally {
-      setLoading(false);
-    }
+    window.location.href = '/api/auth/microsoft/start';
   };
 
   const handleForgotPassword = () => {
@@ -358,7 +374,7 @@ export default function LoginPage() {
         {/* Header Logo */}
         <div className="relative z-10 flex items-center justify-between">
           <div className="flex flex-col gap-1">
-            <GeistDeskLogo size="sm" showText={true} />
+            <HubcomLogo size="sm" showText={true} />
             <span className="text-[10px] text-slate-400 font-extrabold tracking-widest uppercase pl-1.5">
               {texts.platformSub}
             </span>
@@ -527,7 +543,7 @@ export default function LoginPage() {
 
         {/* Mobile Header branding block */}
         <div className="lg:hidden flex items-center justify-between border-b border-slate-100 pb-4 mb-6">
-          <GeistDeskLogo size="xs" showText={true} />
+          <HubcomLogo size="xs" showText={true} />
           <span className="text-[9px] bg-slate-100 px-2 py-1 rounded text-slate-600 font-bold tracking-wider uppercase">{activeLang === 'de' ? 'Souveränes Portal' : 'Sovereign Portal'}</span>
         </div>
 
@@ -774,8 +790,8 @@ export default function LoginPage() {
               {texts.googleSso}
             </button>
 
-            {/* Entra ID Microsoft Enterprise */}
-            {config.ssoEnabled && (
+            {/* Microsoft 365 / Entra ID — sichtbar sobald konfiguriert */}
+            {(m365Configured || config.ssoEnabled) && (
               <button 
                 onClick={handleMicrosoftLogin} 
                 disabled={loading}
@@ -788,7 +804,7 @@ export default function LoginPage() {
                   <path fill="#05a6f0" d="M1 12h10v10H1z"/>
                   <path fill="#ffba08" d="M12 12h10v10H12z"/>
                 </svg>
-                {texts.entraSso}
+                Mit Microsoft 365 anmelden
               </button>
             )}
 

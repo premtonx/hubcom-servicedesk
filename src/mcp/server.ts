@@ -5,10 +5,10 @@ import { registerTicketTools } from './tools/tickets.js';
 import { registerVaultTools } from './tools/vault.js';
 
 /**
- * Build a fresh MCP server instance with GeistDesk tools.
+ * Build a fresh MCP server instance with Hubcom ServiceDesk tools.
  * One instance per Streamable HTTP session / request factory.
  */
-export function createGeistDeskMcpServer(): McpServer {
+export function createHubcomMcpServer(): McpServer {
   const server = new McpServer({
     name: 'geistdesk',
     version: '1.0.0',
@@ -21,7 +21,7 @@ export function createGeistDeskMcpServer(): McpServer {
   server.registerPrompt(
     'geistdesk_system_guidance',
     {
-      title: 'GeistDesk system guidance',
+      title: 'Hubcom ServiceDesk system guidance',
       description:
         'Workspace-configured additional guidance that MCP clients should prepend to their system prompt.',
     },
@@ -29,9 +29,9 @@ export function createGeistDeskMcpServer(): McpServer {
       const actor = getMcpActor();
       const guidance =
         actor.systemInstructions?.trim() ||
-        'Prioritize searching GeistKB before proposing infrastructure modifications. Respect vault audit requirements.';
+        'Prioritize searching Wissensdatenbank before proposing infrastructure modifications. Respect vault audit requirements.';
       return {
-        description: 'GeistDesk workspace guidance',
+        description: 'Hubcom ServiceDesk workspace guidance',
         messages: [
           {
             role: 'user' as const,

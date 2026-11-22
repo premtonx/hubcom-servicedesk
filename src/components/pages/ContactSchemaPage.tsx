@@ -262,7 +262,7 @@ export default function ContactSchemaPage() {
                   <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Contextual DNA</span>
                </div>
                <p className="text-xs text-indigo-200 leading-relaxed">
-                  GeistDesk AI ingests these specific attributes to determine tone. For example, knowing a contact is "Seniority: VP" or " decidido: decision_maker" adjusts politeness levels.
+                  Hubcom KI nutzt diese Attribute für den Tonfall. Beispiel: „Seniorität: VP“ oder „Rolle: Entscheider“ steuert die Höflichkeitsstufe.
                </p>
                <div className="p-3 bg-white/5 rounded-xl border border-white/10 italic text-[10px] text-indigo-100">
                   "AI Prompt: Adjust reply for ${fields.length > 0 ? fields[0].label : 'Contact'} status..."

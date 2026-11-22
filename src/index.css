@@ -54,98 +54,109 @@
 }
 
 :root {
+    /* Hubcom - Citadelle AG — Navy + Akzentblau */
+    --brand-navy: #0B1F3A;
+    --brand-navy-deep: #061525;
+    --brand-accent: #1B6CA8;
+    --brand-accent-light: #E8F1F8;
+
     /* Main Background & Text */
     --background: #FFFFFF;
-    --foreground: #202124;
+    --foreground: #0B1F3A;
     
-    /* Surface Colors (Material Design) */
+    /* Surface Colors */
     --card: #FFFFFF;
-    --card-foreground: #202124;
+    --card-foreground: #0B1F3A;
     --popover: #FFFFFF;
-    --popover-foreground: #202124;
+    --popover-foreground: #0B1F3A;
     
-    /* Google Blue (Primary) */
-    --primary: #1A73E8;
+    /* Primary: tiefes Navy */
+    --primary: #0B1F3A;
     --primary-foreground: #FFFFFF;
     
-    /* Google Workspace Palette (Subtle usage) */
-    --google-blue: #4285F4;
-    --google-red: #EA4335;
-    --google-yellow: #FBBC05;
-    --google-green: #34A853;
+    /* Legacy Google palette hooks (mapped to Hubcom) */
+    --google-blue: #1B6CA8;
+    --google-red: #C62828;
+    --google-yellow: #C9A227;
+    --google-green: #2E7D4F;
     
-    /* Secondary (Light Gray-100) */
-    --secondary: #F1F3F4;
-    --secondary-foreground: #3C4043;
+    /* Secondary */
+    --secondary: #EEF2F6;
+    --secondary-foreground: #1A2B3C;
     
-    /* Muted (Light Gray-50) */
-    --muted: #F8F9FA;
-    --muted-foreground: #5F6368;
+    /* Muted */
+    --muted: #F5F7FA;
+    --muted-foreground: #5A6A7A;
     
-    /* Accent (Light Blue) - Material Selection */
-    --accent: #E8F0FE;
-    --accent-foreground: #1A73E8;
+    /* Accent: helles Navy-Blau */
+    --accent: #E8F1F8;
+    --accent-foreground: #0B1F3A;
     
-    /* Destructive (Material Red) */
-    --destructive: #D93025;
+    /* Destructive */
+    --destructive: #C62828;
     --destructive-foreground: #FFFFFF;
     
     /* Borders & Inputs */
-    --border: #DADCE0;
-    --input: #DADCE0;
-    --ring: #1A73E8;
+    --border: #D0D7DE;
+    --input: #D0D7DE;
+    --ring: #1B6CA8;
     
     /* Layout Constants */
     --radius: 0.5rem;
     
-    /* Sidebar (Workspace Style) */
+    /* Sidebar */
     --sidebar: #FFFFFF;
-    --sidebar-foreground: #3C4043;
-    --sidebar-primary: #1A73E8;
+    --sidebar-foreground: #1A2B3C;
+    --sidebar-primary: #0B1F3A;
     --sidebar-primary-foreground: #FFFFFF;
-    --sidebar-accent: #F1F3F4;
-    --sidebar-accent-foreground: #1A73E8;
-    --sidebar-border: #DADCE0;
-    --sidebar-ring: #1A73E8;
+    --sidebar-accent: #E8F1F8;
+    --sidebar-accent-foreground: #0B1F3A;
+    --sidebar-border: #D0D7DE;
+    --sidebar-ring: #1B6CA8;
 }
 
-/* Google Dark Mode (Refined) */
+/* Dark Mode — Hubcom Navy */
 .dark {
-    --background: #0F1112; 
-    --foreground: #F1F3F4;
+    --brand-navy: #0B1F3A;
+    --brand-navy-deep: #040C16;
+    --brand-accent: #4A9FD4;
+    --brand-accent-light: #132536;
+
+    --background: #061525; 
+    --foreground: #E8F1F8;
     
-    --card: #17191A;
-    --card-foreground: #F1F3F4;
-    --popover: #17191A;
-    --popover-foreground: #F1F3F4;
+    --card: #0B1F3A;
+    --card-foreground: #E8F1F8;
+    --popover: #0B1F3A;
+    --popover-foreground: #E8F1F8;
     
-    --primary: #8AB4F8; /* Light blue for dark mode */
-    --primary-foreground: #0F1112;
+    --primary: #4A9FD4;
+    --primary-foreground: #061525;
     
-    --secondary: #202124;
-    --secondary-foreground: #E8EAED;
+    --secondary: #132536;
+    --secondary-foreground: #E8F1F8;
     
-    --muted: #1E1F21;
-    --muted-foreground: #9AA0A6;
+    --muted: #0F1C2C;
+    --muted-foreground: #9AAEBF;
     
-    --accent: #172B4D;
-    --accent-foreground: #8AB4F8;
+    --accent: #132536;
+    --accent-foreground: #4A9FD4;
     
-    --destructive: #F28B82;
-    --destructive-foreground: #0F1112;
+    --destructive: #E57373;
+    --destructive-foreground: #061525;
     
-    --border: #3C4043;
-    --input: #3C4043;
-    --ring: #8AB4F8;
+    --border: #1E3348;
+    --input: #1E3348;
+    --ring: #4A9FD4;
     
-    --sidebar: #17191A;
-    --sidebar-foreground: #F1F3F4;
-    --sidebar-primary: #8AB4F8;
-    --sidebar-primary-foreground: #0F1112;
-    --sidebar-accent: #202124;
-    --sidebar-accent-foreground: #8AB4F8;
-    --sidebar-border: #3C4043;
-    --sidebar-ring: #8AB4F8;
+    --sidebar: #0B1F3A;
+    --sidebar-foreground: #E8F1F8;
+    --sidebar-primary: #4A9FD4;
+    --sidebar-primary-foreground: #061525;
+    --sidebar-accent: #132536;
+    --sidebar-accent-foreground: #4A9FD4;
+    --sidebar-border: #1E3348;
+    --sidebar-ring: #4A9FD4;
 }
 
 @layer base {

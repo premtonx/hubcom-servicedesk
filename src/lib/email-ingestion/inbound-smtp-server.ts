@@ -67,7 +67,7 @@ class SmtpSession {
     this.socket.on('close', () => {
       this.closed = true;
     });
-    this.reply(220, `${opts.hostname} ESMTP GeistDesk inbound`);
+    this.reply(220, `${opts.hostname} ESMTP Hubcom ServiceDesk inbound`);
   }
 
   private reply(code: number, text: string | string[]): void {

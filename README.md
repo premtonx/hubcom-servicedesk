@@ -1,11 +1,11 @@
-# GeistDesk<br>
-<img width="1774" height="887" alt="geistbanner" src="https://github.com/user-attachments/assets/c5a7f00e-91e4-407f-a655-162c486f7345" />
+# Hubcom ServiceDesk<br>
+<img width="1774" height="887" alt="hubcom-banner" src="https://github.com/user-attachments/assets/c5a7f00e-91e4-407f-a655-162c486f7345" />
 
 
-**Sovereign IT Operations Platform**  
-The Open-Source Standard for Secure IT Operations
+**Hubcom - Citadelle AG**  
+Selbstgehostetes IT-Service-Management
 
-Unify helpdesk, assets, credentials, knowledge, and AI orchestration in a sovereign self-hosted platform. **Keep your data, your rules.**
+Vereinheitlichen Sie Helpdesk, Assets, Anmeldedaten, Wissen und KI-Orchestrierung in einer souveränen, selbstgehosteten Plattform. **Ihre Daten, Ihre Regeln.**
 
 Self-hosted helpdesk, RAG-powered knowledge base, credential management, encrypted exchange, and local AI — on infrastructure you control.
 

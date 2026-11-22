@@ -186,7 +186,7 @@ async function handleScrape(req: Request, res: Response) {
       maxRedirects: 3,
       headers: {
         'User-Agent':
-          'Mozilla/5.0 (compatible; GeistDesk-KB-Ingest/1.0; +https://geistdesk.io/bot)',
+          'Mozilla/5.0 (compatible; HubcomServiceDesk-KB-Ingest/1.0; +https://hubcom.ch)',
         Accept: 'text/html,application/xhtml+xml',
       },
       validateStatus: (code) => code >= 200 && code < 400,

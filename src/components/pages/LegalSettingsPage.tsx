@@ -39,16 +39,16 @@ export default function LegalSettingsPage() {
         <AdminBreadcrumbs />
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-black text-[#202124] tracking-tight uppercase">GeistDesk Legal Guardrail</h1>
-            <p className="text-sm text-[#5F6368] font-medium">Define algorithmic boundaries and forbidden legal/financial responses.</p>
+            <h1 className="text-2xl font-black text-[#0B1F3A] tracking-tight uppercase">Hubcom Legal Guardrail</h1>
+            <p className="text-sm text-[#5A6A7A] font-medium">Definieren Sie algorithmische Grenzen und unzulässige rechtliche/finanzielle Antworten.</p>
           </div>
           <Button 
             onClick={handleSave} 
             disabled={isSaving || !canEdit}
-            className="rounded-xl bg-[#202124] text-white hover:bg-black font-bold h-11 px-6 gap-2"
+            className="rounded-xl bg-[#0B1F3A] text-white hover:bg-[#061525] font-bold h-11 px-6 gap-2"
           >
             <Save className="w-4 h-4" />
-            {isSaving ? "Syncing..." : "Commit Changes"}
+            {isSaving ? "Wird gespeichert…" : "Änderungen speichern"}
           </Button>
         </div>
 
@@ -58,7 +58,7 @@ export default function LegalSettingsPage() {
               <div className="absolute inset-0 bg-white/40 backdrop-blur-[1px] z-10 flex items-center justify-center pointer-events-none">
                  <div className="bg-white p-4 rounded-2xl shadow-xl border border-slate-200 flex items-center gap-3">
                     <Lock className="w-5 h-5 text-amber-600" />
-                    <span className="text-sm font-bold text-slate-900">AI Governance Manager Authorization Required</span>
+                    <span className="text-sm font-bold text-slate-900">Berechtigung als KI-Governance-Manager erforderlich</span>
                  </div>
               </div>
             )}

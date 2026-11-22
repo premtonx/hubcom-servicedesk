@@ -321,7 +321,7 @@ export async function initDb() {
         WHEN duplicate_object THEN NULL;
       END $$;
     `);
-    // GeistKB Document Library — extend the enum without recreating the type.
+    // Wissensdatenbank Document Library — extend the enum without recreating the type.
     try {
       await pgPool.query(`ALTER TYPE "KnowledgeSourceType" ADD VALUE IF NOT EXISTS 'KB_DOCUMENT'`);
     } catch (enumErr: any) {

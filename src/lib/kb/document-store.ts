@@ -1,5 +1,5 @@
 /**
- * GeistKB Document Library — persistent raw-file store + text extraction.
+ * Wissensdatenbank Document Library — persistent raw-file store + text extraction.
  *
  * Files are written to a persistent volume (DOCUMENT_STORAGE_DIR, default
  * /app/storage/documents) under {tenantId}/{docId}/{sanitizedFilename} so a

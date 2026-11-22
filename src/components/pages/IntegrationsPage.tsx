@@ -56,7 +56,7 @@ export default function IntegrationsPage() {
               <Webhook className="w-6 h-6 text-indigo-500" />
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t('integrations.title', 'Integrations Hub')}</h1>
             </div>
-            <p className="text-slate-500">{t('integrations.subtitle', 'Connect GeistDesk to your external workforce and data tools.')}</p>
+            <p className="text-slate-500">{t('integrations.subtitle', 'Verbinden Sie Hubcom ServiceDesk mit your external workforce and data tools.')}</p>
           </div>
           <Button onClick={handleSave} className="rounded-2xl font-bold shadow-lg shadow-primary/20 px-8">
             {t('integrations.persistConfig', 'Persist Config')}

@@ -1,6 +1,6 @@
 {
-  "name": "GeistDesk",
-  "description": "Sovereign IT Operations Platform — the open-source standard for secure IT operations. Self-hosted helpdesk, RAG-powered knowledge base, credential management, encrypted exchange, and local AI on your own infrastructure.",
+  "name": "Hubcom ServiceDesk",
+  "description": "Hubcom ServiceDesk von Hubcom - Citadelle AG — selbstgehostetes IT-Service-Management, Wissensdatenbank, Tresor und lokale KI.",
   "requestFramePermissions": [
     "camera",
     "microphone"

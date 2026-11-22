@@ -210,7 +210,7 @@ export const notificationService = {
       {
         userId,
         title: 'Level 4 Security Breach Prevented',
-        message: 'A Master Secret shard was accessed via an unverified vLLM endpoint. GeistDesk autonomous proxy successfully intercepted the request.',
+        message: 'A Master Secret shard was accessed via an unverified vLLM endpoint. Hubcom ServiceDesk autonomous proxy successfully intercepted the request.',
         category: 'security',
         priority: 'high'
       },
@@ -224,7 +224,7 @@ export const notificationService = {
       {
         userId,
         title: 'System Update: Lexical Redaction V4',
-        message: 'GeistDesk has updated its global entity schema to include 2026 GDPR-V2 compliance requirements.',
+        message: 'Hubcom ServiceDesk has updated its global entity schema to include 2026 GDPR-V2 compliance requirements.',
         category: 'system',
         priority: 'low'
       }

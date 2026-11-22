@@ -114,7 +114,7 @@ export function AdminHubOverviewTab({ telemetry, onTelemetryRefresh }: AdminHubO
             <p className="text-sm text-slate-500">{t('admin.resourceHealthDesc', 'Real-time status of embedded vectors and LLM availability.')}</p>
             <div className="mt-6 space-y-4">
               <HealthRow
-                label={t('admin.vectorIndex', 'Vector Index (GeistDesk_KB)')}
+                label={t('admin.vectorIndex', 'Vektor-Index (Hubcom_KB)')}
                 status={telemetry.activeVectors > 0 ? t('admin.statusHealthy', 'Healthy') : t('admin.statusIdle', 'Idle')}
                 tone={telemetry.activeVectors > 0 ? 'emerald' : 'amber'}
               />

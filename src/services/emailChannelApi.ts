@@ -29,10 +29,25 @@ export interface DomainVerifyResult {
   error?: string;
 }
 
+export interface EmailFromOption {
+  id: string;
+  email: string;
+  name: string;
+  displayName: string;
+  isPrimary: boolean;
+  dnsVerified: boolean;
+  label: string;
+}
+
 export const emailChannelApi = {
   async list(): Promise<EmailChannelConfig[]> {
     const res = await axios.get('/api/email-channels', { withCredentials: true });
     return res.data?.channels || [];
+  },
+
+  async listFromOptions(): Promise<EmailFromOption[]> {
+    const res = await axios.get('/api/email-channels/from-options', { withCredentials: true });
+    return res.data?.options || [];
   },
 
   async create(payload: Partial<EmailChannelConfig>): Promise<EmailChannelConfig> {

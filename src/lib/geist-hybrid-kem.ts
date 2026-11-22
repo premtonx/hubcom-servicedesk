@@ -1,5 +1,5 @@
 /**
- * GeistDesk hybrid post-quantum KEM: ML-KEM-1024 + X25519 with HKDF-SHA-256 combiner.
+ * Hubcom ServiceDesk hybrid post-quantum KEM: ML-KEM-1024 + X25519 with HKDF-SHA-256 combiner.
  * Asymmetric work is confined to the key-exchange envelope; bulk data uses AES-GCM.
  */
 import { createKitchenSink, ecdhKem } from '@noble/post-quantum/hybrid.js';
@@ -15,6 +15,7 @@ function hkdfInfo(label: string): Uint8Array {
   return textEncoder.encode(label);
 }
 
+/** Stable crypto label — do not change; existing vault payloads depend on it. */
 export const HYBRID_KEM_LABEL = 'GeistDesk-KEM(ML-KEM-1024,X25519)-HKDF-SHA-256-v1';
 export const HYBRID_CONTENT_KEY_INFO = 'geistdesk-hybrid-content-aes-v1';
 export const HYBRID_VAULT_KEYPAIR_INFO = 'geistdesk-vault-hybrid-keypair-v1';

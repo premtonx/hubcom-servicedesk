@@ -665,7 +665,7 @@ function mapIngestChannel(channel: OnboardingIngestChannel): EmailConnectionType
 
 export class OnboardingAlreadyCompleteError extends Error {
   constructor() {
-    super('GeistDesk is already initialized. Sign in at /login.');
+    super('Hubcom ServiceDesk ist bereits initialisiert. Sign in at /login.');
     this.name = 'OnboardingAlreadyCompleteError';
   }
 }
@@ -821,7 +821,7 @@ async function importOnboardingSampleData(opts: {
     ? [
         {
           id: 'kb-sample-welcome',
-          title: 'Willkommen bei GeistDesk',
+          title: 'Willkommen bei Hubcom ServiceDesk',
           category: 'Onboarding',
           subCategory: 'Erste Schritte',
           content:
@@ -947,7 +947,7 @@ export async function completeOnboarding(
     email: {
       ...existing.email,
       supportEmail: input.ingestion?.supportEmail || existing.email.supportEmail,
-      senderName: existing.email.senderName || 'GeistDesk Support',
+      senderName: existing.email.senderName || 'Hubcom ServiceDesk Support',
       imapHost: input.ingestion?.imapHost || existing.email.imapHost,
       autoTriageEnabled: true,
       threadingEnabled: true,

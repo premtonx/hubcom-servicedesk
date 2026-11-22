@@ -17,6 +17,7 @@ import { SidebarProvider } from './lib/context/SidebarContext';
 import { WorkspaceProvider } from './lib/context/WorkspaceContext';
 import { ThemeProvider } from './lib/context/ThemeContext';
 import { I18nProvider } from './lib/context/I18nContext';
+import { brandConfig } from './lib/brandConfig';
 
 const DashboardPage = lazy(() => import('./components/pages/DashboardPage'));
 const TicketsPage = lazy(() => import('./components/pages/TicketsPage'));
@@ -40,11 +41,19 @@ const SovereigntyCenterPage = lazy(() => import('./components/pages/SovereigntyC
 const IntegrationsPage = lazy(() => import('./components/pages/IntegrationsPage'));
 const GroupsPage = lazy(() => import('./components/pages/GroupsPage'));
 const WorkforcePage = lazy(() => import('./components/pages/WorkforcePage'));
+const UserManagementPage = lazy(() => import('./components/pages/UserManagementPage'));
 const RolesPage = lazy(() => import('./components/pages/RolesPage'));
 const VaultPortfolioManagementPage = lazy(() => import('./components/pages/VaultPortfolioManagementPage'));
 const AdminImportPage = lazy(() => import('./components/pages/AdminImportPage'));
 const HelpCenterPage = lazy(() => import('./components/pages/HelpCenterPage'));
 const SecretViewerPage = lazy(() => import('./components/pages/SecretViewerPage'));
+const TimeTrackingAdminPage = lazy(() => import('./components/pages/TimeTrackingAdminPage'));
+const TimeTrackingOverviewPage = lazy(() => import('./components/pages/TimeTrackingOverviewPage'));
+const TicketCategoriesAdminPage = lazy(() => import('./components/pages/TicketCategoriesAdminPage'));
+const PortalLayout = lazy(() => import('./components/portal/PortalLayout'));
+const PortalTicketsPage = lazy(() => import('./components/portal/PortalTicketsPage'));
+const PortalTicketDetailPage = lazy(() => import('./components/portal/PortalTicketDetailPage'));
+const PortalCreateTicketPage = lazy(() => import('./components/portal/PortalCreateTicketPage'));
 
 function RouteFallback() {
   return (
@@ -122,6 +131,11 @@ function ModuleRoute({
 }
 
 export default function App() {
+  useEffect(() => {
+    document.title = brandConfig.documentTitle;
+    document.documentElement.lang = document.documentElement.lang || 'de';
+  }, []);
+
   return (
     <I18nProvider>
       <ThemeProvider>
@@ -133,13 +147,22 @@ export default function App() {
   );
 }
 
+function isCustomerRole(profileRole: string | undefined | null, rbacName?: string | null): boolean {
+  const r = String(profileRole || '').toLowerCase();
+  const n = String(rbacName || '').toLowerCase();
+  return r === 'customer' || n === 'customer';
+}
+
 function AppRoutes() {
   const { user, loading } = useAuth();
   const { status, loading: onboardingLoading } = useOnboardingStatus();
+  const { userProfile, role, loading: permissionsLoading } = usePermissions();
   const firstRun = status?.hasAdminUser !== true && status?.isInitialized !== true;
   const needsResume = status?.needsResume === true && status?.hasAdminUser === true;
+  const isCustomer =
+    !!user && isCustomerRole(userProfile?.role, role?.name);
 
-  if (loading || onboardingLoading) {
+  if (loading || onboardingLoading || (user && permissionsLoading)) {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center gap-4 bg-muted">
         <div className="flex -space-x-2 animate-pulse">
@@ -148,7 +171,7 @@ function AppRoutes() {
            <div className="w-4 h-10 bg-[#FBBC05] rounded-full"></div>
            <div className="w-4 h-10 bg-[#34A853] rounded-full"></div>
         </div>
-        <p className="text-xs font-bold text-[#5F6368] uppercase tracking-widest">Warming Engines...</p>
+        <p className="text-xs font-bold text-[#5F6368] uppercase tracking-widest">Wird geladen…</p>
       </div>
     );
   }
@@ -174,9 +197,66 @@ function AppRoutes() {
                     <Route path="/login" element={<LoginPage />} />
                     <Route path="*" element={<LoginPage />} />
                   </>
+                ) : isCustomer ? (
+                  <>
+                    <Route path="/login" element={<Navigate to="/portal" replace />} />
+                    <Route path="/onboarding" element={<Navigate to="/portal" replace />} />
+                    <Route
+                      path="/portal"
+                      element={
+                        <LazyPage>
+                          <PortalLayout />
+                        </LazyPage>
+                      }
+                    >
+                      <Route
+                        index
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Kundenportal" />}>
+                            <LazyPage>
+                              <PortalTicketsPage />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
+                      <Route
+                        path="new"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Kundenportal" />}>
+                            <LazyPage>
+                              <PortalCreateTicketPage />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
+                      <Route
+                        path="tickets/:id"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Kundenportal" />}>
+                            <LazyPage>
+                              <PortalTicketDetailPage />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
+                    </Route>
+                    {/* Interne Agenten-Bereiche für Kunden blockieren */}
+                    <Route path="/tickets/*" element={<Navigate to="/portal" replace />} />
+                    <Route path="/vault/*" element={<Navigate to="/portal" replace />} />
+                    <Route path="/credentials/*" element={<Navigate to="/portal" replace />} />
+                    <Route path="/admin/*" element={<Navigate to="/portal" replace />} />
+                    <Route path="/kb/*" element={<Navigate to="/portal" replace />} />
+                    <Route path="/kb-intern/*" element={<Navigate to="/portal" replace />} />
+                    <Route path="/dashboard/*" element={<Navigate to="/portal" replace />} />
+                    <Route path="/settings/*" element={<Navigate to="/portal" replace />} />
+                    <Route path="/customers/*" element={<Navigate to="/portal" replace />} />
+                    <Route path="/email-channels/*" element={<Navigate to="/portal" replace />} />
+                    <Route path="*" element={<Navigate to="/portal" replace />} />
+                  </>
                 ) : (
                   <>
                     <Route path="/onboarding" element={<Navigate to="/dashboard" replace />} />
+                    <Route path="/portal/*" element={<Navigate to="/tickets" replace />} />
                     <Route
                       path="/"
                       element={
@@ -210,10 +290,15 @@ function AppRoutes() {
                     <Route path="admin/integrations" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Integrations" />}><LazyPage><IntegrationsPage /></LazyPage></ErrorBoundary></AdminRoute>} />
                     <Route path="admin/polyglot" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Polyglot Bridge" />}><LazyPage><PolyglotBridgeAdminPage /></LazyPage></ErrorBoundary></AdminRoute>} />
                     <Route path="admin/groups" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Groups" />}><LazyPage><GroupsPage /></LazyPage></ErrorBoundary></AdminRoute>} />
-                    <Route path="admin/workforce" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Workforce" />}><LazyPage><WorkforcePage /></LazyPage></ErrorBoundary></AdminRoute>} />
+                    <Route path="admin/workforce" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Benutzerverwaltung" />}><LazyPage><UserManagementPage /></LazyPage></ErrorBoundary></AdminRoute>} />
+                    <Route path="admin/users" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Benutzerverwaltung" />}><LazyPage><UserManagementPage /></LazyPage></ErrorBoundary></AdminRoute>} />
+                    <Route path="admin/workforce-legacy" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Workforce" />}><LazyPage><WorkforcePage /></LazyPage></ErrorBoundary></AdminRoute>} />
                     <Route path="admin/roles" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Roles" />}><LazyPage><RolesPage /></LazyPage></ErrorBoundary></AdminRoute>} />
                     <Route path="admin/vault-portfolio" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Vault Portfolio" />}><LazyPage><VaultPortfolioManagementPage /></LazyPage></ErrorBoundary></AdminRoute>} />
                     <Route path="admin/import" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Import" />}><LazyPage><AdminImportPage /></LazyPage></ErrorBoundary></AdminRoute>} />
+                    <Route path="admin/time-tracking" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Zeiterfassung" />}><LazyPage><TimeTrackingAdminPage /></LazyPage></ErrorBoundary></AdminRoute>} />
+                    <Route path="admin/time-tracking/overview" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Zeiterfassung Gesamt" />}><LazyPage><TimeTrackingOverviewPage /></LazyPage></ErrorBoundary></AdminRoute>} />
+                    <Route path="admin/ticket-categories" element={<AdminRoute><ErrorBoundary fallback={<ModuleCrashFallback module="Ticket-Kategorien" />}><LazyPage><TicketCategoriesAdminPage /></LazyPage></ErrorBoundary></AdminRoute>} />
                     <Route path="email-channels" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Email Channels" />}><LazyPage><EmailChannelsPage /></LazyPage></ErrorBoundary>} />
                     <Route path="*" element={<Navigate to="/tickets" replace />} />
                     </Route>

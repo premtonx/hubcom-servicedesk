@@ -116,7 +116,7 @@ function formatGroundingContext(contextDocuments) {
   structuredMessages.push({
     role: "system",
     content: (
-      "You are the sovereign GeistDesk AI orchestration agent. Your goal is to helper-solve technical queries.\n" +
+      "You are the sovereign Hubcom KI orchestration agent. Your goal is to helper-solve technical queries.\n" +
       "ROLE & SECURITY CONSTRAINTS:\n" +
       "1. You must answer ONLY using the verified context documents provided under the 'system' role.\n" +
       "2. Do not hallucinate or use external speculative intelligence for factual points.\n" +
@@ -254,12 +254,12 @@ function generateSimulatorResponse(prompt, userId, deploymentName, startTime, co
   const lowerPrompt = prompt.toLowerCase();
 
   if (lowerPrompt.includes("help") || lowerPrompt.includes("hello") || lowerPrompt.includes("hi")) {
-    responseText = "### GeistDesk Sovereign Gate Connected\n\nHello! I am your secure corporate assistant. System routing and **PII scrubbing are fully active**. How can I assist you with your sovereign deployment workspaces and security matrices today?";
+    responseText = "### Hubcom ServiceDesk Sovereign Gate Connected\n\nHello! I am your secure corporate assistant. System routing and **PII scrubbing are fully active**. How can I assist you with your sovereign deployment workspaces and security matrices today?";
   } else if (lowerPrompt.includes("transcript") || lowerPrompt.includes("meeting") || lowerPrompt.includes("summary")) {
     responseText = "### Meeting Session Context Summary\n\nBased on your secure meeting content, here is the processed summary:\n1. **Credentials Redaction Check**: Verified local regex compliance filters successfully removed security signatures.\n2. **Action Item**: Maintainers must verify configuration ports prior to deploying reverse proxy networks.\n3. **Participant Engagement**: System operational guidelines are active.";
   } else {
     // Elegant generic response grounding on the user's prompt
-    responseText = `### GeistDesk Sovereign Orchestrator Response\n\nYour message: *"${prompt}"*\n\n**Grounding context verified:**\n- All raw data was processed locally and evaluated against the PII security schema before reasoning.\n- No credentials or sensitive parameters were transmitted outside local sovereign boundaries.\n\n*Note: Operating in local sandbox simulator mode. You can link a local Ollama model (via OLLAMA_ENDPOINT env) or an Azure OpenAI instance (via AZURE_OPENAI_ENDPOINT env) to connect a live AI model.*`;
+    responseText = `### Hubcom ServiceDesk Sovereign Orchestrator Response\n\nYour message: *"${prompt}"*\n\n**Grounding context verified:**\n- All raw data was processed locally and evaluated against the PII security schema before reasoning.\n- No credentials or sensitive parameters were transmitted outside local sovereign boundaries.\n\n*Note: Operating in local sandbox simulator mode. You can link a local Ollama model (via OLLAMA_ENDPOINT env) or an Azure OpenAI instance (via AZURE_OPENAI_ENDPOINT env) to connect a live AI model.*`;
   }
 
   const promptTokens = Math.ceil(prompt.length / 4) + 50;

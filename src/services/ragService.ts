@@ -72,7 +72,7 @@ function keywordFallback(
 
 export const ragService = {
   /**
-   * Enqueue background chunking + embedding for a published GeistKB article.
+   * Enqueue background chunking + embedding for a published Wissensdatenbank article.
    * Prefer this after create/publish; the server /api/db hook also auto-enqueues.
    */
   indexArticle: async (articleId: string): Promise<void> => {

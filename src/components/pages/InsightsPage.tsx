@@ -331,7 +331,7 @@ export default function InsightsPage() {
                  </div>
                  <h3 className="text-2xl font-black text-slate-900 font-mono">97</h3>
                  <p className="text-[9px] text-[#5F6368] mt-1 font-mono italic">
-                    {isDe ? 'GeistKB Entwürfe' : 'GeistKB contributions'}
+                    {isDe ? 'Wissensdatenbank Entwürfe' : 'Wissensdatenbank contributions'}
                  </p>
               </div>
            </div>
@@ -758,7 +758,7 @@ export default function InsightsPage() {
                 <div className="relative z-10 space-y-6">
                    <Badge className="bg-[#34A853] text-white border-none uppercase text-[10px] font-black tracking-widest px-4 h-6">{t('insights.cisoCertified', 'CISO Certified 2026')}</Badge>
                    <h2 className="text-2xl md:text-3xl font-black italic tracking-tighter max-w-2xl leading-tight">
-                      {t('insights.leaksHeadline', 'GeistDesk has prevented 1,240 accidental PII leaks this quarter through autonomous entity redaction.')}
+                      {t('insights.leaksHeadline', 'Hubcom ServiceDesk hat verhindert 1,240 accidental PII leaks this quarter through autonomous entity redaction.')}
                    </h2>
                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 sm:gap-8">
                       <div>

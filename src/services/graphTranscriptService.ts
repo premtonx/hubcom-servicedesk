@@ -175,7 +175,7 @@ export const graphTranscriptService = {
           speakerId = notification.resourceData.content.speaker?.id || "unknown";
         } else {
           // Trigger mock stream block or fetch block on resource update
-          transcriptText = `Inbound audio sequence packet received. Processing GeistDesk Sovereign session payload under: ${notification.resource}`;
+          transcriptText = `Inbound audio sequence packet received. Processing Hubcom ServiceDesk Sovereign session payload under: ${notification.resource}`;
           speakerName = "Sovereign Portal Gateway";
         }
 

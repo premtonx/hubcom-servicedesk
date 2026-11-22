@@ -161,6 +161,13 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     let userDoc: any = null;
     if (verifiedUid) {
       userDoc = await getDocDirect("users", verifiedUid);
+      // Entra OID oft ≠ internes Document-ID — per entraObjectId nachschlagen.
+      if (!userDoc) {
+        const byOid = await getDocsDirect("users", [
+          { type: "where", field: "entraObjectId", op: "==", value: verifiedUid },
+        ]);
+        if (byOid && byOid.length > 0) userDoc = byOid[0];
+      }
     }
     if (!userDoc && verifiedEmail) {
       const results = await getDocsDirect("users", [
@@ -216,10 +223,12 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
 
     req.user = {
       id: userDoc.id || verifiedUid,
+      uid: userDoc.id || verifiedUid,
       name: userDoc.name || "Default User",
       email: userDoc.email || verifiedEmail || "",
       role: computedRole,
       is_admin: isAdminClaim,
+      kuerzel: typeof userDoc.kuerzel === "string" ? userDoc.kuerzel : "",
       tenantId: resolveUserTenantId(userDoc as Record<string, unknown>),
       dbRecord: userDoc
     };

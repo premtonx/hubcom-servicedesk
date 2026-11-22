@@ -386,7 +386,7 @@ export default function AdminImportPage() {
               Data Import & Migration
             </h1>
             <p className="text-slate-500 text-sm mt-1 max-w-xl">
-              Bulk-import legacy tickets and GeistKB articles from CSV/JSON, or add single entries.
+              Bulk-import legacy tickets and Wissensdatenbank articles from CSV/JSON, or add single entries.
               Resolved tickets and published articles are queued for pgvector RAG automatically.
             </p>
           </div>
@@ -450,7 +450,7 @@ export default function AdminImportPage() {
                   resetFileState();
                 }}
               >
-                <BookOpen className="w-4 h-4 mr-2" /> GeistKB
+                <BookOpen className="w-4 h-4 mr-2" /> Wissensdatenbank
               </Button>
             </div>
 
@@ -458,7 +458,7 @@ export default function AdminImportPage() {
               <CardHeader>
                 <CardTitle className="text-lg">Upload file</CardTitle>
                 <CardDescription>
-                  Drag and drop a .csv or .json export, then map columns to GeistDesk fields.
+                  Drag and drop a .csv or .json export, then Spalten auf Hubcom-ServiceDesk-Felder zuordnen.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -513,7 +513,7 @@ export default function AdminImportPage() {
                       <div className="grid grid-cols-[1fr_auto_1fr] gap-2 bg-slate-50 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
                         <span>Source column</span>
                         <span />
-                        <span>GeistDesk field</span>
+                        <span>Hubcom-Feld</span>
                       </div>
                       <div className="divide-y divide-slate-100">
                         {headers.map((header) => (

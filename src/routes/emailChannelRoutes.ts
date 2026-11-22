@@ -6,6 +6,7 @@ import {
   deleteEmailChannel,
   getEmailChannel,
   listEmailChannels,
+  listSendableFromOptions,
   updateEmailChannel,
   updateEmailChannelStatus,
 } from '../lib/email-ingestion/channel-store.js';
@@ -50,6 +51,7 @@ const optionalBool = z
 const channelSchema = z
   .object({
     name: optionalText(200),
+    displayName: optionalText(200),
     email: optionalText(320),
     group: optionalText(200),
     status: z
@@ -61,6 +63,11 @@ const channelSchema = z
     provider: z.enum(['gmail', 'outlook', 'custom', 'microsoft', 'google']).nullish(),
     webhookSecret: optionalText(256),
     forwardingAddress: optionalText(320),
+    smtpHost: optionalText(255),
+    smtpPort: optionalPort,
+    smtpUser: optionalText(320),
+    smtpPassword: optionalText(500),
+    smtpSecure: optionalBool,
     // IMAP fields are optional at the schema level — required only for IMAP types below.
     imapHost: optionalText(255),
     imapPort: optionalPort,
@@ -154,6 +161,16 @@ router.get('/', authenticate, requireRole(['SYSTEM_ADMIN']), async (_req, res: R
   }
 });
 
+/** Absender-Optionen für Ticket-Composer (alle authentifizierten Agenten). */
+router.get('/from-options', authenticate, async (_req, res: Response) => {
+  try {
+    const options = await listSendableFromOptions();
+    res.json({ options });
+  } catch (err: any) {
+    res.status(500).json({ error: safeErrorMessage(err, 'Absender-Optionen konnten nicht geladen werden') });
+  }
+});
+
 router.post('/', authenticate, requireRole(['SYSTEM_ADMIN']), async (req: Request, res: Response) => {
   const parsed = channelSchema.safeParse(req.body || {});
   if (!parsed.success) {
@@ -217,7 +234,7 @@ router.post('/:id/test', authenticate, requireRole(['SYSTEM_ADMIN']), async (req
     };
 
     // Restore secrets when client sent masked placeholders
-    for (const key of ['imapPassword', 'oauthClientSecret', 'clientSecret', 'webhookSecret', 'oauthRefreshToken'] as const) {
+    for (const key of ['imapPassword', 'oauthClientSecret', 'clientSecret', 'webhookSecret', 'oauthRefreshToken', 'smtpPassword'] as const) {
       if ((effective as any)[key] === '••••••••') {
         (effective as any)[key] = (channel as any)[key];
       }

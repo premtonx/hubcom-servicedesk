@@ -278,7 +278,7 @@ export function ExchangeCreateSecretPanel({
           onChange={(e) => setSecretContent(e.target.value)}
         />
         <span className="text-[9.5px] text-slate-400 block py-0.5 font-semibold">
-          {t('vault.clientSideEncNote', 'Note: GeistDesk encrypts this client-side using ML-KEM post-quantum cryptographic parameters.')}
+          {t('vault.clientSideEncNote', 'Hinweis: Hubcom ServiceDesk verschlüsselt this client-side using ML-KEM post-quantum cryptographic parameters.')}
         </span>
       </div>
 

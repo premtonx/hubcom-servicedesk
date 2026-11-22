@@ -51,6 +51,8 @@ export interface EmailChannelConfig {
   id: string;
   name: string;
   email: string;
+  /** Anzeigename für From-Header (z. B. „Hubcom Support“). Fallback: name. */
+  displayName?: string;
   group?: string;
   status:
     | 'verified'
@@ -62,8 +64,16 @@ export interface EmailChannelConfig {
     | 'auth_error';
   connectionType: EmailConnectionType;
   enabled: boolean;
+  /** Standard-Absender für den Ticket-Composer. */
   isPrimary?: boolean;
   provider?: 'gmail' | 'outlook' | 'custom' | 'microsoft' | 'google';
+
+  // Optional per-channel SMTP (overrides global SMTP when set)
+  smtpHost?: string | null;
+  smtpPort?: number | string | null;
+  smtpUser?: string | null;
+  smtpPassword?: string | null;
+  smtpSecure?: boolean | null;
 
   // Webhook / forwarding
   webhookSecret?: string | null;

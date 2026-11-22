@@ -1,6 +1,6 @@
 /**
  * Native MCP (Model Context Protocol) endpoint — Streamable HTTP / SSE.
- * Mounted at /api/mcp. Authenticated via GeistDesk API tokens (gdk_*) or session JWT.
+ * Mounted at /api/mcp. Authenticated via Hubcom ServiceDesk API tokens (gdk_*) or session JWT.
  */
 
 import { randomUUID } from 'crypto';
@@ -18,7 +18,7 @@ import {
   type McpScope,
 } from '../lib/api-tokens.js';
 import { DEFAULT_MCP_SETTINGS, normalizeMcpSettings } from '../lib/mcp-config.js';
-import { createGeistDeskMcpServer } from '../mcp/server.js';
+import { createHubcomMcpServer } from '../mcp/server.js';
 import { mcpActorStore } from '../mcp/context.js';
 import type { McpActorContext } from '../mcp/types.js';
 import { safeLog } from '../lib/safe-log.js';
@@ -52,7 +52,7 @@ async function resolveActorFromRequest(req: Request): Promise<McpActorContext | 
 
   const settings = await loadMcpSettings();
 
-  // Prefer GeistDesk API tokens (gdk_…).
+  // Prefer Hubcom ServiceDesk API tokens (gdk_…).
   if (token.startsWith('gdk_')) {
     const verified = await verifyApiToken(token);
     if (!verified) return null;
@@ -154,7 +154,7 @@ async function requireMcpEnabledAndAuth(
   const actor = await resolveActorFromRequest(req);
   if (!actor) {
     res.status(401).json({
-      error: 'Unauthorized: Provide a GeistDesk API token (Bearer gdk_…) or a valid session JWT.',
+      error: 'Unauthorized: Provide a Hubcom ServiceDesk API token (Bearer gdk_…) or a valid session JWT.',
     });
     return null;
   }
@@ -206,7 +206,7 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
           if (id) sessions.delete(id);
         };
 
-        const server = createGeistDeskMcpServer();
+        const server = createHubcomMcpServer();
         await server.connect(transport);
         await transport.handleRequest(req, res, req.body);
         return;

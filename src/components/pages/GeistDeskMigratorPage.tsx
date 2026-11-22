@@ -53,7 +53,7 @@ const GEISTDESK_FIELDS = [
   'Created At'
 ];
 
-export default function GeistDeskMigratorPage() {
+export default function HubcomMigratorPage() {
   const [status, setStatus] = useState<ImportStatus>('idle');
   const [importFile, setImportFile] = useState<ImportFile | null>(null);
   const [mappings, setMappings] = useState<Mapping[]>([]);
@@ -304,8 +304,8 @@ export default function GeistDeskMigratorPage() {
                 <UploadCloud className="w-6 h-6 text-primary" />
              </div>
              <div>
-                <h1 className="text-3xl font-bold tracking-tight">GeistDesk Migrator Engine</h1>
-                <p className="text-muted-foreground text-sm">Transfer your legacy ecosystem into the GeistDesk architecture with near-zero friction.</p>
+                <h1 className="text-3xl font-bold tracking-tight">Hubcom Migrations-Engine</h1>
+                <p className="text-muted-foreground text-sm">Transfer your legacy ecosystem in die Hubcom-ServiceDesk-Architektur with near-zero friction.</p>
              </div>
           </div>
         </div>
@@ -354,7 +354,7 @@ export default function GeistDeskMigratorPage() {
                  </div>
                  <h3 className="text-2xl font-black text-slate-900 tracking-tighter italic">Jira Smart Sync</h3>
                  <p className="text-slate-500 text-sm mt-2 leading-relaxed">
-                    Seamlessly map Jira components and custom fields to GeistDesk autonomous workflows.
+                    Seamlessly map Jira components and custom fields auf Hubcom-autonome workflows.
                  </p>
                  <div className="mt-auto pt-8 flex items-center justify-between">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-blue-600 transition-colors">Integrate Now</span>
@@ -434,7 +434,7 @@ export default function GeistDeskMigratorPage() {
                       onChange={(e) => setUseEmailSync(e.target.checked)}
                     />
                   </div>
-                  <p className="text-[10px] text-muted-foreground leading-relaxed">Provides a "Shadow Inbox" that keeps both legacy and GeistDesk systems running until you are ready to fully transition. Never miss an email.</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">Provides a "Shadow Inbox" that keeps both Legacy- und Hubcom-ServiceDesk-Systeme running until you are ready to fully transition. Never miss an email.</p>
                 </div>
 
                 <div className="flex flex-col gap-2 p-4 bg-red-500/5 rounded-xl border border-red-500/10">
@@ -596,7 +596,7 @@ export default function GeistDeskMigratorPage() {
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
                   <CardTitle>Coordinate Field Mapping</CardTitle>
-                  <CardDescription>We've detected {importFile.headers.length} headers in your file. Link them to GeistDesk properties.</CardDescription>
+                  <CardDescription>We've detected {importFile.headers.length} headers in your file. Verknüpfen Sie sie mit Hubcom-ServiceDesk-Eigenschaften.</CardDescription>
                 </div>
                 <div className="flex items-center gap-3">
                   <Button variant="ghost" size="sm" onClick={() => setStatus('idle')} className="text-muted-foreground hover:text-foreground">
@@ -614,7 +614,7 @@ export default function GeistDeskMigratorPage() {
                       <tr>
                         <th className="px-6 py-4 text-left font-bold text-muted-foreground uppercase tracking-wider text-[10px]">Source Header</th>
                         <th className="px-6 py-4 text-center w-20"></th>
-                        <th className="px-6 py-4 text-left font-bold text-muted-foreground uppercase tracking-wider text-[10px]">GeistDesk Field Target</th>
+                        <th className="px-6 py-4 text-left font-bold text-muted-foreground uppercase tracking-wider text-[10px]">Hubcom-Zielfeld</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -672,8 +672,8 @@ export default function GeistDeskMigratorPage() {
               </h2>
               <p className="text-muted-foreground">
                 {status === 'completed' 
-                  ? `${importCount.total} tickets have been added to your GeistDesk instance.`
-                  : `Ingesting ${importCount.total.toLocaleString()} records into the GeistDesk architecture...`}
+                  ? `${importCount.total} tickets have been added to Ihre Hubcom-ServiceDesk-Instanz.`
+                  : `Ingesting ${importCount.total.toLocaleString()} records in die Hubcom-ServiceDesk-Architektur...`}
               </p>
             </div>
 
@@ -685,7 +685,7 @@ export default function GeistDeskMigratorPage() {
                       {status === 'completed' 
                         ? 'Finalizing...' 
                         : shieldingProgress < 100 && useShield 
-                        ? 'GeistDesk AI is shielding your data...' 
+                        ? 'Hubcom KI is shielding your data...' 
                         : retroScanProgress > 0 && retroScanProgress < 100
                         ? 'Sentiment Retro-Scan: Analyzing 12 months of emotion...'
                         : emailSyncProgress > 0 && emailSyncProgress < 100
@@ -795,7 +795,7 @@ export default function GeistDeskMigratorPage() {
                        </div>
                        <div className="flex-1">
                           <p className="text-xs font-bold">Zero-Loss sync is active.</p>
-                          <p className="text-[10px] text-muted-foreground">Emails arriving at your old Zendesk endpoint are being mirrored to GeistDesk in real-time. No tickets will be lost during DNS propagation.</p>
+                          <p className="text-[10px] text-muted-foreground">Emails arriving at your old Zendesk endpoint are being an Hubcom ServiceDesk gespiegelt in real-time. No tickets will be lost during DNS propagation.</p>
                        </div>
                     </div>
                   </div>

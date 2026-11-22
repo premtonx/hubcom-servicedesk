@@ -24,7 +24,7 @@ export function createAdaptiveCard(responseText, wasScrubbed) {
   // Formulate warning/compliance badge details based on redaction shield alert status
   const statusMessage = wasScrubbed
     ? "⚠️ PII detected and local entity redaction active."
-    : "🛡️ GeistDesk Sovereign Shield Enabled | Powered by Azure AI";
+    : "🛡️ Hubcom Sovereign Shield aktiv | Powered by Azure AI";
 
   const alertColor = wasScrubbed ? "Warning" : "Good";
   const containerStyle = wasScrubbed ? "warning" : "accent";
@@ -129,7 +129,7 @@ export function createAdaptiveCard(responseText, wasScrubbed) {
     actions: [
       {
         type: "Action.OpenUrl",
-        title: "Access GeistDesk Secure Portal",
+        title: "Hubcom ServiceDesk-Portal öffnen",
         url: process.env.GEISTDESK_CUSTOMER_PORTAL_URL || "https://geistdesk.sovereign.local/portal",
         style: "positive"
       }

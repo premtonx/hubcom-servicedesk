@@ -60,7 +60,9 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  role: "admin" | "agent" | "team_lead" | "customer";
+  role: "admin" | "SYSTEM_ADMIN" | "agent" | "team_lead" | "customer";
+  /** Agentenkürzel für Zeiterfassung (z. B. „PX“). */
+  kuerzel?: string;
   avatar?: string;
   signature?: string;
   visibilityScope?: 'all' | 'group' | 'assigned';
@@ -71,11 +73,24 @@ export interface User {
   is_admin?: boolean;
   can_create_tickets?: boolean;
   can_view_knowledgebase?: boolean;
+  /** Firma / Organisation (Anzeige). */
+  company?: string | null;
+  /** Kundenportal: verknüpfte Firmen-ID (tickets.companyId). */
+  companyId?: string | null;
+  /** Kundenportal: verknüpfter Kontakt. */
+  contactId?: string | null;
+  /** Kundenportal: Anzeigename der Firma (customerCompany). */
+  customerCompany?: string | null;
+  /** Microsoft Entra Object ID (oid). */
+  entraObjectId?: string | null;
+  /** User Principal Name. */
+  upn?: string | null;
   lastActiveAt?: any;
   createdAt: any;
   updatedAt?: any;
   password?: string;
-  authMethod?: 'sso' | 'password';
+  /** password = lokal; microsoft365 = Entra ID; sso = Legacy-Alias für microsoft365 */
+  authMethod?: 'sso' | 'password' | 'microsoft365';
   personalVaultInitialized?: boolean;
 }
 
@@ -229,6 +244,12 @@ export interface Ticket {
   aiConfidence?: number;
   originalLanguage?: string;
   type?: 'question' | 'incident' | 'problem' | 'feature_request';
+  /** ID der Ticket-Kategorie (Collection ticket_categories). */
+  categoryId?: string | null;
+  /** Denormalisierter Anzeigename der Kategorie. */
+  categoryName?: string | null;
+  /** Optional: Slug der Kategorie für Filter/Export. */
+  categorySlug?: string | null;
   ticketKind?: 'support' | 'bug';
   product?: 'GeistDeskTech' | 'GeistDeskMobile';
   slaDueAt?: any;
@@ -307,6 +328,13 @@ export interface Message {
   /** Outbound mail result — `saved_locally` when SMTP/dispatch is unavailable. */
   deliveryStatus?: 'delivered' | 'saved_locally' | 'pending';
   deliveryReason?: string | null;
+  /** Absender-Adresse / From-Header der ausgehenden Nachricht. */
+  fromAddress?: string | null;
+  /** Empfänger (An) der ausgehenden Nachricht. */
+  toAddress?: string | null;
+  /** CC-Empfänger der ausgehenden Nachricht. */
+  cc?: string[] | null;
+  mailFrom?: string | null;
 }
 
 export interface AgentComment {

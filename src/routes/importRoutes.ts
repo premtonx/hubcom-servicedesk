@@ -1,5 +1,5 @@
 /**
- * Admin data import API — tickets + GeistKB (JSON body or multipart CSV/JSON file).
+ * Admin data import API — tickets + Wissensdatenbank (JSON body or multipart CSV/JSON file).
  */
 
 import { Router, type Request, type Response } from 'express';

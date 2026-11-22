@@ -10,6 +10,9 @@ const defaultTranslations: Record<string, TranslationSchema> = {
   en: enCommon as unknown as TranslationSchema,
 };
 
+/** Feste Standardsprache — neue Sessions und ungültige Werte landen immer auf Deutsch. */
+export const DEFAULT_LANGUAGE = 'de';
+
 interface I18nContextProps {
   language: string;
   languages: string[];
@@ -38,19 +41,33 @@ function getNestedValue(obj: any, path: string): string | undefined {
   return typeof current === 'string' ? current : undefined;
 }
 
+function resolveInitialLanguage(): string {
+  try {
+    const saved = localStorage.getItem('lang');
+    if (saved === 'de' || saved === 'en') return saved;
+  } catch {
+    /* private mode */
+  }
+  return DEFAULT_LANGUAGE;
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [translations, setTranslations] = useState<Record<string, any>>(defaultTranslations);
-  const [language, setLanguageState] = useState<string>(() => {
-    const saved = localStorage.getItem('lang');
-    return saved || 'de'; // German ('de') is the absolute default fallback language
-  });
+  const [language, setLanguageState] = useState<string>(resolveInitialLanguage);
 
   useEffect(() => {
-    localStorage.setItem('lang', language);
+    try {
+      localStorage.setItem('lang', language);
+    } catch {
+      /* ignore */
+    }
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = language;
+    }
   }, [language]);
 
   const changeLanguage = (lang: string) => {
-    setLanguageState(lang);
+    setLanguageState(lang === 'en' ? 'en' : DEFAULT_LANGUAGE);
   };
 
   const addTranslations = (lang: string, extraTranslations: any) => {
@@ -63,11 +80,17 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     }));
   };
 
-  // Translate function — strict locale: never cross-fallback to the other language,
-  // which caused mixed EN/DE UI when keys were missing or mis-nested in locale files.
+  // Strict locale: never cross-fallback to the other language.
+  // Bei fehlendem DE-Schlüssel: EN-Fallback vermeiden — defaultValue oder Key.
+  // Bei EN-Sprache und fehlendem Key: deutschen Text als letzte Hilfe nutzen (DE ist Quelle der Wahrheit).
   const t = (keyPath: string, defaultValue?: string): string => {
     const activeText = getNestedValue(translations[language], keyPath);
     if (activeText !== undefined) return activeText;
+
+    if (language !== DEFAULT_LANGUAGE) {
+      const deText = getNestedValue(translations[DEFAULT_LANGUAGE], keyPath);
+      if (deText !== undefined) return deText;
+    }
 
     if (defaultValue !== undefined) return defaultValue;
     return keyPath;

@@ -2,10 +2,10 @@
   "nav": {
     "dashboard": "Dashboard",
     "tickets": "Tickets",
-    "geistKB": "GeistKB",
-    "geistVault": "GeistVault",
+    "geistKB": "Knowledge Base",
+    "geistVault": "Vault",
     "companies": "Companies",
-    "geistExchange": "GeistExchange",
+    "geistExchange": "Secure Exchange",
     "reports": "Reports",
     "aiInsights": "AI Insights",
     "integrations": "Integrations",
@@ -23,8 +23,8 @@
     "close": "Close",
     "actions": "Actions",
     "createTicket": "Create Ticket",
-    "createKBArticle": "Create GeistKB Article",
-    "createVaultEntry": "Create GeistVault Entry",
+    "createKBArticle": "Create Knowledge Base Article",
+    "createVaultEntry": "Create Vault Entry",
     "createCompany": "Create Company",
     "createShort": "Create",
     "createExchange": "New Exchange"
@@ -81,7 +81,7 @@
     "quickAccess": "Quick Access",
     "createTicketDesc": "Submit a new request",
     "searchKbDesc": "Find solutions",
-    "geistVault": "GeistVault",
+    "geistVault": "Vault",
     "geistVaultDesc": "Store and retrieve system secrets",
     "aiAssistant": "AI Assistant",
     "aiAssistantDesc": "Get AI-powered help",
@@ -250,23 +250,15 @@
     "updatedToast": "Ticket updated",
     "failedToast": "Failed to update ticket",
     "bulk": {
-      "assign": "Bulk Assign",
-      "assignToMe": "Assign to Me",
-      "assignedToYou": "Selected tickets have been assigned to you.",
-      "assignTo": "Assign to",
-      "assignedTo": "Tickets assigned to {{agent}}",
-      "updateStatus": "Update Status",
-      "statusUpdated": "Status updated to: {{status}}",
-      "modifyPriority": "Modify Priority",
-      "priorityUpdated": "Priority changed to: {{priority}}",
-      "updating": "Updating {{count}} tickets...",
-      "assignedSuccess": "Tickets successfully assigned",
-      "updatedSuccess": "Successfully updated",
-      "failedToast": "Bulk update failed"
+      "clearSelection": "Clear selection",
+      "aiMassResolve": "AI Mass-Resolve",
+      "massResolveLoading": "Mass resolving {{count}} tickets...",
+      "massResolveSuccess": "{{count}} tickets successfully AI-resolved!",
+      "massResolveError": "Mass resolve failed."
     },
     "filters": {
       "masterFilterList": "Master Filter List",
-      "geistGuardrails": "GeistDesk Legal Guardrail & AI Controls",
+      "geistGuardrails": "Hubcom Legal Guardrail & AI Controls",
       "catStandard": "Category A: Standard Workflow",
       "catAi": "Category B: AI-Enhanced (Contino)",
       "catTimeline": "Category C: Timeline & SLA",
@@ -323,8 +315,8 @@
       "products": "Products",
       "allProducts": "All Products",
       "totalEcosystem": "Total Ecosystem",
-      "geistCore": "GeistDeskTech Core",
-      "geistMobile": "GeistDeskMobile Platform",
+      "geistCore": "Hubcom Tech Core",
+      "geistMobile": "Hubcom Mobile Platform",
       "source": {
         "label": "Source",
         "email": "Email",
@@ -333,7 +325,10 @@
         "phone": "Phone"
       },
       "resetAll": "Reset All",
-      "applyFilters": "Apply Filters"
+      "applyFilters": "Apply Filters",
+      "category": "Category",
+      "selectCategory": "Select category",
+      "anyCategory": "All categories"
     },
     "merge": {
       "title": "Merge tickets",
@@ -507,7 +502,6 @@
       "primaryViews": "Primary views",
       "urgency": "Urgency & SLA",
       "statusQueues": "Status & queues",
-      "my_work": "My Work",
       "team": "Team Queues",
       "priority": "Priority Views",
       "ai": "AI Workspace",
@@ -515,7 +509,7 @@
       "maintenance": "Maintenance"
     },
     "items": {
-      "assigned_me": "My Tickets",
+      "assigned_me": "Assigned To Me",
       "due_today": "Due Today",
       "waiting_my_response": "Awaiting reply",
       "my_paused": "Paused",
@@ -551,7 +545,6 @@
       "sla_risk": "SLA Risk",
       "escalations": "Escalations",
       "my_open": "My Open Tickets",
-      "assigned_me": "Assigned To Me",
       "mentioned_me": "Mentioned To Me",
       "watching": "Watching",
       "agent_seeking_help": "Agenten Helfen",
@@ -584,25 +577,47 @@
       "help": "HELP"
     },
     "sidebar": {
-      "manageViews": "Manage views",
-      "moreViews": "More",
-      "manageViewsDesc": "Personalize queues, favorites, and saved filters for your workspace.",
-      "toggleFavorite": "Toggle favorite",
-      "sectionOrder": "Section order & visibility",
-      "showSection": "Show",
-      "hideSection": "Hide",
-      "customViews": "Custom views",
-      "noCustomViews": "No custom views yet. Create one below.",
-      "pinned": "Pinned",
-      "unpinned": "Not pinned",
-      "customViewName": "e.g. Critical Work",
-      "filterAssignedMe": "Assigned to me",
-      "filterNotClosed": "Status not closed",
-      "saveCustomView": "Save custom view",
-      "defaultSectionState": "Default section state",
-      "defaultSectionStateDesc": "Choose which sections start expanded or collapsed in the sidebar.",
-      "startCollapsed": "Starts collapsed",
-      "startExpanded": "Starts expanded"
+      "title": "Dispatch desk properties",
+      "dynamicRag": "Dynamic RAG",
+      "agentAssignment": "Agent assignment",
+      "activelyAssigned": "Actively assigned",
+      "unassignedBadge": "Unassigned",
+      "responsibleAgent": "Responsible agent",
+      "clickToAssign": "Click below to assign this ticket",
+      "selectDispatchAgent": "Select dispatch agent",
+      "transferTicket": "Transfer ticket",
+      "dispatchCaseStatus": "Dispatch case status",
+      "slaHelpEscalation": "SLA help escalation",
+      "supportAccountContext": "Support & account",
+      "aiAccountHealth": "AI assessment",
+      "estimatedAccountHealth": "Estimated from signals",
+      "healthGood": "Healthy relationship",
+      "healthBad": "Needs attention",
+      "healthAtRisk": "At risk",
+      "aiCopilotHub": "AI Copilot SmartHub",
+      "suggestedAiStrategy": "Suggested AI strategy",
+      "aiStrategySample": "Confirm Microsoft Entra configuration parity. Draft a polite message to confirm the security review.",
+      "oneClickAiCommands": "One-click AI commands",
+      "draftReply": "Draft reply",
+      "kbExtraction": "KB extraction",
+      "verifiedKbCitations": "Verified KB citations",
+      "sampleKbRule": "Microsoft Entra SSO parity rule",
+      "confidence": "{{percent}}% confidence",
+      "standardProperties": "Standard properties",
+      "ticketCategory": "Ticket category",
+      "lifecycleStatus": "Lifecycle status",
+      "dynamicSentiment": "Dynamic sentiment",
+      "customerContext": "Customer context",
+      "metadataTags": "Metadata tags",
+      "noTagsDefined": "No manual tags defined.",
+      "tagPlaceholder": "Enter tag...",
+      "aiTagSuggestions": "AI tag suggestions",
+      "linkedTickets": "Linked tickets ({{count}})",
+      "noActiveLinks": "No active linkages.",
+      "incReference": "Inc: #{{id}}",
+      "category": "Category",
+      "ticketType": "Ticket type",
+      "noCategory": "No category"
     },
     "responseSla": "Response SLA",
     "replyBtn": "Reply",
@@ -621,7 +636,7 @@
     "customer_matrix": "Customer matrix",
     "audit_history_logs": "Audit history logs",
     "ai_sources_ground": "AI sources ground",
-    "linked_licenses": "GeistExchange",
+    "linked_licenses": "Secure Exchange",
     "neural_linkings": "Neural linkings",
     "openingPost": "Opening post",
     "checkedSafeLegal": "Checked with SafeLegal",
@@ -688,7 +703,7 @@
       "sentimentAngry": "Angry",
       "sentimentNegative": "Negative",
       "none": "None",
-      "defaultProduct": "GeistDeskTech License"
+      "defaultProduct": "Hubcom Tech License"
     },
     "notes": {
       "workspaceNotes": "Internal Agent Workspace Notes",
@@ -746,7 +761,8 @@
       "aiInsights": "AI Insights",
       "assets": "Assets",
       "neuralLinks": "Neural Links",
-      "tasks": "Tasks"
+      "tasks": "Tasks",
+      "time": "Time tracking"
     },
     "pagination": {
       "showing": "Showing",
@@ -755,13 +771,6 @@
       "ticketSingular": "ticket",
       "ticketPlural": "tickets",
       "rowsPerPage": "Rows per page:"
-    },
-    "bulk": {
-      "clearSelection": "Clear selection",
-      "aiMassResolve": "AI Mass-Resolve",
-      "massResolveLoading": "Mass resolving {{count}} tickets...",
-      "massResolveSuccess": "{{count}} tickets successfully AI-resolved!",
-      "massResolveError": "Mass resolve failed."
     },
     "sentimentLabels": {
       "calm": "CALM",
@@ -860,46 +869,6 @@
       "saveFailed": "Could not update task status.",
       "deleteFailed": "Could not delete task."
     },
-    "sidebar": {
-      "title": "Dispatch desk properties",
-      "dynamicRag": "Dynamic RAG",
-      "agentAssignment": "Agent assignment",
-      "activelyAssigned": "Actively assigned",
-      "unassignedBadge": "Unassigned",
-      "responsibleAgent": "Responsible agent",
-      "clickToAssign": "Click below to assign this ticket",
-      "selectDispatchAgent": "Select dispatch agent",
-      "transferTicket": "Transfer ticket",
-      "dispatchCaseStatus": "Dispatch case status",
-      "slaHelpEscalation": "SLA help escalation",
-      "supportAccountContext": "Support & account",
-      "aiAccountHealth": "AI assessment",
-      "estimatedAccountHealth": "Estimated from signals",
-      "healthGood": "Healthy relationship",
-      "healthBad": "Needs attention",
-      "healthAtRisk": "At risk",
-      "aiCopilotHub": "AI Copilot SmartHub",
-      "suggestedAiStrategy": "Suggested AI strategy",
-      "aiStrategySample": "Confirm Microsoft Entra configuration parity. Draft a polite message to confirm the security review.",
-      "oneClickAiCommands": "One-click AI commands",
-      "draftReply": "Draft reply",
-      "kbExtraction": "KB extraction",
-      "verifiedKbCitations": "Verified KB citations",
-      "sampleKbRule": "Microsoft Entra SSO parity rule",
-      "confidence": "{{percent}}% confidence",
-      "standardProperties": "Standard properties",
-      "ticketCategory": "Ticket category",
-      "lifecycleStatus": "Lifecycle status",
-      "dynamicSentiment": "Dynamic sentiment",
-      "customerContext": "Customer context",
-      "metadataTags": "Metadata tags",
-      "noTagsDefined": "No manual tags defined.",
-      "tagPlaceholder": "Enter tag...",
-      "aiTagSuggestions": "AI tag suggestions",
-      "linkedTickets": "Linked tickets ({{count}})",
-      "noActiveLinks": "No active linkages.",
-      "incReference": "Inc: #{{id}}"
-    },
     "emailComposer": {
       "from": "From:",
       "to": "To:",
@@ -935,7 +904,7 @@
     "assetsTab": {
       "enterSecret": "Please enter a secret to secure.",
       "linkCreated": "One-time security link produced.",
-      "secretSharedMsg": "🔒 [Security Exchange Event] Shared a secure credential ({{type}}) with client via GeistExchange. One-time link burned upon first access: {{url}}",
+      "secretSharedMsg": "🔒 [Security Exchange Event] Shared a secure credential ({{type}}) with client via Secure Exchange. One-time link burned upon first access: {{url}}",
       "secretAppended": "Shared secret delivery link successfully appended on ticket conversation thread!",
       "linkFailed": "Failed to generate secure link.",
       "logRequest": "Diagnostic log request",
@@ -954,9 +923,9 @@
       "sandboxPool": "Central sandbox tenant pool",
       "cloudEnvironment": "Cloud environment",
       "onDemand": "On demand",
-      "mobileLicense": "GeistDesk mobile license",
-      "proCore": "GeistDeskTech Pro Core",
-      "secureActions": "GeistExchange secure actions",
+      "mobileLicense": "Hubcom ServiceDesk mobile license",
+      "proCore": "Hubcom Tech Pro Core",
+      "secureActions": "Secure Exchange secure actions",
       "licensedAssets": "Licensed assets",
       "sendSecretTitle": "Send secure secret to client",
       "sendSecretDesc": "Generate a post-quantum link that burns upon read. Delivery link is appended on the ticket conversation stream!",
@@ -1006,15 +975,15 @@
     }
   },
   "kb": {
-    "title": "GeistKB Knowledge Base",
+    "title": "Knowledge Base Knowledge Base",
     "pageTitle": "Knowledge Base",
     "metaPillPublished": "Published",
     "metaPillDrafts": "Drafts",
     "metaPillReview": "Review Required",
     "pageSubtitle": "Centralized documentation, SOPs, onboarding guides, and AI-powered company knowledge",
     "headerMetaSummary": "{{articles}} Articles • {{categories}} Categories • {{health}}% Health Score",
-    "headerMetaInline": "GeistKB • {{published}} Published • {{drafts}} Drafts • {{review}} Needs Review",
-    "aiSearchPlaceholder": "Ask Geist AI or search documentation...",
+    "headerMetaInline": "Knowledge Base • {{published}} Published • {{drafts}} Drafts • {{review}} Needs Review",
+    "aiSearchPlaceholder": "Ask Hubcom AI or search documentation...",
     "voiceSearch": "Voice search",
     "advancedFilters": "Advanced filters",
     "views": "Views",
@@ -1094,17 +1063,17 @@
       "createArticle": "+ Create first article",
       "importDocs": "Import documents"
     },
-    "askGeistAi": "Ask Geist AI",
+    "askGeistAi": "Ask Hubcom AI",
     "askGeistAiHint": "Press Enter or click to get an AI summary",
-    "aiAnswerRegion": "Geist AI answer",
-    "aiAnswerHeading": "Geist AI",
+    "aiAnswerRegion": "Hubcom AI answer",
+    "aiAnswerHeading": "Hubcom AI",
     "aiAnswerLoading": "Searching documentation and drafting an answer…",
     "aiAnswerSources": "Sources from this workspace",
     "aiAnswerFailed": "Could not generate an AI answer.",
-    "aiNotConfigured": "Geist AI is not configured. Connect a model in AI Orchestrator settings.",
+    "aiNotConfigured": "Hubcom AI is not configured. Connect a model in AI Orchestrator settings.",
     "allLanguages": "All languages",
     "allTags": "All tags",
-    "aiSearchHeading": "Ask Geist AI or search documentation...",
+    "aiSearchHeading": "Ask Hubcom AI or search documentation...",
     "categoryExplorer": "Category Explorer",
     "coverage": "Coverage",
     "helpfulness": "Helpfulness",
@@ -1310,7 +1279,7 @@
     "filesLabel": "Files",
     "knowledgeCoverage": "Knowledge Coverage",
     "aiAssistant": "AI ASSISTANT",
-    "geistLlm": "GEIST-LLM",
+    "geistLlm": "HUBCOM-LLM",
     "aiAssistantDesc": "Optimize libraries, generate SOP handbooks, merge duplicates, or scan content security.",
     "generateFromTickets": "Generate From Tickets",
     "suggestMissingArticles": "Suggest Missing Articles",
@@ -1405,7 +1374,7 @@
     }
   },
   "exchange": {
-    "pageTitle": "GeistExchange",
+    "pageTitle": "Secure Exchange",
     "pageSubtitle": "Securely exchange credentials, diagnostics, files and secrets with enterprise-grade protection.",
     "customizeDashboard": "Customize Dashboard",
     "searchPlaceholder": "Search exchanges, recipients, files...",
@@ -1521,7 +1490,7 @@
         "uploadCompletedTitle": "Upload Completed Successfully ⚡",
         "uploadCompletedDesc": "Your diagnostic data has been encrypted and securely transferred to the IT security team. This one-time upload quota has now been consumed.",
         "uploadedFile": "Received file",
-        "uploadCompletedAdminHint": "The support team can recover this payload from the GeistVault admin dashboard using “Download File Securely”.",
+        "uploadCompletedAdminHint": "The support team can recover this payload from the Vault admin dashboard using “Download File Securely”.",
         "uploading": "Encrypting and transmitting payload...",
         "antivirusEnabled": "Antivirus scan",
         "dropzoneUnavailable": "Dropzone Expired or Not Found",
@@ -1535,7 +1504,7 @@
         "copyText": "Copy Text",
         "pqcShield": "PQC-ECC Shield",
         "selfDestruct": "Self Destruct",
-        "poweredBy": "Powered by GeistDesk Phantom Vault",
+        "poweredBy": "Powered by Hubcom Phantom Vault",
         "expired": "This secret has already been burned or has expired.",
         "reconstructFailed": "Failed to reconstruct the secure payload.",
         "finalView": "Final view consumed. This link is now expired.",
@@ -1723,9 +1692,9 @@
     }
   },
   "vault": {
-    "title": "GeistVault Enterprise Vault",
-    "titleShort": "GeistVault",
-    "pageTitle": "GeistVault",
+    "title": "Vault Enterprise Vault",
+    "titleShort": "Vault",
+    "pageTitle": "Vault",
     "pageSubtitle": "Secure credential, secret, and access management.",
     "globalSearchPlaceholder": "Search assets, credentials, hosts, API keys...",
     "advancedFilters": "Advanced filters",
@@ -1882,7 +1851,7 @@
     "sovereignVault": "Sovereign Vault",
     "securityChecks": "AI Security Checks",
     "breakGlass": "Break Glass Emergency",
-    "lockTitle": "Unlock GeistVault Enterprise",
+    "lockTitle": "Unlock Vault Enterprise",
     "lockSubtitle": "Zero-Knowledge Architecture: Keys decrypted locally in-browser using Argon2id. Central cloud engines never receive your private secrets payload.",
     "masterPassword": "Master Password",
     "masterPasswordPlaceholder": "Enter master password...",
@@ -1932,11 +1901,10 @@
     "sharedFilter": "SHARED FILTER",
     "trashFilter": "TRASH FILTER",
     "filterSuffix": "FILTER",
-    "overview": "GeistVault Overview",
+    "overview": "Vault Overview",
     "tagline": "Secure. Sync. Simplify.",
     "total": "Total",
     "shared": "Shared",
-    "weak": "Weak",
     "expiring": "Expiring",
     "securityScore": "Vault Security Score",
     "healthIndex": "Health Index",
@@ -2004,7 +1972,7 @@
     "noChange": "No change",
     "discoveryEngine": "Discovery Engine",
     "lastDiscovery": "Last discovery: 2 hours ago",
-    "geistVaultSummary": "GeistVault Summary",
+    "geistVaultSummary": "Vault Summary",
     "openVault": "Open vault",
     "credentials": "Credentials",
     "apiKeys": "API Keys",
@@ -2035,10 +2003,10 @@
     "trendSpend": "↑ 12% vs last month"
   },
   "admin": {
-    "subtitle": "Central control for GeistDesk AI, governance, and infrastructure.",
+    "subtitle": "Central control for Hubcom AI, governance, and infrastructure.",
     "resourceHealth": "Resource Health",
     "resourceHealthDesc": "Real-time status of embedded vectors and LLM availability.",
-    "vectorIndex": "Vector Index (GeistDesk_KB)",
+    "vectorIndex": "Vector Index (Hubcom_KB)",
     "statusHealthy": "Healthy",
     "statusIdle": "Idle",
     "statusNoKey": "No Key",
@@ -2130,7 +2098,7 @@
     },
     "hubMcp": {
       "title": "API & MCP",
-      "subtitle": "Expose GeistKB, Ticketing, and GeistVault tools to Cursor, Claude Desktop, and Windsurf over Streamable HTTP.",
+      "subtitle": "Expose Knowledge Base, Ticketing, and Vault tools to Cursor, Claude Desktop, and Windsurf over Streamable HTTP.",
       "enabled": "Enabled",
       "disabled": "Disabled",
       "toggle": "Enable MCP server",
@@ -2178,7 +2146,7 @@
     }
   },
   "protocols": {
-    "alpha": "GeistDesk Protocol Alpha",
+    "alpha": "Hubcom Protocol Alpha",
     "status": "Protocol Status"
   },
   "audit": {
@@ -2187,7 +2155,7 @@
     "systemIntegrity": "System Integrity",
     "verifiableSignatures": "Verifiable Signatures",
     "sovereignty": "Audit Sovereignty",
-    "description": "Immutable record-keeping for enterprise-grade compliance. Every action is cryptographically tied to an identity and verified via the GeistDesk Governance Engine.",
+    "description": "Immutable record-keeping for enterprise-grade compliance. Every action is cryptographically tied to an identity and verified via the Hubcom Governance Engine.",
     "liveIndexing": "Live Indexing Active",
     "downloadManifest": "Download Certified Manifest",
     "atomicLogs": "Atomic Logs",
@@ -2206,13 +2174,13 @@
     "aiPolicyBreachIntercepted": "AI Policy Breach Intercepted",
     "reviewViolationDetail": "Review Violation Detail",
     "violatorIdentity": "Violator Identity",
-    "agentNode": "GeistDesk Agent Node",
+    "agentNode": "Hubcom Agent Node",
     "policyClause": "Policy Clause",
     "evidenceFragment": "Evidence Fragment / Blocked Payload",
     "intercepted": "INTERCEPTED",
     "marker": "Marker:",
     "zeroComplianceRuptures": "Zero Compliance Ruptures",
-    "zeroComplianceRupturesDesc": "All AI vectors and human actions are within the established legal boundaries of the GeistDesk Protocol.",
+    "zeroComplianceRupturesDesc": "All AI vectors and human actions are within the established legal boundaries of the Hubcom Protocol.",
     "fragmentNotFound": "Fragment Not Found",
     "fragmentNotFoundDescPre": "The cryptographic sequence matching",
     "fragmentNotFoundDescPost": "does not exist in the current index.",
@@ -2269,7 +2237,7 @@
     "privacyGuardTitle": "Privacy Audit Velocity",
     "privacyGuardDesc": "Volume of sensitive data intercepted by the AI Shield per hour.",
     "cisoCertified": "CISO Certified 2026",
-    "leaksHeadline": "GeistDesk has prevented 1,240 accidental PII leaks this quarter through autonomous entity redaction.",
+    "leaksHeadline": "Hubcom ServiceDesk has prevented 1,240 accidental PII leaks this quarter through autonomous entity redaction.",
     "auditScore": "Audit Score",
     "zeroTrustLevel": "Zero-Trust Level",
     "generateReport": "Generate CISO Compliance Report",
@@ -2301,7 +2269,7 @@
     "global": "Global",
     "workTimerEngineDesc": "Toggle the Personio time-tracking module across the organization.",
     "interfaceLanguage": "Interface Language",
-    "interfaceLanguageDesc": "Choose your preferred display language for the GeistDesk interface.",
+    "interfaceLanguageDesc": "Choose your preferred display language for Hubcom ServiceDesk.",
     "activeLanguage": "Active",
     "commChannelsTitle": "Communication Channels",
     "commChannelsDesc": "Manage your helpdesk email addresses and SMTP/IMAP settings.",
@@ -2375,7 +2343,22 @@
     "index": "Index:",
     "totalVectors": "Total Vectors",
     "languageChangedDe": "Language changed to German!",
-    "languageChangedEn": "Language changed to English!"
+    "languageChangedEn": "Language changed to English!",
+    "branding": {
+      "title": "Company branding",
+      "description": "Upload the official Hubcom - Citadelle AG logo here. Until then the placeholder SVG is used.",
+      "company": "Company",
+      "product": "Product",
+      "support": "Support",
+      "preview": "Navigation preview:",
+      "upload": "Upload official logo",
+      "resetBtn": "Restore placeholder",
+      "invalidType": "Please choose an image file (PNG, SVG, JPG).",
+      "tooLarge": "Logo too large (max. 512 KB).",
+      "uploaded": "Logo saved. It appears in navigation and login.",
+      "readError": "Could not read logo.",
+      "reset": "Placeholder logo restored."
+    }
   },
   "header": {
     "dataSovereignDe": "Data Sovereign: DE",
@@ -2475,7 +2458,10 @@
     "slaBasedOnPriorityPost": "priority calculation.",
     "press": "Press",
     "toSaveAndPublish": "to save and publish",
-    "loadingEditor": "Loading editor..."
+    "loadingEditor": "Loading editor...",
+    "category": "Category",
+    "selectCategory": "Select category",
+    "noCategory": "No category"
   },
   "aiOrchestrator": {
     "workbench": {
@@ -2490,7 +2476,7 @@
     },
     "featureRouting": {
       "title": "Feature Routing",
-      "description": "Visual routing matrix for all GeistDesk AI features",
+      "description": "Visual routing matrix for all Hubcom AI features",
       "bulkRouter": "Bulk Model Router",
       "selectModel": "Select model…",
       "applyToAll": "Apply to All",
@@ -2501,14 +2487,38 @@
       "routedModelColumn": "Routed Model"
     },
     "features": {
-      "ticket_summarization": { "label": "Ticket Summary", "tooltip": "Summarizes ticket threads for agents." },
-      "sentiment_analysis": { "label": "Sentiment Analysis", "tooltip": "Detects customer sentiment in messages." },
-      "smart_reply": { "label": "Smart Reply", "tooltip": "Drafts contextual agent replies." },
-      "kb_generation": { "label": "KB Generation", "tooltip": "Generates knowledge base articles from tickets." },
-      "escalation_analysis": { "label": "Escalation Analysis", "tooltip": "Analyzes escalation risk and routing." },
-      "root_cause_analysis": { "label": "Root Cause Analysis", "tooltip": "Performs incident root cause analysis." },
-      "translation": { "label": "Translation", "tooltip": "Translates support content bidirectionally." },
-      "vault_insights": { "label": "Vault Insights", "tooltip": "Analyzes vault credential security posture." }
+      "ticket_summarization": {
+        "label": "Ticket Summary",
+        "tooltip": "Summarizes ticket threads for agents."
+      },
+      "sentiment_analysis": {
+        "label": "Sentiment Analysis",
+        "tooltip": "Detects customer sentiment in messages."
+      },
+      "smart_reply": {
+        "label": "Smart Reply",
+        "tooltip": "Drafts contextual agent replies."
+      },
+      "kb_generation": {
+        "label": "KB Generation",
+        "tooltip": "Generates knowledge base articles from tickets."
+      },
+      "escalation_analysis": {
+        "label": "Escalation Analysis",
+        "tooltip": "Analyzes escalation risk and routing."
+      },
+      "root_cause_analysis": {
+        "label": "Root Cause Analysis",
+        "tooltip": "Performs incident root cause analysis."
+      },
+      "translation": {
+        "label": "Translation",
+        "tooltip": "Translates support content bidirectionally."
+      },
+      "vault_insights": {
+        "label": "Vault Insights",
+        "tooltip": "Analyzes vault credential security posture."
+      }
     },
     "promptLibrary": {
       "featureLabel": "Core Feature",
@@ -2646,8 +2656,8 @@
           "root": "AI Governance",
           "policy": "Workspace Policy Node",
           "tickets": "Tickets",
-          "vault": "GeistVault",
-          "exchange": "GeistExchange"
+          "vault": "Vault",
+          "exchange": "Secure Exchange"
         }
       },
       "workflow": {
@@ -2766,5 +2776,28 @@
   "languages": {
     "de": "Deutsch",
     "en": "English"
+  },
+  "timeTracking": {
+    "tabTitle": "Time tracking",
+    "tabDesc": "Log work on this ticket. Rates come from admin settings.",
+    "exportExcel": "Export as Excel (.xlsx)",
+    "kuerzel": "Initials",
+    "hours": "Hours",
+    "minutes": "Minutes",
+    "date": "Date",
+    "description": "Activity / note",
+    "descriptionPlaceholder": "What was done?",
+    "createBtn": "Log time",
+    "updateBtn": "Save entry",
+    "listTitle": "Logged time",
+    "empty": "No time logged on this ticket yet.",
+    "adminTitle": "Time tracking & rates",
+    "adminDesc": "Standard and special rates plus Microsoft Graph Excel sync.",
+    "overviewTitle": "Time tracking overview",
+    "overviewDesc": "All logged time across tickets — including Excel export."
+  },
+  "ticketCategories": {
+    "adminTitle": "Ticket categories",
+    "adminDesc": "Create, rename, color, sort or deactivate categories."
   }
 }

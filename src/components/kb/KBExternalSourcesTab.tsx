@@ -1,5 +1,5 @@
 /**
- * GeistKB — "Verknüpfte Datenquellen" tab.
+ * Wissensdatenbank — "Verknüpfte Datenquellen" tab.
  * Lists external connectors (NAS local dir, SFTP, SharePoint, OneDrive) with
  * delta-hash sync. Mirrors the admin-hub panel but is role-gated to read + sync.
  */

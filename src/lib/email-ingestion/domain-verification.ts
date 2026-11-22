@@ -246,13 +246,15 @@ export function ensureDomainVerificationFields(
 
 export function buildVerifiedFromHeader(channel: EmailChannelConfig): string {
   const address = (channel.email || '').trim();
-  const display = (channel.name || 'Support').trim().replace(/[\r\n"]/g, '');
+  const display = (channel.displayName || channel.name || 'Support')
+    .trim()
+    .replace(/[\r\n"]/g, '');
   return `${display} <${address}>`;
 }
 
 export function buildSystemDefaultFromHeader(): string {
   const domain = mailForwardDomain();
   const address = (process.env.MAIL_FROM_ADDRESS || `noreply@${domain}`).trim();
-  const display = (process.env.MAIL_FROM_NAME || 'GeistDesk Support').trim().replace(/[\r\n"]/g, '');
+  const display = (process.env.MAIL_FROM_NAME || 'Hubcom ServiceDesk Support').trim().replace(/[\r\n"]/g, '');
   return `${display} <${address}>`;
 }

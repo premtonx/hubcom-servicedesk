@@ -1,5 +1,5 @@
 /**
- * Controllable demo-data seeder for GeistDesk (CLI + Admin Hub).
+ * Controllable demo-data seeder for Hubcom ServiceDesk (CLI + Admin Hub).
  *
  * Tags every row with `isDemoData: true` and stable ID prefixes so
  * `resetDemoData()` can wipe simulation rows without touching real tenant data.
@@ -201,7 +201,7 @@ function buildTicketSpecs(): DemoTicketSpec[] {
       aiSuggestionsCount: 2,
       aiSummary: 'Quarantined message, revoked any accidental tokens, sent awareness blurb.',
       aiSuggestedDraft:
-        'The message is quarantined. Please do not open the attachment. We published a short awareness note in GeistKB.',
+        'The message is quarantined. Please do not open the attachment. We published a short awareness note in Wissensdatenbank.',
       aiInsights: ['Attachment double extension', 'No credential use detected'],
       originalLanguage: 'en',
     },
@@ -209,7 +209,7 @@ function buildTicketSpecs(): DemoTicketSpec[] {
       id: `${DEMO_TICKET_PREFIX}007`,
       subject: 'Closed: Rotate expired Stripe webhook signing secret',
       description:
-        'Production Stripe webhooks returned 401 after secret rotation in Dashboard was not mirrored to GeistDesk.',
+        'Production Stripe webhooks returned 401 after secret rotation in Dashboard was not an Hubcom ServiceDesk gespiegelt.',
       status: 'closed',
       priority: 'urgent',
       team: 'engineering',
@@ -241,7 +241,7 @@ function buildTicketSpecs(): DemoTicketSpec[] {
       aiSuggestionUsed: false,
       aiSuggestionsCount: 0,
       aiSummary: 'Documentation drift after VPN change. Point to SOP kb-demo-sim-003.',
-      aiSuggestedDraft: 'Thanks — we will refresh the WireGuard DNS section in GeistKB today.',
+      aiSuggestedDraft: 'Thanks — we will refresh the WireGuard DNS section in Wissensdatenbank today.',
       aiInsights: ['Resolver 10.8.0.1 → 10.9.0.53'],
       originalLanguage: 'de',
     },

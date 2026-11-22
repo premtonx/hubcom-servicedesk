@@ -442,7 +442,7 @@ export function TicketDialogs(props: TicketDialogsProps) {
         )}
       </AnimatePresence>
 
-      {/* GeistDesk Handoff Engine Modal */}
+      {/* Hubcom Übergabe-Engine Modal */}
       <Dialog open={isHandoffOpen} onOpenChange={setIsHandoffOpen}>
         <DialogContent className="sm:max-w-[500px] bg-slate-50 border-amber-100 rounded-2xl overflow-hidden p-0 gap-0 shadow-2xl">
           <div className="bg-amber-50 p-6 border-b border-amber-100">
@@ -452,12 +452,12 @@ export function TicketDialogs(props: TicketDialogsProps) {
                   <UserPlus className="w-5 h-5 text-amber-600" />
                 </div>
                 <Badge variant="outline" className="bg-white border-amber-200 text-amber-700 text-[10px] font-black uppercase tracking-widest px-2 h-5">
-                  GeistDesk Handoff Engine
+                  Hubcom Übergabe-Engine
                 </Badge>
               </div>
-              <DialogTitle className="text-xl font-bold text-slate-900">{t('tickets.handoff.title', 'High-Priority Transfer Briefing')}</DialogTitle>
+              <DialogTitle className="text-xl font-bold text-slate-900">{t('tickets.handoff.title', 'Priorisierte Übergabe-Zusammenfassung')}</DialogTitle>
               <DialogDescription className="text-slate-500 font-medium text-sm">
-                {t('tickets.handoff.desc', 'AI is summarizing the context to ensure a smooth transition for the next agent.')}
+                {t('tickets.handoff.desc', 'Die KI fasst den Kontext zusammen, damit der nächste Agent nahtlos übernehmen kann.')}
               </DialogDescription>
             </DialogHeader>
           </div>

@@ -26,6 +26,7 @@ const SECRET_FIELDS = [
   'clientSecret',
   'webhookSecret',
   'oauthRefreshToken',
+  'smtpPassword',
 ] as const;
 
 /** Exclude localhost / loopback values so generated addresses never persist @localhost. */
@@ -228,6 +229,7 @@ export async function createEmailChannel(
 
   const created = await addDocDirect(EMAIL_CHANNELS_COLLECTION, {
     name: input.name || 'Support Channel',
+    displayName: (input.displayName || input.name || 'Support').trim(),
     email: input.email || '',
     group: input.group || '',
     status: input.status || 'pending',
@@ -235,6 +237,11 @@ export async function createEmailChannel(
     enabled: input.enabled !== false,
     isPrimary: Boolean(input.isPrimary),
     provider: input.provider || 'custom',
+    smtpHost: input.smtpHost || null,
+    smtpPort: input.smtpPort ?? null,
+    smtpUser: input.smtpUser || null,
+    smtpPassword: input.smtpPassword || null,
+    smtpSecure: input.smtpSecure ?? null,
     // Webhook / passive forwarding: leave IMAP server fields null (not required).
     imapHost: isWebhook ? null : input.imapHost || null,
     imapPort: isWebhook ? null : (input.imapPort ?? 993),
@@ -274,6 +281,10 @@ export async function createEmailChannel(
     updatedAt: now,
   });
 
+  if (input.isPrimary) {
+    await setPrimaryEmailChannel(id);
+  }
+
   return redactChannelSecrets({
     id,
     ...created.data,
@@ -283,6 +294,7 @@ export async function createEmailChannel(
     ...domainFields,
     dnsVerified: false,
     dnsVerifiedAt: null,
+    isPrimary: Boolean(input.isPrimary),
   });
 }
 
@@ -338,6 +350,12 @@ export async function updateEmailChannel(
   }
 
   await setDocDirect(EMAIL_CHANNELS_COLLECTION, id, next);
+
+  if (next.isPrimary) {
+    await setPrimaryEmailChannel(id);
+    next.isPrimary = true;
+  }
+
   return redactChannelSecrets({
     ...next,
     forwardingDomain: getForwardingDomain(),
@@ -392,11 +410,67 @@ export async function updateEmailChannelStatus(
   });
 }
 
+export async function getEmailChannelById(id: string): Promise<EmailChannelConfig | null> {
+  const doc = await getDocDirect(EMAIL_CHANNELS_COLLECTION, id);
+  if (!doc) return null;
+  return { id: doc.id || id, ...doc } as EmailChannelConfig;
+}
+
+/** Absender-Optionen für den Ticket-Composer (aktiv + E-Mail vorhanden). */
+export async function listSendableFromOptions(): Promise<
+  Array<{
+    id: string;
+    email: string;
+    name: string;
+    displayName: string;
+    isPrimary: boolean;
+    dnsVerified: boolean;
+    label: string;
+  }>
+> {
+  const channels = await listEmailChannels();
+  return channels
+    .filter((c) => c.enabled !== false && (c.email || '').includes('@'))
+    .map((c) => {
+      const displayName = (c.displayName || c.name || 'Support').trim();
+      const email = c.email.trim();
+      return {
+        id: c.id,
+        email,
+        name: c.name || displayName,
+        displayName,
+        isPrimary: c.isPrimary === true,
+        dnsVerified: c.dnsVerified === true,
+        label: `${displayName} <${email}>`,
+      };
+    })
+    .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.label.localeCompare(b.label, 'de'));
+}
+
+/** Markiert einen Kanal als Standard-Absender und hebt isPrimary bei anderen auf. */
+export async function setPrimaryEmailChannel(channelId: string): Promise<void> {
+  const channels = await listEmailChannels();
+  for (const channel of channels) {
+    const shouldBePrimary = channel.id === channelId;
+    if (Boolean(channel.isPrimary) !== shouldBePrimary) {
+      await updateDocDirect(EMAIL_CHANNELS_COLLECTION, channel.id, {
+        isPrimary: shouldBePrimary,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  }
+}
+
 /** Resolve a channel for outbound From: selection (mailbox / support email / forwarding). */
 export async function findChannelForOutbound(params: {
   mailbox?: string | null;
   supportEmail?: string | null;
+  channelId?: string | null;
 }): Promise<EmailChannelConfig | null> {
+  if (params.channelId) {
+    const byId = await getEmailChannelById(params.channelId);
+    if (byId) return byId;
+  }
   const docs = await getDocsDirect(EMAIL_CHANNELS_COLLECTION, []);
   const mailbox = (params.mailbox || '').toLowerCase().trim();
   const supportEmail = (params.supportEmail || '').toLowerCase().trim();

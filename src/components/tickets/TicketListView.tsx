@@ -1,7 +1,7 @@
 import type { MutableRefObject, MouseEvent } from 'react';
 import {
   AlertTriangle, Angry, Box, Building2, CheckCircle2, ChevronDown, ChevronLeft,
-  ChevronRight, Clock, Frown, GitMerge, Globe, Hash, History, Link2, List, Mail, Meh,
+  ChevronRight, Clock, FolderTree, Frown, GitMerge, Globe, Hash, History, Link2, List, Mail, Meh,
   MessageCircleHeart, MessageSquare, MoreVertical, PhoneCall, RefreshCw, Settings2,
   Share2, SlidersHorizontal, Smile, Sparkles, Tag, Ticket, UserCheck, UserRound, X,
 } from 'lucide-react';
@@ -45,6 +45,7 @@ import type { TicketQueueStats, TopStatusFilterId } from '../../lib/ticketViewFi
 import { ticketsShareCustomer } from '../../lib/ticketMerge';
 import { isTicketAssignedToUser } from '../../lib/ticketAssignee';
 import { SELECTABLE_TICKET_STATUSES } from '../../lib/ticket-status';
+import { useTicketCategories } from '../../hooks/useTicketCategories';
 
 export interface TicketListViewProps {
   ticketQueueStats: TicketQueueStats;
@@ -93,6 +94,9 @@ export interface TicketListViewProps {
 
 export function TicketListView(props: TicketListViewProps) {
   const { t } = useTranslation();
+  const { categories: ticketCategories } = useTicketCategories(true);
+  const categoryColorById = Object.fromEntries(ticketCategories.map((c) => [c.id, c.color]));
+  const categoryColorByName = Object.fromEntries(ticketCategories.map((c) => [c.name, c.color]));
   const {
     ticketQueueStats,
     topStatusFilter,
@@ -255,7 +259,7 @@ export function TicketListView(props: TicketListViewProps) {
                     </div>
                     <div>
                       <SheetTitle className="font-bold text-lg text-foreground uppercase tracking-tight">{t('tickets.filters.masterFilterList', 'Master-Filterliste')}</SheetTitle>
-                      <SheetDescription className="text-xs text-muted-foreground font-medium uppercase tracking-widest">{t('tickets.filters.geistGuardrails', 'GeistDesk Legal Guardrail & AI Controls')}</SheetDescription>
+                      <SheetDescription className="text-xs text-muted-foreground font-medium uppercase tracking-widest">{t('tickets.filters.geistGuardrails', 'Hubcom Legal Guardrail & AI Controls')}</SheetDescription>
                     </div>
                   </div>
                 </SheetHeader>
@@ -352,6 +356,26 @@ export function TicketListView(props: TicketListViewProps) {
                               <SelectItem value="any">{t('tickets.filters.anyType', 'Jeder Typ')}</SelectItem>
                               {['Question', 'Incident', 'Problem', 'Feature Request'].map(typeOpt => (
                                 <SelectItem key={typeOpt} value={typeOpt.toLowerCase()}>{t(`tickets.typeLabels.${typeOpt.toLowerCase().replace(' ', '_')}`, typeOpt)}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-[11px] font-bold text-foreground/70 uppercase tracking-wider flex items-center gap-2">
+                            <FolderTree className="w-3.5 h-3.5 text-primary" /> {t('tickets.filters.category', 'Kategorie')}
+                          </label>
+                          <Select
+                            value={filters.category || 'any'}
+                            onValueChange={(v) => setFilters({ ...filters, category: v })}
+                          >
+                            <SelectTrigger className="w-full bg-muted/50 border-border rounded-xl h-11 font-medium">
+                              <SelectValue placeholder={t('tickets.filters.selectCategory', 'Kategorie wählen')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="any">{t('tickets.filters.anyCategory', 'Alle Kategorien')}</SelectItem>
+                              {ticketCategories.map((cat) => (
+                                <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -547,8 +571,8 @@ export function TicketListView(props: TicketListViewProps) {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="any">{t('tickets.filters.totalEcosystem', 'Gesamtes Ökosystem')}</SelectItem>
-                              <SelectItem value="GeistDeskTech">{t('tickets.filters.geistCore', 'GeistDeskTech Core')}</SelectItem>
-                              <SelectItem value="GeistDeskMobile">{t('tickets.filters.geistMobile', 'GeistDeskMobile Platform')}</SelectItem>
+                              <SelectItem value="GeistDeskTech">{t('tickets.filters.geistCore', 'Hubcom Tech Core')}</SelectItem>
+                              <SelectItem value="GeistDeskMobile">{t('tickets.filters.geistMobile', 'Hubcom Mobile Platform')}</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -907,6 +931,19 @@ export function TicketListView(props: TicketListViewProps) {
                                <span className="text-[10px] text-slate-400 font-medium font-mono tabular-nums shrink-0">
                                  {formatTicketRef(ticket.id)}
                                </span>
+                               {ticket.categoryName && (
+                                 <span
+                                   className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full text-white shrink-0"
+                                   style={{
+                                     backgroundColor:
+                                       (ticket.categoryId && categoryColorById[ticket.categoryId]) ||
+                                       categoryColorByName[ticket.categoryName] ||
+                                       '#1B6CA8',
+                                   }}
+                                 >
+                                   {ticket.categoryName}
+                                 </span>
+                               )}
                                {sla && (
                                  <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border border-blue-100 bg-blue-50 text-blue-700 shrink-0">
                                    SLA
@@ -1110,6 +1147,19 @@ export function TicketListView(props: TicketListViewProps) {
                         <div className="space-y-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-[9px] font-bold font-mono tabular-nums text-muted-foreground bg-muted border rounded px-1">#{ticket.id.slice(0, 4)}</span>
+                            {ticket.categoryName && (
+                              <span
+                                className="text-[8px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full text-white"
+                                style={{
+                                  backgroundColor:
+                                    (ticket.categoryId && categoryColorById[ticket.categoryId]) ||
+                                    categoryColorByName[ticket.categoryName] ||
+                                    '#1B6CA8',
+                                }}
+                              >
+                                {ticket.categoryName}
+                              </span>
+                            )}
                             {sla && (
                               <Badge className={cn("text-[8px] px-1.5 py-0 h-4 border uppercase tracking-wider font-extrabold font-mono tabular-nums", sla.color)}>
                                 {sla.label}

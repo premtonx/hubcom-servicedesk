@@ -19,21 +19,21 @@ export function AdminHubSystemTab({ telemetry, onTelemetryRefresh }: AdminHubSys
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SystemTile
           icon={<ShieldCheck className="w-4 h-4 text-emerald-500" />}
-          label={t('admin.hubSys.health', 'Control plane')}
+          label={t('admin.hubSys.health', 'Steuerungsebene')}
           value={`${telemetry.systemHealth}%`}
-          hint={t('admin.hubSys.healthHint', 'SLA uptime on the sovereign runtime')}
+          hint={t('admin.hubSys.healthHint', 'SLA-Verfügbarkeit der Runtime')}
         />
         <SystemTile
           icon={<HardDrive className="w-4 h-4 text-slate-500" />}
-          label={t('admin.hubSys.assets', 'Managed records')}
+          label={t('admin.hubSys.assets', 'Verwaltete Datensätze')}
           value={telemetry.assetsManaged.toLocaleString()}
-          hint={t('admin.hubSys.assetsHint', 'Tickets, vault items, and directory rows')}
+          hint={t('admin.hubSys.assetsHint', 'Tickets, Tresor-Einträge und Verzeichnisdaten')}
         />
         <SystemTile
           icon={<Database className="w-4 h-4 text-cyan-600" />}
-          label={t('admin.hubSys.backup', 'Import & restore')}
+          label={t('admin.hubSys.backup', 'Import & Wiederherstellung')}
           value={t('admin.hubSys.backupValue', 'CSV / JSON')}
-          hint={t('admin.hubSys.backupHint', 'Use Data Import for tenant backups and migrations')}
+          hint={t('admin.hubSys.backupHint', 'Nutzen Sie Datenimport für Tenant-Backups und Migrationen')}
         />
       </div>
 

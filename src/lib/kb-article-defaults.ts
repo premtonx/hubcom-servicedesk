@@ -9,7 +9,7 @@ export const DEFAULT_KB_ALERTS: KBArticleAlert[] = [
   {
     type: 'info',
     title: 'Information',
-    body: 'Enterprise tenants should map GeistDesk roles to Azure AD security groups before enabling automated provisioning.',
+    body: 'Enterprise tenants should map Hubcom ServiceDesk roles to Azure AD security groups before enabling automated provisioning.',
   },
   {
     type: 'success',

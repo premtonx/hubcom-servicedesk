@@ -262,7 +262,10 @@ export const ticketService = {
     });
   },
 
-  sendMessage: async (ticketId: string, message: Partial<Message>) => {
+  sendMessage: async (
+    ticketId: string,
+    message: Partial<Message> & { fromChannelId?: string },
+  ) => {
     // Prefer database-first reply API (graceful when SMTP is unavailable).
     if (message.senderType === 'agent' && message.content) {
       return ticketService.sendReply(ticketId, {
@@ -271,6 +274,9 @@ export const ticketService = {
         senderId: message.senderId || auth.currentUser?.uid || 'agent',
         senderName: message.senderName,
         senderType: 'agent',
+        fromAddress: message.fromAddress || undefined,
+        fromChannelId: message.fromChannelId || undefined,
+        cc: Array.isArray(message.cc) ? message.cc : undefined,
       });
     }
 
@@ -339,6 +345,9 @@ export const ticketService = {
       senderId: string;
       senderName?: string;
       senderType?: 'agent' | 'customer' | 'ai';
+      fromAddress?: string;
+      fromChannelId?: string;
+      cc?: string[];
     },
   ): Promise<{
     success: boolean;

@@ -75,7 +75,7 @@ export interface IngestResult {
 }
 
 /**
- * Ingest a normalized inbound email into GeistDesk tickets.
+ * Ingest a normalized inbound email into Hubcom ServiceDesk tickets.
  * All drivers (Graph, IMAP, Webhook) must call this after producing NormalizedInboundEmail.
  */
 export async function ingestNormalizedEmail(

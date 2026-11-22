@@ -56,10 +56,10 @@ export const PIIShield = {
 };
 
 /**
- * GeistDeskTeamsAgent handles incoming Microsoft Teams messages via Microsoft Bot Framework.
+ * HubcomTeamsAgent handles incoming Microsoft Teams messages via Microsoft Bot Framework.
  * It routes raw messages through PIIShield before performing downstream LLM work.
  */
-export class GeistDeskTeamsAgent extends ActivityHandler {
+export class HubcomTeamsAgent extends ActivityHandler {
   constructor() {
     super();
 
@@ -75,11 +75,11 @@ export class GeistDeskTeamsAgent extends ActivityHandler {
 
         if (wasScrubbed) {
           await context.sendActivity(
-            `🔒 **Sovereign Shield Active**: We detected and redacted sensitive patterns (API keys, credentials, or PII) from your input before processing. Here is the processed inquiry:\n\n*${cleanText}*\n\n**GeistDesk AI Response:** I have successfully ingested this secure payload.`
+            `🔒 **Sovereign Shield Active**: We detected and redacted sensitive patterns (API keys, credentials, or PII) from your input before processing. Here is the processed inquiry:\n\n*${cleanText}*\n\n**Hubcom KI Response:** I have successfully ingested this secure payload.`
           );
         } else {
           await context.sendActivity(
-            `**GeistDesk AI Sovereign Agent**: Ingested payload: "${cleanText}"`
+            `**Hubcom KI Sovereign Agent**: Ingested payload: "${cleanText}"`
           );
         }
       } catch (error) {
@@ -110,7 +110,7 @@ export const createTeamsBotAdapter = () => {
   adapter.onTurnError = async (context: TurnContext, error: any) => {
     console.error(`\n [onTurnError] Unhandled team bot connection error: ${error}`);
     try {
-      await context.sendActivity('⚠️ **GeistDesk Sovereign Exception**: An unexpected gateway error occurred during processing. Raw session data has been discarded.');
+      await context.sendActivity('⚠️ **Hubcom ServiceDesk Sovereign Exception**: An unexpected gateway error occurred during processing. Raw session data has been discarded.');
     } catch (innerError) {
       console.error(`Error sending error message activity: ${innerError}`);
     }

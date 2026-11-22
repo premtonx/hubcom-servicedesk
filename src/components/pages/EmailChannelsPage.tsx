@@ -98,11 +98,18 @@ const FREEMAIL_RE =
 function emptyDraft(forwardingDomain?: string): Partial<EmailChannelConfig> {
   return {
     name: '',
+    displayName: '',
     email: '',
     group: 'Technical Support',
     connectionType: 'webhook',
     enabled: true,
+    isPrimary: false,
     status: 'pending',
+    smtpHost: '',
+    smtpPort: 587,
+    smtpUser: '',
+    smtpPassword: '',
+    smtpSecure: false,
     forwardingDomain,
   };
 }
@@ -152,13 +159,24 @@ function DnsRecordRow({
 /** Build API payload — webhook channels omit IMAP/Graph server fields entirely. */
 function buildSavePayload(editing: Partial<EmailChannelConfig>): Partial<EmailChannelConfig> {
   const connectionType = (editing.connectionType || 'webhook') as EmailConnectionType;
+  const displayName = (editing.displayName || editing.name || '').trim();
   const base: Partial<EmailChannelConfig> = {
     name: editing.name?.trim() || '',
+    displayName,
     email: editing.email?.trim() || '',
     group: editing.group || '',
     connectionType,
     enabled: editing.enabled !== false,
+    isPrimary: editing.isPrimary === true,
     status: editing.status || 'pending',
+    smtpHost: editing.smtpHost || null,
+    smtpPort: editing.smtpPort ?? null,
+    smtpUser: editing.smtpUser || null,
+    smtpPassword:
+      editing.smtpPassword && editing.smtpPassword !== '••••••••'
+        ? editing.smtpPassword
+        : undefined,
+    smtpSecure: editing.smtpSecure ?? null,
   };
 
   if (connectionType === 'webhook') {
@@ -307,17 +325,17 @@ export default function EmailChannelsPage() {
       let saved: EmailChannelConfig;
       if (editing.id) {
         const updated = await emailChannelApi.update(editing.id, payload);
-        setChannels((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-        setEditing(updated);
         saved = updated;
-        toast.success('Channel saved');
+        toast.success('Absender gespeichert');
       } else {
         const created = await emailChannelApi.create(payload);
-        setChannels((prev) => [created, ...prev]);
-        setEditing(created);
         saved = created;
-        toast.success('Channel created');
+        toast.success('Absender angelegt');
       }
+      // Liste neu laden, damit isPrimary bei anderen Kanälen korrekt ist
+      const refreshed = await emailChannelApi.list();
+      setChannels(refreshed);
+      setEditing(refreshed.find((c) => c.id === saved.id) || saved);
 
       // Advanced direct connections (IMAP/Graph) run a background test on save
       // and report connected / auth_error / pending.
@@ -508,10 +526,10 @@ export default function EmailChannelsPage() {
     <div className="p-6 md:p-8 max-w-6xl mx-auto space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-slate-900">E-Mail-Kanäle</h1>
+          <h1 className="text-2xl font-black tracking-tight text-slate-900">E-Mail-Kanäle / Absender</h1>
           <p className="text-sm text-slate-500 mt-1 max-w-2xl">
-            Multi-provider ingestion: Webhook forwarding, IMAP (password / OAuth2), and Microsoft Graph.
-            Active drivers poll every 60s; webhook channels wait for passive push.
+            Mehrere Absender-Adressen verwalten (z.&nbsp;B. support@hubcom.de, it-service@citadelle.de) inkl.
+            Anzeigename, SMTP und Standard-Absender für den Ticket-Composer. Zusätzlich: Webhook-, IMAP- und Graph-Ingestion.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -562,8 +580,20 @@ export default function EmailChannelsPage() {
                 return (
                   <tr key={channel.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                     <td className="px-4 py-3">
-                      <div className="font-bold text-slate-900">{channel.name}</div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-slate-900">
+                          {channel.displayName || channel.name}
+                        </span>
+                        {channel.isPrimary ? (
+                          <Badge className="text-[9px] font-bold uppercase bg-blue-50 text-blue-700 border-blue-100">
+                            Standard
+                          </Badge>
+                        ) : null}
+                      </div>
                       <div className="text-xs text-slate-500 font-mono">{channel.email}</div>
+                      {channel.displayName && channel.displayName !== channel.name ? (
+                        <div className="text-[11px] text-slate-400">{channel.name}</div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-xs font-semibold text-slate-600">{typeLabel}</td>
                     <td className="px-4 py-3">
@@ -628,17 +658,105 @@ export default function EmailChannelsPage() {
             <div className="space-y-4 py-1">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Name</Label>
-                  <Input value={editing.name || ''} onChange={(e) => setField('name', e.target.value)} />
+                  <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Interner Name
+                  </Label>
+                  <Input
+                    value={editing.name || ''}
+                    onChange={(e) => setField('name', e.target.value)}
+                    placeholder="Hubcom Support"
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Support-E-Mail
+                    Anzeigename (From)
+                  </Label>
+                  <Input
+                    value={editing.displayName || ''}
+                    onChange={(e) => setField('displayName', e.target.value)}
+                    placeholder="Hubcom Support"
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Absender-E-Mail
                   </Label>
                   <Input
                     value={editing.email || ''}
                     onChange={(e) => setField('email', e.target.value)}
-                    placeholder="support@domain.com"
+                    placeholder="support@hubcom.de"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2">
+                <div>
+                  <p className="text-xs font-bold text-slate-800">Standard-Absender</p>
+                  <p className="text-[10px] text-slate-400">
+                    Wird im Ticket-Composer vorausgewählt. Es kann nur einen Standard geben.
+                  </p>
+                </div>
+                <Switch
+                  checked={editing.isPrimary === true}
+                  onCheckedChange={(checked) => setField('isPrimary', checked)}
+                />
+              </div>
+
+              <div className="space-y-3 rounded-xl border border-slate-200 p-3">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                  <Server className="w-3.5 h-3.5" />
+                  SMTP (optional, kanalbezogen)
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Überschreibt die globale SMTP-Konfiguration für diesen Absender, sofern gesetzt.
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-[10px] font-bold uppercase text-slate-400">SMTP-Host</Label>
+                    <Input
+                      value={editing.smtpHost || ''}
+                      onChange={(e) => setField('smtpHost', e.target.value)}
+                      placeholder="smtp.hubcom.de"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] font-bold uppercase text-slate-400">Port</Label>
+                    <Input
+                      type="number"
+                      value={editing.smtpPort ?? ''}
+                      onChange={(e) =>
+                        setField('smtpPort', e.target.value === '' ? null : Number(e.target.value))
+                      }
+                      placeholder="587"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] font-bold uppercase text-slate-400">SMTP-Benutzer</Label>
+                    <Input
+                      value={editing.smtpUser || ''}
+                      onChange={(e) => setField('smtpUser', e.target.value)}
+                      placeholder="support@hubcom.de"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] font-bold uppercase text-slate-400">SMTP-Passwort</Label>
+                    <Input
+                      type="password"
+                      value={editing.smtpPassword || ''}
+                      onChange={(e) => setField('smtpPassword', e.target.value)}
+                      placeholder={editing.id ? '••••••••' : ''}
+                      autoComplete="new-password"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold text-slate-700">TLS/SSL (smtpSecure)</Label>
+                  <Switch
+                    checked={editing.smtpSecure === true}
+                    onCheckedChange={(checked) => setField('smtpSecure', checked)}
                   />
                 </div>
               </div>

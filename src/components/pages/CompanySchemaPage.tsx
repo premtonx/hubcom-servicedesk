@@ -194,7 +194,7 @@ export default function CompanySchemaPage() {
                </div>
                <h1 className="text-2xl font-black text-[#202124] tracking-tight uppercase">Company Schema Architect</h1>
             </div>
-            <p className="text-sm text-slate-500 ml-13">Define global metadata for company accounts. Data is indexed by GeistDesk AI for smart context.</p>
+            <p className="text-sm text-slate-500 ml-13">Definieren Sie globale Metadaten für Firmenkonten. Die Daten werden von Hubcom KI für den Smart-Kontext indexiert.</p>
           </div>
           <div className="flex gap-3">
              <Button 
@@ -241,10 +241,10 @@ export default function CompanySchemaPage() {
                   <span className="text-[10px] font-black uppercase tracking-widest text-primary">AI Moat</span>
                </div>
                <p className="text-xs text-slate-400 leading-relaxed">
-                  Every custom field you add is automatically tokenized and injected into the GeistDesk context window during ticket drafting.
+                  Jedes benutzerdefinierte Feld wird automatisch tokenisiert und beim Ticket-Entwurf in das Hubcom-Kontextfenster eingefügt.
                </p>
                <div className="p-3 bg-white/5 rounded-xl border border-white/10 italic text-[10px] text-slate-300">
-                  "GeistDesk: This customer has {fields.length > 0 ? fields[0].label : '...'} set to X, adjust tone accordingly."
+                  "Hubcom KI: Dieser Kunde hat {fields.length > 0 ? fields[0].label : '...'} = X — Ton entsprechend anpassen."
                </div>
             </div>
           </div>

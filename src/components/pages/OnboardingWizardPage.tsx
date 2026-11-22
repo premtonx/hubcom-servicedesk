@@ -28,7 +28,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { GeistDeskLogo } from '../ui/GeistDeskLogo';
+import { HubcomLogo } from '../ui/HubcomLogo';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Input } from '../ui/input';
@@ -104,7 +104,7 @@ export default function OnboardingWizardPage() {
   const [chatModel, setChatModel] = useState('llama3.1');
   const [embeddingModel, setEmbeddingModel] = useState('nomic-embed-text');
 
-  const [geistKB, setGeistKB] = useState(true);
+  const [geistKB, setWissensdatenbank] = useState(true);
   const [geistVault, setGeistVault] = useState(true);
   const [geistExchange, setGeistExchange] = useState(true);
   const [importSampleData, setImportSampleData] = useState(false);
@@ -401,8 +401,8 @@ export default function OnboardingWizardPage() {
 
       toast.success(
         res.data?.channelId
-          ? 'GeistDesk ist eingerichtet. Der primäre E-Mail-Kanal wurde erstellt.'
-          : 'GeistDesk ist eingerichtet. Willkommen!',
+          ? 'Hubcom ServiceDesk ist eingerichtet. Der primäre E-Mail-Kanal wurde erstellt.'
+          : 'Hubcom ServiceDesk ist eingerichtet. Willkommen!',
       );
       await refresh();
       navigate('/dashboard', { replace: true });
@@ -430,10 +430,10 @@ export default function OnboardingWizardPage() {
     <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-50 via-background to-muted">
       <div className="mx-auto max-w-3xl px-4 py-10">
         <div className="mb-8 flex items-center gap-3">
-            <GeistDeskLogo size="xs" showText={true} />
+            <HubcomLogo size="xs" showText={true} />
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">ERSTEINRICHTUNG</p>
-            <h1 className="text-2xl font-semibold tracking-tight">GeistDesk Konfiguration</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Hubcom ServiceDesk Konfiguration</h1>
           </div>
         </div>
 
@@ -759,7 +759,7 @@ export default function OnboardingWizardPage() {
             <CardHeader>
               <CardTitle>Modul-Aktivierung</CardTitle>
               <CardDescription>
-                GeistDesk Tickets bleibt aktiv. Deaktivieren Sie andere Produkte, um sie für Operatoren in der
+                Hubcom ServiceDesk Tickets bleibt aktiv. Deaktivieren Sie andere Produkte, um sie für Operatoren in der
                 Seitenleiste auszublenden.
               </CardDescription>
             </CardHeader>
@@ -768,14 +768,14 @@ export default function OnboardingWizardPage() {
                 locked
                 active
                 icon={Ticket}
-                title="GeistDesk Tickets"
+                title="Hubcom ServiceDesk Tickets"
                 body="Zentraler Helpdesk für Kundenanfragen via E-Mail, SLA-Tracking und Support-Workflows."
               />
               <ModuleToggle
                 active={geistKB}
-                onToggle={() => setGeistKB((v) => !v)}
+                onToggle={() => setWissensdatenbank((v) => !v)}
                 icon={BookOpen}
-                title="GeistKB"
+                title="Wissensdatenbank"
                 body="Wissensdatenbank für Kunden-Hilfeartikel, interne SOPs und KI-Antworten (RAG)."
               />
               <ModuleToggle

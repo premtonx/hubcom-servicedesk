@@ -1,5 +1,5 @@
 /**
- * GeistKB Document Library API client.
+ * Wissensdatenbank Document Library API client.
  * Uploads go through the async vector-queue pipeline (HTTP 202 → status polling).
  */
 import axios from 'axios';

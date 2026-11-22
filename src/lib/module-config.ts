@@ -220,8 +220,8 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig = {
     customApiKey: ''
   },
   email: {
-    senderName: 'GeistDesk Support',
-    supportEmail: 'support@geistdesk.ai',
+    senderName: 'Hubcom ServiceDesk Support',
+    supportEmail: 'support@hubcom.ch',
     smtpHost: 'smtp.gmail.com',
     smtpPort: '587',
     useOAuth: true,
@@ -230,7 +230,7 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig = {
     forwardAddress: '',
     threadingEnabled: true,
     autoTriageEnabled: true,
-    signature: '<p>Best regards,<br><strong>GeistDesk Support Team</strong></p>'
+    signature: '<p>Mit freundlichen Grüßen,<br><strong>Hubcom ServiceDesk Support</strong><br>Hubcom - Citadelle AG</p>'
   },
   legalPolicy: '1. Never offer specific financial advice or tax implications.\n2. Do not promise fixed refund amounts without supervisor approval.\n3. Avoid definitively stating legal outcomes of disputes.\n4. Always include "Subject to terms and conditions" for complex issues.',
   forbiddenText: '',

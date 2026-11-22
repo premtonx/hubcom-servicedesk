@@ -229,7 +229,7 @@ export const SEEDED_CREDENTIALS: SeedItem[] = [
     host: 'smtp.acme.com:587',
     username: 'support-relay@acme.com',
     plainPass: 'Smtp-Relay!2026',
-    notes: 'Outbound transactional mail relay for GeistDesk notifications.',
+    notes: 'Outbound transactional mail relay für Hubcom-ServiceDesk-Benachrichtigungen.',
     lastModifiedBy: 'Messaging Team',
     offsetHours: 5,
     favorite: false,

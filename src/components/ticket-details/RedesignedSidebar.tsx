@@ -47,6 +47,7 @@ import { useAuth } from '../../lib/hooks';
 import { AccountHealthSmiley, accountHealthAriaLabel } from './AccountHealthSmiley';
 import { DynamicSentimentGlyph } from './DynamicSentimentGlyph';
 import { SELECTABLE_TICKET_STATUSES, isReadonlyTerminalStatus, isSelectableTicketStatus } from '../../lib/ticket-status';
+import { useTicketCategories } from '../../hooks/useTicketCategories';
 
 const UNASSIGNED_SENTINELS = new Set(['', 'unassigned', 'nicht-zugewiesen', 'nicht zugewiesen']);
 
@@ -181,6 +182,7 @@ export function RedesignedSidebar({
 }: RedesignedSidebarProps) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const { categories: ticketCategories } = useTicketCategories(true);
   const ticketKind = getTicketKind(ticket);
   const [slaTierDraft, setSlaTierDraft] = useState(ticket.slaTier ?? '');
   const syncedHealthTicketId = useRef<string | null>(null);
@@ -406,16 +408,55 @@ export function RedesignedSidebar({
           </div>
 
           <div className="space-y-1 pt-1">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">{t('tickets.sidebar.ticketCategory', 'Ticket category')}</label>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">{t('tickets.sidebar.category', 'Kategorie')}</label>
+            <select
+              className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary"
+              value={ticket.categoryId || ''}
+              onChange={(e) => {
+                const id = e.target.value;
+                if (!id) {
+                  onUpdateTicketField({ categoryId: null, categoryName: null, categorySlug: null });
+                  return;
+                }
+                const cat = ticketCategories.find((c) => c.id === id);
+                onUpdateTicketField({
+                  categoryId: id,
+                  categoryName: cat?.name || null,
+                  categorySlug: cat?.slug || null,
+                });
+              }}
+            >
+              <option value="">{t('tickets.sidebar.noCategory', 'Keine Kategorie')}</option>
+              {ticketCategories.map((cat) => (
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              ))}
+            </select>
+            {ticket.categoryName && (
+              <div className="pt-1.5">
+                <span
+                  className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full text-white"
+                  style={{
+                    backgroundColor:
+                      ticketCategories.find((c) => c.id === ticket.categoryId)?.color || '#1B6CA8',
+                  }}
+                >
+                  {ticket.categoryName}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-1 pt-1">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">{t('tickets.sidebar.ticketType', 'Tickettyp')}</label>
             <select
               className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary"
               value={ticket.type || 'incident'}
               onChange={(e) => onUpdateTicketField({ type: e.target.value as any })}
             >
-              <option value="incident">{t('tickets.typeLabels.incident', 'Incident')}</option>
-              <option value="question">{t('tickets.typeLabels.question', 'Question')}</option>
+              <option value="incident">{t('tickets.typeLabels.incident', 'Vorfall')}</option>
+              <option value="question">{t('tickets.typeLabels.question', 'Frage')}</option>
               <option value="problem">{t('tickets.typeLabels.problem', 'Problem')}</option>
-              <option value="feature_request">{t('tickets.typeLabels.feature_request', 'Feature request')}</option>
+              <option value="feature_request">{t('tickets.typeLabels.feature_request', 'Feature-Anfrage')}</option>
             </select>
           </div>
 

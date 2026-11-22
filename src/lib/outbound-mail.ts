@@ -4,7 +4,7 @@
  *
  * Domain verification gate:
  *   - dnsVerified channel → From: "Support Name <support@domain.com>"
- *   - otherwise → system-default From on the GeistDesk mail domain
+ *   - otherwise → system-default From on the Hubcom ServiceDesk mail domain
  */
 
 import {
@@ -20,10 +20,18 @@ export interface OutboundMailResult {
   domainVerified?: boolean;
 }
 
-function smtpConfigured(): boolean {
+function globalSmtpConfigured(): boolean {
   const host = (process.env.SMTP_HOST || process.env.MAIL_SMTP_HOST || '').trim();
   const user = (process.env.SMTP_USER || process.env.MAIL_SMTP_USER || '').trim();
   return Boolean(host && user);
+}
+
+function channelSmtpConfigured(channel?: EmailChannelConfig | null): boolean {
+  return Boolean((channel?.smtpHost || '').trim() && (channel?.smtpUser || '').trim());
+}
+
+function smtpConfigured(channel?: EmailChannelConfig | null): boolean {
+  return channelSmtpConfigured(channel) || globalSmtpConfigured();
 }
 
 export function resolveOutboundFrom(channel?: EmailChannelConfig | null): {
@@ -38,14 +46,23 @@ export function resolveOutboundFrom(channel?: EmailChannelConfig | null): {
     };
   }
 
+  // If the agent explicitly chose a channel with an address, still use that
+  // display From even when DNS is unverified — dispatcher may rewrite.
+  if (channel?.email?.includes('@')) {
+    const header = buildVerifiedFromHeader(channel);
+    const systemFrom = buildSystemDefaultFromHeader();
+    return {
+      from: header,
+      domainVerified: false,
+      warning: `Domain unverified for ${channel.email} — preferred From is ${header}; fallback system From is ${systemFrom}.`,
+    };
+  }
+
   const systemFrom = buildSystemDefaultFromHeader();
-  const alias = channel?.email?.trim();
   return {
     from: systemFrom,
     domainVerified: false,
-    warning: alias
-      ? `Domain unverified for ${alias} — sent via system From (${systemFrom}). Complete DNS verification to use the support alias.`
-      : `No verified support channel — sent via system From (${systemFrom}).`,
+    warning: `No verified support channel — sent via system From (${systemFrom}).`,
   };
 }
 
@@ -57,13 +74,16 @@ export function resolveOutboundFrom(channel?: EmailChannelConfig | null): {
 export async function trySendTicketReplyEmail(params: {
   ticketId: string;
   to?: string | null;
+  cc?: string[] | null;
   subject?: string | null;
   body: string;
   agentName?: string | null;
   /** Ingestion / support channel used to pick the From: header. */
   channel?: EmailChannelConfig | null;
+  /** Explicit From override from the composer (display label or address). */
+  fromOverride?: string | null;
 }): Promise<OutboundMailResult> {
-  if (!smtpConfigured()) {
+  if (!smtpConfigured(params.channel)) {
     return {
       delivered: false,
       reason: 'SMTP not configured (SMTP_HOST / SMTP_USER missing). Reply saved to database only.',
@@ -82,11 +102,26 @@ export async function trySendTicketReplyEmail(params: {
     }
 
     const fromResolution = resolveOutboundFrom(params.channel);
-    let body = params.body;
-    if (!fromResolution.domainVerified && fromResolution.warning) {
-      // Keep the customer body clean; surface the warning to the dispatcher + delivery audit.
-      body = params.body;
-    }
+    const from =
+      (params.fromOverride || '').trim() ||
+      fromResolution.from;
+    const cc = (params.cc || [])
+      .map((e) => String(e || '').trim().toLowerCase())
+      .filter((e) => e.includes('@'));
+
+    const body = params.body;
+
+    const channelSmtp = channelSmtpConfigured(params.channel)
+      ? {
+          host: params.channel!.smtpHost,
+          port: params.channel!.smtpPort ?? 587,
+          user: params.channel!.smtpUser,
+          // Password is available only when channel was loaded with secrets.
+          password: (params.channel as EmailChannelConfig & { smtpPassword?: string | null })
+            .smtpPassword,
+          secure: params.channel!.smtpSecure === true,
+        }
+      : null;
 
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -94,13 +129,15 @@ export async function trySendTicketReplyEmail(params: {
       body: JSON.stringify({
         ticketId: params.ticketId,
         to: params.to,
+        cc: cc.length > 0 ? cc : undefined,
         subject: params.subject,
         body,
         agentName: params.agentName,
-        from: fromResolution.from,
+        from,
         domainVerified: fromResolution.domainVerified,
         unverifiedDomainWarning: fromResolution.warning || null,
         replyTo: params.channel?.email || null,
+        smtp: channelSmtp,
         // Loop-breaking conventions for conforming dispatchers (Resend/Postmark/
         // Mailgun/Mailcow). Not stamped by this payload; the dispatcher is
         // expected to send Auto-Submitted: no and proper In-Reply-To/References.
@@ -114,14 +151,14 @@ export async function trySendTicketReplyEmail(params: {
       return {
         delivered: false,
         reason: `Mail dispatch failed (${res.status}): ${detail.slice(0, 200)}`,
-        from: fromResolution.from,
+        from,
         domainVerified: fromResolution.domainVerified,
       };
     }
 
     return {
       delivered: true,
-      from: fromResolution.from,
+      from,
       domainVerified: fromResolution.domainVerified,
       reason: fromResolution.warning,
     };

@@ -435,7 +435,7 @@ export default function SecretViewerPage() {
         </motion.div>
 
         <p className="mt-8 text-[10px] font-bold text-slate-400 uppercase tracking-[.2em]">
-          {t('exchange.createSecret.viewer.poweredBy', 'Powered by GeistDesk Phantom Vault')}
+          {t('exchange.createSecret.viewer.poweredBy', 'Powered by Hubcom Phantom Vault')}
         </p>
       </div>
     );
@@ -580,7 +580,7 @@ export default function SecretViewerPage() {
       </motion.div>
 
       <p className="mt-8 text-[10px] font-bold text-slate-400 uppercase tracking-[.2em]">
-        {t('exchange.createSecret.viewer.poweredBy', 'Powered by GeistDesk Phantom Vault')}
+        {t('exchange.createSecret.viewer.poweredBy', 'Powered by Hubcom Phantom Vault')}
       </p>
     </div>
   );

@@ -19,7 +19,8 @@ export type BackgroundJobType =
   | 'VECTOR_DELETE'
   | 'EXTERNAL_SOURCE_SYNC'
   | 'EMAIL_POLL'
-  | 'SWARM_DETECTION';
+  | 'SWARM_DETECTION'
+  | 'TIME_EXPORT_SYNC';
 
 export interface BackgroundJobRow {
   id: string;

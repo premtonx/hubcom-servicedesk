@@ -26,6 +26,7 @@ import { AiInsightsTabContent } from '../ticket-details/AiInsightsTabContent';
 import { AssetsTabContent } from '../ticket-details/AssetsTabContent';
 import { RelatedTicketsTabContent } from '../ticket-details/RelatedTicketsTabContent';
 import { TasksTabContent } from '../ticket-details/TasksTabContent';
+import { TimeTrackingTabContent } from '../ticket-details/TimeTrackingTabContent';
 import { SwarmOutageBanner } from '../tickets/SwarmOutageBanner';
 import { TicketDetailsSpamAction } from '../pages/TicketDetailsPage';
 import { DynamicSentimentGlyph } from '../ticket-details/DynamicSentimentGlyph';
@@ -80,7 +81,11 @@ export interface TicketDetailViewProps {
   linkTicket: (ticketId: string) => void;
   unlinkTicket: (ticketId: string) => void;
   generateAiReply: () => void;
-  handleSendReply: () => void;
+  handleSendReply: (meta?: {
+    fromAddress?: string;
+    fromChannelId?: string;
+    cc?: string[];
+  }) => void;
   acceptGhostDraft: () => void;
   ghostDraft: string | null;
   isGhostDrafting: boolean;
@@ -368,7 +373,8 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                           { id: 'ai_insights', labelKey: 'aiInsights' },
                           { id: 'assets', labelKey: 'assets' },
                           { id: 'related_tickets', labelKey: 'neuralLinks' },
-                          { id: 'tasks', labelKey: 'tasks' }
+                          { id: 'tasks', labelKey: 'tasks' },
+                          { id: 'time', labelKey: 'time' },
                         ] as const).map(tab => (
                           <button
                             key={tab.id}
@@ -653,7 +659,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                                   onAcceptGhostDraft={acceptGhostDraft}
                                   onSend={handleSendReply}
                                   onDiscard={() => {
-                                    setReplyText("");
+                                    setReplyText('');
                                     setLegalViolation(null);
                                   }}
                                   isAiReady={isAiReady}
@@ -753,6 +759,10 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                             ticket={selectedTicket}
                             onChecklistUpdated={handleChecklistUpdated}
                           />
+                        )}
+
+                        {activeDetailTab === 'time' && (
+                          <TimeTrackingTabContent ticket={selectedTicket} />
                         )}
     
                       </div>

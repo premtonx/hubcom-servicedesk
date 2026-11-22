@@ -56,6 +56,7 @@ import { customerService } from '../services/customerService';
 import { Company, Contact, User } from '../types';
 import { useTranslation } from '../lib/context/I18nContext';
 import { useWorkspace } from '../lib/context/WorkspaceContext';
+import { useTicketCategories } from '../hooks/useTicketCategories';
 
 interface CreateTicketDialogProps {
   isOpen: boolean;
@@ -81,6 +82,7 @@ export function CreateTicketDialog({
   const { t, language } = useTranslation();
   const { workspace } = useWorkspace();
   const { user } = useAuth();
+  const { categories: ticketCategories } = useTicketCategories(true);
   const [loading, setLoading] = useState(false);
   const [isInternalNotesOpen, setIsInternalNotesOpen] = useState(false);
   const [isAdditionalDetailsOpen, setIsAdditionalDetailsOpen] = useState(true);
@@ -106,6 +108,9 @@ export function CreateTicketDialog({
     tags: ['billing', 'new customer'] as string[],
     assignee: 'unassigned',
     ticketKind: 'support' as 'support' | 'bug',
+    categoryId: '',
+    categoryName: '',
+    categorySlug: '',
     slaTier: '',
     affectedVersion: '',
     environment: '',
@@ -225,6 +230,9 @@ export function CreateTicketDialog({
         team: formData.ticketKind === 'bug' ? 'engineering' : 'support',
         ticketKind: formData.ticketKind,
         type: formData.ticketKind === 'bug' ? 'problem' : formData.type,
+        categoryId: formData.categoryId || null,
+        categoryName: formData.categoryName || null,
+        categorySlug: formData.categorySlug || null,
         devStatus: formData.ticketKind === 'bug' ? 'backlog' : undefined,
         tags: formData.ticketKind === 'bug'
           ? [...new Set([...formData.tags, 'bug'])]
@@ -428,8 +436,8 @@ export function CreateTicketDialog({
                                             <SelectValue />
                                         </SelectTrigger>
                                         <SelectContent className="rounded-xl">
-                                            <SelectItem value="GeistDeskTech">GeistDeskTech</SelectItem>
-                                            <SelectItem value="GeistDeskMobile">GeistDeskMobile</SelectItem>
+                                            <SelectItem value="GeistDeskTech">Hubcom Tech</SelectItem>
+                                            <SelectItem value="GeistDeskMobile">Hubcom Mobile</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -561,7 +569,42 @@ export function CreateTicketDialog({
                 </div>
 
                 <div className="space-y-2.5">
-                    <Label className="text-[12px] font-bold text-slate-500">{t('dialog.type', 'Type')}</Label>
+                    <Label className="text-[12px] font-bold text-slate-500">{t('dialog.category', 'Kategorie')}</Label>
+                    <Select
+                      value={formData.categoryId || 'none'}
+                      onValueChange={(v) => {
+                        if (v === 'none') {
+                          setFormData({ ...formData, categoryId: '', categoryName: '', categorySlug: '' });
+                          return;
+                        }
+                        const cat = ticketCategories.find((c) => c.id === v);
+                        setFormData({
+                          ...formData,
+                          categoryId: v,
+                          categoryName: cat?.name || '',
+                          categorySlug: cat?.slug || '',
+                        });
+                      }}
+                    >
+                        <SelectTrigger className="w-full h-11 border-slate-100 rounded-xl bg-[#F9FAFB] hover:bg-slate-50 transition-colors">
+                             <div className="flex items-center gap-3">
+                                <HelpCircle className="w-4.5 h-4.5 text-slate-400" />
+                                <span className="text-sm font-semibold text-[#374151]">
+                                  {formData.categoryName || t('dialog.selectCategory', 'Kategorie wählen')}
+                                </span>
+                            </div>
+                        </SelectTrigger>
+                        <SelectContent className="rounded-xl">
+                            <SelectItem value="none">{t('dialog.noCategory', 'Keine Kategorie')}</SelectItem>
+                            {ticketCategories.map((cat) => (
+                              <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                <div className="space-y-2.5">
+                    <Label className="text-[12px] font-bold text-slate-500">{t('dialog.type', 'Typ')}</Label>
                     <Select value={formData.type} onValueChange={(v) => setFormData({...formData, type: v})}>
                         <SelectTrigger className="w-full h-11 border-slate-100 rounded-xl bg-[#F9FAFB] hover:bg-slate-50 transition-colors">
                              <div className="flex items-center gap-3">
@@ -570,9 +613,9 @@ export function CreateTicketDialog({
                             </div>
                         </SelectTrigger>
                         <SelectContent className="rounded-xl">
-                            <SelectItem value="question">{t('dialog.typeQuestion', 'Question')}</SelectItem>
+                            <SelectItem value="question">{t('dialog.typeQuestion', 'Frage')}</SelectItem>
                             <SelectItem value="bug">{t('dialog.typeBug', 'Bug')}</SelectItem>
-                            <SelectItem value="feature_request">{t('dialog.typeFeatureRequest', 'Feature Request')}</SelectItem>
+                            <SelectItem value="feature_request">{t('dialog.typeFeatureRequest', 'Feature-Anfrage')}</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>

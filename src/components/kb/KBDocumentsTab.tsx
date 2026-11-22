@@ -1,5 +1,5 @@
 /**
- * GeistKB — "Dokumente" tab.
+ * Wissensdatenbank — "Dokumente" tab.
  * Drag-and-drop upload zone (async 202 → status polling) + document list with
  * status pills, per-document RAG toggle and delete (confirm dialog).
  */

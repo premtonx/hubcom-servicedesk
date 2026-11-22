@@ -58,6 +58,9 @@ export function ConversationTimeline({
       channel: string;
       deliveryStatus?: Message['deliveryStatus'];
       attachments?: Message['attachments'];
+      fromAddress?: string | null;
+      toAddress?: string | null;
+      cc?: string[] | null;
     }> = [
       {
         id: 'opening-post',
@@ -68,6 +71,9 @@ export function ConversationTimeline({
         html_content: ticket.html_content,
         channel: 'via Email',
         attachments: undefined,
+        fromAddress: ticket.customerEmail || ticket.from_email || null,
+        toAddress: ticket.mailbox || (ticket as any).supportEmail || null,
+        cc: null,
       }
     ];
 
@@ -90,6 +96,9 @@ export function ConversationTimeline({
         channel: isBot ? 'via System' : (msg.senderType === 'customer' ? 'via Email' : 'via Web'),
         deliveryStatus: msg.deliveryStatus,
         attachments: msg.attachments,
+        fromAddress: msg.fromAddress || msg.mailFrom || null,
+        toAddress: msg.toAddress || null,
+        cc: Array.isArray(msg.cc) ? msg.cc : null,
       });
     });
 
@@ -200,6 +209,29 @@ export function ConversationTimeline({
                       </span>
                     </div>
                   </div>
+
+                  {(item.fromAddress || item.toAddress || (item.cc && item.cc.length > 0)) ? (
+                    <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-2.5 py-1.5 space-y-0.5 text-[11px] text-slate-600">
+                      {item.fromAddress ? (
+                        <div>
+                          <span className="font-bold text-slate-500">Von:</span>{' '}
+                          <span className="font-mono">{item.fromAddress}</span>
+                        </div>
+                      ) : null}
+                      {item.toAddress ? (
+                        <div>
+                          <span className="font-bold text-slate-500">An:</span>{' '}
+                          <span className="font-mono">{item.toAddress}</span>
+                        </div>
+                      ) : null}
+                      {item.cc && item.cc.length > 0 ? (
+                        <div>
+                          <span className="font-bold text-slate-500">CC:</span>{' '}
+                          <span className="font-mono">{item.cc.join(', ')}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {/* Message body — prefer html_content, sanitize before dangerouslySetInnerHTML */}
                   <div className="font-sans text-sm text-foreground/90 whitespace-pre-wrap leading-relaxed break-words [&_p]:mb-2.5 [&_p:last-child]:mb-0 [&_a]:underline [&_blockquote]:mt-3 [&_blockquote]:border-l-2 [&_blockquote]:border-slate-200 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [.gmail_signature]:mt-3 [.gmail_signature]:text-muted-foreground [&_.gmail_signature]:mt-3 [&_.gmail_signature]:text-muted-foreground [&_pre]:font-sans [&_pre]:text-sm [&_pre]:whitespace-pre-wrap [&_pre]:bg-transparent [&_pre]:p-0 [&_pre]:m-0">

@@ -21,6 +21,7 @@ const ticketPrioritySchema = z.enum(['low', 'medium', 'high', 'urgent']);
 const ALLOWED_NEW_FIELDS = new Set([
   'agentId', 'agentName', 'assignedTo', 'assigneeId', 'assignedToEmail',
   'status', 'priority', 'type', 'tags', 'groupId', 'groupName',
+  'categoryId', 'categoryName', 'categorySlug',
   'internalNotes', 'include_in_rag', 'resolvedAt', 'mergedIntoId',
   'linkedTicketIds', 'isMasterTicket', 'masterTicketId',
   'aiSummary', 'aiInsights', 'aiRootCause', 'aiChecklist', 'aiSentiment',

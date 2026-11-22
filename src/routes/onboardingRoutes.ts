@@ -42,7 +42,7 @@ async function allowRegisterAdmin(req: Request, res: Response, next: NextFunctio
     const config = await loadModuleConfigDoc();
     if (config?.is_initialized === true) {
       return res.status(403).json({
-        error: 'GeistDesk is already initialized. Sign in at /login.',
+        error: 'Hubcom ServiceDesk ist bereits initialisiert. Sign in at /login.',
       });
     }
     return next();

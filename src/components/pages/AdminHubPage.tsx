@@ -76,7 +76,7 @@ export default function AdminHubPage() {
               <div>
                 <h1 className="text-3xl font-black tracking-tight text-slate-900">{t('nav.admin', 'Admin Hub')}</h1>
                 <p className="text-slate-500 text-sm mt-0.5">
-                  {t('admin.subtitle', 'Central control for GeistDesk AI, governance, and infrastructure.')}
+                  {t('admin.subtitle', 'Central control for Hubcom KI, governance, and infrastructure.')}
                 </p>
               </div>
             </div>

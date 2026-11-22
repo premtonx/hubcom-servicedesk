@@ -16,6 +16,8 @@ import {
   Building2,
   ShieldCheck,
   Lock,
+  Clock,
+  FolderTree,
 } from 'lucide-react';
 
 export const ADMIN_HUB_TABS = [
@@ -168,14 +170,14 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         module: 'rbac',
       },
       {
-        title: 'Workforce Hub',
-        description: 'Agent directory, multi-step onboarding, and workforce lifecycle management.',
+        title: 'Benutzerverwaltung',
+        description: 'Lokale Benutzer und Microsoft 365 / Entra ID — Rollen, Kürzel, Sync und SSO.',
         icon: Briefcase,
-        path: '/admin/workforce',
+        path: '/admin/users',
         color: 'text-violet-600',
         bgColor: 'bg-violet-50',
         borderColor: 'border-violet-105',
-        badge: 'Management',
+        badge: 'Benutzer',
         module: 'workforce',
       },
       {
@@ -197,7 +199,7 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         color: 'text-blue-600',
         bgColor: 'bg-blue-50',
         borderColor: 'border-blue-105',
-        badge: 'GeistVault',
+        badge: 'Tresor',
         module: 'vault',
       },
       {
@@ -281,14 +283,14 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
     tab: 'integrations',
     sections: [
       {
-        title: 'Communication',
-        description: 'Email channels, SMTP/IMAP settings, and routing rules.',
+        title: 'E-Mail-Kanäle / Absender',
+        description: 'Absender-Adressen, Anzeigename, SMTP und Standard-Absender für Ticket-Antworten.',
         icon: Mail,
         path: '/email-channels',
         color: 'text-rose-500',
         bgColor: 'bg-rose-50',
         borderColor: 'border-rose-105',
-        badge: 'Inbound',
+        badge: 'Absender',
         module: 'tickets',
       },
       {
@@ -354,8 +356,21 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         module: 'rbac',
       },
       {
+        title: 'Firmenbranding',
+        description:
+          'Firmenname Hubcom - Citadelle AG, Support-Domain und Logo (Platzhalter durch offizielles Logo ersetzen).',
+        icon: Briefcase,
+        path: '/settings',
+        color: 'text-[#1B6CA8]',
+        bgColor: 'bg-[#E8F1F8]',
+        borderColor: 'border-[#1B6CA8]/20',
+        badge: 'Branding',
+        module: 'rbac',
+      },
+      {
         title: 'Data Import & Migration',
-        description: 'Bulk CSV/JSON import for tickets and GeistKB, plus single-entry quick-add with RAG indexing.',
+        description:
+          'Massenimport (CSV/JSON) für Tickets und Wissensdatenbank sowie Schnellerfassung mit RAG-Indexierung.',
         icon: Database,
         path: '/admin/import',
         color: 'text-cyan-600',
@@ -363,6 +378,40 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         borderColor: 'border-cyan-105',
         badge: 'Migration',
         module: 'rbac',
+      },
+      {
+        title: 'Zeiterfassung & Stundensätze',
+        description:
+          'Standard- und Sonderzahlungssätze, Excel-Export und Microsoft Graph Synchronisation.',
+        icon: Clock,
+        path: '/admin/time-tracking',
+        color: 'text-[#1B6CA8]',
+        bgColor: 'bg-[#E8F1F8]',
+        borderColor: 'border-[#1B6CA8]/20',
+        badge: 'Reporting',
+        module: 'rbac',
+      },
+      {
+        title: 'Zeiterfassung Gesamt',
+        description: 'Globale Übersicht aller Zeiteinträge inkl. Excel-Download.',
+        icon: BarChart3,
+        path: '/admin/time-tracking/overview',
+        color: 'text-emerald-600',
+        bgColor: 'bg-emerald-50',
+        borderColor: 'border-emerald-105',
+        badge: 'Reporting',
+        module: 'rbac',
+      },
+      {
+        title: 'Ticket-Kategorien',
+        description: 'Kategorien anlegen, farblich markieren, sortieren und deaktivieren.',
+        icon: FolderTree,
+        path: '/admin/ticket-categories',
+        color: 'text-violet-600',
+        bgColor: 'bg-violet-50',
+        borderColor: 'border-violet-105',
+        badge: 'Struktur',
+        module: 'tickets',
       },
     ],
   },

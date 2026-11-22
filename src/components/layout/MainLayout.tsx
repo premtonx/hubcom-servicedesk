@@ -64,7 +64,7 @@ import { notificationService } from '../../services/notificationService';
 import { Ticket as TicketType, Customer } from '../../types';
 
 import { useTranslation } from '../../lib/context/I18nContext';
-import { GeistDeskLogo } from '../ui/GeistDeskLogo';
+import { HubcomLogo } from '../ui/HubcomLogo';
 import { FlagIcon } from '../ui/FlagIcon';
 import { syncModuleConfigFromServer, getModuleConfig } from '../../lib/module-config';
 import { PiiShieldPopover } from './PiiShieldPopover';
@@ -75,7 +75,7 @@ import type { HeaderTelemetrySnapshot } from '../../types/headerTelemetry';
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard', key: 'dashboard' },
   { icon: Ticket, label: 'Tickets', path: '/tickets', key: 'tickets' },
-  { icon: BookOpen, label: 'GeistKB', path: '/kb', key: 'geistKB' },
+  { icon: BookOpen, label: 'Wissensdatenbank', path: '/kb', key: 'geistKB' },
   { icon: Lock, label: 'GeistVault', path: '/credentials', key: 'geistVault' },
   { icon: UploadCloud, label: 'Geist Exchange', path: '/vault', key: 'geistExchange' },
   { icon: LayoutGrid, label: 'Admin Hub', path: '/admin', key: 'admin' },
@@ -256,7 +256,7 @@ export default function MainLayout() {
 
           {/* Logo */}
           <div className="flex items-center cursor-pointer select-none" onClick={() => navigate('/dashboard')}>
-            <GeistDeskLogo size="sm" showText={true} />
+            <HubcomLogo size="sm" showText={true} />
           </div>
         </div>
 
@@ -513,7 +513,7 @@ export default function MainLayout() {
                 {moduleFlags.geistKB ? (
                 <DropdownMenuItem onClick={() => navigate('/kb?action=create')} className="flex items-center gap-2.5 text-xs font-bold text-slate-700 p-2.5 hover:bg-slate-50 rounded-lg cursor-pointer">
                   <BookOpen className="w-4 h-4 text-[#1A73E8]" />
-                  <span>{t('actions.createKBArticle', 'Create GeistKB Article')}</span>
+                  <span>{t('actions.createKBArticle', 'Create Wissensdatenbank Article')}</span>
                 </DropdownMenuItem>
                 ) : null}
                 {moduleFlags.geistVault ? (

@@ -55,7 +55,7 @@ export function parseInboundWebhookPayload(params: {
   const body = params.body || {};
   const files = params.files || [];
 
-  // Custom GeistDesk JSON (legacy + native)
+  // Custom Hubcom ServiceDesk JSON (legacy + native)
   const customSender = firstString(body.sender, body.from_email, body.from, body.From);
   const customSubject = firstString(body.subject, body.title, body.Subject);
   const customHtml = firstString(

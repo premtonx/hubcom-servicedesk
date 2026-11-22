@@ -1,4 +1,4 @@
-// Server-side cryptographic primitives for GeistDesk.
+// Server-side cryptographic primitives for Hubcom ServiceDesk.
 // - Password hashing/verification via Argon2id (hash-wasm, cross-platform, no native build).
 // - Authenticated symmetric encryption of secret assets via AES-256-GCM (Node native crypto).
 // - Hybrid ML-KEM-1024 + X25519 envelope (HKDF-SHA-256) for post-quantum resilient vault/exchange payloads.

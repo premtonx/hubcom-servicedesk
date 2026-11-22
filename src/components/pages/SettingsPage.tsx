@@ -36,6 +36,7 @@ import { AdminBreadcrumbs } from '../../components/AdminBreadcrumbs';
 import { userService } from '../../services/userService';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { FlagIcon, languageToFlagCode } from '../ui/FlagIcon';
+import { BrandingSettingsCard } from '../settings/BrandingSettingsCard';
 
 export default function SettingsPage() {
   const { isAdmin } = useAdmin();
@@ -46,6 +47,7 @@ export default function SettingsPage() {
 
   // Personal Profile state hooks
   const [displayNameInput, setDisplayNameInput] = useState('');
+  const [kuerzelInput, setKuerzelInput] = useState('');
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
 
@@ -53,6 +55,10 @@ export default function SettingsPage() {
     if (user) {
       setDisplayNameInput(user.displayName || '');
       setEmailInput(user.email || '');
+      setKuerzelInput(String((user as any).kuerzel || ''));
+      void userService.getUser(user.uid).then((profile) => {
+        if (profile?.kuerzel) setKuerzelInput(String(profile.kuerzel));
+      });
     }
   }, [user]);
 
@@ -62,10 +68,13 @@ export default function SettingsPage() {
     try {
       const { updateProfile } = await import('../../lib/firebase-custom-client');
       await updateProfile(user as any, { displayName: displayNameInput });
-      await userService.updateUser(user.uid, { name: displayNameInput });
-      toast.success("Profile display name updated successfully.");
+      await userService.updateUser(user.uid, {
+        name: displayNameInput,
+        kuerzel: kuerzelInput.trim().toUpperCase(),
+      });
+      toast.success(t('settings.toasts.profileUpdated', 'Anzeigename erfolgreich aktualisiert.'));
     } catch (err: any) {
-      toast.error(err.message || "Failed to update profile name.");
+      toast.error(err.message || t('settings.toasts.profileFailed', 'Anzeigename konnte nicht aktualisiert werden.'));
     }
   };
 
@@ -77,9 +86,9 @@ export default function SettingsPage() {
       const { updateEmail } = await import('../../lib/firebase-custom-client');
       await updateEmail(user as any, emailInput);
       await userService.updateUser(user.uid, { email: emailInput });
-      toast.success("Account contact email updated.");
+      toast.success(t('settings.toasts.emailUpdated', 'Kontakt-E-Mail aktualisiert.'));
     } catch (err: any) {
-      toast.error(err.message || "Failed to update email.");
+      toast.error(err.message || t('settings.toasts.emailFailed', 'E-Mail konnte nicht aktualisiert werden.'));
     }
   };
 
@@ -87,16 +96,16 @@ export default function SettingsPage() {
     e.preventDefault();
     if (!user) return;
     if (!passwordInput) {
-      toast.error("Please enter a new password.");
+      toast.error(t('settings.toasts.passwordRequired', 'Bitte geben Sie ein neues Passwort ein.'));
       return;
     }
     try {
       const { updatePassword } = await import('../../lib/firebase-custom-client');
       await updatePassword(user as any, passwordInput);
       setPasswordInput('');
-      toast.success("Security credentials password updated.");
+      toast.success(t('settings.toasts.passwordUpdated', 'Passwort erfolgreich aktualisiert.'));
     } catch (err: any) {
-      toast.error(err.message || "Failed to update password.");
+      toast.error(err.message || t('settings.toasts.passwordFailed', 'Passwort konnte nicht aktualisiert werden.'));
     }
   };
 
@@ -122,7 +131,7 @@ export default function SettingsPage() {
       await logout();
       window.location.href = "/";
     } catch (err) {
-      toast.error("Logout failed.");
+      toast.error(t('settings.toasts.logoutFailed', 'Abmeldung fehlgeschlagen.'));
     }
   };
 
@@ -131,7 +140,7 @@ export default function SettingsPage() {
       l.lang === langName ? { ...l, enabled: !l.enabled } : l
     );
     if (newLanguages.every(l => !l.enabled) && config.polyglotEnabled) {
-      toast.error("At least one language must remain active.");
+      toast.error(t('settings.toasts.oneLanguageRequired', 'Mindestens eine Sprache muss aktiv bleiben.'));
       return;
     }
     await persist({ ...config, languages: newLanguages });
@@ -185,16 +194,24 @@ export default function SettingsPage() {
                 {/* 1. Name Form */}
                 <form onSubmit={handleUpdateProfile} className="p-4 bg-white rounded-2xl border border-slate-100 shadow-xs space-y-3.5 flex flex-col justify-between">
                   <div className="space-y-2">
-                    <Label className="text-[10px] uppercase font-black text-slate-500 tracking-wider">{t('settings.displayName', 'Display Name')}</Label>
+                    <Label className="text-[10px] uppercase font-black text-slate-500 tracking-wider">{t('settings.displayName', 'Anzeigename')}</Label>
                     <Input 
                       value={displayNameInput}
                       onChange={(e) => setDisplayNameInput(e.target.value)}
-                      placeholder="e.g. Premton"
+                      placeholder="z. B. Premton"
+                      className="rounded-xl border-slate-200 text-xs h-10 bg-white"
+                    />
+                    <Label className="text-[10px] uppercase font-black text-slate-500 tracking-wider">{t('settings.kuerzel', 'Kürzel (Zeiterfassung)')}</Label>
+                    <Input
+                      value={kuerzelInput}
+                      onChange={(e) => setKuerzelInput(e.target.value.toUpperCase())}
+                      placeholder="z. B. PX"
+                      maxLength={12}
                       className="rounded-xl border-slate-200 text-xs h-10 bg-white"
                     />
                   </div>
-                  <Button type="submit" size="sm" className="rounded-xl w-full bg-[#1A73E8] hover:bg-[#1557b0] text-xs font-bold h-9 cursor-pointer mt-2">
-                    {t('settings.updateName', 'Update Name')}
+                  <Button type="submit" size="sm" className="rounded-xl w-full bg-[#0B1F3A] hover:bg-[#061525] text-xs font-bold h-9 cursor-pointer mt-2">
+                    {t('settings.updateName', 'Profil speichern')}
                   </Button>
                 </form>
 
@@ -271,14 +288,16 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
+         {isAdmin && <BrandingSettingsCard />}
+
          {/* Interface Language Card */}
          <Card className="shadow-sm border-slate-200">
            <CardHeader>
-             <div className="flex items-center gap-2 text-[#1A73E8]">
+             <div className="flex items-center gap-2 text-[#1B6CA8]">
                 <Languages className="w-5 h-5" />
-                <CardTitle>{t('settings.interfaceLanguage', 'Interface Language')}</CardTitle>
+                <CardTitle>{t('settings.interfaceLanguage', 'Oberflächensprache')}</CardTitle>
              </div>
-             <CardDescription>{t('settings.interfaceLanguageDesc', 'Choose your preferred display language for the GeistDesk interface.')}</CardDescription>
+             <CardDescription>{t('settings.interfaceLanguageDesc', 'Wählen Sie Ihre bevorzugte Anzeigesprache für Hubcom ServiceDesk.')}</CardDescription>
            </CardHeader>
            <CardContent>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -522,12 +541,12 @@ export default function SettingsPage() {
                 <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2 text-xs text-slate-600">
                    <p className="font-bold text-slate-800">{t('settings.regInstructions', 'Registration Instructions:')}</p>
                    <p>{t('settings.regStep1', '1. Open the Azure Portal > **Microsoft Entra ID** > **App registrations** > **New registration**.')}</p>
-                   <p>{t('settings.regStep2', '2. Set the redirect URI as a **Web** platform type pointing at your GeistDesk SSO callback:')}</p>
+                   <p>{t('settings.regStep2', '2. Legen Sie die Redirect-URI als Plattformtyp **Web** auf Ihren Hubcom-ServiceDesk-SSO-Callback fest:')}</p>
                    <div className="bg-white p-2.5 rounded-xl font-mono text-[10px] text-slate-800 break-all border border-slate-200 select-all shadow-inner">
                      https://app.premtonx.cloud/api/auth/sso/callback
                    </div>
                    <p>{t('settings.regStep3', "3. Configure MICROSOFT_PROVIDER_CLIENT_ID on the server. Sessions are issued as signed JWTs stored in geistdesk_token — no Firebase listener is used.")}</p>
-                   <p className="text-[10px] text-indigo-600/80 italic font-semibold">{t('settings.postgresNote', 'Note: Authentication is handled entirely by the PostgreSQL-backed GeistDesk API.')}</p>
+                   <p className="text-[10px] text-indigo-600/80 italic font-semibold">{t('settings.postgresNote', 'Hinweis: Die Authentifizierung erfolgt vollständig über die PostgreSQL-gestützte Hubcom-ServiceDesk-API.')}</p>
                 </div>
               </div>
             )}
@@ -691,7 +710,7 @@ export default function SettingsPage() {
 
             {/* Workforce profile */}
             <div 
-              onClick={() => navigate('/admin/workforce')}
+              onClick={() => navigate('/admin/users')}
               className="group flex flex-col justify-between p-5 bg-white rounded-2xl border border-[#DADCE0] cursor-pointer hover:border-violet-300 hover:bg-violet-50/5 transition-all shadow-xs"
             >
               <div className="flex items-start justify-between">

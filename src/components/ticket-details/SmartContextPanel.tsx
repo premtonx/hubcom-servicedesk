@@ -167,7 +167,7 @@ export function SmartContextPanel({
           </div>
           <div className="space-y-1">
             <h4 className="text-xs font-black text-foreground">
-              {(ticket as any).product || t('tickets.context.defaultProduct', 'GeistDeskTech License')}
+              {(ticket as any).product || t('tickets.context.defaultProduct', 'Hubcom-Tech-Lizenz')}
             </h4>
             <p className="text-[10px] text-muted-foreground truncate">{t('tickets.context.licenseId', 'License ID')}: <span className="font-mono tabular-nums text-xs font-semibold text-slate-600">GDT-8842-AX9</span></p>
           </div>

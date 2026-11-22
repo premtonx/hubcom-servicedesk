@@ -74,6 +74,8 @@ export default function WorkforcePage() {
     email: '',
     role: 'agent',
     password: '',
+    companyId: '',
+    customerCompany: '',
   });
 
   const { openResetDialog, resetDialog } = usePersonalVaultReset();
@@ -171,6 +173,8 @@ export default function WorkforcePage() {
         email: newUser.email.toLowerCase().trim(),
         role: newUser.role,
         authMethod: isSso ? 'sso' : 'password',
+        companyId: newUser.role === 'customer' ? newUser.companyId || null : null,
+        customerCompany: newUser.role === 'customer' ? newUser.customerCompany || null : null,
       });
       const created = createRes.data?.user as { id: string } | undefined;
       if (!created?.id) {
@@ -190,7 +194,7 @@ export default function WorkforcePage() {
       );
 
       // Reset form
-      setNewUser({ name: '', email: '', role: 'agent', password: '' });
+      setNewUser({ name: '', email: '', role: 'agent', password: '', companyId: '', customerCompany: '' });
       setIsInviteModalOpen(false);
     } catch (err: unknown) {
       const message = axios.isAxiosError(err)
@@ -263,7 +267,7 @@ export default function WorkforcePage() {
           <div className="flex items-center gap-3">
             <Button 
               onClick={() => {
-                setNewUser({ name: '', email: '', role: 'agent', password: '' });
+                setNewUser({ name: '', email: '', role: 'agent', password: '', companyId: '', customerCompany: '' });
                 setIsInviteModalOpen(true);
               }} 
               className="rounded-2xl font-black px-6 shadow-md shadow-indigo-100 bg-indigo-600 text-white hover:bg-indigo-700 h-12 transition-all"
@@ -662,6 +666,36 @@ export default function WorkforcePage() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {newUser.role === 'customer' ? (
+                <div className="space-y-3 rounded-xl border border-sky-100 bg-sky-50/50 p-3">
+                  <p className="text-[11px] font-semibold text-sky-800">
+                    Kundenportal: Firma zuordnen, damit der Kunde Firmen-Tickets sieht.
+                  </p>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-black uppercase tracking-widest text-slate-400">
+                      Firmenname (customerCompany)
+                    </Label>
+                    <Input
+                      value={newUser.customerCompany}
+                      onChange={(e) => setNewUser({ ...newUser, customerCompany: e.target.value })}
+                      placeholder="z. B. Muster AG"
+                      className="h-11 rounded-xl border-slate-200 bg-white font-medium"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-black uppercase tracking-widest text-slate-400">
+                      Firmen-ID (companyId, optional)
+                    </Label>
+                    <Input
+                      value={newUser.companyId}
+                      onChange={(e) => setNewUser({ ...newUser, companyId: e.target.value })}
+                      placeholder="ID aus Kundenstamm"
+                      className="h-11 rounded-xl border-slate-200 bg-white font-mono text-xs"
+                    />
+                  </div>
+                </div>
+              ) : null}
 
               <DialogFooter className="pt-4 border-t border-slate-100 flex gap-2">
                 <Button 

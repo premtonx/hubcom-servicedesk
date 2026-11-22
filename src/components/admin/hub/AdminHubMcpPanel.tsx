@@ -208,7 +208,7 @@ export function AdminHubMcpPanel() {
             <p className="text-sm text-slate-500 mt-1 max-w-2xl">
               {t(
                 'admin.hubMcp.subtitle',
-                'Expose GeistKB, Ticketing, and GeistVault tools to Cursor, Claude Desktop, and Windsurf over Streamable HTTP.',
+                'Expose Wissensdatenbank, Ticketing, and GeistVault tools to Cursor, Claude Desktop, and Windsurf over Streamable HTTP.',
               )}
             </p>
           </div>

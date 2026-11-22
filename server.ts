@@ -22,7 +22,7 @@ import {
   getTicketStats
 } from "./src/lib/postgres-backend.js";
 import { jsPDF } from "jspdf";
-import { createTeamsBotAdapter, GeistDeskTeamsAgent } from "./src/services/teamsBotService";
+import { createTeamsBotAdapter, HubcomTeamsAgent } from "./src/services/teamsBotService";
 import { graphTranscriptService } from "./src/services/graphTranscriptService";
 import { PIIShield } from "./src/server/pii-shield.js";
 import { generateAzureAIAnswer } from "./src/server/azure-ai-orchestrator.js";
@@ -201,6 +201,12 @@ async function startServer() {
   safeLog('info', "Initializing Express app...");
   await initDb();
   try {
+    const { ensureDefaultTicketCategories } = await import('./src/lib/ticket-categories/store.js');
+    await ensureDefaultTicketCategories();
+  } catch (catSeedErr: any) {
+    safeLog('warn', '[ticket-categories] Seed übersprungen:', catSeedErr?.message || String(catSeedErr));
+  }
+  try {
     const { ensureStorageDirs } = await import("./src/lib/kb/document-store.js");
     ensureStorageDirs();
   } catch (storageErr: any) {
@@ -341,8 +347,21 @@ async function startServer() {
       if (userDoc.isDeactivated) {
         return res.status(403).json({ error: "Your account has been deactivated." });
       }
+      const method = String(userDoc.authMethod || "").toLowerCase();
+      if (method === "microsoft365" || method === "sso") {
+        return res.status(400).json({
+          error: "Dieses Konto meldet sich über Microsoft 365 an. Bitte „Mit Microsoft 365 anmelden“ verwenden.",
+        });
+      }
       const token = issueSessionToken({ id: userDoc.id, email: userDoc.email });
       setSessionCookie(res, token);
+      try {
+        await updateDocDirect("users", userDoc.id, {
+          lastActiveAt: new Date().toISOString(),
+        });
+      } catch {
+        /* non-fatal */
+      }
       return res.json({ user: sanitizeUserDoc(userDoc) });
     } catch (e: any) {
       safeLog('error', "[Auth/Login] Failed:", e?.message || e);
@@ -649,6 +668,10 @@ async function startServer() {
   // Mount Admin User Management Router
   app.use("/api/admin/onboarding", onboardingRoutes);
   app.use("/api/admin/demo-data", demoDataAdminRoutes);
+  const { default: userAdminRoutes } = await import("./src/routes/userAdminRoutes.js");
+  app.use("/api/admin", userAdminRoutes);
+  const { default: microsoftAuthRoutes } = await import("./src/routes/microsoftAuthRoutes.js");
+  app.use("/api/auth", microsoftAuthRoutes);
   app.use("/api/admin", adminRoutes);
   app.use("/api/admin/import", importRoutes);
   app.use("/api/ai", aiRoutes);
@@ -749,6 +772,12 @@ async function startServer() {
   app.use("/api/vectors", vectorRoutes);
   app.use("/api/rag", ragRoutes);
   app.use("/api/admin/rag", ragAdminRoutes);
+  const { default: timeEntryRoutes } = await import("./src/routes/timeEntryRoutes.js");
+  app.use("/api/time-entries", timeEntryRoutes);
+  const { default: ticketCategoryRoutes } = await import("./src/routes/ticketCategoryRoutes.js");
+  app.use("/api/ticket-categories", ticketCategoryRoutes);
+  const { default: portalRoutes } = await import("./src/routes/portalRoutes.js");
+  app.use("/api/portal", portalRoutes);
 
   // Authoritative, SQL-computed ticket metrics for dashboards.
   app.get("/api/stats/tickets", authenticate, async (req: any, res) => {
@@ -774,7 +803,7 @@ async function startServer() {
 
   // Microsoft Teams Bot Framework Webhook Handler
   const teamsAdapter = createTeamsBotAdapter();
-  const teamsBot = new GeistDeskTeamsAgent();
+  const teamsBot = new HubcomTeamsAgent();
 
   app.post("/api/messages", (req, res) => {
     teamsAdapter.processActivity(req, res, async (context) => {
@@ -915,7 +944,7 @@ async function startServer() {
         prompt: cleanText,
         userId: "sandbox-browser-user",
         contextDocuments: [
-          "System: Operational Workspace GeistDesk secure customer deployment guidelines.",
+          "System: Operativer Arbeitsbereich Hubcom ServiceDesk — sichere Kundenrichtlinien.",
           "Documentation: Secure access controls and API routing protocols require PII shielding."
         ]
       });
@@ -1159,14 +1188,14 @@ async function startServer() {
                   <!-- Card bottom security compliance alert banner badge -->
                   <div id="cardFooter" class="bg-[#3b3a39] px-3 py-2 flex items-center justify-between border-t border-[#484644]">
                     <span id="footerStatusText" class="text-[10px] font-bold text-[#a19f9d]">
-                      🛡️ GeistDesk Sovereign Shield Enabled | Powered by Azure AI
+                      🛡️ Hubcom Sovereign Shield aktiv | Powered by Azure AI
                     </span>
                   </div>
 
                   <!-- Dynamic Adaptive Card v1.4 Actions area -->
                   <div class="bg-[#2f2e2d] p-3 border-t border-[#3b3a39] flex" id="cardActions">
-                    <a href="https://geistdesk.sovereign.local/portal" target="_blank" class="px-4 py-1.5 text-xs font-semibold text-white bg-teal-600 rounded hover:bg-teal-500 text-center select-none cursor-pointer">
-                      Access GeistDesk Secure Portal
+                    <a href="https://hubcom.ch/portal" target="_blank" class="px-4 py-1.5 text-xs font-semibold text-white bg-teal-600 rounded hover:bg-teal-500 text-center select-none cursor-pointer">
+                      Hubcom ServiceDesk-Portal öffnen
                     </a>
                   </div>
 
@@ -1283,7 +1312,7 @@ async function startServer() {
               teamsSystemAlertText.innerHTML = "🛡️ **Operational Safe Mode active.**";
               teamsSystemAlertText.className = "text-[11px] text-teal-450 font-bold";
               cardFooter.className = "bg-[#333231] px-3 py-2 flex items-center justify-between border-t border-[#484644]";
-              footerStatusText.innerText = "🛡️ GeistDesk Sovereign Shield Enabled | Powered by Azure AI";
+              footerStatusText.innerText = "🛡️ Hubcom Sovereign Shield aktiv | Powered by Azure AI";
               footerStatusText.className = "text-[10px] font-bold text-[#a19f9d]";
             }
 
@@ -1684,7 +1713,7 @@ async function startServer() {
       let aiChecklist: { task: string; completed: boolean }[] = [];
       let aiSentiment = "Neutral";
 
-      const prompt = `You are an elite Sovereign AI Support operations engineer. Perform a deep-dive analysis on the following GeistDesk support ticket.
+      const prompt = `You are an elite Sovereign AI Support operations engineer. Perform a deep-dive analysis on the following Hubcom ServiceDesk support ticket.
         
 SUBJECT: ${ticket.subject}
 DESCRIPTION: ${ticket.description}
@@ -1822,13 +1851,13 @@ Respond only with the raw valid JSON payload.`;
 
       doc.setFontSize(8);
       doc.setTextColor(150, 150, 150);
-      doc.text("GOBD COMPLIANT ARCHIVE • ELECTRONICALLY SIGNED • GEISTDESK TECHNOLOGIES", 20, 285);
+      doc.text("GOBD COMPLIANT ARCHIVE • ELECTRONICALLY SIGNED • HUBCOM - CITADELLE AG", 20, 285);
 
       const pdfBase64 = doc.output("datauristring").split(',')[1];
       const buffer = Buffer.from(pdfBase64, 'base64');
       
       res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `attachment; filename=GeistDesk_Archive_${ticket.customId || ticketId}.pdf`);
+      res.setHeader("Content-Disposition", `attachment; filename=Hubcom_ServiceDesk_Archive_${ticket.customId || ticketId}.pdf`);
       res.send(buffer);
     } catch (error) {
       safeLog('error', "Export Error:", error);
@@ -1928,7 +1957,7 @@ Respond only with the raw valid JSON payload.`;
       1. "customerGoal": A clear ONE-SENTENCE description of what the customer actually wants.
       2. "effortSoFar": A bulleted list of actions agents have already taken or attempted to resolve this.
       
-      Keep it professional, direct, and "GeistDesk Sovereign" styled.
+      Keep it professional, direct, and "Hubcom ServiceDesk" styled.
       `;
 
       const lifecycle = await runServerLifecycleAi('ticket_summarization', prompt, { ticketId });
@@ -1972,7 +2001,7 @@ Respond only with the raw valid JSON payload.`;
     const { concept, variables, tone } = req.body;
 
     try {
-      const prompt = `You are a professional communications assistant for GeistDesk Sovereign. 
+      const prompt = `You are a professional communications assistant for Hubcom ServiceDesk. 
       Draft an automated email notification template based on the following:
       
       CONCEPT: ${concept}
@@ -2227,6 +2256,15 @@ Example output format:
     safeLog('warn', '[AI Swarm] Detector failed to start:', swarmErr?.message || String(swarmErr));
   }
 
+  // Zeiterfassung — Excel-Export + optional Microsoft Graph Sync.
+  try {
+    const { startTimeExportScheduler } = await import('./src/lib/time-tracking/scheduler.js');
+    startTimeExportScheduler();
+    safeLog('info', '[time-export] Zeiterfassungs-Scheduler gestartet.');
+  } catch (timeErr: any) {
+    safeLog('warn', '[time-export] Scheduler fehlgeschlagen:', timeErr?.message || String(timeErr));
+  }
+
   app.listen(PORT, "0.0.0.0", () => {
     const publicBase =
       process.env.PUBLIC_APP_URL ||
@@ -2317,7 +2355,7 @@ async function processAiTriage(ticketId: string, emailBody: string, subject: str
       ticketId,
       senderId: "geistdesk-ai",
       senderType: "ai",
-      senderName: "GeistDesk AI Triage",
+      senderName: "Hubcom KI-Triage",
       content: `AI Analysis Complete:\n- Priority: ${data.priority?.toUpperCase()}\n- Sentiment: ${data.sentiment?.toUpperCase()}\n\nSuggested Draft:\n${data.suggestedDraft}`,
       citations: data.citations || citations,
       reasoningPath: data.reasoningPath || "",

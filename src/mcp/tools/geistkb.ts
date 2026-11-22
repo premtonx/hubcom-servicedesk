@@ -10,9 +10,9 @@ export function registerGeistKbTools(server: McpServer): void {
   server.registerTool(
     'geistkb_search',
     {
-      title: 'Search GeistKB',
+      title: 'Search Wissensdatenbank',
       description:
-        'Semantic hybrid search (pgvector + FTS) across GeistKB articles, documents, and resolved tickets.',
+        'Semantic hybrid search (pgvector + FTS) across Wissensdatenbank articles, documents, and resolved tickets.',
       inputSchema: {
         query: z.string().min(1).max(4000).describe('Natural-language search query'),
         limit: z.number().int().min(1).max(20).optional().describe('Max hits (default 5)'),
@@ -53,8 +53,8 @@ export function registerGeistKbTools(server: McpServer): void {
   server.registerTool(
     'geistkb_get_article',
     {
-      title: 'Get GeistKB article',
-      description: 'Retrieve the markdown/HTML content of a GeistKB article by id.',
+      title: 'Get Wissensdatenbank article',
+      description: 'Retrieve the markdown/HTML content of a Wissensdatenbank article by id.',
       inputSchema: {
         id: z.string().min(1).max(200).describe('KB article document id'),
       },
@@ -88,8 +88,8 @@ export function registerGeistKbTools(server: McpServer): void {
   server.registerTool(
     'geistkb_create_article',
     {
-      title: 'Create GeistKB article',
-      description: 'Create a new SOP/doc in GeistKB and optionally enqueue it for RAG indexing.',
+      title: 'Create Wissensdatenbank article',
+      description: 'Create a new SOP/doc in Wissensdatenbank and optionally enqueue it for RAG indexing.',
       inputSchema: {
         title: z.string().min(1).max(500).describe('Article title'),
         content: z.string().min(1).max(200_000).describe('Markdown or HTML body'),

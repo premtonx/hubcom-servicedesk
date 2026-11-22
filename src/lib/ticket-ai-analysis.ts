@@ -76,7 +76,7 @@ export function buildTicketDeepDivePrompt(ticket: {
   description?: string;
   sentiment?: string;
 }, messagesText: string): string {
-  return `You are an elite Sovereign AI Support operations engineer. Perform a deep-dive analysis on the following GeistDesk support ticket.
+  return `You are an elite Sovereign AI Support operations engineer. Perform a deep-dive analysis on the following Hubcom ServiceDesk support ticket.
         
 SUBJECT: ${ticket.subject ?? ''}
 DESCRIPTION: ${ticket.description ?? ''}

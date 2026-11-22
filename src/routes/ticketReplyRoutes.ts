@@ -4,11 +4,21 @@ import { authenticate } from '../middleware/authMiddleware.js';
 import { addDocDirect, getDocDirect, updateDocDirect } from '../lib/postgres-backend.js';
 import { routeParam } from '../lib/route-params.js';
 import { trySendTicketReplyEmail } from '../lib/outbound-mail.js';
-import { findChannelForOutbound, listEmailChannels } from '../lib/email-ingestion/channel-store.js';
+import {
+  findChannelForOutbound,
+  getEmailChannel,
+  listEmailChannels,
+} from '../lib/email-ingestion/channel-store.js';
 import { formatReplyRecipientLabel, resolveComposerFromAddress } from '../lib/ticket-reply-address.js';
 import { safeLog } from '../lib/safe-log.js';
 
 const router = Router();
+
+const emailListSchema = z
+  .array(z.string().trim().email().max(320))
+  .max(25)
+  .optional()
+  .default([]);
 
 /**
  * GET /api/tickets/:id/composer-addresses
@@ -45,6 +55,9 @@ const replySchema = z.object({
   senderId: z.string().min(1).max(128),
   senderName: z.string().min(1).max(200).optional(),
   senderType: z.enum(['agent', 'customer', 'ai']).default('agent'),
+  fromAddress: z.string().trim().max(500).optional(),
+  fromChannelId: z.string().trim().max(128).optional(),
+  cc: emailListSchema,
 });
 
 /**
@@ -72,6 +85,32 @@ router.post('/:id/replies', authenticate, async (req: Request, res: Response): P
 
     const now = new Date().toISOString();
     const data = parsed.data;
+    const toAddress =
+      ticket.customerEmail || ticket.contactEmail || ticket.requesterEmail || null;
+    const cc = data.cc || [];
+
+    // Prefer explicit channel from composer; fall back to ticket mailbox matching.
+    let channel =
+      (data.fromChannelId
+        ? await getEmailChannel(data.fromChannelId, { includeSecrets: true })
+        : null) ||
+      (await findChannelForOutbound({
+        channelId: data.fromChannelId || null,
+        mailbox: ticket.mailbox || ticket.forwardingAddress || null,
+        supportEmail: ticket.supportEmail || ticket.channelEmail || null,
+      }));
+
+    // If channel was resolved without secrets but has smtpHost, reload with secrets.
+    if (channel?.id && channel.smtpHost && !(channel as any).smtpPassword) {
+      channel = (await getEmailChannel(channel.id, { includeSecrets: true })) || channel;
+    }
+
+    const fromAddress =
+      (data.fromAddress || '').trim() ||
+      (channel
+        ? `${(channel.displayName || channel.name || 'Support').trim()} <${channel.email}>`
+        : null);
+
     const messageRecord = await addDocDirect(`tickets/${ticketId}/messages`, {
       ticketId,
       senderId: data.senderId || req.user!.id,
@@ -79,6 +118,9 @@ router.post('/:id/replies', authenticate, async (req: Request, res: Response): P
       senderName: data.senderName || req.user!.email || 'Agent',
       content: data.content,
       originalContent: data.originalContent || null,
+      fromAddress: fromAddress || null,
+      toAddress: toAddress || null,
+      cc,
       deliveryStatus: 'pending',
       createdAt: now,
       updatedAt: now,
@@ -95,17 +137,15 @@ router.post('/:id/replies', authenticate, async (req: Request, res: Response): P
     let mailFrom: string | undefined;
     let domainVerified: boolean | undefined;
     try {
-      const channel = await findChannelForOutbound({
-        mailbox: ticket.mailbox || ticket.forwardingAddress || null,
-        supportEmail: ticket.supportEmail || ticket.channelEmail || null,
-      });
       const mailResult = await trySendTicketReplyEmail({
         ticketId,
-        to: ticket.customerEmail || ticket.contactEmail || null,
+        to: toAddress,
+        cc,
         subject: ticket.subject ? `Re: ${ticket.subject}` : `Re: Ticket ${ticketId}`,
         body: data.content,
         agentName: data.senderName || req.user!.email || 'Agent',
         channel,
+        fromOverride: fromAddress,
       });
       delivered = mailResult.delivered;
       deliveryReason = mailResult.reason;
@@ -121,7 +161,10 @@ router.post('/:id/replies', authenticate, async (req: Request, res: Response): P
     await updateDocDirect(`tickets/${ticketId}/messages`, messageRecord.id, {
       deliveryStatus,
       deliveryReason: deliveryReason || null,
-      mailFrom: mailFrom || null,
+      mailFrom: mailFrom || fromAddress || null,
+      fromAddress: fromAddress || mailFrom || null,
+      toAddress: toAddress || null,
+      cc,
       domainVerified: typeof domainVerified === 'boolean' ? domainVerified : null,
       deliveredAt: delivered ? new Date().toISOString() : null,
     });
@@ -132,7 +175,7 @@ router.post('/:id/replies', authenticate, async (req: Request, res: Response): P
       delivered,
       deliveryStatus,
       deliveryReason: deliveryReason || null,
-      mailFrom: mailFrom || null,
+      mailFrom: mailFrom || fromAddress || null,
       domainVerified: typeof domainVerified === 'boolean' ? domainVerified : null,
       message: {
         id: messageRecord.id,
@@ -142,6 +185,9 @@ router.post('/:id/replies', authenticate, async (req: Request, res: Response): P
         senderName: data.senderName || req.user!.email || 'Agent',
         content: data.content,
         originalContent: data.originalContent || null,
+        fromAddress: fromAddress || mailFrom || null,
+        toAddress: toAddress || null,
+        cc,
         deliveryStatus,
         createdAt: now,
       },

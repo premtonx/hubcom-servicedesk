@@ -30,6 +30,17 @@ import { useTranslation } from '../../lib/context/I18nContext';
 import { ticketService } from '../../services/ticketService';
 import { getModuleConfig } from '../../lib/module-config';
 import { formatReplyRecipientLabel, resolveComposerFromAddress } from '../../lib/ticket-reply-address';
+import {
+  emailChannelApi,
+  type EmailFromOption,
+} from '../../services/emailChannelApi';
+import { EmailCcInput } from './EmailCcInput';
+
+export interface EmailComposerSendMeta {
+  fromAddress: string;
+  fromChannelId?: string;
+  cc: string[];
+}
 
 export interface AiComposerMeta {
   confidenceScore: number | null;
@@ -60,7 +71,7 @@ interface EmailComposerProps {
   isDrafting: boolean;
   ghostDraft: string;
   onAcceptGhostDraft: () => void;
-  onSend: () => void;
+  onSend: (meta: EmailComposerSendMeta) => void;
   onDiscard: () => void;
   isAiReady: boolean;
   isAiDrafting: boolean;
@@ -99,47 +110,66 @@ export function EmailComposer({
   const { t } = useTranslation();
   const [suggestionApplied, setSuggestionApplied] = useState(false);
   const [critiqueOpen, setCritiqueOpen] = useState(false);
+  const [fromOptions, setFromOptions] = useState<EmailFromOption[]>([]);
+  const [fromChannelId, setFromChannelId] = useState<string>('');
   const [fromAddress, setFromAddress] = useState(() =>
     resolveComposerFromAddress({
       ticketMailbox: ticket.mailbox,
       moduleSupportEmail: getModuleConfig().email?.supportEmail,
     }),
   );
+  const [ccAddresses, setCcAddresses] = useState<string[]>([]);
   const suggestionText = "Hi there, I have investigated this issue and found similar cases where we resolved... Let me walk you through the troubleshooting.";
 
   const replyToLabel = useMemo(() => formatReplyRecipientLabel(ticket), [ticket]);
 
+  const selectedFromLabel = useMemo(() => {
+    const opt = fromOptions.find((o) => o.id === fromChannelId);
+    if (opt) return opt.label;
+    return fromAddress || t('tickets.emailComposer.fromUnset', 'Kein Absender konfiguriert');
+  }, [fromOptions, fromChannelId, fromAddress, t]);
+
   useEffect(() => {
     let alive = true;
     const mailbox = ticket.mailbox;
-    ticketService
-      .getComposerAddresses(ticket.id)
-      .then((addresses) => {
-        if (!alive) return;
-        if (addresses.from) {
-          setFromAddress(addresses.from);
-          return;
-        }
-        setFromAddress(
-          resolveComposerFromAddress({
-            ticketMailbox: mailbox,
-            moduleSupportEmail: getModuleConfig().email?.supportEmail,
-          }),
-        );
-      })
-      .catch(() => {
-        if (!alive) return;
-        setFromAddress(
-          resolveComposerFromAddress({
-            ticketMailbox: mailbox,
-            moduleSupportEmail: getModuleConfig().email?.supportEmail,
-          }),
-        );
+    const fallbackFrom = () =>
+      resolveComposerFromAddress({
+        ticketMailbox: mailbox,
+        moduleSupportEmail: getModuleConfig().email?.supportEmail,
       });
+
+    Promise.all([
+      emailChannelApi.listFromOptions().catch(() => [] as EmailFromOption[]),
+      ticketService.getComposerAddresses(ticket.id).catch(() => ({ from: '', to: '' })),
+    ]).then(([options, addresses]) => {
+      if (!alive) return;
+      setFromOptions(options);
+      const primary = options.find((o) => o.isPrimary) || options[0];
+      if (primary) {
+        setFromChannelId(primary.id);
+        setFromAddress(primary.label);
+      } else if (addresses.from) {
+        setFromChannelId('');
+        setFromAddress(addresses.from);
+      } else {
+        setFromChannelId('');
+        setFromAddress(fallbackFrom());
+      }
+    });
+
     return () => {
       alive = false;
     };
   }, [ticket.id, ticket.mailbox]);
+
+  const emitSend = () => {
+    const opt = fromOptions.find((o) => o.id === fromChannelId);
+    onSend({
+      fromAddress: opt?.label || fromAddress,
+      fromChannelId: fromChannelId || undefined,
+      cc: ccAddresses,
+    });
+  };
 
   const applySuggestion = () => {
     onChange(value ? `${value}<p>${suggestionText}</p>` : `<p>${suggestionText}</p>`);
@@ -168,17 +198,44 @@ export function EmailComposer({
       {/* Email-style Header rows */}
       <div className="bg-muted/15 p-4 border-b border-border space-y-2.5 text-xs text-muted-foreground/80">
         <div className="flex items-center gap-2">
-          <span className="w-12 font-bold text-foreground">{t('tickets.emailComposer.from', 'From:')}</span>
-          <span className="font-mono bg-muted/60 px-2 py-0.5 rounded text-foreground border border-border/40">
-            {fromAddress || t('tickets.emailComposer.fromUnset', 'Kein Absender konfiguriert')}
+          <span className="w-12 shrink-0 font-bold text-foreground">
+            {t('tickets.emailComposer.from', 'Von:')}
           </span>
-          <span className="text-[10px] text-muted-foreground">{t('tickets.emailComposer.guardrails', '(Corporate guardrails enabled)')}</span>
+          {fromOptions.length > 0 ? (
+            <div className="relative flex-1 min-w-0">
+              <select
+                value={fromChannelId}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setFromChannelId(id);
+                  const opt = fromOptions.find((o) => o.id === id);
+                  if (opt) setFromAddress(opt.label);
+                }}
+                className="w-full appearance-none font-mono bg-muted/60 pl-2 pr-7 py-1.5 rounded text-foreground border border-border/40 text-[11px] outline-none focus:ring-2 focus:ring-ring/40"
+                aria-label={t('tickets.emailComposer.fromSelect', 'Absender wählen')}
+              >
+                {fromOptions.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                    {opt.isPrimary ? ' (Standard)' : ''}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            </div>
+          ) : (
+            <span className="font-mono bg-muted/60 px-2 py-0.5 rounded text-foreground border border-border/40">
+              {selectedFromLabel}
+            </span>
+          )}
         </div>
         
         <Separator className="bg-border/40" />
         
         <div className="flex items-center gap-2">
-          <span className="w-12 font-bold text-foreground">{t('tickets.emailComposer.to', 'To:')}</span>
+          <span className="w-12 shrink-0 font-bold text-foreground">
+            {t('tickets.emailComposer.to', 'An:')}
+          </span>
           <span className="font-mono bg-muted/60 px-2 py-0.5 rounded text-foreground border border-border/40">
             {replyToLabel || t('tickets.emailComposer.toUnset', 'Kein Empfänger')}
           </span>
@@ -186,8 +243,19 @@ export function EmailComposer({
 
         <Separator className="bg-border/40" />
 
+        <div className="flex items-start gap-2">
+          <span className="w-12 shrink-0 font-bold text-foreground pt-1.5">
+            {t('tickets.emailComposer.cc', 'CC:')}
+          </span>
+          <EmailCcInput value={ccAddresses} onChange={setCcAddresses} />
+        </div>
+
+        <Separator className="bg-border/40" />
+
         <div className="flex items-center gap-2">
-          <span className="w-12 font-bold text-foreground">{t('tickets.emailComposer.subject', 'Subject:')}</span>
+          <span className="w-12 shrink-0 font-bold text-foreground">
+            {t('tickets.emailComposer.subject', 'Betreff:')}
+          </span>
           <span className="font-semibold text-foreground">
             Re: {ticket.subject} [Ref: #{ticket.id.slice(-5).toUpperCase()}]
           </span>
@@ -371,7 +439,7 @@ export function EmailComposer({
           {isHighConfidence && !isAutoDispatched && (
             <Button
               className="h-9 font-bold text-xs rounded-xl shadow-md min-w-[110px] bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
-              onClick={onSend}
+              onClick={emitSend}
               disabled={isValidatingLegal}
             >
               <Zap className="w-3.5 h-3.5" />
@@ -382,13 +450,16 @@ export function EmailComposer({
             variant="ghost" 
             size="sm" 
             className="text-[11px] font-bold text-muted-foreground hover:text-red-500 rounded-lg h-9" 
-            onClick={onDiscard}
+            onClick={() => {
+              setCcAddresses([]);
+              onDiscard();
+            }}
           >
-            {t('tickets.emailComposer.discard', 'Discard')}
+            {t('tickets.emailComposer.discard', 'Verwerfen')}
           </Button>
           <Button 
             className="h-9 font-bold text-xs rounded-xl shadow-md min-w-[90px] bg-primary hover:bg-primary/95 text-primary-foreground gap-1.5"
-            onClick={onSend}
+            onClick={emitSend}
             disabled={isValidatingLegal}
           >
             {isValidatingLegal ? (

@@ -1,5 +1,5 @@
 /**
- * Admin bulk-import pipeline for legacy Tickets and GeistKB articles (CSV / JSON).
+ * Admin bulk-import pipeline for legacy Tickets and Wissensdatenbank articles (CSV / JSON).
  * Batches of 50; resolved/closed tickets and published KB articles enqueue pgvector jobs.
  */
 

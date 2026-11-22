@@ -1,5 +1,5 @@
 /**
- * Multi-provider embeddings for GeistDesk RAG (KnowledgeEmbedding vector(1536)).
+ * Multi-provider embeddings for Hubcom ServiceDesk RAG (KnowledgeEmbedding vector(1536)).
  *
  * Supported (aligned with KI orchestrator / Admin secrets):
  *   - openai          → OpenAI text-embedding-3-small (orchestrator secret `openai` or OPENAI_API_KEY)

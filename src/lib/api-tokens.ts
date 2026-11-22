@@ -1,5 +1,5 @@
 /**
- * GeistDesk API tokens for machine clients (MCP, integrations).
+ * Hubcom ServiceDesk API tokens for machine clients (MCP, integrations).
  * Tokens are stored hashed (SHA-256); the plaintext is shown once at creation.
  */
 

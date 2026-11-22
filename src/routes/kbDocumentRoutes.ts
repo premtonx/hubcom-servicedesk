@@ -1,5 +1,5 @@
 /**
- * GeistKB Document Library routes.
+ * Wissensdatenbank Document Library routes.
  * - POST /api/kb/documents/upload — multipart upload, returns HTTP 202 { documentId, status: 'queued' }
  * - GET  /api/kb/documents        — tenant-scoped document list
  * - PATCH /api/kb/documents/:id   — index_in_rag toggle (enqueue / purge)

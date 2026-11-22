@@ -12,7 +12,7 @@ export interface McpWorkspaceSettings {
 export const DEFAULT_MCP_SETTINGS: McpWorkspaceSettings = {
   enabled: false,
   systemInstructions:
-    'Prioritize searching GeistKB before proposing infrastructure modifications. Always provide a reason when revealing vault secrets.',
+    'Prioritize searching Wissensdatenbank before proposing infrastructure modifications. Always provide a reason when revealing vault secrets.',
 };
 
 export function normalizeMcpSettings(

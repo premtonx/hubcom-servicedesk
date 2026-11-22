@@ -183,7 +183,7 @@ export default function SovereigntyCenterPage() {
   const handleDownloadReport = () => {
     // The report is not fabricated: it is composed from the live health/config snapshot.
     const rows = [
-      `GeistDesk Sovereignty Attestation — ${new Date().toISOString()}`,
+      `Hubcom Souveränitäts-Bescheinigung — ${new Date().toISOString()}`,
       `AI status: ${telemetry.encryptionStatus} · Providers online: ${telemetry.providersOnline}/${telemetry.providersTotal}`,
       `AI requests (today): ${telemetry.aiRequests} · PII redacted: ${telemetry.piiRedacted}`,
       `Audit coverage: ${telemetry.auditCoverage}% · Compliance violations: ${telemetry.complianceViolations}`,

@@ -1,9 +1,9 @@
 {
-  "name": "geistdesk-sovereign-ai-orchestrator",
+  "name": "hubcom-servicedesk",
   "version": "1.0.0",
   "license": "AGPL-3.0",
   "type": "module",
-  "description": "Sovereign IT Operations Platform — the open-source standard for secure IT operations. Self-hosted helpdesk, RAG knowledge, Phantom Vault, and local AI with PII Shield.",
+  "description": "Hubcom ServiceDesk von Hubcom - Citadelle AG — selbstgehostetes IT-Service-Management, Wissensdatenbank, Tresor und lokale KI.",
   "main": "server.ts",
   "engines": {
     "node": ">=20.0.0"
@@ -46,6 +46,7 @@
     "dexie-react-hooks": "*",
     "dompurify": "^3.4.11",
     "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
     "express": "^5.0.1",
     "express-rate-limit": "^8.5.2",
     "firebase": "*",

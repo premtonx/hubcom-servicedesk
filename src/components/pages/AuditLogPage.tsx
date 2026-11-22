@@ -126,12 +126,12 @@ export default function AuditLogPage() {
                    <ShieldCheck className="w-6 h-6" />
                 </div>
                 <div className="flex flex-col">
-                   <span className="text-[10px] font-black tracking-[0.2em] text-slate-400 uppercase leading-none">{t('protocols.alpha', 'GeistDesk Protocol Alpha')}</span>
+                   <span className="text-[10px] font-black tracking-[0.2em] text-slate-400 uppercase leading-none">{t('protocols.alpha', 'Hubcom-Protokoll Alpha')}</span>
                    <h1 className="text-2xl sm:text-4xl font-black text-black tracking-tight uppercase leading-none mt-1 italic">{t('audit.sovereignty', 'Audit Sovereignty')}</h1>
                 </div>
              </div>
              <p className="text-sm text-slate-500 max-w-xl leading-relaxed">
-                {t('audit.description', 'Immutable record-keeping for enterprise-grade compliance. Every action is cryptographically tied to an identity and verified via the GeistDesk Governance Engine.')}
+                {t('audit.description', 'Immutable record-keeping for enterprise-grade compliance. Every action is cryptographically tied to an identity and verified via the Hubcom-Governance-Engine.')}
              </p>
           </div>
           
@@ -356,7 +356,7 @@ export default function AuditLogPage() {
                                   </div>
                                   <div>
                                      <p className="text-xs font-black text-black">{log.agentEmail}</p>
-                                     <p className="text-[10px] font-bold text-slate-400 uppercase">{t('audit.agentNode', 'GeistDesk Agent Node')}</p>
+                                     <p className="text-[10px] font-bold text-slate-400 uppercase">{t('audit.agentNode', 'Hubcom-Agenten-Knoten')}</p>
                                   </div>
                                </div>
                             </div>
@@ -410,7 +410,7 @@ export default function AuditLogPage() {
                       <ShieldCheck className="w-10 h-10 text-emerald-500" />
                    </div>
                    <h3 className="text-xl font-black text-black uppercase italic tracking-tighter">{t('audit.zeroComplianceRuptures', 'Zero Compliance Ruptures')}</h3>
-                   <p className="text-sm text-slate-500 max-w-sm mt-2">{t('audit.zeroComplianceRupturesDesc', 'All AI vectors and human actions are within the established legal boundaries of the GeistDesk Protocol.')}</p>
+                   <p className="text-sm text-slate-500 max-w-sm mt-2">{t('audit.zeroComplianceRupturesDesc', 'All AI vectors and human actions are within the established legal boundaries of the Hubcom-Protokoll.')}</p>
                 </div>
               )}
            </TabsContent>
