@@ -20,23 +20,150 @@ import { hashPassword } from '../lib/crypto.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 import { CLIENT_PORTAL_ROLE_SEEDS, isClientPortalRole } from '../lib/client-portal/roles.js';
 import { resolveOrganizationIdFromUser } from '../lib/client-portal/ticket-visibility.js';
+import {
+  getOrganization,
+  updateOrganizationBranding,
+} from '../lib/client-portal/organizations.js';
+import {
+  parseAndValidateLogoDataUrl,
+  resolvePortalTitle,
+} from '../lib/client-portal/org-branding.js';
 
 const router = Router();
 
 router.use(authenticate, attachClientOrganizationContext);
 
+async function loadOrgBranding(organizationId: string | null | undefined) {
+  if (!organizationId) return null;
+  const org = await getOrganization(organizationId);
+  if (!org) return null;
+  return {
+    id: org.id,
+    name: org.name,
+    logo_url: org.logo_url,
+    portal_title: org.portal_title,
+    resolved_portal_title: resolvePortalTitle(org.name, org.portal_title),
+  };
+}
+
 /** GET /api/portal/me — session identity for the Kunden-Portal shell. */
 router.get('/me', requireClientPortalRole(), async (req: Request, res: Response): Promise<any> => {
+  const organizationId = resolveOrganizationIdFromUser(req.user!);
+  const organization = await loadOrgBranding(organizationId);
   return res.json({
     user: {
       id: req.user!.id,
       name: req.user!.name,
       email: req.user!.email,
       role: req.user!.role,
-      organizationId: resolveOrganizationIdFromUser(req.user!),
+      organizationId,
     },
+    organization,
   });
 });
+
+/** GET /api/portal/organization — branding for the signed-in client org. */
+router.get(
+  '/organization',
+  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      const organization = await loadOrgBranding(organizationId);
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({ organization });
+    } catch (err: any) {
+      return res.status(500).json({ error: safeErrorMessage(err, 'Failed to load organization') });
+    }
+  },
+);
+
+const portalBrandingSchema = z.object({
+  logoDataUrl: z.string().min(1).optional().nullable(),
+  portal_title: z.string().max(120).optional().nullable(),
+  clearLogo: z.boolean().optional(),
+});
+
+/**
+ * PUT /api/portal/organization/branding
+ * CLIENT_ADMIN only — scoped strictly to their own organization_id.
+ */
+router.put(
+  '/organization/branding',
+  requireClientPortalRole(['CLIENT_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const parsed = portalBrandingSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Invalid branding payload',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organization missing.' });
+      }
+
+      const patch: { logo_url?: string | null; portal_title?: string | null } = {};
+      if (parsed.data.clearLogo) {
+        patch.logo_url = null;
+      } else if (parsed.data.logoDataUrl !== undefined && parsed.data.logoDataUrl !== null) {
+        const validated = parseAndValidateLogoDataUrl(parsed.data.logoDataUrl);
+        if (validated.ok === false) {
+          return res.status(400).json({ error: validated.error });
+        }
+        patch.logo_url = validated.dataUrl;
+      }
+      if (parsed.data.portal_title !== undefined) {
+        patch.portal_title = parsed.data.portal_title;
+      }
+
+      const organization = await updateOrganizationBranding(organizationId, patch);
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({
+        organization: {
+          id: organization.id,
+          name: organization.name,
+          logo_url: organization.logo_url,
+          portal_title: organization.portal_title,
+          resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
+        },
+      });
+    } catch (err: any) {
+      safeLog('error', '[portal] branding update failed', err?.message || err);
+      return res.status(500).json({ error: safeErrorMessage(err, 'Failed to update branding') });
+    }
+  },
+);
+
+/** DELETE /api/portal/organization/logo — CLIENT_ADMIN, own org only. */
+router.delete(
+  '/organization/logo',
+  requireClientPortalRole(['CLIENT_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organization missing.' });
+      }
+      const organization = await updateOrganizationBranding(organizationId, { logo_url: null });
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({
+        organization: {
+          id: organization.id,
+          name: organization.name,
+          logo_url: organization.logo_url,
+          portal_title: organization.portal_title,
+          resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete logo') });
+    }
+  },
+);
 
 /** GET /api/portal/members — same-organization directory. */
 router.get(

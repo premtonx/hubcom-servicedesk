@@ -17,6 +17,10 @@ export interface OrganizationRecord {
   m365_tenant_id: string | null;
   /** When true, users from m365_tenant_id may sign in via Microsoft SSO. */
   sso_enabled: boolean;
+  /** Optional Kunden-Portal logo (data URL). */
+  logo_url: string | null;
+  /** Custom portal title; empty → "{name} ServiceDesk". */
+  portal_title: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -29,6 +33,8 @@ export interface OrganizationInput {
   settings?: Record<string, unknown>;
   m365_tenant_id?: string | null;
   sso_enabled?: boolean;
+  logo_url?: string | null;
+  portal_title?: string | null;
 }
 
 function slugify(input: string): string {
@@ -77,6 +83,11 @@ function mapRow(row: any): OrganizationRecord {
         : String(row.m365_tenant_id),
     sso_enabled:
       row.sso_enabled === true || row.sso_enabled === 't' || settingsSso === true,
+    logo_url: row.logo_url == null || row.logo_url === '' ? null : String(row.logo_url),
+    portal_title:
+      row.portal_title == null || row.portal_title === ''
+        ? null
+        : String(row.portal_title),
     created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
     updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : '',
   };
@@ -146,12 +157,33 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
     ? String(input.m365_tenant_id).trim()
     : null;
   const ssoEnabled = Boolean(input.sso_enabled);
+  const logoUrl =
+    input.logo_url == null || String(input.logo_url).trim() === ''
+      ? null
+      : String(input.logo_url).trim();
+  const portalTitle =
+    input.portal_title == null || String(input.portal_title).trim() === ''
+      ? null
+      : String(input.portal_title).trim().slice(0, 120);
 
   const res = await queryDb(
-    `INSERT INTO organizations (id, name, slug, domain, is_active, settings, m365_tenant_id, sso_enabled)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+    `INSERT INTO organizations (
+       id, name, slug, domain, is_active, settings, m365_tenant_id, sso_enabled, logo_url, portal_title
+     )
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10)
      RETURNING *`,
-    [id, name, slug, domain, isActive, JSON.stringify(settings), m365TenantId, ssoEnabled],
+    [
+      id,
+      name,
+      slug,
+      domain,
+      isActive,
+      JSON.stringify(settings),
+      m365TenantId,
+      ssoEnabled,
+      logoUrl,
+      portalTitle,
+    ],
   );
   return mapRow(res.rows[0]);
 }
@@ -187,6 +219,18 @@ export async function updateOrganization(
       : existing.m365_tenant_id;
   const ssoEnabled =
     input.sso_enabled !== undefined ? Boolean(input.sso_enabled) : existing.sso_enabled;
+  const logoUrl =
+    input.logo_url !== undefined
+      ? input.logo_url == null || String(input.logo_url).trim() === ''
+        ? null
+        : String(input.logo_url).trim()
+      : existing.logo_url;
+  const portalTitle =
+    input.portal_title !== undefined
+      ? input.portal_title == null || String(input.portal_title).trim() === ''
+        ? null
+        : String(input.portal_title).trim().slice(0, 120)
+      : existing.portal_title;
 
   const res = await queryDb(
     `UPDATE organizations
@@ -197,10 +241,23 @@ export async function updateOrganization(
             settings = $6::jsonb,
             m365_tenant_id = $7,
             sso_enabled = $8,
+            logo_url = $9,
+            portal_title = $10,
             updated_at = NOW()
       WHERE id = $1
       RETURNING *`,
-    [id, name, slug, domain, isActive, JSON.stringify(settings), m365TenantId, ssoEnabled],
+    [
+      id,
+      name,
+      slug,
+      domain,
+      isActive,
+      JSON.stringify(settings),
+      m365TenantId,
+      ssoEnabled,
+      logoUrl,
+      portalTitle,
+    ],
   );
   if (!res.rowCount) return null;
   return mapRow(res.rows[0]);
@@ -213,5 +270,15 @@ export async function updateOrganizationSsoSettings(
   return updateOrganization(id, {
     m365_tenant_id: input.m365_tenant_id,
     sso_enabled: input.sso_enabled,
+  });
+}
+
+export async function updateOrganizationBranding(
+  id: string,
+  input: { logo_url?: string | null; portal_title?: string | null },
+): Promise<OrganizationRecord | null> {
+  return updateOrganization(id, {
+    logo_url: input.logo_url,
+    portal_title: input.portal_title,
   });
 }

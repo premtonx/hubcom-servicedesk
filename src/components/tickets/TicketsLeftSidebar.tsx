@@ -1,7 +1,9 @@
-import { type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Archive,
+  Building2,
   ChevronDown,
+  ChevronRight,
   Hourglass,
   MoreHorizontal,
   Settings2,
@@ -28,6 +30,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
+import { organizationInitials } from '../../lib/client-portal/org-branding';
+
+const KUNDEN_COLLAPSE_KEY = 'hubcom.tickets.kundenSidebarOpen';
+
+export interface KundenSidebarOrg {
+  id: string;
+  name: string;
+  logo_url?: string | null;
+  openCount?: number;
+}
 
 type BadgeTone = 'default' | 'amber' | 'rose';
 
@@ -290,6 +302,10 @@ interface TicketsLeftSidebarProps {
   selectedTicketId?: string | null;
   isMobileSidebarOpen?: boolean;
   footer?: ReactNode;
+  /** Hubcom staff only — collapsible Kunden client filter. */
+  kundenOrgs?: KundenSidebarOrg[];
+  selectedOrganizationId?: string | null;
+  onSelectOrganization?: (organizationId: string | null) => void;
 }
 
 export function TicketsLeftSidebar({
@@ -305,9 +321,38 @@ export function TicketsLeftSidebar({
   selectedTicketId,
   isMobileSidebarOpen,
   footer,
+  kundenOrgs,
+  selectedOrganizationId,
+  onSelectOrganization,
 }: TicketsLeftSidebarProps) {
   const { t } = useTranslation();
   const favoriteAriaLabel = t('tickets.sidebar.toggleFavorite', 'Toggle favorite');
+  const showKunden = Boolean(kundenOrgs && onSelectOrganization);
+  const [kundenOpen, setKundenOpen] = useState(() => {
+    try {
+      const raw = localStorage.getItem(KUNDEN_COLLAPSE_KEY);
+      if (raw === null) return true;
+      return raw === '1' || raw === 'true';
+    } catch {
+      return true;
+    }
+  });
+  const [kundenFilter, setKundenFilter] = useState('');
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(KUNDEN_COLLAPSE_KEY, kundenOpen ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [kundenOpen]);
+
+  const filteredKunden = useMemo(() => {
+    const list = kundenOrgs || [];
+    const q = kundenFilter.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((o) => o.name.toLowerCase().includes(q));
+  }, [kundenOrgs, kundenFilter]);
 
   const resolveLabel = (item: SidebarItemConfig) => {
     if (item.id.startsWith('custom:')) return item.label;
@@ -590,6 +635,92 @@ export function TicketsLeftSidebar({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+          </div>
+        )}
+
+        {showKunden && !effectiveCollapsed && (
+          <div className="mt-2 pt-1 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setKundenOpen((v) => !v)}
+              className="w-full flex items-center justify-between gap-2 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-600"
+            >
+              <span className="flex items-center gap-1.5">
+                <Building2 className="w-3 h-3" />
+                {t('tickets.groups.kunden', 'Kunden')}
+              </span>
+              {kundenOpen ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5" />
+              )}
+            </button>
+            {kundenOpen && (
+              <div className="space-y-0.5 pb-1">
+                {(kundenOrgs?.length || 0) > 8 && (
+                  <input
+                    type="search"
+                    value={kundenFilter}
+                    onChange={(e) => setKundenFilter(e.target.value)}
+                    placeholder={t('tickets.sidebar.filterKunden', 'Kunde filtern…')}
+                    className="mx-1 mb-1 w-[calc(100%-0.5rem)] h-7 rounded-md border border-slate-200 bg-white px-2 text-[11px] text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                )}
+                {filteredKunden.map((org) => {
+                  const active = selectedOrganizationId === org.id;
+                  const count = org.openCount ?? 0;
+                  return (
+                    <button
+                      key={org.id}
+                      type="button"
+                      onClick={() => onSelectOrganization?.(org.id)}
+                      className={cn(
+                        'flex h-8 w-full min-w-0 items-center justify-between gap-2 px-2.5 py-1.5 text-[13px] font-medium leading-none rounded-md transition-colors',
+                        active
+                          ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100',
+                      )}
+                      title={org.name}
+                    >
+                      <span className="flex items-center gap-2 min-w-0">
+                        {org.logo_url ? (
+                          <img
+                            src={org.logo_url}
+                            alt=""
+                            className="w-4 h-4 rounded object-contain bg-white shrink-0"
+                          />
+                        ) : (
+                          <span
+                            className={cn(
+                              'w-4 h-4 rounded text-[8px] font-black flex items-center justify-center shrink-0',
+                              active ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600',
+                            )}
+                          >
+                            {organizationInitials(org.name)}
+                          </span>
+                        )}
+                        <span className="truncate text-left">{org.name}</span>
+                      </span>
+                      {count > 0 && (
+                        <span
+                          className={cn(
+                            'font-mono tabular-nums text-[11px] font-semibold px-1.5 py-0.5 rounded-full shrink-0',
+                            active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600',
+                          )}
+                        >
+                          {count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+                {filteredKunden.length === 0 && (
+                  <p className="px-3 py-2 text-[11px] text-slate-400">
+                    {t('tickets.sidebar.noKunden', 'Keine Kunden')}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

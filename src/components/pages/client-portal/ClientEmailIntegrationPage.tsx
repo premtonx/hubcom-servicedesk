@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import axios from 'axios';
 import {
   CheckCircle2,
   Info,
@@ -18,6 +19,7 @@ import {
   type PortalEmailChannel,
   type PortalEmailOrgSettings,
 } from '../../../services/clientPortalApi';
+import { OrgPortalBrandingCard } from '../../client-portal/OrgPortalBrandingCard';
 
 const MASK = '••••••••';
 
@@ -40,6 +42,11 @@ export default function ClientEmailIntegrationPage() {
   const [org, setOrg] = useState<PortalEmailOrgSettings | null>(null);
   const [m365TenantId, setM365TenantId] = useState('');
   const [ssoEnabled, setSsoEnabled] = useState(false);
+  const [branding, setBranding] = useState<{
+    name: string;
+    logo_url: string | null;
+    portal_title: string | null;
+  } | null>(null);
 
   const [testResult, setTestResult] = useState<{
     ok: boolean;
@@ -63,6 +70,19 @@ export default function ClientEmailIntegrationPage() {
       setOrg(data.organization);
       setM365TenantId(data.organization?.m365TenantId || '');
       setSsoEnabled(Boolean(data.organization?.ssoEnabled));
+      try {
+        const brandRes = await axios.get('/api/portal/organization', { withCredentials: true });
+        const o = brandRes.data?.organization;
+        if (o) {
+          setBranding({
+            name: o.name || data.organization?.name || '',
+            logo_url: o.logo_url || null,
+            portal_title: o.portal_title || null,
+          });
+        }
+      } catch {
+        /* branding optional on this page */
+      }
       if (ch?.lastTestOk != null) {
         setTestResult({
           ok: Boolean(ch.lastTestOk),
@@ -185,6 +205,27 @@ export default function ClientEmailIntegrationPage() {
           {org?.name ? ` (${org.name})` : ''}.
         </p>
       </div>
+
+      {branding ? (
+        <OrgPortalBrandingCard
+          organizationName={branding.name || org?.name || 'Organisation'}
+          logoUrl={branding.logo_url}
+          portalTitle={branding.portal_title}
+          onSave={async (payload) => {
+            const res = await axios.put('/api/portal/organization/branding', payload, {
+              withCredentials: true,
+            });
+            const o = res.data?.organization;
+            if (o) {
+              setBranding({
+                name: o.name || branding.name,
+                logo_url: o.logo_url || null,
+                portal_title: o.portal_title || null,
+              });
+            }
+          }}
+        />
+      ) : null}
 
       {/* Setup helper */}
       <div className="rounded-2xl border border-sky-100 bg-sky-50/70 px-5 py-4 space-y-3">

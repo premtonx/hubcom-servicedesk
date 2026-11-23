@@ -113,6 +113,10 @@ export interface Organization {
   /** Optional Entra ID tenant GUID for client M365 SSO. */
   m365_tenant_id?: string | null;
   sso_enabled?: boolean;
+  /** Optional Kunden-Portal logo (data URL or absolute URL). */
+  logo_url?: string | null;
+  /** Optional custom portal title; empty → "{name} ServiceDesk". */
+  portal_title?: string | null;
   created_at?: string;
   updated_at?: string;
 }
