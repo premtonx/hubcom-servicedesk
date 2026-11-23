@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../middleware/authMiddleware.js';
+import { attachClientOrganizationContext } from '../middleware/clientPortalMiddleware.js';
 import { addDocDirect, getDocDirect, updateDocDirect } from '../lib/postgres-backend.js';
 import { routeParam } from '../lib/route-params.js';
 import { trySendTicketReplyEmail } from '../lib/outbound-mail.js';
@@ -11,6 +12,11 @@ import {
 } from '../lib/email-ingestion/channel-store.js';
 import { formatReplyRecipientLabel, resolveComposerFromAddress } from '../lib/ticket-reply-address.js';
 import { safeLog } from '../lib/safe-log.js';
+import { isClientPortalRole } from '../lib/client-portal/roles.js';
+import {
+  clientCanMutateTicket,
+  resolveOrganizationIdFromUser,
+} from '../lib/client-portal/ticket-visibility.js';
 
 const router = Router();
 
@@ -25,12 +31,23 @@ const emailListSchema = z
  * Von:/An: for the reply composer. Uses the ticket mailbox's channel
  * forwardingAddress (or support email), then MAIL_FROM_ADDRESS.
  */
-router.get('/:id/composer-addresses', authenticate, async (req: Request, res: Response): Promise<any> => {
+router.get('/:id/composer-addresses', authenticate, attachClientOrganizationContext, async (req: Request, res: Response): Promise<any> => {
   const ticketId = routeParam(req.params.id);
   try {
     const ticket = await getDocDirect('tickets', ticketId);
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found.' });
+    }
+    if (isClientPortalRole(req.user?.role)) {
+      const canView = await clientCanMutateTicket(
+        {
+          id: String(req.user!.id),
+          role: String(req.user!.role),
+          organizationId: resolveOrganizationIdFromUser(req.user!),
+        },
+        { ...ticket, id: ticketId },
+      );
+      if (!canView) return res.status(404).json({ error: 'Ticket not found.' });
     }
 
     const channels = await listEmailChannels();
@@ -67,7 +84,7 @@ const replySchema = z.object({
  *   2. Attempt outbound email (non-fatal)
  *   3. Always 200 when DB write succeeds — even if SMTP is unavailable
  */
-router.post('/:id/replies', authenticate, async (req: Request, res: Response): Promise<any> => {
+router.post('/:id/replies', authenticate, attachClientOrganizationContext, async (req: Request, res: Response): Promise<any> => {
   const ticketId = routeParam(req.params.id);
   const parsed = replySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -83,13 +100,30 @@ router.post('/:id/replies', authenticate, async (req: Request, res: Response): P
       return res.status(404).json({ error: 'Ticket not found.' });
     }
 
+    const isClient = isClientPortalRole(req.user?.role);
+    if (isClient) {
+      const canReply = await clientCanMutateTicket(
+        {
+          id: String(req.user!.id),
+          role: String(req.user!.role),
+          organizationId: resolveOrganizationIdFromUser(req.user!),
+        },
+        { ...ticket, id: ticketId },
+      );
+      if (!canReply) return res.status(404).json({ error: 'Ticket not found.' });
+    }
+
     const now = new Date().toISOString();
     const data = parsed.data;
     const toAddress =
       ticket.customerEmail || ticket.contactEmail || ticket.requesterEmail || null;
     const cc = data.cc || [];
+    const ticketOrgId =
+      (typeof ticket.organizationId === 'string' && ticket.organizationId) ||
+      (typeof ticket.organization_id === 'string' && ticket.organization_id) ||
+      null;
 
-    // Prefer explicit channel from composer; fall back to ticket mailbox matching.
+    // Prefer explicit channel from composer; fall back to org Send-As / mailbox matching.
     let channel =
       (data.fromChannelId
         ? await getEmailChannel(data.fromChannelId, { includeSecrets: true })
@@ -98,6 +132,7 @@ router.post('/:id/replies', authenticate, async (req: Request, res: Response): P
         channelId: data.fromChannelId || null,
         mailbox: ticket.mailbox || ticket.forwardingAddress || null,
         supportEmail: ticket.supportEmail || ticket.channelEmail || null,
+        organizationId: ticketOrgId,
       }));
 
     // If channel was resolved without secrets but has smtpHost, reload with secrets.
@@ -113,8 +148,8 @@ router.post('/:id/replies', authenticate, async (req: Request, res: Response): P
 
     const messageRecord = await addDocDirect(`tickets/${ticketId}/messages`, {
       ticketId,
-      senderId: data.senderId || req.user!.id,
-      senderType: data.senderType,
+      senderId: isClient ? req.user!.id : data.senderId || req.user!.id,
+      senderType: isClient ? 'customer' : data.senderType,
       senderName: data.senderName || req.user!.email || 'Agent',
       content: data.content,
       originalContent: data.originalContent || null,
@@ -122,6 +157,8 @@ router.post('/:id/replies', authenticate, async (req: Request, res: Response): P
       toAddress: toAddress || null,
       cc,
       deliveryStatus: 'pending',
+      is_internal: false,
+      isInternal: false,
       createdAt: now,
       updatedAt: now,
     });
@@ -146,11 +183,19 @@ router.post('/:id/replies', authenticate, async (req: Request, res: Response): P
         agentName: data.senderName || req.user!.email || 'Agent',
         channel,
         fromOverride: fromAddress,
+        organizationId: ticketOrgId,
       });
       delivered = mailResult.delivered;
       deliveryReason = mailResult.reason;
       mailFrom = mailResult.from;
       domainVerified = mailResult.domainVerified;
+      if (!delivered) {
+        safeLog(
+          'warn',
+          '[ticket-replies] outbound mail not delivered',
+          `ticket=${ticketId} via=${mailResult.via || 'none'} reason=${deliveryReason || 'unknown'}`,
+        );
+      }
     } catch (mailErr: any) {
       delivered = false;
       deliveryReason = mailErr?.message || 'Outbound mail threw unexpectedly';

@@ -19,6 +19,11 @@ import {
 import { ensureDomainVerificationFields } from './domain-verification.js';
 import { composeHelpForwardingAddress, forwardingLocalSlug } from '../email-forwarding-address.js';
 import { extractEmailAddress } from '../global-blacklist.js';
+import {
+  decryptEmailChannelSecret,
+  encryptEmailChannelSecret,
+  isEncryptedEmailSecret,
+} from './channel-secret-crypto.js';
 
 const SECRET_FIELDS = [
   'imapPassword',
@@ -92,9 +97,40 @@ export function redactChannelSecrets(
     if (typeof value === 'string' && value.length > 0) {
       (clone as any)[field] = '••••••••';
       (clone as any)[`${field}Set`] = true;
+      if (field === 'clientSecret') {
+        clone.hasClientSecret = true;
+        clone.clientSecretSet = true;
+      }
+    }
+  }
+  // Never leak encrypted ciphertext in API responses either.
+  if (clone.clientSecret && clone.clientSecret !== '••••••••') {
+    clone.clientSecret = '••••••••';
+    clone.hasClientSecret = true;
+    clone.clientSecretSet = true;
+  }
+  return clone;
+}
+
+/** Prepare a channel for Graph/IMAP drivers — decrypt secrets in memory. */
+export function hydrateChannelSecrets(channel: EmailChannelConfig): EmailChannelConfig {
+  const clone: EmailChannelConfig = { ...channel };
+  if (typeof clone.clientSecret === 'string' && clone.clientSecret) {
+    try {
+      clone.clientSecret = decryptEmailChannelSecret(clone.clientSecret);
+    } catch (err: any) {
+      throw new Error(
+        `Failed to decrypt Graph client secret for channel ${channel.id}: ${err?.message || err}`,
+      );
     }
   }
   return clone;
+}
+
+function sealClientSecret(value: string | null | undefined): string | null {
+  if (!value || value === '••••••••') return value || null;
+  if (isEncryptedEmailSecret(value)) return value;
+  return encryptEmailChannelSecret(value);
 }
 
 function mergeSecrets(
@@ -199,7 +235,94 @@ export async function getEmailChannel(
     forwardingDomain: getForwardingDomain(),
   } as EmailChannelConfig);
   const repaired = await repairForwardingAddressIfNeeded(ensured);
-  return opts?.includeSecrets ? repaired : redactChannelSecrets(repaired);
+  if (opts?.includeSecrets) {
+    return hydrateChannelSecrets(repaired);
+  }
+  return redactChannelSecrets(repaired);
+}
+
+/** Hubcom global default channel (organization_id IS NULL). Prefer healthy Graph. */
+export async function findGlobalDefaultEmailChannel(
+  opts?: { includeSecrets?: boolean },
+): Promise<EmailChannelConfig | null> {
+  const globals = await listGlobalEmailChannels(opts);
+  return (
+    globals.find((c) => c.connectionType === 'microsoft_graph' && isHealthySendAsGraph(c)) ||
+    globals.find((c) => c.connectionType === 'microsoft_graph') ||
+    globals[0] ||
+    null
+  );
+}
+
+/** All Hubcom-global (no organizationId) email channels. */
+export async function listGlobalEmailChannels(
+  opts?: { includeSecrets?: boolean },
+): Promise<EmailChannelConfig[]> {
+  const docs = await getDocsDirect(EMAIL_CHANNELS_COLLECTION, []);
+  const out: EmailChannelConfig[] = [];
+  for (const doc of docs) {
+    const channel = { id: doc.id, ...doc } as EmailChannelConfig;
+    const orgId = channel.organizationId || channel.organization_id || null;
+    if (orgId) continue;
+    if (
+      channel.connectionType !== 'microsoft_graph' &&
+      channel.connectionType !== 'imap_basic' &&
+      channel.connectionType !== 'imap_oauth2'
+    ) {
+      continue;
+    }
+    if (channel.status === 'disabled' || channel.enabled === false) continue;
+    const ensured = await backfillDomainVerificationIfNeeded({
+      ...channel,
+      forwardingDomain: getForwardingDomain(),
+    });
+    out.push(opts?.includeSecrets ? hydrateChannelSecrets(ensured) : redactChannelSecrets(ensured));
+  }
+  return out;
+}
+
+/** Active Graph channel linked to a client organization (Send-As / inbound). */
+export async function findOrganizationEmailChannel(
+  organizationId: string,
+  opts?: { includeSecrets?: boolean; requireSendAs?: boolean; requireInbound?: boolean },
+): Promise<EmailChannelConfig | null> {
+  if (!organizationId) return null;
+  const docs = await getDocsDirect(EMAIL_CHANNELS_COLLECTION, []);
+  for (const doc of docs) {
+    const channel = { id: doc.id, ...doc } as EmailChannelConfig;
+    const orgId = channel.organizationId || channel.organization_id || null;
+    if (orgId !== organizationId) continue;
+    if (channel.connectionType !== 'microsoft_graph') continue;
+    if (channel.status === 'disabled') continue;
+    if (opts?.requireSendAs && !channel.sendAsEnabled) continue;
+    if (opts?.requireInbound && channel.inboundEnabled === false) continue;
+    const ensured = await backfillDomainVerificationIfNeeded({
+      ...channel,
+      forwardingDomain: getForwardingDomain(),
+    });
+    return opts?.includeSecrets ? hydrateChannelSecrets(ensured) : redactChannelSecrets(ensured);
+  }
+  return null;
+}
+
+/** All active Graph channels that should be polled for inbound mail. */
+export async function listInboundGraphChannels(
+  opts?: { includeSecrets?: boolean },
+): Promise<EmailChannelConfig[]> {
+  const docs = await getDocsDirect(EMAIL_CHANNELS_COLLECTION, []);
+  const out: EmailChannelConfig[] = [];
+  for (const doc of docs) {
+    const channel = { id: doc.id, ...doc } as EmailChannelConfig;
+    if (channel.connectionType !== 'microsoft_graph') continue;
+    if (channel.status === 'disabled') continue;
+    if (channel.inboundEnabled === false) continue;
+    const ensured = await backfillDomainVerificationIfNeeded({
+      ...channel,
+      forwardingDomain: getForwardingDomain(),
+    });
+    out.push(opts?.includeSecrets ? hydrateChannelSecrets(ensured) : redactChannelSecrets(ensured));
+  }
+  return out;
 }
 
 /** IMAP / Graph server fields are unused for webhook channels — persist as null. */
@@ -255,11 +378,18 @@ export async function createEmailChannel(
     oauthScope: isWebhook ? null : input.oauthScope || null,
     tenantId: connectionType === 'microsoft_graph' ? input.tenantId || null : null,
     clientId: connectionType === 'microsoft_graph' ? input.clientId || null : null,
-    clientSecret: connectionType === 'microsoft_graph' ? input.clientSecret || null : null,
+    clientSecret:
+      connectionType === 'microsoft_graph'
+        ? sealClientSecret(input.clientSecret || null)
+        : null,
     mailbox:
       connectionType === 'microsoft_graph'
         ? input.mailbox || input.email || null
         : null,
+    organizationId: input.organizationId || input.organization_id || null,
+    organization_id: input.organizationId || input.organization_id || null,
+    inboundEnabled: input.inboundEnabled !== false,
+    sendAsEnabled: Boolean(input.sendAsEnabled),
     createdAt: now,
     updatedAt: now,
   });
@@ -316,6 +446,9 @@ export async function updateEmailChannel(
   if (!safeInput.spfRecordValue) delete (safeInput as any).spfRecordValue;
 
   const merged = mergeSecrets(safeInput, existing as EmailChannelConfig);
+  if (typeof merged.clientSecret === 'string' && merged.clientSecret && merged.clientSecret !== '••••••••') {
+    merged.clientSecret = sealClientSecret(merged.clientSecret) || merged.clientSecret;
+  }
   const now = new Date().toISOString();
   const next: EmailChannelConfig = {
     ...(existing as EmailChannelConfig),
@@ -325,6 +458,10 @@ export async function updateEmailChannel(
     dnsVerified: Boolean((existing as EmailChannelConfig).dnsVerified),
     dnsVerifiedAt: (existing as EmailChannelConfig).dnsVerifiedAt ?? null,
   };
+  if (safeInput.organizationId !== undefined || safeInput.organization_id !== undefined) {
+    next.organizationId = safeInput.organizationId ?? safeInput.organization_id ?? null;
+    next.organization_id = next.organizationId;
+  }
 
   if (next.connectionType === 'webhook') {
     next.webhookSecret = next.webhookSecret || generateWebhookSecret();
@@ -461,46 +598,119 @@ export async function setPrimaryEmailChannel(channelId: string): Promise<void> {
   }
 }
 
+function channelAddressMatch(channel: EmailChannelConfig, address: string): boolean {
+  if (!address) return false;
+  const email = (channel.email || '').toLowerCase();
+  const forwarding = (channel.forwardingAddress || '').toLowerCase();
+  const mailbox = (channel.mailbox || '').toLowerCase();
+  return address === email || address === forwarding || address === mailbox;
+}
+
+/** Prefer Graph (can sendMail) over passive webhook/IMAP when several channels match. */
+function preferOutboundChannel(candidates: EmailChannelConfig[]): EmailChannelConfig | null {
+  if (!candidates.length) return null;
+  const enabled = candidates.filter((c) => c.enabled !== false && c.status !== 'disabled');
+  const pool = enabled.length ? enabled : candidates;
+  return (
+    pool.find((c) => c.connectionType === 'microsoft_graph') ||
+    pool.find((c) => c.connectionType === 'imap_oauth2' || c.connectionType === 'imap_basic') ||
+    pool[0] ||
+    null
+  );
+}
+
+function channelBelongsToOrgOrGlobal(
+  channel: EmailChannelConfig,
+  organizationId: string | null,
+): boolean {
+  const channelOrg = channel.organizationId || channel.organization_id || null;
+  if (!organizationId) {
+    // Unscoped tickets may only use Hubcom global channels.
+    return !channelOrg;
+  }
+  // Org-scoped tickets: own org channel OR Hubcom global — never another client.
+  return !channelOrg || channelOrg === organizationId;
+}
+
+function isHealthySendAsGraph(channel: EmailChannelConfig | null | undefined): boolean {
+  if (!channel || channel.connectionType !== 'microsoft_graph') return false;
+  if (channel.enabled === false || channel.status === 'disabled') return false;
+  if (channel.status === 'auth_error' || channel.status === 'failed') return false;
+  const orgId = channel.organizationId || channel.organization_id || null;
+  // Org Send-As channels must explicitly enable sendAs; Hubcom globals may omit it.
+  if (orgId && channel.sendAsEnabled !== true) return false;
+  return (
+    channel.status === 'connected' ||
+    channel.status === 'verified' ||
+    channel.status === 'active' ||
+    channel.lastTestOk === true ||
+    (!channel.status && !orgId)
+  );
+}
+
 /** Resolve a channel for outbound From: selection (mailbox / support email / forwarding). */
 export async function findChannelForOutbound(params: {
   mailbox?: string | null;
   supportEmail?: string | null;
   channelId?: string | null;
+  organizationId?: string | null;
 }): Promise<EmailChannelConfig | null> {
   if (params.channelId) {
     const byId = await getEmailChannelById(params.channelId);
     if (byId) return byId;
   }
+
+  // Prefer per-client Send-As Graph channel when the ticket is org-scoped.
+  const orgId = (params.organizationId || '').trim() || null;
+  if (orgId) {
+    const orgChannel = await findOrganizationEmailChannel(orgId, {
+      requireSendAs: true,
+    });
+    if (orgChannel && isHealthySendAsGraph(orgChannel)) return orgChannel;
+  }
+
   const docs = await getDocsDirect(EMAIL_CHANNELS_COLLECTION, []);
   const mailbox = (params.mailbox || '').toLowerCase().trim();
   const supportEmail = (params.supportEmail || '').toLowerCase().trim();
 
+  const exactMatches: EmailChannelConfig[] = [];
   for (const doc of docs) {
     const channel = { id: doc.id, ...doc } as EmailChannelConfig;
-    const email = (channel.email || '').toLowerCase();
-    const forwarding = (channel.forwardingAddress || '').toLowerCase();
-    if (mailbox && (mailbox === email || mailbox === forwarding || mailbox === (channel.mailbox || '').toLowerCase())) {
-      return channel;
+    if (!channelBelongsToOrgOrGlobal(channel, orgId)) continue;
+    if (mailbox && channelAddressMatch(channel, mailbox)) {
+      exactMatches.push(channel);
+      continue;
     }
-    if (supportEmail && supportEmail === email) {
-      return channel;
+    if (supportEmail && channelAddressMatch(channel, supportEmail)) {
+      exactMatches.push(channel);
     }
   }
+  const exact = preferOutboundChannel(exactMatches);
+  if (exact) return exact;
 
-  // Fallback: match by domain of mailbox against a verified channel email domain.
+  // Fallback: same-domain verified channel or Graph mailbox (Graph skips DNS TXT).
   const domain = mailbox.includes('@') ? mailbox.split('@')[1] : '';
   if (domain) {
+    const domainMatches: EmailChannelConfig[] = [];
     for (const doc of docs) {
       const channel = { id: doc.id, ...doc } as EmailChannelConfig;
+      if (!channelBelongsToOrgOrGlobal(channel, orgId)) continue;
       const emailDomain = (channel.email || '').toLowerCase().split('@')[1];
-      if (channel.dnsVerified && emailDomain && emailDomain === domain) {
-        return channel;
+      const mailboxDomain = (channel.mailbox || '').toLowerCase().split('@')[1];
+      const sameDomain = emailDomain === domain || mailboxDomain === domain;
+      if (!sameDomain) continue;
+      if (channel.dnsVerified || channel.connectionType === 'microsoft_graph') {
+        domainMatches.push(channel);
       }
     }
+    const byDomain = preferOutboundChannel(domainMatches);
+    if (byDomain) return byDomain;
   }
 
-  return null;
+  return findGlobalDefaultEmailChannel();
 }
+
+export { isHealthySendAsGraph, channelBelongsToOrgOrGlobal };
 
 /** Resolve channel by forwarding alias or webhook secret (for inbound push). */
 export async function findChannelForWebhook(params: {

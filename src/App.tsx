@@ -3,10 +3,12 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from './components/ui/sonner';
 import { TooltipProvider } from './components/ui/tooltip';
 import MainLayout from './components/layout/MainLayout';
+import ClientPortalLayout from './components/client-portal/ClientPortalLayout';
 import LoginPage from './components/pages/LoginPage';
 import OnboardingWizardPage from './components/pages/OnboardingWizardPage';
 import { useAuth, useAdmin } from './lib/hooks';
 import { usePermissions } from './hooks/usePermissions';
+import { useClientPortalSession } from './hooks/useClientPortalSession';
 import { isSystemAdminSession } from './lib/beta-admin-bypass';
 import { ErrorBoundary, ModuleCrashFallback } from './components/ErrorBoundary';
 import { useOnboardingStatus } from './hooks/useOnboardingStatus';
@@ -50,10 +52,22 @@ const SecretViewerPage = lazy(() => import('./components/pages/SecretViewerPage'
 const TimeTrackingAdminPage = lazy(() => import('./components/pages/TimeTrackingAdminPage'));
 const TimeTrackingOverviewPage = lazy(() => import('./components/pages/TimeTrackingOverviewPage'));
 const TicketCategoriesAdminPage = lazy(() => import('./components/pages/TicketCategoriesAdminPage'));
+/** Hubcom legacy customer portal (role === customer) — keep alongside Phase 2–5 CLIENT_* portal. */
 const PortalLayout = lazy(() => import('./components/portal/PortalLayout'));
 const PortalTicketsPage = lazy(() => import('./components/portal/PortalTicketsPage'));
 const PortalTicketDetailPage = lazy(() => import('./components/portal/PortalTicketDetailPage'));
 const PortalCreateTicketPage = lazy(() => import('./components/portal/PortalCreateTicketPage'));
+const ClientTicketsPage = lazy(() => import('./components/pages/client-portal/ClientTicketsPage'));
+const ClientCreateTicketPage = lazy(
+  () => import('./components/pages/client-portal/ClientCreateTicketPage'),
+);
+const ClientTicketDetailPage = lazy(
+  () => import('./components/pages/client-portal/ClientTicketDetailPage'),
+);
+const ClientMembersPage = lazy(() => import('./components/pages/client-portal/ClientMembersPage'));
+const ClientEmailIntegrationPage = lazy(
+  () => import('./components/pages/client-portal/ClientEmailIntegrationPage'),
+);
 
 function RouteFallback() {
   return (
@@ -70,8 +84,9 @@ function LazyPage({ children }: { children: ReactNode }) {
 function AdminRoute({ children }: { children: ReactNode }) {
   const { loading: authLoading } = useAuth();
   const { isAdmin, checking } = useAdmin();
+  const { isClient, loading: clientLoading } = useClientPortalSession();
 
-  if (authLoading || checking) {
+  if (authLoading || checking || clientLoading) {
     return (
       <div className="h-full w-full flex items-center justify-center p-20 bg-background">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
@@ -79,11 +94,75 @@ function AdminRoute({ children }: { children: ReactNode }) {
     );
   }
 
+  if (isClient) {
+    return <Navigate to="/portal/tickets" replace />;
+  }
+
   if (!isAdmin) {
     return <Navigate to="/dashboard" replace />;
   }
 
   return <>{children}</>;
+}
+
+/** Gate for /portal/* — only CLIENT_* roles. */
+function ClientPortalRoute({ children }: { children: ReactNode }) {
+  const { loading: authLoading } = useAuth();
+  const { isClient, isClientAdmin, loading } = useClientPortalSession();
+
+  if (authLoading || loading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center p-20 bg-background">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (!isClient) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function ClientAdminRoute({ children }: { children: ReactNode }) {
+  const { isClientAdmin, isClient, loading } = useClientPortalSession();
+  if (loading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center p-20 bg-background">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+  if (!isClient) return <Navigate to="/dashboard" replace />;
+  if (!isClientAdmin) return <Navigate to="/portal/tickets" replace />;
+  return <>{children}</>;
+}
+
+/** Redirect Hubcom shell away from client accounts (and vice versa). */
+function StaffShellRedirect({ children }: { children: ReactNode }) {
+  const { isClient, loading } = useClientPortalSession();
+  if (loading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center p-20 bg-background">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+  if (isClient) return <Navigate to="/portal/tickets" replace />;
+  return <>{children}</>;
+}
+
+function ClientAwareHomeRedirect() {
+  const { isClient, loading } = useClientPortalSession();
+  if (loading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center p-20 bg-background">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+  return <Navigate to={isClient ? '/portal/tickets' : '/dashboard'} replace />;
 }
 
 function OnboardingGate({ children }: { children: ReactNode }) {
@@ -199,6 +278,8 @@ function AppRoutes() {
                   </>
                 ) : isCustomer ? (
                   <>
+                    {/* Hubcom legacy role=customer portal (a31c080) — kept for existing customers.
+                        New MSP CLIENT_* roles use ClientPortalLayout below. */}
                     <Route path="/login" element={<Navigate to="/portal" replace />} />
                     <Route path="/onboarding" element={<Navigate to="/portal" replace />} />
                     <Route
@@ -240,7 +321,6 @@ function AppRoutes() {
                         }
                       />
                     </Route>
-                    {/* Interne Agenten-Bereiche für Kunden blockieren */}
                     <Route path="/tickets/*" element={<Navigate to="/portal" replace />} />
                     <Route path="/vault/*" element={<Navigate to="/portal" replace />} />
                     <Route path="/credentials/*" element={<Navigate to="/portal" replace />} />
@@ -255,14 +335,83 @@ function AppRoutes() {
                   </>
                 ) : (
                   <>
-                    <Route path="/onboarding" element={<Navigate to="/dashboard" replace />} />
-                    <Route path="/portal/*" element={<Navigate to="/tickets" replace />} />
+                    <Route path="/onboarding" element={<ClientAwareHomeRedirect />} />
+
+                    {/* Kunden-Portal — CLIENT_* roles only */}
+                    <Route
+                      path="/portal"
+                      element={
+                        <ClientPortalRoute>
+                          <ClientPortalLayout />
+                        </ClientPortalRoute>
+                      }
+                    >
+                      <Route index element={<Navigate to="tickets" replace />} />
+                      <Route
+                        path="tickets"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Tickets" />}>
+                            <LazyPage>
+                              <ClientTicketsPage />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
+                      <Route
+                        path="tickets/new"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Create Ticket" />}>
+                            <LazyPage>
+                              <ClientCreateTicketPage />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
+                      <Route
+                        path="tickets/:ticketId"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Ticket Detail" />}>
+                            <LazyPage>
+                              <ClientTicketDetailPage />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
+                      <Route
+                        path="members"
+                        element={
+                          <ClientAdminRoute>
+                            <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Members" />}>
+                              <LazyPage>
+                                <ClientMembersPage />
+                              </LazyPage>
+                            </ErrorBoundary>
+                          </ClientAdminRoute>
+                        }
+                      />
+                      <Route
+                        path="email"
+                        element={
+                          <ClientAdminRoute>
+                            <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Email" />}>
+                              <LazyPage>
+                                <ClientEmailIntegrationPage />
+                              </LazyPage>
+                            </ErrorBoundary>
+                          </ClientAdminRoute>
+                        }
+                      />
+                      <Route path="*" element={<Navigate to="tickets" replace />} />
+                    </Route>
+
                     <Route
                       path="/"
                       element={
-                        <OnboardingGate>
-                          <MainLayout />
-                        </OnboardingGate>
+                        <StaffShellRedirect>
+                          <OnboardingGate>
+                            <MainLayout />
+                          </OnboardingGate>
+                        </StaffShellRedirect>
                       }
                     >
                     <Route index element={<Navigate to="/dashboard" replace />} />
