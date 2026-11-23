@@ -200,6 +200,9 @@ export const ticketService = {
           updateMsg = `Der Status von Ticket "${ticketSubject}" wurde auf "${updates.status}" geändert.`;
         } else if (updates.priority) {
           updateMsg = `Die Priorität von Ticket "${ticketSubject}" wurde auf "${updates.priority}" geändert.`;
+        } else if (updates.categoryId !== undefined || updates.categoryName !== undefined) {
+          const catLabel = updates.categoryName || updates.categorySlug || updates.categoryId || 'Keine';
+          updateMsg = `Die Kategorie von Ticket "${ticketSubject}" wurde auf "${catLabel}" geändert.`;
         } else if (updates.agentName) {
           updateMsg = `Ticket "${ticketSubject}" wurde an "${updates.agentName}" übergeben.`;
         }

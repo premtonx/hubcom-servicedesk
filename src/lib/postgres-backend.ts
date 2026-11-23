@@ -329,6 +329,8 @@ export async function initDb() {
     );
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS m365_tenant_id TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS sso_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS logo_url TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS portal_title TEXT;
     CREATE INDEX IF NOT EXISTS idx_organizations_active_name
       ON organizations (is_active, name);
     CREATE INDEX IF NOT EXISTS idx_organizations_domain

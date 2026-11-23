@@ -397,7 +397,24 @@ export function RedesignedSidebar({
           )}
 
           <div className="space-y-1 pt-1">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">{t('tickets.sidebar.dispatchCaseStatus', 'Dispatch case status')}</label>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">{t('tickets.sidebar.priority', 'Priorität')}</label>
+            <select
+              id="dispatch-priority-select"
+              className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer dark:text-slate-200"
+              value={String(ticket.priority || 'medium').toLowerCase()}
+              onChange={(e) => {
+                onUpdateTicketField({ priority: e.target.value as any });
+              }}
+            >
+              <option value="low">{t('tickets.priority.low', 'Niedrig')}</option>
+              <option value="medium">{t('tickets.priority.medium', 'Mittel')}</option>
+              <option value="high">{t('tickets.priority.high', 'Hoch')}</option>
+              <option value="urgent">{t('tickets.priority.urgent', 'Dringend')}</option>
+            </select>
+          </div>
+
+          <div className="space-y-1 pt-1">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">{t('tickets.sidebar.dispatchCaseStatus', 'Status')}</label>
             <DispatchStatusSelect
               id="dispatch-status-select"
               status={ticket.status}
@@ -410,7 +427,8 @@ export function RedesignedSidebar({
           <div className="space-y-1 pt-1">
             <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">{t('tickets.sidebar.category', 'Kategorie')}</label>
             <select
-              className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary"
+              id="dispatch-category-select"
+              className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer dark:text-slate-200"
               value={ticket.categoryId || ''}
               onChange={(e) => {
                 const id = e.target.value;

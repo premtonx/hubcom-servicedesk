@@ -13,6 +13,7 @@ import {
   getOrganization,
   listOrganizations,
   updateOrganization,
+  updateOrganizationBranding,
 } from '../lib/client-portal/organizations.js';
 import {
   addDocDirect,
@@ -23,11 +24,24 @@ import {
 import { hashPassword } from '../lib/crypto.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
-import { CLIENT_PORTAL_ROLE_SEEDS } from '../lib/client-portal/roles.js';
+import { CLIENT_PORTAL_ROLE_SEEDS, isHubcomStaffRole } from '../lib/client-portal/roles.js';
+import {
+  parseAndValidateLogoDataUrl,
+  resolvePortalTitle,
+} from '../lib/client-portal/org-branding.js';
 
 const router = Router();
 
-router.use(authenticate, forbidClientPortalRoles, requireRole(['SYSTEM_ADMIN']));
+router.use(authenticate, forbidClientPortalRoles);
+
+/** requireRole(['SYSTEM_ADMIN', …]) rejects every non–SYSTEM_ADMIN — use this for staff reads. */
+function requireHubcomStaff(req: Request, res: Response, next: () => void): any {
+  const role = String(req.user?.role || '');
+  if (!isHubcomStaffRole(role) && role !== 'SYSTEM_ADMIN' && !(req.user as any)?.is_admin) {
+    return res.status(403).json({ error: 'Forbidden: Hubcom staff only.' });
+  }
+  return next();
+}
 
 const orgSchema = z.object({
   name: z.string().min(1).max(200),
@@ -35,6 +49,7 @@ const orgSchema = z.object({
   domain: z.string().max(255).optional().nullable(),
   is_active: z.boolean().optional(),
   settings: z.record(z.string(), z.unknown()).optional(),
+  portal_title: z.string().max(120).optional().nullable(),
 });
 
 const inviteClientAdminSchema = z.object({
@@ -43,11 +58,25 @@ const inviteClientAdminSchema = z.object({
   temporaryPassword: z.string().min(10).max(200).optional(),
 });
 
-/** GET /api/admin/organizations */
-router.get('/', async (_req: Request, res: Response): Promise<any> => {
+const brandingSchema = z.object({
+  logoDataUrl: z.string().min(1).optional().nullable(),
+  portal_title: z.string().max(120).optional().nullable(),
+  clearLogo: z.boolean().optional(),
+});
+
+/**
+ * GET /api/admin/organizations
+ * Hubcom staff (SYSTEM_ADMIN / AGENT / …) — read-only for Kunden sidebar.
+ */
+router.get('/', requireHubcomStaff, async (_req: Request, res: Response): Promise<any> => {
   try {
     const organizations = await listOrganizations({ includeInactive: true });
-    return res.json({ organizations });
+    return res.json({
+      organizations: organizations.map((o) => ({
+        ...o,
+        resolved_portal_title: resolvePortalTitle(o.name, o.portal_title),
+      })),
+    });
   } catch (err: any) {
     safeLog('error', '[organizations] list failed', err?.message || err);
     return res.status(500).json({ error: safeErrorMessage(err, 'Failed to list organizations') });
@@ -55,7 +84,7 @@ router.get('/', async (_req: Request, res: Response): Promise<any> => {
 });
 
 /** POST /api/admin/organizations */
-router.post('/', async (req: Request, res: Response): Promise<any> => {
+router.post('/', requireRole(['SYSTEM_ADMIN']), async (req: Request, res: Response): Promise<any> => {
   const parsed = orgSchema.safeParse(req.body || {});
   if (!parsed.success) {
     return res.status(400).json({
@@ -77,19 +106,24 @@ router.post('/', async (req: Request, res: Response): Promise<any> => {
 });
 
 /** GET /api/admin/organizations/:id */
-router.get('/:id', async (req: Request, res: Response): Promise<any> => {
+router.get('/:id', requireHubcomStaff, async (req: Request, res: Response): Promise<any> => {
   const id = routeParam(req.params.id);
   try {
     const organization = await getOrganization(id);
     if (!organization) return res.status(404).json({ error: 'Organization not found.' });
-    return res.json({ organization });
+    return res.json({
+      organization: {
+        ...organization,
+        resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
+      },
+    });
   } catch (err: any) {
     return res.status(500).json({ error: safeErrorMessage(err, 'Failed to load organization') });
   }
 });
 
 /** PUT /api/admin/organizations/:id */
-router.put('/:id', async (req: Request, res: Response): Promise<any> => {
+router.put('/:id', requireRole(['SYSTEM_ADMIN']), async (req: Request, res: Response): Promise<any> => {
   const id = routeParam(req.params.id);
   const parsed = orgSchema.partial().safeParse(req.body || {});
   if (!parsed.success) {
@@ -112,10 +146,80 @@ router.put('/:id', async (req: Request, res: Response): Promise<any> => {
 });
 
 /**
+ * PUT /api/admin/organizations/:id/branding
+ * Upload / update / clear portal logo + title (SYSTEM_ADMIN).
+ */
+router.put(
+  '/:id/branding',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const id = routeParam(req.params.id);
+    const parsed = brandingSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Invalid branding payload',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    try {
+      const existing = await getOrganization(id);
+      if (!existing) return res.status(404).json({ error: 'Organization not found.' });
+
+      const patch: { logo_url?: string | null; portal_title?: string | null } = {};
+
+      if (parsed.data.clearLogo) {
+        patch.logo_url = null;
+      } else if (parsed.data.logoDataUrl !== undefined && parsed.data.logoDataUrl !== null) {
+        const validated = parseAndValidateLogoDataUrl(parsed.data.logoDataUrl);
+        if (validated.ok === false) {
+          return res.status(400).json({ error: validated.error });
+        }
+        patch.logo_url = validated.dataUrl;
+      }
+
+      if (parsed.data.portal_title !== undefined) {
+        patch.portal_title = parsed.data.portal_title;
+      }
+
+      const organization = await updateOrganizationBranding(id, patch);
+      return res.json({
+        organization: {
+          ...organization,
+          resolved_portal_title: resolvePortalTitle(
+            organization!.name,
+            organization!.portal_title,
+          ),
+        },
+      });
+    } catch (err: any) {
+      safeLog('error', '[organizations] branding update failed', err?.message || err);
+      return res.status(500).json({ error: safeErrorMessage(err, 'Failed to update branding') });
+    }
+  },
+);
+
+/** DELETE /api/admin/organizations/:id/logo */
+router.delete(
+  '/:id/logo',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const id = routeParam(req.params.id);
+    try {
+      const organization = await updateOrganizationBranding(id, { logo_url: null });
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({ organization });
+    } catch (err: any) {
+      return res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete logo') });
+    }
+  },
+);
+
+/**
  * POST /api/admin/organizations/:id/invite-client-admin
  * Create (or promote) the initial CLIENT_ADMIN for a Kunden organization.
  */
-router.post('/:id/invite-client-admin', async (req: Request, res: Response): Promise<any> => {
+router.post('/:id/invite-client-admin', requireRole(['SYSTEM_ADMIN']), async (req: Request, res: Response): Promise<any> => {
   const organizationId = routeParam(req.params.id);
   const parsed = inviteClientAdminSchema.safeParse(req.body || {});
   if (!parsed.success) {

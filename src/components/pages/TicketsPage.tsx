@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronLeft, Ticket } from 'lucide-react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { ChevronDown, ChevronLeft, Ticket, X } from 'lucide-react';
 import axios from 'axios';
 import {
   executeTicketDeepDiveAnalysis,
@@ -68,7 +68,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
-import { TicketsLeftSidebar } from '../tickets/TicketsLeftSidebar';
+import { TicketsLeftSidebar, type KundenSidebarOrg } from '../tickets/TicketsLeftSidebar';
 import { TicketsSidebarManageSheet } from '../tickets/TicketsSidebarManageSheet';
 import { TicketListView } from '../tickets/TicketListView';
 import { TicketDetailContextPane } from '../tickets/TicketDetailContextPane';
@@ -79,6 +79,7 @@ import { TICKETS_SIDEBAR_GROUPS } from '../tickets/ticketsSidebarConfig';
 import { TicketsLayoutMode } from '../tickets/TicketsViewModeSelector';
 import { isReadonlyTerminalStatus } from '../../lib/ticket-status';
 import { ticketsShareCustomer } from '../../lib/ticketMerge';
+import { isClientPortalRole, isHubcomStaffRole } from '../../lib/client-portal/roles';
 const matchStatus = (status: string | undefined, target: string): boolean => {
   if (!status) return false;
   return String(status).toLowerCase().trim() === target.toLowerCase().trim();
@@ -119,7 +120,24 @@ export default function TicketsPage() {
   const { isPipelineCollapsed, togglePipelineSidebar } = useSidebar();
   const { ticketId } = useParams();
   const navigate = useNavigate();
-  
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const roleName = String(role?.name || '').trim();
+  const isStaffUser = isHubcomStaffRole(roleName) && !isClientPortalRole(roleName);
+
+  const [kundenOrgs, setKundenOrgs] = useState<KundenSidebarOrg[]>([]);
+  const selectedOrganizationId = searchParams.get('organizationId') || null;
+
+  const setSelectedOrganizationId = useCallback(
+    (organizationId: string | null) => {
+      const next = new URLSearchParams();
+      if (organizationId) next.set('organizationId', organizationId);
+      const qs = next.toString();
+      navigate(qs ? `/tickets?${qs}` : '/tickets', { replace: true });
+    },
+    [navigate],
+  );
+
   const [isCreateTicketOpen, setIsCreateTicketOpen] = useState(false);
   const { companies: createTicketCompanies, agents: createTicketAgents } = useCreateTicketCatalog();
 
@@ -256,6 +274,33 @@ export default function TicketsPage() {
   const [isKbDrafting, setIsKbDrafting] = useState(false);
   const [kbDraft, setKbDraft] = useState<{ title: string; content: string; tags: string[] } | null>(null);
   const [pendingAgentUpdate, setPendingAgentUpdate] = useState<{ id: string; data: any } | null>(null);
+  useEffect(() => {
+    if (!isStaffUser) {
+      setKundenOrgs([]);
+      return;
+    }
+    let active = true;
+    void (async () => {
+      try {
+        const res = await axios.get('/api/admin/organizations', { withCredentials: true });
+        const orgs = (res.data?.organizations || [])
+          .filter((o: any) => o.is_active !== false)
+          .map((o: any) => ({
+            id: String(o.id),
+            name: String(o.name || ''),
+            logo_url: o.logo_url || null,
+            openCount: 0,
+          })) as KundenSidebarOrg[];
+        if (active) setKundenOrgs(orgs);
+      } catch {
+        if (active) setKundenOrgs([]);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [isStaffUser]);
+
   const [filters, setFilters] = useState({
     agent: 'any',
     group: 'any',
@@ -466,11 +511,35 @@ export default function TicketsPage() {
 
   const hoveredTicket = allTickets.find(t => t.id === hoveredTicketId);
 
+  const kundenOrgsWithCounts = useMemo(() => {
+    return kundenOrgs.map((org) => {
+      const openCount = allTickets.filter((t) => {
+        const oid = String(t.organizationId || t.organization_id || '').trim();
+        if (oid !== org.id) return false;
+        const status = String(t.status || '').toLowerCase();
+        return status !== 'resolved' && status !== 'closed' && status !== 'deleted' && status !== 'trash' && status !== 'spam' && status !== 'merged';
+      }).length;
+      return { ...org, openCount };
+    });
+  }, [kundenOrgs, allTickets]);
+
+  const selectedKundenName = useMemo(() => {
+    if (!selectedOrganizationId) return null;
+    return kundenOrgs.find((o) => o.id === selectedOrganizationId)?.name || null;
+  }, [kundenOrgs, selectedOrganizationId]);
+
   // Compute final tickets after applying the top sub-status filter, search query, and advanced filters drawer
   const finalRenderedTickets = useMemo(() => {
     if (!user) return [];
     
     let result = filterTicketsByTopStatus([...baseSidebarTickets], topStatusFilter);
+
+    if (selectedOrganizationId) {
+      result = result.filter((t) => {
+        const oid = String(t.organizationId || t.organization_id || '').trim();
+        return oid === selectedOrganizationId;
+      });
+    }
 
     // Live search filtering
     if (searchQuery.trim()) {
@@ -618,7 +687,7 @@ export default function TicketsPage() {
     });
 
     return result;
-  }, [baseSidebarTickets, topStatusFilter, searchQuery, filters, user, listSort, allTickets]);
+  }, [baseSidebarTickets, topStatusFilter, searchQuery, filters, user, listSort, allTickets, selectedOrganizationId]);
 
   const getFilteredTickets = () => {
     return finalRenderedTickets;
@@ -1586,6 +1655,9 @@ export default function TicketsPage() {
         onOpenManageViews={() => setIsManageViewsOpen(true)}
         selectedTicketId={selectedTicketId}
         isMobileSidebarOpen={isMobileSidebarOpen}
+        kundenOrgs={isStaffUser ? kundenOrgsWithCounts : undefined}
+        selectedOrganizationId={selectedOrganizationId}
+        onSelectOrganization={isStaffUser ? setSelectedOrganizationId : undefined}
         footer={
           moduleConfig.polyglotEnabled && activePolyglotLanguages.length > 0 ? (
             <DropdownMenu>
@@ -1653,6 +1725,20 @@ export default function TicketsPage() {
         "flex-1 min-w-0 min-h-0 h-full flex flex-col overflow-hidden bg-slate-50 text-foreground",
         isMobileSidebarOpen ? "hidden md:flex" : "flex"
       )}>
+        {isStaffUser && selectedOrganizationId && selectedKundenName && !selectedTicketId && !isCreateTicketOpen ? (
+          <div className="shrink-0 px-4 md:px-6 pt-3 bg-slate-50">
+            <button
+              type="button"
+              onClick={() => setSelectedOrganizationId(null)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              <span>
+                {t('tickets.filter.kundePill', 'Kunde')}: {selectedKundenName}
+              </span>
+              <X className="w-3.5 h-3.5 text-slate-400" />
+            </button>
+          </div>
+        ) : null}
         {isCreateTicketOpen ? (
           <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#F8F9FB] overflow-hidden">
             <div className="px-4 md:px-6 pt-4 md:pt-5 pb-3 border-b border-slate-100 bg-white shrink-0">

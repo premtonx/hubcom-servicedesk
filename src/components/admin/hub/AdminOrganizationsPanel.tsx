@@ -6,6 +6,8 @@ import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { Label } from '../../ui/label';
 import { useTranslation } from '../../../lib/context/I18nContext';
+import { OrgPortalBrandingCard } from '../../client-portal/OrgPortalBrandingCard';
+import { organizationInitials } from '../../../lib/client-portal/org-branding';
 
 interface OrganizationRow {
   id: string;
@@ -13,6 +15,8 @@ interface OrganizationRow {
   slug: string;
   domain: string | null;
   is_active: boolean;
+  logo_url?: string | null;
+  portal_title?: string | null;
 }
 
 export function AdminOrganizationsPanel() {
@@ -24,6 +28,7 @@ export function AdminOrganizationsPanel() {
   const [slug, setSlug] = useState('');
   const [domain, setDomain] = useState('');
   const [inviteOrgId, setInviteOrgId] = useState<string | null>(null);
+  const [brandingOrgId, setBrandingOrgId] = useState<string | null>(null);
   const [inviteName, setInviteName] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [lastTempPassword, setLastTempPassword] = useState<string | null>(null);
@@ -176,7 +181,22 @@ export function AdminOrganizationsPanel() {
             ) : (
               organizations.map((org) => (
                 <tr key={org.id} className="border-t border-slate-100">
-                  <td className="px-4 py-3 font-semibold text-slate-800">{org.name}</td>
+                  <td className="px-4 py-3 font-semibold text-slate-800">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {org.logo_url ? (
+                        <img
+                          src={org.logo_url}
+                          alt=""
+                          className="w-7 h-7 rounded-lg object-contain border border-slate-100 bg-white shrink-0"
+                        />
+                      ) : (
+                        <span className="w-7 h-7 rounded-lg bg-slate-900 text-white text-[10px] font-black flex items-center justify-center shrink-0">
+                          {organizationInitials(org.name)}
+                        </span>
+                      )}
+                      <span className="truncate">{org.name}</span>
+                    </div>
+                  </td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-500">{org.slug}</td>
                   <td className="px-4 py-3 text-slate-600">{org.domain || '—'}</td>
                   <td className="px-4 py-3">
@@ -191,19 +211,30 @@ export function AdminOrganizationsPanel() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => {
-                        setInviteOrgId(org.id);
-                        setLastTempPassword(null);
-                      }}
-                    >
-                      <UserPlus className="w-3.5 h-3.5" />
-                      {t('admin.orgs.inviteAdmin', 'Invite CLIENT_ADMIN')}
-                    </Button>
+                    <div className="inline-flex flex-wrap gap-2 justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={() => setBrandingOrgId(org.id)}
+                      >
+                        {t('admin.orgs.branding', 'Branding')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={() => {
+                          setInviteOrgId(org.id);
+                          setLastTempPassword(null);
+                        }}
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        {t('admin.orgs.inviteAdmin', 'Invite CLIENT_ADMIN')}
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))
@@ -211,6 +242,33 @@ export function AdminOrganizationsPanel() {
           </tbody>
         </table>
       </div>
+
+      {brandingOrgId ? (
+        <div className="space-y-3">
+          {(() => {
+            const org = organizations.find((o) => o.id === brandingOrgId);
+            if (!org) return null;
+            return (
+              <OrgPortalBrandingCard
+                organizationName={org.name}
+                logoUrl={org.logo_url || null}
+                portalTitle={org.portal_title || null}
+                onSave={async (payload) => {
+                  await axios.put(
+                    `/api/admin/organizations/${encodeURIComponent(org.id)}/branding`,
+                    payload,
+                    { withCredentials: true },
+                  );
+                  await load();
+                }}
+              />
+            );
+          })()}
+          <Button type="button" variant="outline" size="sm" onClick={() => setBrandingOrgId(null)}>
+            {t('common.close', 'Close')}
+          </Button>
+        </div>
+      ) : null}
 
       {inviteOrgId ? (
         <div className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3">

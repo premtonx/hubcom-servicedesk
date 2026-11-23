@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   Ticket,
@@ -7,11 +8,15 @@ import {
   LogOut,
   Building2,
 } from 'lucide-react';
+import axios from 'axios';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
 import { logout } from '../../lib/hooks';
 import { useClientPortalSession } from '../../hooks/useClientPortalSession';
-import { GeistDeskLogo } from '../ui/GeistDeskLogo';
+import {
+  organizationInitials,
+  resolvePortalTitle,
+} from '../../lib/client-portal/org-branding';
 
 const NAV_ALL = [
   { to: '/portal/tickets', label: 'Übersicht / Tickets', icon: Ticket, end: true },
@@ -23,9 +28,37 @@ const NAV_ADMIN_ONLY = [
   { to: '/portal/email', label: 'E-Mail & M365 Integration', icon: Mail, end: false },
 ] as const;
 
+interface OrgBranding {
+  id: string;
+  name: string;
+  logo_url: string | null;
+  portal_title: string | null;
+  resolved_portal_title?: string;
+}
+
 export default function ClientPortalLayout() {
   const { session, isClientAdmin, loading } = useClientPortalSession();
   const navigate = useNavigate();
+  const [org, setOrg] = useState<OrgBranding | null>(null);
+
+  useEffect(() => {
+    if (!session?.organizationId) {
+      setOrg(null);
+      return;
+    }
+    let active = true;
+    void (async () => {
+      try {
+        const res = await axios.get('/api/portal/organization', { withCredentials: true });
+        if (active) setOrg(res.data?.organization || null);
+      } catch {
+        if (active) setOrg(null);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [session?.organizationId]);
 
   if (loading || !session) {
     return (
@@ -40,17 +73,32 @@ export default function ClientPortalLayout() {
     ...(isClientAdmin ? NAV_ADMIN_ONLY : []),
   ];
 
+  const orgName = org?.name || 'Kunde';
+  const portalTitle =
+    org?.resolved_portal_title || resolvePortalTitle(orgName, org?.portal_title);
+  const initials = organizationInitials(orgName);
+
   return (
     <div className="h-screen w-screen flex overflow-hidden bg-[#f7f8fa] text-slate-900">
       <aside className="w-64 shrink-0 border-r border-slate-200 bg-white flex flex-col min-h-0">
         <div className="px-5 pt-6 pb-4 border-b border-slate-100">
-          <div className="flex items-center gap-2.5">
-            <GeistDeskLogo size="xs" showText={false} />
+          <div className="flex items-center gap-2.5 min-w-0">
+            {org?.logo_url ? (
+              <img
+                src={org.logo_url}
+                alt=""
+                className="w-9 h-9 rounded-xl object-contain border border-slate-100 bg-white shrink-0"
+              />
+            ) : (
+              <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center text-[11px] font-black shrink-0">
+                {initials}
+              </div>
+            )}
             <div className="min-w-0">
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
                 Kunden-Portal
               </p>
-              <p className="text-sm font-black truncate">Hubcom ServiceDesk</p>
+              <p className="text-sm font-black truncate">{portalTitle}</p>
             </div>
           </div>
         </div>
@@ -98,11 +146,14 @@ export default function ClientPortalLayout() {
             <LogOut className="w-3.5 h-3.5" />
             Abmelden
           </Button>
+          <p className="text-[10px] text-center text-slate-400 font-medium tracking-wide">
+            Powered by Hubcom
+          </p>
         </div>
       </aside>
 
       <main className="flex-1 min-w-0 min-h-0 overflow-y-auto overflow-x-hidden">
-        <Outlet />
+        <Outlet context={{ organization: org, setOrganization: setOrg }} />
       </main>
     </div>
   );
