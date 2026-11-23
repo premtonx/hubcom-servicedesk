@@ -5,6 +5,7 @@
 import axios from 'axios';
 import { extractEmailAddress } from '../../global-blacklist.js';
 import { plainTextToEmailHtml } from '../../email-plain-html.js';
+import { prepareOutboundEmailHtml } from '../../email-html-prepare.js';
 import type {
   EmailChannelConfig,
   EmailIngestionDriver,
@@ -239,10 +240,13 @@ export class MicrosoftGraphDriver implements EmailIngestionDriver {
         };
       }
 
-      const contentType = params.contentType || 'HTML';
+      // Always send HTML so Quill / composer markup and plain-text newlines
+      // both render correctly (plain text is converted; HTML is not escaped).
+      const contentType: 'HTML' | 'Text' =
+        params.contentType === 'Text' ? 'Text' : 'HTML';
       const content =
         contentType === 'HTML'
-          ? plainTextToEmailHtml(String(params.body || ''))
+          ? prepareOutboundEmailHtml(String(params.body || ''))
           : String(params.body || '');
 
       await axios.post(

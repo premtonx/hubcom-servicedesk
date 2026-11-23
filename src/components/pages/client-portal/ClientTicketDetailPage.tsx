@@ -13,6 +13,7 @@ import {
   type PortalTicketAttachment,
 } from '../../../services/clientPortalApi';
 import type { Ticket, TicketStatus } from '../../../types';
+import { sanitizeTimelineHtml } from '../../../lib/sanitize-html';
 
 type TimelineItem = {
   id: string;
@@ -242,7 +243,9 @@ export default function ClientTicketDetailPage() {
               </div>
               <div
                 className="prose prose-sm max-w-none text-slate-700"
-                dangerouslySetInnerHTML={{ __html: item.content || '' }}
+                dangerouslySetInnerHTML={{
+                  __html: sanitizeTimelineHtml(item.content || ''),
+                }}
               />
               {item.attachments?.length ? (
                 <ul className="mt-3 space-y-1">

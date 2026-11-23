@@ -1,5 +1,9 @@
 import DOMPurify from 'dompurify';
 import { unwrapLegacyPreHtml } from './email-plain-html';
+import {
+  cleanEmailHtmlForStorage,
+  looksLikeHtml as looksLikeHtmlShared,
+} from './email-html-prepare';
 
 const LINKIFY_ALLOWED_TAGS = ['a', 'br', 'p', 'strong', 'em', 'ul', 'ol', 'li', 'code', 'pre', 'h1', 'h2', 'h3', 'blockquote', 'div', 'span', 'br'];
 
@@ -58,7 +62,7 @@ export function decodeHtmlEntities(input: string): string {
 }
 
 function looksLikeHtml(value: string): boolean {
-  return /<\/?[a-z][\s\S]*>/i.test(value);
+  return looksLikeHtmlShared(value);
 }
 
 /**
@@ -111,6 +115,7 @@ export function sanitizeTimelineHtml(raw: string): string {
   // Normalize non-breaking spaces to regular spaces for readable thread copy.
   content = content.replace(/&nbsp;/gi, ' ').replace(/\u00a0/g, ' ');
   content = unwrapLegacyPreHtml(content);
+  content = cleanEmailHtmlForStorage(content);
 
   if (looksLikeHtml(content)) {
     return DOMPurify.sanitize(content, {

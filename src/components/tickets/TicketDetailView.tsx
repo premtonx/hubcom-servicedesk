@@ -38,6 +38,7 @@ import type { AIAdapter } from '../../lib/ai/provider-adapter';
 import type { LegalValidationResult } from '../../services/legalService';
 import type { AiComposerMeta } from '../ticket-details/EmailComposer';
 import type { SuggestedLink } from '../../services/neuralLinkService';
+import { sanitizeTimelineHtml } from '../../lib/sanitize-html';
 
 export interface TicketDetailViewProps {
   selectedTicket: TicketType;
@@ -464,7 +465,12 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                                                 {comment.createdAt ? new Date(comment.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recent'}
                                               </span>
                                             </div>
-                                            <p className="text-[11px] text-amber-950 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">{comment.content}</p>
+                                            <div
+                                              className="text-[11px] text-amber-950 dark:text-slate-200 leading-relaxed prose prose-sm max-w-none break-words"
+                                              dangerouslySetInnerHTML={{
+                                                __html: sanitizeTimelineHtml(String(comment.content || '')),
+                                              }}
+                                            />
                                           </div>
                                         </div>
                                       ))}

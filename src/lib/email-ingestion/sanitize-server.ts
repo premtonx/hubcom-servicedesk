@@ -4,6 +4,7 @@
  */
 
 import * as cheerio from 'cheerio';
+import { cleanEmailHtmlForStorage } from '../email-html-prepare.js';
 
 const ALLOWED_TAGS = new Set([
   'a', 'b', 'strong', 'i', 'em', 'u', 's', 'br', 'p', 'div', 'span',
@@ -28,7 +29,8 @@ function isSafeUrl(value: string): boolean {
 export function sanitizeInboundHtml(html: string): string {
   if (!html) return '';
   try {
-    const $ = cheerio.load(String(html), { xml: false });
+    const cleaned = cleanEmailHtmlForStorage(String(html));
+    const $ = cheerio.load(cleaned, { xml: false });
     $('script, style, iframe, object, embed, link, meta, form, input, button, textarea, select, svg, math, base').remove();
 
     $('*').each((_, el) => {

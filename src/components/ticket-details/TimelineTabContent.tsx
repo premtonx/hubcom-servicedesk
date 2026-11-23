@@ -11,6 +11,8 @@ import { Card, CardContent } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { safeString } from '../../lib/utils';
+import { htmlToPlainText, sanitizeTimelineHtml } from '../../lib/sanitize-html';
+import { looksLikeHtml } from '../../lib/email-html-prepare';
 
 interface TimelineTabContentProps {
   ticket: TicketType;
@@ -116,7 +118,16 @@ export function TimelineTabContent({
                       {ev.type}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground/90 pl-1 leading-relaxed">{ev.desc}</p>
+                  {looksLikeHtml(ev.desc) ? (
+                    <div
+                      className="text-xs text-muted-foreground/90 pl-1 leading-relaxed prose prose-sm max-w-none break-words"
+                      dangerouslySetInnerHTML={{ __html: sanitizeTimelineHtml(ev.desc) }}
+                    />
+                  ) : (
+                    <p className="text-xs text-muted-foreground/90 pl-1 leading-relaxed whitespace-pre-wrap">
+                      {htmlToPlainText(ev.desc) || ev.desc}
+                    </p>
+                  )}
                   <p className="text-[9.5px] text-muted-foreground font-mono pl-1">{ev.time.toLocaleString()}</p>
                 </div>
               </div>

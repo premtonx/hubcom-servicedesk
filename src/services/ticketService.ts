@@ -20,6 +20,12 @@ import { groupService } from './groupService';
 import { notificationService } from './notificationService';
 import { autopilotService } from './autopilotService';
 import axios from 'axios';
+import {
+  cleanEmailHtmlForStorage,
+  formatMergeSourceBodyHtml,
+  looksLikeHtml,
+} from '../lib/email-html-prepare';
+import { escapeHtmlText } from '../lib/email-plain-html';
 
 const TICKETS_COLLECTION = 'tickets';
 
@@ -462,10 +468,29 @@ export const ticketService = {
         const messages = messagesSnap.docs.map(d => d.data() as Message);
 
         for (const msg of messages) {
-          await ticketService.sendMessage(destinationId, {
-            ...msg,
-            id: undefined,
-            content: `[Merged from #${sourceId.slice(-5)}]: ${msg.content}`
+          const cleanedContent = looksLikeHtml(String(msg.content || ''))
+            ? cleanEmailHtmlForStorage(String(msg.content || ''))
+            : String(msg.content || '');
+          const cleanedHtml = msg.html_content
+            ? cleanEmailHtmlForStorage(String(msg.html_content))
+            : looksLikeHtml(cleanedContent)
+              ? cleanedContent
+              : undefined;
+
+          // Copy onto the destination thread without re-sending outbound email
+          // (agent sendMessage → sendReply would re-mail the customer).
+          const path = `${TICKETS_COLLECTION}/${destinationId}/messages`;
+          await addDoc(collection(db, path), {
+            ticketId: destinationId,
+            senderId: msg.senderId,
+            senderType: msg.senderType,
+            senderName: msg.senderName,
+            content: `[Merged from #${sourceId.slice(-5)}]: ${cleanedContent}`,
+            html_content: cleanedHtml
+              ? `<p><em>[Merged from #${sourceId.slice(-5)}]</em></p>${cleanedHtml}`
+              : undefined,
+            attachments: Array.isArray(msg.attachments) ? msg.attachments : undefined,
+            createdAt: serverTimestamp(),
           });
         }
       } catch (messageError) {
@@ -475,9 +500,11 @@ export const ticketService = {
       if (sourceTicket?.agentComments && sourceTicket.agentComments.length > 0) {
         for (const comment of sourceTicket.agentComments) {
           try {
+            const raw = String(comment.content || '');
+            const cleaned = looksLikeHtml(raw) ? cleanEmailHtmlForStorage(raw) : raw;
             await ticketService.addAgentComment(destinationId, {
               ...comment,
-              content: `[Merged from #${sourceId.slice(-5)}]: ${comment.content}`
+              content: `[Merged from #${sourceId.slice(-5)}]: ${cleaned}`,
             });
           } catch (commentError) {
             console.warn('Merge: could not copy agent comment', commentError);
@@ -488,19 +515,30 @@ export const ticketService = {
       const stamp = new Date().toLocaleString();
       const sourceRef = `#${sourceId.slice(-5).toUpperCase()}`;
       const destRef = `#${destinationId.slice(-5).toUpperCase()}`;
+      const bodyHtml = formatMergeSourceBodyHtml(
+        String(sourceTicket?.description || sourceTicket?.html_content || ''),
+        sourceTicket?.subject,
+      );
+      const notesRaw = String(sourceTicket?.internalNotes || '').trim();
+      const notesHtml = notesRaw
+        ? looksLikeHtml(notesRaw)
+          ? cleanEmailHtmlForStorage(notesRaw)
+          : `<p>${escapeHtmlText(notesRaw).replace(/\n/g, '<br />')}</p>`
+        : '';
       const timelineBlock = [
-        `[Zusammengeführt von ${sourceRef} am ${stamp}]`,
-        sourceTicket?.subject ? `Betreff: ${sourceTicket.subject}` : '',
-        sourceTicket?.description ? String(sourceTicket.description) : '',
-        sourceTicket?.internalNotes ? `Notizen:\n${sourceTicket.internalNotes}` : '',
-      ].filter(Boolean).join('\n\n');
+        `<p><strong>[Zusammengeführt von ${escapeHtmlText(sourceRef)} am ${escapeHtmlText(stamp)}]</strong></p>`,
+        bodyHtml,
+        notesHtml ? `<p><strong>Notizen:</strong></p>${notesHtml}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
 
       const destNotes = [destTicket?.internalNotes, timelineBlock]
         .filter(Boolean)
         .join('\n\n');
       const sourceNotes = [
         sourceTicket?.internalNotes,
-        `[Zusammengeführt]: Dieses Ticket wurde am ${stamp} in ${destRef} überführt.`,
+        `<p><strong>[Zusammengeführt]</strong>: Dieses Ticket wurde am ${escapeHtmlText(stamp)} in ${escapeHtmlText(destRef)} überführt.</p>`,
       ].filter(Boolean).join('\n\n');
 
       const destLinked = Array.from(
