@@ -74,7 +74,7 @@ export function startTimeExportScheduler(): void {
   if (started) return;
   started = true;
 
-  void recoverOrphanedJobs([TIME_EXPORT_JOB_TYPE], 15).catch(() => undefined);
+  void recoverOrphanedJobs('time-export', 15).catch(() => undefined);
 
   // Drain alle 30s
   drainInterval = setInterval(() => {

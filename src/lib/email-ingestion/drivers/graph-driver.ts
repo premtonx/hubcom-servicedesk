@@ -62,14 +62,55 @@ export class MicrosoftGraphDriver implements EmailIngestionDriver {
       const token = await acquireGraphToken(this.channel);
       const mailbox = this.mailbox();
       if (!mailbox) throw new Error('Target support email (mailbox) is required.');
+      const headers = { Authorization: `Bearer ${token}` };
+
+      // 1) Mail.Read — inbox reachable
       await axios.get(
         `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailbox)}/mailFolders/inbox`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          timeout: 20_000,
-        },
+        { headers, timeout: 20_000 },
       );
-      return { ok: true, message: `Microsoft Graph handshake OK for ${mailbox}` };
+
+      // 2) Mail.ReadWrite — create + delete a draft (proves write access for outbound prep)
+      let draftOk = false;
+      try {
+        const draftRes = await axios.post(
+          `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailbox)}/messages`,
+          {
+            subject: '[GeistDesk] connection test — safe to delete',
+            body: { contentType: 'Text', content: 'Automated Graph channel test.' },
+            toRecipients: [{ emailAddress: { address: mailbox } }],
+          },
+          { headers: { ...headers, 'Content-Type': 'application/json' }, timeout: 20_000 },
+        );
+        const draftId = draftRes.data?.id;
+        if (draftId) {
+          await axios
+            .delete(
+              `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(draftId)}`,
+              { headers, timeout: 15_000 },
+            )
+            .catch(() => undefined);
+          draftOk = true;
+        }
+      } catch {
+        draftOk = false;
+      }
+
+      if (!draftOk) {
+        return {
+          ok: false,
+          message:
+            `Inbox OK for ${mailbox}, but creating a draft failed. Grant application permission ` +
+            `Mail.ReadWrite (+ admin consent) so replies can be prepared/sent.`,
+        };
+      }
+
+      return {
+        ok: true,
+        message:
+          `Microsoft Graph handshake OK for ${mailbox} (Mail.Read + Mail.ReadWrite). ` +
+          `Ensure Mail.Send is also granted with admin consent for ticket replies.`,
+      };
     } catch (err: any) {
       const detail =
         err?.response?.data?.error?.message ||
@@ -137,6 +178,9 @@ export class MicrosoftGraphDriver implements EmailIngestionDriver {
         }
       }
 
+      const orgId =
+        this.channel.organizationId || this.channel.organization_id || undefined;
+
       normalized.push({
         sender,
         from_email: sender,
@@ -149,6 +193,8 @@ export class MicrosoftGraphDriver implements EmailIngestionDriver {
         externalMessageId: msg.internetMessageId || msg.id,
         mailbox,
         source: 'microsoft_graph',
+        organizationId: orgId || undefined,
+        channelId: this.channel.id,
       });
 
       // Mark as read so subsequent polls skip it.
@@ -167,5 +213,64 @@ export class MicrosoftGraphDriver implements EmailIngestionDriver {
     }
 
     return normalized;
+  }
+
+  /**
+   * Send an outbound message as the configured mailbox via application
+   * permissions (`Mail.Send`). Used by ticket agent replies (Send As).
+   */
+  async sendMail(params: {
+    to: string;
+    subject: string;
+    body: string;
+    contentType?: 'HTML' | 'Text';
+  }): Promise<{ ok: true } | { ok: false; message: string }> {
+    try {
+      const to = String(params.to || '').trim();
+      if (!to || !to.includes('@')) {
+        return { ok: false, message: 'Outbound recipient email is missing or invalid.' };
+      }
+      const token = await acquireGraphToken(this.channel);
+      const mailbox = this.mailbox();
+      if (!mailbox) {
+        return {
+          ok: false,
+          message: 'Target support email (mailbox) is required for Graph sendMail.',
+        };
+      }
+
+      const contentType = params.contentType || 'HTML';
+      const content =
+        contentType === 'HTML'
+          ? plainTextToEmailHtml(String(params.body || ''))
+          : String(params.body || '');
+
+      await axios.post(
+        `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailbox)}/sendMail`,
+        {
+          message: {
+            subject: String(params.subject || '(no subject)').slice(0, 998),
+            body: { contentType, content },
+            toRecipients: [{ emailAddress: { address: to } }],
+          },
+          saveToSentItems: true,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30_000,
+        },
+      );
+      return { ok: true };
+    } catch (err: any) {
+      const detail =
+        err?.response?.data?.error?.message ||
+        err?.response?.data?.error_description ||
+        err?.message ||
+        'Graph sendMail failed';
+      return { ok: false, message: String(detail) };
+    }
   }
 }

@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { authenticate, requireRole } from '../middleware/authMiddleware.js';
+import { routeParam } from '../lib/route-params.js';
 import { buildTimeEntriesBuffer } from '../lib/time-tracking/excel-export.js';
 import { syncTimeEntriesToGraph } from '../lib/time-tracking/graph-sync.js';
 import { enqueueJob } from '../lib/job-queue.js';
@@ -9,6 +10,7 @@ import {
   redactTimeTrackingSettings,
   saveTimeTrackingSettings,
 } from '../lib/time-tracking/settings.js';
+import type { TimeTrackingGraphConfig, TimeTrackingSettings } from '../lib/time-tracking/types.js';
 import {
   createTimeEntry,
   deleteTimeEntry,
@@ -97,7 +99,11 @@ router.put(
     if (!parsed.success) {
       return res.status(400).json({ error: 'Ungültige Einstellungen.', details: parsed.error.flatten() });
     }
-    const saved = await saveTimeTrackingSettings(parsed.data);
+    const saved = await saveTimeTrackingSettings(
+      parsed.data as Partial<TimeTrackingSettings> & {
+        graph?: Partial<TimeTrackingGraphConfig>;
+      },
+    );
     res.json({ settings: redactTimeTrackingSettings(saved) });
   },
 );
@@ -213,7 +219,7 @@ router.patch('/:id', authenticate, async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Ungültige Eingabe.', details: parsed.error.flatten() });
   }
   try {
-    const entry = await updateTimeEntry(req.params.id, parsed.data);
+    const entry = await updateTimeEntry(routeParam(req.params.id), parsed.data);
     res.json({ entry });
   } catch (err: any) {
     res.status(404).json({ error: err?.message || 'Aktualisierung fehlgeschlagen.' });
@@ -222,11 +228,12 @@ router.patch('/:id', authenticate, async (req: Request, res: Response) => {
 
 /** DELETE /api/time-entries/:id */
 router.delete('/:id', authenticate, async (req: Request, res: Response) => {
-  const existing = await getTimeEntry(req.params.id);
+  const id = routeParam(req.params.id);
+  const existing = await getTimeEntry(id);
   if (!existing) {
     return res.status(404).json({ error: 'Zeiteintrag nicht gefunden.' });
   }
-  await deleteTimeEntry(req.params.id);
+  await deleteTimeEntry(id);
   res.json({ ok: true });
 });
 

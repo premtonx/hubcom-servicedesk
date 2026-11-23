@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { authenticate, requireRole } from '../middleware/authMiddleware.js';
+import { routeParam } from '../lib/route-params.js';
 import {
   createTicketCategory,
   deleteTicketCategory,
@@ -31,7 +32,7 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
 
 /** GET /api/ticket-categories/:id */
 router.get('/:id', authenticate, async (req: Request, res: Response) => {
-  const category = await getTicketCategory(req.params.id);
+  const category = await getTicketCategory(routeParam(req.params.id));
   if (!category) return res.status(404).json({ error: 'Kategorie nicht gefunden.' });
   res.json({ category });
 });
@@ -66,7 +67,7 @@ router.patch(
       return res.status(400).json({ error: 'Ungültige Eingabe.', details: parsed.error.flatten() });
     }
     try {
-      const category = await updateTicketCategory(req.params.id, parsed.data);
+      const category = await updateTicketCategory(routeParam(req.params.id), parsed.data);
       res.json({ category });
     } catch (err: any) {
       res.status(404).json({ error: err?.message || 'Aktualisierung fehlgeschlagen.' });
@@ -80,9 +81,10 @@ router.delete(
   authenticate,
   requireRole(['SYSTEM_ADMIN']),
   async (req: Request, res: Response) => {
-    const existing = await getTicketCategory(req.params.id);
+    const id = routeParam(req.params.id);
+    const existing = await getTicketCategory(id);
     if (!existing) return res.status(404).json({ error: 'Kategorie nicht gefunden.' });
-    await deleteTicketCategory(req.params.id);
+    await deleteTicketCategory(id);
     res.json({ ok: true });
   },
 );

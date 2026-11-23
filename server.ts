@@ -29,6 +29,25 @@ import { generateAzureAIAnswer } from "./src/server/azure-ai-orchestrator.js";
 import { authenticate, requireRole } from "./src/middleware/authMiddleware";
 import { requestLoggingMiddleware } from "./src/middleware/request-logging.js";
 import adminRoutes from "./src/routes/adminRoutes.js";
+import organizationAdminRoutes from "./src/routes/organizationAdminRoutes.js";
+import ticketParticipantRoutes from "./src/routes/ticketParticipantRoutes.js";
+import clientPortalRoutes from "./src/routes/clientPortalRoutes.js";
+import clientPortalTeamRoutes from "./src/routes/clientPortalTeamRoutes.js";
+import clientPortalEmailRoutes from "./src/routes/clientPortalEmailRoutes.js";
+import {
+  enforceClientDbTicketAccess,
+  parseTicketMessagesCollection,
+  postFilterClientDbResult,
+} from "./src/lib/client-portal/db-ticket-guard.js";
+import {
+  clientCanMutateTicket,
+  clientCanViewTicket,
+  filterMessagesForClient,
+  resolveOrganizationIdFromUser,
+  sanitizeTicketForClient,
+} from "./src/lib/client-portal/ticket-visibility.js";
+import { isClientPortalRole } from "./src/lib/client-portal/roles.js";
+import { forbidClientOnHubcomTicketTool } from "./src/lib/client-portal/assert-ticket-access.js";
 import aiRoutes from "./src/routes/aiRoutes.js";
 import moduleConfigRoutes from "./src/routes/moduleConfigRoutes.js";
 import vaultRoutes from "./src/routes/vaultRoutes.js";
@@ -162,7 +181,18 @@ function verifyInboundMailWebhook(req: any): boolean {
 // Fields that must never be returned to clients for the users collection.
 const USER_SENSITIVE_FIELDS = ["password", "passwordHash", "activationToken"];
 // Fields a non-admin must not be able to set on a user record (anti-escalation).
-const USER_PROTECTED_FIELDS = ["role", "is_admin", "roleId", "password", "passwordHash", "isDeactivated", "can_create_tickets", "can_view_knowledgebase"];
+const USER_PROTECTED_FIELDS = [
+  "role",
+  "is_admin",
+  "roleId",
+  "password",
+  "passwordHash",
+  "isDeactivated",
+  "can_create_tickets",
+  "can_view_knowledgebase",
+  "organizationId",
+  "organization_id",
+];
 
 function sanitizeUserDoc(doc: any): any {
   if (!doc || typeof doc !== "object") return doc;
@@ -375,7 +405,25 @@ async function startServer() {
   });
 
   app.get("/api/auth/session", authenticate, async (req: any, res) => {
-    return res.json({ user: sanitizeUserDoc(req.user?.dbRecord || { id: req.user.id, email: req.user.email, name: req.user.name, role: req.user.role }) });
+    const base = sanitizeUserDoc(
+      req.user?.dbRecord || {
+        id: req.user.id,
+        email: req.user.email,
+        name: req.user.name,
+        role: req.user.role,
+      },
+    );
+    // Prefer the middleware-computed role + organizationId (session-derived).
+    return res.json({
+      user: {
+        ...base,
+        id: req.user?.id || base?.id,
+        role: req.user?.role || base?.role,
+        is_admin: req.user?.is_admin === true,
+        organizationId: req.user?.organizationId ?? base?.organizationId ?? null,
+        organization_id: req.user?.organizationId ?? base?.organization_id ?? null,
+      },
+    });
   });
 
   // Generic database API router for standard PostgreSQL / fallback execution
@@ -400,6 +448,7 @@ async function startServer() {
       userIsAdmin: req.user?.role === "SYSTEM_ADMIN",
       userId: req.user?.id,
       docId: id,
+      userRole: req.user?.role,
     });
     if (access.allowed === false) {
       return res.status(access.status).json({ error: access.error });
@@ -412,6 +461,37 @@ async function startServer() {
     const uid = req.user?.id;
     const tenantId = resolveTenantFromRequest(req);
     const tenantScoped = TENANT_SCOPED_COLLECTIONS.has(collection);
+
+    // MSP client portal: strip spoofed org fields and stamp session organizationId on creates.
+    if (req.user && isClientPortalRole(req.user.role)) {
+      const clientGuard = await enforceClientDbTicketAccess({
+        user: req.user,
+        collection,
+        action,
+        id,
+        data: data && typeof data === "object" ? data : null,
+      });
+      if (clientGuard.ok === false) {
+        return res.status(clientGuard.status).json({ error: clientGuard.error });
+      }
+      if (clientGuard.data) data = clientGuard.data;
+
+      // Message reads require parent ticket visibility.
+      const msgScope = parseTicketMessagesCollection(collection);
+      if (msgScope) {
+        const parent = await getDocDirect("tickets", msgScope.ticketId);
+        if (!parent) return res.status(404).json({ error: "Ticket not found." });
+        const canView = await clientCanViewTicket(
+          {
+            id: String(req.user.id),
+            role: String(req.user.role),
+            organizationId: resolveOrganizationIdFromUser(req.user),
+          },
+          { ...parent, id: msgScope.ticketId },
+        );
+        if (!canView) return res.status(404).json({ error: "Ticket not found." });
+      }
+    }
 
     // 2. Enforce Administrative Access Controls (legacy guard; policy module is authoritative)
     const adminCollections = ['roles', 'module_config', 'audits', 'admins', 'groups', 'audit_logs', 'compliance_logs'];
@@ -549,6 +629,17 @@ async function startServer() {
         if (tenantScoped && doc && !documentBelongsToTenant(doc, tenantId)) {
           return res.status(404).json({ error: "Document not found" });
         }
+        if (req.user && isClientPortalRole(req.user.role)) {
+          const filtered = await postFilterClientDbResult({
+            user: req.user,
+            collection,
+            action,
+            doc,
+          });
+          if (filtered.denied) return res.status(404).json({ error: "Document not found" });
+          const out = filtered.doc;
+          return res.json({ result: collection === "users" ? sanitizeUserDoc(out) : out });
+        }
         return res.json({ result: collection === "users" ? sanitizeUserDoc(doc) : doc });
       }
       if (action === "get_docs") {
@@ -561,6 +652,15 @@ async function startServer() {
         });
         if (tenantScoped) {
           docs = (docs || []).filter((d: any) => documentBelongsToTenant(d, tenantId));
+        }
+        if (req.user && isClientPortalRole(req.user.role)) {
+          const filtered = await postFilterClientDbResult({
+            user: req.user,
+            collection,
+            action,
+            docs: docs || [],
+          });
+          docs = filtered.docs || [];
         }
         const safe = collection === "users" ? (docs || []).map(sanitizeUserDoc) : docs;
         return res.json({ result: safe });
@@ -577,31 +677,53 @@ async function startServer() {
         });
         return res.json({ result: resObj });
       }
-      if (action === "update_doc") {
+      if (action === "update_doc" || action === "set_doc") {
         if (tenantScoped) {
           const existing = await getDocDirect(collection, id, { tenantId });
           if (!existing) {
             return res.status(404).json({ error: "Document not found" });
           }
-        }
-        const payload = tenantScoped ? stampTenantId(data || {}, tenantId) : data;
-        await updateDocDirect(collection, id, payload, {
-          tenantId: tenantScoped ? tenantId : undefined,
-        });
-        handleKnowledgeDocumentMutation({ collection, action, id, data: payload, tenantId });
-        return res.json({ result: { success: true } });
-      }
-      if (action === "set_doc") {
-        if (tenantScoped) {
-          const existing = await getDocDirect(collection, id, { tenantId });
-          if (existing && !documentBelongsToTenant(existing, tenantId)) {
+          if (action === "set_doc" && !documentBelongsToTenant(existing, tenantId)) {
             return res.status(404).json({ error: "Document not found" });
           }
         }
+        // Client portal: never mutate tickets/messages outside visibility scope.
+        if (req.user && isClientPortalRole(req.user.role) && collection === "tickets") {
+          const existingTicket = await getDocDirect("tickets", id);
+          if (!existingTicket) {
+            return res.status(404).json({ error: "Document not found" });
+          }
+          const canMutate = await clientCanMutateTicket(
+            {
+              id: String(req.user.id),
+              role: String(req.user.role),
+              organizationId: resolveOrganizationIdFromUser(req.user),
+            },
+            { ...existingTicket, id },
+          );
+          if (!canMutate) {
+            return res.status(404).json({ error: "Document not found" });
+          }
+        }
+        if (
+          req.user &&
+          isClientPortalRole(req.user.role) &&
+          parseTicketMessagesCollection(collection)
+        ) {
+          return res.status(403).json({
+            error: "Forbidden: Client portal accounts cannot rewrite message history.",
+          });
+        }
         const payload = tenantScoped ? stampTenantId(data || {}, tenantId) : data;
-        await setDocDirect(collection, id, payload, {
-          tenantId: tenantScoped ? tenantId : undefined,
-        });
+        if (action === "update_doc") {
+          await updateDocDirect(collection, id, payload, {
+            tenantId: tenantScoped ? tenantId : undefined,
+          });
+        } else {
+          await setDocDirect(collection, id, payload, {
+            tenantId: tenantScoped ? tenantId : undefined,
+          });
+        }
         handleKnowledgeDocumentMutation({ collection, action, id, data: payload, tenantId });
         return res.json({ result: { success: true } });
       }
@@ -672,7 +794,11 @@ async function startServer() {
   app.use("/api/admin", userAdminRoutes);
   const { default: microsoftAuthRoutes } = await import("./src/routes/microsoftAuthRoutes.js");
   app.use("/api/auth", microsoftAuthRoutes);
+  app.use("/api/admin/organizations", organizationAdminRoutes);
   app.use("/api/admin", adminRoutes);
+  app.use("/api/portal/team", clientPortalTeamRoutes);
+  app.use("/api/portal/email-channel", clientPortalEmailRoutes);
+  app.use("/api/portal", clientPortalRoutes);
   app.use("/api/admin/import", importRoutes);
   app.use("/api/ai", aiRoutes);
   app.use("/api/kb/articles", kbArticleRoutes);
@@ -764,6 +890,7 @@ async function startServer() {
   app.use("/api/vault", vaultRoutes);
   app.use("/api/credential-vault", credentialVaultRoutes);
   app.use("/api/exchange", exchangeRoutes);
+  app.use("/api/tickets", ticketParticipantRoutes);
   app.use("/api/tickets", ticketReplyRoutes);
   app.use("/api/tickets", ticketSpamRoutes);
   app.use("/api/tickets", ticketRoutes);
@@ -1675,12 +1802,15 @@ async function startServer() {
     res.json({ success: true, settings });
   });
 
-  app.get("/api/tickets/:id", authenticate, async (req, res) => {
+  app.get("/api/tickets/:id", authenticate, async (req: any, res) => {
     const { id } = req.params;
     const forceRefresh = req.query.refresh === 'true';
     const db = getDb();
 
     try {
+      // Hubcom AI analysis — never expose internal diagnosis to client portal roles.
+      if (forbidClientOnHubcomTicketTool(req, res)) return;
+
       const ticketSnap = await db.collection("tickets").doc(id).get();
       if (!ticketSnap.exists) {
         return res.status(404).json({ error: "Ticket not found" });
@@ -1780,16 +1910,31 @@ Respond only with the raw valid JSON payload.`;
     }
   });
 
-  app.get("/api/tickets/:ticketId/export", authenticate, async (req, res) => {
+  app.get("/api/tickets/:ticketId/export", authenticate, async (req: any, res) => {
     const { ticketId } = req.params;
     try {
       const db = getDb();
       const ticketSnap = await db.collection("tickets").doc(ticketId).get();
       if (!ticketSnap.exists) return res.status(404).json({ error: "Ticket not found" });
       
-      const ticket = ticketSnap.data()!;
+      let ticket = { id: ticketId, ...ticketSnap.data()! } as Record<string, unknown>;
+      if (isClientPortalRole(req.user?.role)) {
+        const canView = await clientCanViewTicket(
+          {
+            id: String(req.user.id),
+            role: String(req.user.role),
+            organizationId: resolveOrganizationIdFromUser(req.user),
+          },
+          ticket,
+        );
+        if (!canView) return res.status(404).json({ error: "Ticket not found" });
+        ticket = sanitizeTicketForClient(ticket);
+      }
       const messagesSnap = await db.collection("tickets").doc(ticketId).collection("messages").orderBy("createdAt", "asc").get();
-      const messages = messagesSnap.docs.map(d => d.data());
+      let messages = messagesSnap.docs.map(d => d.data());
+      if (isClientPortalRole(req.user?.role)) {
+        messages = filterMessagesForClient(messages as Record<string, unknown>[]);
+      }
 
       const doc = new jsPDF();
       
@@ -1804,17 +1949,23 @@ Respond only with the raw valid JSON payload.`;
       doc.text(`Generated: ${new Date().toLocaleString()}`, 20, 36);
       doc.line(20, 42, 190, 42);
 
+      const subject = String(ticket.subject || '');
+      const customId = ticket.customId != null ? String(ticket.customId) : 'N/A';
+      const priority = String(ticket.priority || '').toUpperCase();
+      const status = String(ticket.status || '').toUpperCase();
+      const customerName = String(ticket.customerName || '');
+
       doc.setTextColor(0, 0, 0);
       doc.setFontSize(14);
       doc.setFont("helvetica", "bold");
-      doc.text(`Subject: ${ticket.subject}`, 20, 52);
+      doc.text(`Subject: ${subject}`, 20, 52);
       
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      doc.text(`Ticket ID: ${ticket.customId || "N/A"}`, 20, 60);
-      doc.text(`Priority: ${ticket.priority?.toUpperCase()}`, 70, 60);
-      doc.text(`Status: ${ticket.status?.toUpperCase()}`, 110, 60);
-      doc.text(`Customer: ${ticket.customerName}`, 150, 60);
+      doc.text(`Ticket ID: ${customId}`, 20, 60);
+      doc.text(`Priority: ${priority}`, 70, 60);
+      doc.text(`Status: ${status}`, 110, 60);
+      doc.text(`Customer: ${customerName}`, 150, 60);
 
       let y = 75;
       messages.forEach((msg: any) => {
@@ -1933,11 +2084,12 @@ Respond only with the raw valid JSON payload.`;
   app.post("/coverage/recalculate", authenticate, handleRecalculateCoverage);
 
   // Handoff Engine Endpoints
-  app.post("/api/tickets/:ticketId/handoff-summary", authenticate, async (req, res) => {
+  app.post("/api/tickets/:ticketId/handoff-summary", authenticate, async (req: any, res) => {
     const { ticketId } = req.params;
     const db = getDb();
 
     try {
+      if (forbidClientOnHubcomTicketTool(req, res)) return;
       const ticketSnap = await db.collection("tickets").doc(ticketId).get();
       if (!ticketSnap.exists) return res.status(404).json({ error: "Ticket not found" });
       
@@ -1982,6 +2134,7 @@ Respond only with the raw valid JSON payload.`;
     }
 
     try {
+      if (forbidClientOnHubcomTicketTool(req, res)) return;
       await db.collection("tickets").doc(ticketId).collection("messages").add({
         ticketId,
         senderId: req.user?.id,
@@ -1989,6 +2142,9 @@ Respond only with the raw valid JSON payload.`;
         senderName: req.user?.name || req.user?.email || "Agent",
         content,
         isGoldenNote: true,
+        is_internal: true,
+        isInternal: true,
+        visibility: "internal",
         createdAt: admin.firestore.FieldValue.serverTimestamp()
       });
       res.json({ success: true });

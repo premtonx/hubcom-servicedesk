@@ -413,6 +413,18 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         badge: 'Struktur',
         module: 'tickets',
       },
+      {
+        title: 'Client Organizations',
+        description:
+          'MSP-Kunden-Tenants anlegen und den initialen CLIENT_ADMIN für jede Organisation provisionieren.',
+        icon: Building2,
+        path: '/admin?tab=system',
+        color: 'text-indigo-600',
+        bgColor: 'bg-indigo-50',
+        borderColor: 'border-indigo-105',
+        badge: 'MSP Portal',
+        module: 'rbac',
+      },
     ],
   },
 ];
