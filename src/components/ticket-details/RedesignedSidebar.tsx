@@ -46,8 +46,15 @@ import { TICKET_DISPATCH_AGENTS } from '../../lib/ticketDispatchAgents';
 import { useAuth } from '../../lib/hooks';
 import { AccountHealthSmiley, accountHealthAriaLabel } from './AccountHealthSmiley';
 import { DynamicSentimentGlyph } from './DynamicSentimentGlyph';
-import { SELECTABLE_TICKET_STATUSES, isReadonlyTerminalStatus, isSelectableTicketStatus } from '../../lib/ticket-status';
+import { isReadonlyTerminalStatus } from '../../lib/ticket-status';
 import { useTicketCategories } from '../../hooks/useTicketCategories';
+import { useTicketStatuses } from '../../hooks/useTicketStatuses';
+import { useTicketPriorities } from '../../hooks/useTicketPriorities';
+import {
+  TicketStatusChip,
+  TicketPriorityChip,
+  TicketCategoryChip,
+} from '../tickets/TicketTableCells';
 
 const UNASSIGNED_SENTINELS = new Set(['', 'unassigned', 'nicht-zugewiesen', 'nicht zugewiesen']);
 
@@ -94,51 +101,6 @@ function matchDispatchAgentId(
   return assignee.id || '';
 }
 
-function DispatchStatusSelect({
-  id,
-  status,
-  statusLabel,
-  onChange,
-  readOnlyHint,
-}: {
-  id?: string;
-  status: string;
-  statusLabel: (st: string) => string;
-  onChange: (status: string) => void;
-  readOnlyHint: string;
-}) {
-  if (isReadonlyTerminalStatus(status)) {
-    return (
-      <div className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-slate-300 flex items-center justify-between gap-2">
-        <span>{statusLabel(status)}</span>
-        <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground shrink-0">
-          {readOnlyHint}
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <select
-      id={id}
-      className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer dark:text-slate-200 capitalize"
-      value={status}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      {SELECTABLE_TICKET_STATUSES.map((st) => (
-        <option key={st} value={st}>
-          {statusLabel(st)}
-        </option>
-      ))}
-      {!isSelectableTicketStatus(status) ? (
-        <option value={status} disabled>
-          {statusLabel(status)}
-        </option>
-      ) : null}
-    </select>
-  );
-}
-
 interface RedesignedSidebarProps {
   ticket: TicketType;
   contact: Contact | null;
@@ -182,7 +144,10 @@ export function RedesignedSidebar({
 }: RedesignedSidebarProps) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const { categories: ticketCategories } = useTicketCategories(true);
+  const { categories: allTicketCategories } = useTicketCategories(false);
+  const { statuses: ticketStatuses } = useTicketStatuses();
+  const { priorities: ticketPriorities } = useTicketPriorities();
+  // Pass full config list into chips; selectableCategoriesForValue keeps inactive current values.
   const ticketKind = getTicketKind(ticket);
   const [slaTierDraft, setSlaTierDraft] = useState(ticket.slaTier ?? '');
   const syncedHealthTicketId = useRef<string | null>(null);
@@ -259,7 +224,6 @@ export function RedesignedSidebar({
     onUpdateTicketField({ accountHealth: accountHealthStatus });
   }, [ticket.id, ticket.accountHealth, accountHealthStatus, onUpdateTicketField]);
 
-  const statusLabel = (st: string) => t(`tickets.statusLabels.${st}`, st);
   // Collapsing Section States
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({
     copilot: false,
@@ -322,16 +286,22 @@ export function RedesignedSidebar({
           </div>
 
           <div className="flex items-center gap-3 bg-muted/40 p-2.5 rounded-xl border border-dashed border-border/80">
-            <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 border ${
-              ticketAssignee
-                ? "bg-primary/10 text-primary border-primary/20" 
-                : "bg-slate-100 text-slate-400 border-slate-200"
-            }`}>
-              {ticketAssignee ? getInitials(ticketAssignee.name || ticketAssignee.id) : "?"}
+            <div
+              className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 border ${
+                ticketAssignee
+                  ? 'bg-slate-100 text-slate-700 border-slate-200'
+                  : 'bg-slate-50 text-slate-400 border-dashed border-slate-300'
+              }`}
+            >
+              {ticketAssignee ? getInitials(ticketAssignee.name || ticketAssignee.id) : '—'}
             </div>
             
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-semibold text-slate-900 truncate">
+              <div
+                className={`text-xs truncate ${
+                  ticketAssignee ? 'font-semibold text-slate-900' : 'font-normal italic text-slate-400'
+                }`}
+              >
                 {safeString(ticketAssignee?.name || ticketAssignee?.id, t('tickets.unassigned', 'Unassigned'))}
               </div>
               <div className="text-[11px] text-slate-400 truncate">
@@ -397,71 +367,57 @@ export function RedesignedSidebar({
           )}
 
           <div className="space-y-1 pt-1">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">{t('tickets.sidebar.priority', 'Priorität')}</label>
-            <select
-              id="dispatch-priority-select"
-              className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer dark:text-slate-200"
-              value={String(ticket.priority || 'medium').toLowerCase()}
-              onChange={(e) => {
-                onUpdateTicketField({ priority: e.target.value as any });
-              }}
+            <label
+              htmlFor="dispatch-priority-select"
+              className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1"
             >
-              <option value="low">{t('tickets.priority.low', 'Niedrig')}</option>
-              <option value="medium">{t('tickets.priority.medium', 'Mittel')}</option>
-              <option value="high">{t('tickets.priority.high', 'Hoch')}</option>
-              <option value="urgent">{t('tickets.priority.urgent', 'Dringend')}</option>
-            </select>
+              {t('tickets.sidebar.priority', 'Priorität')}
+            </label>
+            <div id="dispatch-priority-select" className="min-h-[2rem] min-w-0 max-w-full flex items-center">
+              <TicketPriorityChip
+                priority={ticket.priority ?? 'medium'}
+                priorities={ticketPriorities}
+                onChange={(priority) => onUpdateTicketField({ priority: priority as any })}
+              />
+            </div>
           </div>
 
           <div className="space-y-1 pt-1">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">{t('tickets.sidebar.dispatchCaseStatus', 'Status')}</label>
-            <DispatchStatusSelect
-              id="dispatch-status-select"
-              status={ticket.status}
-              statusLabel={statusLabel}
-              onChange={(status) => onUpdateTicketField({ status: status as any })}
-              readOnlyHint={t('tickets.merge.readonlyMerged', 'Nur lesbar')}
-            />
-          </div>
-
-          <div className="space-y-1 pt-1">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">{t('tickets.sidebar.category', 'Kategorie')}</label>
-            <select
-              id="dispatch-category-select"
-              className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer dark:text-slate-200"
-              value={ticket.categoryId || ''}
-              onChange={(e) => {
-                const id = e.target.value;
-                if (!id) {
-                  onUpdateTicketField({ categoryId: null, categoryName: null, categorySlug: null });
-                  return;
-                }
-                const cat = ticketCategories.find((c) => c.id === id);
-                onUpdateTicketField({
-                  categoryId: id,
-                  categoryName: cat?.name || null,
-                  categorySlug: cat?.slug || null,
-                });
-              }}
+            <label
+              htmlFor="dispatch-status-select"
+              className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1"
             >
-              <option value="">{t('tickets.sidebar.noCategory', 'Keine Kategorie')}</option>
-              {ticketCategories.map((cat) => (
-                <option key={cat.id} value={cat.id}>{cat.name}</option>
-              ))}
-            </select>
-            {ticket.categoryName && (
-              <div className="pt-1.5">
-                <span
-                  className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full text-white"
-                  style={{
-                    backgroundColor:
-                      ticketCategories.find((c) => c.id === ticket.categoryId)?.color || '#1B6CA8',
-                  }}
-                >
-                  {ticket.categoryName}
+              {t('tickets.sidebar.dispatchCaseStatus', 'Status')}
+            </label>
+            <div id="dispatch-status-select" className="min-h-[2rem] min-w-0 max-w-full flex items-center gap-2">
+              <TicketStatusChip
+                status={ticket.status ?? 'open'}
+                statuses={ticketStatuses}
+                onChange={(status) => onUpdateTicketField({ status: status as any })}
+              />
+              {isReadonlyTerminalStatus(ticket.status) ? (
+                <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground shrink-0">
+                  {t('tickets.merge.readonlyMerged', 'Nur lesbar')}
                 </span>
-              </div>
-            )}
+              ) : null}
+            </div>
+          </div>
+
+          <div className="space-y-1 pt-1">
+            <label
+              htmlFor="dispatch-category-select"
+              className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1"
+            >
+              {t('tickets.sidebar.category', 'Kategorie')}
+            </label>
+            <div id="dispatch-category-select" className="min-h-[2rem] min-w-0 max-w-full flex items-center">
+              <TicketCategoryChip
+                categoryId={ticket.categoryId}
+                categoryName={ticket.categoryName}
+                categories={allTicketCategories}
+                onChange={(patch) => onUpdateTicketField(patch)}
+              />
+            </div>
           </div>
 
           <div className="space-y-1 pt-1">

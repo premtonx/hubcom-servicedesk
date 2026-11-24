@@ -1,4 +1,4 @@
-import type { MutableRefObject, MouseEvent } from 'react';
+import { useMemo, type MutableRefObject, type MouseEvent } from 'react';
 import {
   AlertTriangle, Angry, Box, Building2, CheckCircle2, ChevronDown, ChevronLeft,
   ChevronRight, Clock, FolderTree, Frown, GitMerge, Globe, Hash, History, Link2, List, Mail, Meh,
@@ -100,7 +100,15 @@ export interface TicketListViewProps {
 
 export function TicketListView(props: TicketListViewProps) {
   const { t } = useTranslation();
-  const { categories: ticketCategories } = useTicketCategories(true);
+  // Load all categories (incl. inactive) so renamed/recoloured/inactive values resolve like detail.
+  const { categories: allTicketCategories } = useTicketCategories(false);
+  const ticketCategories = useMemo(
+    () =>
+      allTicketCategories
+        .filter((c) => c.isActive !== false)
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'de')),
+    [allTicketCategories],
+  );
   const { statuses: ticketStatuses, activeStatuses } = useTicketStatuses();
   const { priorities: ticketPriorities, activePriorities } = useTicketPriorities();
   const {
@@ -1105,7 +1113,7 @@ export function TicketListView(props: TicketListViewProps) {
                             <TicketCategoryChip
                               categoryId={ticket.categoryId}
                               categoryName={ticket.categoryName}
-                              categories={ticketCategories}
+                              categories={allTicketCategories}
                               onChange={(patch) => handleInlineUpdate(ticket.id, patch)}
                             />
                           </div>
@@ -1236,7 +1244,7 @@ export function TicketListView(props: TicketListViewProps) {
                               <TicketCategoryChip
                                 categoryId={ticket.categoryId}
                                 categoryName={ticket.categoryName}
-                                categories={ticketCategories}
+                                categories={allTicketCategories}
                                 onChange={(patch) => handleInlineUpdate(ticket.id, patch)}
                               />
                             </div>
@@ -1257,19 +1265,20 @@ export function TicketListView(props: TicketListViewProps) {
                         {/* Row 3: Status, Priority, Assignee & Updated */}
                         <div className="border-t pt-2.5 flex items-center justify-between gap-2 flex-wrap">
                           {/* Left badges: status & priority */}
-                          <div className="flex items-center gap-1.5">
+                          <div
+                            className="flex items-center gap-1.5 min-w-0 flex-wrap"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             <TicketStatusChip
                               status={ticket.status ?? 'open'}
                               statuses={ticketStatuses}
                               onChange={(val) => handleInlineUpdate(ticket.id, { status: val })}
                             />
-                            <div onClick={(e) => e.stopPropagation()}>
-                              <TicketPriorityChip
-                                priority={ticket.priority ?? 'medium'}
-                                priorities={ticketPriorities}
-                                onChange={(val) => handleInlineUpdate(ticket.id, { priority: val })}
-                              />
-                            </div>
+                            <TicketPriorityChip
+                              priority={ticket.priority ?? 'medium'}
+                              priorities={ticketPriorities}
+                              onChange={(val) => handleInlineUpdate(ticket.id, { priority: val })}
+                            />
                           </div>
 
                           {/* Assignee & lastUpdate */}

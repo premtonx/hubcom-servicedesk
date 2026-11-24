@@ -1,11 +1,19 @@
 import React, { useMemo } from 'react';
 import { X, Sparkles, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, safeString } from '../../lib/utils';
+import { safeString } from '../../lib/utils';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { Button } from '../ui/button';
-import { Badge } from '../ui/badge';
 import { Ticket as TicketType, KBArticle } from '../../types';
+import { useTicketStatuses } from '../../hooks/useTicketStatuses';
+import { useTicketPriorities } from '../../hooks/useTicketPriorities';
+import { useTicketCategories } from '../../hooks/useTicketCategories';
+import {
+  resolveCategoryConfig,
+  resolvePriorityConfig,
+  resolveStatusConfig,
+  softTintStyles,
+} from '../../lib/ticket-config/display';
 
 interface TicketDetailDrawerProps {
   ticket: TicketType | null;
@@ -35,6 +43,24 @@ export function TicketDetailDrawer({
   onOpenFullView,
 }: TicketDetailDrawerProps) {
   const { t } = useTranslation();
+  const { statuses } = useTicketStatuses();
+  const { priorities } = useTicketPriorities();
+  const { categories } = useTicketCategories(false);
+
+  const statusDisplay = useMemo(
+    () => resolveStatusConfig(ticket?.status, statuses),
+    [ticket?.status, statuses],
+  );
+  const priorityDisplay = useMemo(
+    () => resolvePriorityConfig(ticket?.priority, priorities),
+    [ticket?.priority, priorities],
+  );
+  const categoryDisplay = useMemo(
+    () => resolveCategoryConfig(ticket?.categoryId, ticket?.categoryName, categories),
+    [ticket?.categoryId, ticket?.categoryName, categories],
+  );
+  const statusTint = softTintStyles(statusDisplay.color);
+  const priorityTint = softTintStyles(priorityDisplay.color);
 
   const similarCount = useMemo(() => {
     if (!ticket) return 0;
@@ -102,14 +128,43 @@ export function TicketDetailDrawer({
             <header className="px-5 py-4 border-b border-slate-100 bg-[#FAFBFC] shrink-0">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <Badge variant="outline" className="text-[10px] h-5 capitalize">
-                      {t(`tickets.status.${ticket.status ?? 'open'}`, ticket.status ?? 'open')}
-                    </Badge>
-                    <Badge variant="outline" className="text-[10px] h-5 capitalize">
-                      {t(`tickets.priority.${ticket.priority ?? 'medium'}`, ticket.priority ?? 'medium')}
-                    </Badge>
-                    <span className="text-[10px] font-mono text-slate-400">#{ticket.id.slice(-6).toUpperCase()}</span>
+                  <div className="flex flex-wrap items-center gap-2 mb-2 min-w-0">
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold max-w-full"
+                      style={statusTint}
+                      title={statusDisplay.name}
+                    >
+                      <span
+                        className="h-1.5 w-1.5 rounded-full shrink-0"
+                        style={{ backgroundColor: statusDisplay.color }}
+                        aria-hidden
+                      />
+                      <span className="truncate">{statusDisplay.name}</span>
+                    </span>
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold max-w-full"
+                      style={priorityTint}
+                      title={priorityDisplay.name}
+                    >
+                      <span
+                        className="h-1.5 w-1.5 rounded-full shrink-0"
+                        style={{ backgroundColor: priorityDisplay.color }}
+                        aria-hidden
+                      />
+                      <span className="truncate">{priorityDisplay.name}</span>
+                    </span>
+                    {categoryDisplay.name ? (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-white max-w-full"
+                        style={{ backgroundColor: categoryDisplay.color }}
+                        title={categoryDisplay.name}
+                      >
+                        <span className="truncate">{categoryDisplay.name}</span>
+                      </span>
+                    ) : null}
+                    <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                      #{ticket.id.slice(-6).toUpperCase()}
+                    </span>
                   </div>
                   <h2 className="text-base font-bold text-slate-900 leading-snug break-words">{safeString(ticket.subject)}</h2>
                   <p className="text-[11px] text-slate-500 mt-1 truncate">
@@ -141,11 +196,13 @@ export function TicketDetailDrawer({
                       {safeString(ticket.agentName, t('tickets.unassigned', 'Unassigned'))}
                     </p>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-[10px] text-slate-400 font-semibold uppercase mb-0.5">
                       {t('tickets.table.priority', 'Priority')}
                     </p>
-                    <p className="font-semibold text-slate-800 capitalize">{safeString(ticket.priority, 'medium')}</p>
+                    <p className="font-semibold text-slate-800 truncate" title={priorityDisplay.name}>
+                      {priorityDisplay.name}
+                    </p>
                   </div>
                   <div>
                     <p className="text-[10px] text-slate-400 font-semibold uppercase mb-0.5">
