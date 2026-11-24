@@ -138,10 +138,10 @@ router.post('/', async (req: Request, res: Response): Promise<any> => {
     return res.status(result.created ? 201 : 200).json({
       success: true,
       member: result.member,
-      setupLink: result.setupLink,
-      temporaryPassword: result.temporaryPassword,
+      setupLink: result.emailSent ? null : result.setupLink,
       emailSent: result.emailSent,
       emailReason: result.emailReason || null,
+      invitationStatus: result.invitationStatus,
       created: result.created,
     });
   } catch (err: any) {
@@ -262,10 +262,10 @@ router.post('/:userId/reset-password', async (req: Request, res: Response): Prom
     return res.json({
       success: true,
       member: result.member,
-      setupLink: result.setupLink,
-      temporaryPassword: result.temporaryPassword,
+      setupLink: result.emailSent ? null : result.setupLink,
       emailSent: result.emailSent,
       emailReason: result.emailReason || null,
+      invitationStatus: result.invitationStatus,
     });
   } catch (err: any) {
     const status = Number(err?.status) || 500;

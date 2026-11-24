@@ -24,7 +24,7 @@ export default function CompanyKPI({ company }: CompanyKPIProps) {
   const kpis = [
     {
       title: 'Users',
-      value: company.usersCount,
+      value: company.usersCount ?? '—',
       label: t('companies.contacts', 'Users'),
       icon: Users,
       iconColor: 'text-indigo-500 bg-indigo-500/5',
@@ -33,7 +33,7 @@ export default function CompanyKPI({ company }: CompanyKPIProps) {
     },
     {
       title: 'Assets',
-      value: company.assetsCount,
+      value: company.assetsCount ?? '—',
       label: t('companies.assetOverview', 'Assets'),
       icon: Laptop,
       iconColor: 'text-[#34A853] bg-[#34A853]/5',
@@ -53,7 +53,7 @@ export default function CompanyKPI({ company }: CompanyKPIProps) {
     },
     {
       title: 'Vault Entries',
-      value: company.vaultEntriesCount,
+      value: company.vaultEntriesCount ?? '—',
       label: t('companies.geistVaultSummary', 'Vault Entries'),
       icon: Key,
       iconColor: 'text-amber-500 bg-amber-500/5',

@@ -22,6 +22,8 @@ interface PortalUserRow {
   email: string;
   role: string;
   isDeactivated?: boolean;
+  invitationStatus?: string;
+  invitationEmailReason?: string | null;
 }
 
 type PortalRole = 'CLIENT_ADMIN' | 'CLIENT_SUPPORTER' | 'CLIENT_USER';
@@ -32,6 +34,23 @@ interface CompanyPortalTabProps {
   onOpenEmailConfig?: () => void;
   /** When true, scroll/focus the invite form (e.g. header quick action). */
   focusInvite?: boolean;
+}
+
+function invitationLabel(status?: string): { text: string; className: string } {
+  switch (status) {
+    case 'sent':
+      return { text: 'Einladung gesendet', className: 'bg-sky-50 text-sky-800 border-sky-200' };
+    case 'pending':
+      return { text: 'Einladung ausstehend', className: 'bg-amber-50 text-amber-900 border-amber-200' };
+    case 'accepted':
+      return { text: 'Aktiv', className: 'bg-emerald-50 text-emerald-800 border-emerald-200' };
+    case 'expired':
+      return { text: 'Einladung abgelaufen', className: 'bg-rose-50 text-rose-800 border-rose-200' };
+    case 'failed':
+      return { text: 'E-Mail fehlgeschlagen', className: 'bg-rose-50 text-rose-800 border-rose-200' };
+    default:
+      return { text: status || '—', className: 'bg-slate-50 text-slate-700 border-slate-200' };
+  }
 }
 
 export default function CompanyPortalTab({
@@ -55,7 +74,12 @@ export default function CompanyPortalTab({
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<PortalRole>('CLIENT_ADMIN');
   const [saving, setSaving] = useState(false);
-  const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [lastInviteResult, setLastInviteResult] = useState<{
+    emailSent: boolean;
+    emailReason?: string | null;
+    setupLink?: string | null;
+    invitationStatus?: string;
+  } | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -121,11 +145,11 @@ export default function CompanyPortalTab({
 
   const invite = async () => {
     if (!organizationId || !inviteName.trim() || !inviteEmail.trim()) {
-      toast.error(t('admin.orgs.inviteRequired', 'Name and email are required.'));
+      toast.error(t('admin.orgs.inviteRequired', 'Name und E-Mail sind erforderlich.'));
       return;
     }
     setSaving(true);
-    setTempPassword(null);
+    setLastInviteResult(null);
     try {
       const res = await axios.post(
         `/api/admin/organizations/${encodeURIComponent(organizationId)}/invite-client-admin`,
@@ -136,15 +160,31 @@ export default function CompanyPortalTab({
         },
         { withCredentials: true },
       );
-      setTempPassword(res.data?.temporaryPassword || null);
+      const emailSent = Boolean(res.data?.emailSent);
+      const emailReason = res.data?.emailReason || null;
+      setLastInviteResult({
+        emailSent,
+        emailReason,
+        setupLink: res.data?.setupLink || null,
+        invitationStatus: res.data?.invitationStatus,
+      });
       setInviteName('');
       setInviteEmail('');
-      toast.success(
-        t('companies.portal.invited', 'Portal-Benutzer für {{name}} provisioniert.').replace(
-          '{{name}}',
-          companyName,
-        ),
-      );
+      if (emailSent) {
+        toast.success(
+          t(
+            'companies.portal.invitedSent',
+            'Einladung an {{email}} gesendet.',
+          ).replace('{{email}}', String(res.data?.user?.email || '')),
+        );
+      } else {
+        toast.error(
+          t(
+            'companies.portal.inviteMailFailed',
+            'Benutzer angelegt, aber E-Mail konnte nicht gesendet werden.',
+          ) + (emailReason ? ` (${emailReason})` : ''),
+        );
+      }
       await load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Einladung fehlgeschlagen');
@@ -171,20 +211,36 @@ export default function CompanyPortalTab({
     }
   };
 
-  const resetPassword = async (userId: string) => {
+  const resendInvite = async (userId: string) => {
     if (!organizationId) return;
     setBusyUserId(userId);
-    setTempPassword(null);
+    setLastInviteResult(null);
     try {
       const res = await axios.post(
         `/api/admin/organizations/${encodeURIComponent(organizationId)}/users/${encodeURIComponent(userId)}/reset-password`,
         {},
         { withCredentials: true },
       );
-      setTempPassword(res.data?.temporaryPassword || null);
-      toast.success(t('companies.portal.passwordReset', 'Temporäres Passwort erzeugt.'));
+      const emailSent = Boolean(res.data?.emailSent);
+      setLastInviteResult({
+        emailSent,
+        emailReason: res.data?.emailReason || null,
+        setupLink: res.data?.setupLink || null,
+        invitationStatus: res.data?.invitationStatus,
+      });
+      if (emailSent) {
+        toast.success(t('companies.portal.inviteResent', 'Einladungs-E-Mail erneut gesendet.'));
+      } else {
+        toast.error(
+          t(
+            'companies.portal.inviteMailFailed',
+            'E-Mail konnte nicht gesendet werden.',
+          ) + (res.data?.emailReason ? ` (${res.data.emailReason})` : ''),
+        );
+      }
+      await load();
     } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Passwort-Reset fehlgeschlagen');
+      toast.error(err?.response?.data?.error || 'Erneutes Senden fehlgeschlagen');
     } finally {
       setBusyUserId(null);
     }
@@ -227,58 +283,70 @@ export default function CompanyPortalTab({
 
         <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
           {users.length === 0 ? (
-            <p className="p-6 text-sm text-slate-500">
+            <p className="p-6 text-sm text-slate-500" role="status">
               {t('companies.portal.noUsers', 'Noch keine Portal-Benutzer für dieses Unternehmen.')}
             </p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {users.map((u) => (
-                <li
-                  key={u.id}
-                  className="px-4 py-3 flex flex-wrap items-center justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-slate-900 truncate">{u.name || u.email}</p>
-                    <p className="text-xs text-slate-500 truncate">{u.email}</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Select
-                      value={u.role}
-                      onValueChange={(val) => void changeRole(u.id, val as PortalRole)}
-                      disabled={busyUserId === u.id}
-                    >
-                      <SelectTrigger className="h-8 w-[160px] text-[10px] font-extrabold uppercase">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="CLIENT_ADMIN">CLIENT_ADMIN</SelectItem>
-                        <SelectItem value="CLIENT_SUPPORTER">CLIENT_SUPPORTER</SelectItem>
-                        <SelectItem value="CLIENT_USER">CLIENT_USER</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-1 text-[10px] font-bold"
-                      disabled={busyUserId === u.id}
-                      onClick={() => void resetPassword(u.id)}
-                    >
-                      {busyUserId === u.id ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <KeyRound className="w-3 h-3" />
-                      )}
-                      Reset
-                    </Button>
-                    {u.isDeactivated ? (
-                      <Badge variant="destructive" className="text-[10px]">
-                        inactive
-                      </Badge>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
+              {users.map((u) => {
+                const inv = invitationLabel(u.invitationStatus);
+                return (
+                  <li
+                    key={u.id}
+                    className="px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-slate-900 truncate">{u.name || u.email}</p>
+                      <p className="text-xs text-slate-500 truncate">{u.email}</p>
+                      <span
+                        className={`mt-1 inline-flex text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md border ${inv.className}`}
+                      >
+                        {inv.text}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Select
+                        value={u.role}
+                        onValueChange={(val) => void changeRole(u.id, val as PortalRole)}
+                        disabled={busyUserId === u.id}
+                      >
+                        <SelectTrigger className="h-8 w-[160px] text-[10px] font-extrabold uppercase">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="CLIENT_ADMIN">CLIENT_ADMIN</SelectItem>
+                          <SelectItem value="CLIENT_SUPPORTER">CLIENT_SUPPORTER</SelectItem>
+                          <SelectItem value="CLIENT_USER">CLIENT_USER</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1 text-[10px] font-bold"
+                        disabled={busyUserId === u.id}
+                        onClick={() => void resendInvite(u.id)}
+                        title={t(
+                          'companies.portal.resendInvite',
+                          'Einladung / Passwort-Setup erneut senden',
+                        )}
+                      >
+                        {busyUserId === u.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <KeyRound className="w-3 h-3" />
+                        )}
+                        {t('companies.portal.resend', 'Erneut senden')}
+                      </Button>
+                      {u.isDeactivated ? (
+                        <Badge variant="destructive" className="text-[10px]">
+                          inactive
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -290,6 +358,12 @@ export default function CompanyPortalTab({
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
             <UserPlus className="w-3.5 h-3.5" />
             {t('companies.portal.inviteTitle', 'Portal-Benutzer einladen')}
+          </p>
+          <p className="text-xs text-slate-600">
+            {t(
+              'companies.portal.inviteHint',
+              'Sendet einen einmaligen, zeitlich begrenzten Einrichtungslink an die eingegebene E-Mail. Es wird kein Passwort angezeigt oder per E-Mail versendet.',
+            )}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
@@ -331,11 +405,39 @@ export default function CompanyPortalTab({
               {t('companies.portal.inviteCta', 'Einladen')}
             </Button>
           </div>
-          {tempPassword ? (
-            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-              {t('admin.orgs.tempPassword', 'Temporäres Passwort')}:{' '}
-              <code className="font-mono font-bold">{tempPassword}</code>
-            </p>
+          {lastInviteResult ? (
+            <div
+              className={`text-xs rounded-lg px-3 py-2 border ${
+                lastInviteResult.emailSent
+                  ? 'text-emerald-900 bg-emerald-50 border-emerald-100'
+                  : 'text-amber-900 bg-amber-50 border-amber-100'
+              }`}
+              role="status"
+            >
+              {lastInviteResult.emailSent
+                ? t(
+                    'companies.portal.inviteResultSent',
+                    'Einladungs-E-Mail wurde über die konfigurierte Mail-Infrastruktur gesendet.',
+                  )
+                : t(
+                    'companies.portal.inviteResultFailed',
+                    'E-Mail-Versand fehlgeschlagen — Benutzer ist angelegt, aber nicht benachrichtigt.',
+                  )}
+              {lastInviteResult.emailReason ? (
+                <span className="block mt-1 font-mono text-[11px] opacity-80">
+                  {lastInviteResult.emailReason}
+                </span>
+              ) : null}
+              {!lastInviteResult.emailSent && lastInviteResult.setupLink ? (
+                <span className="block mt-2 break-all">
+                  {t(
+                    'companies.portal.manualSetupLink',
+                    'Autorisierter Setup-Link (nur bei Versandfehler, einmalig):',
+                  )}{' '}
+                  <code className="font-mono text-[11px]">{lastInviteResult.setupLink}</code>
+                </span>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </section>

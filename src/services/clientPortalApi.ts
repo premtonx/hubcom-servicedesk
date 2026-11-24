@@ -113,11 +113,20 @@ export const clientPortalApi = {
     name: string;
     email: string;
     role: 'CLIENT_SUPPORTER' | 'CLIENT_USER';
-  }): Promise<{ member: PortalMember; temporaryPassword?: string }> {
+  }): Promise<{
+    member: PortalMember;
+    setupLink?: string | null;
+    emailSent?: boolean;
+    emailReason?: string | null;
+    invitationStatus?: string;
+  }> {
     const res = await axios.post('/api/portal/members', payload, { withCredentials: true });
     return {
       member: res.data?.member,
-      temporaryPassword: res.data?.temporaryPassword,
+      setupLink: res.data?.setupLink ?? null,
+      emailSent: res.data?.emailSent,
+      emailReason: res.data?.emailReason ?? null,
+      invitationStatus: res.data?.invitationStatus,
     };
   },
 
@@ -145,16 +154,18 @@ export const clientPortalApi = {
     role: PortalTeamRole;
   }): Promise<{
     member: PortalMember;
-    temporaryPassword?: string;
-    setupLink?: string;
+    setupLink?: string | null;
     emailSent?: boolean;
+    emailReason?: string | null;
+    invitationStatus?: string;
   }> {
     const res = await axios.post('/api/portal/team', payload, { withCredentials: true });
     return {
       member: { ...res.data?.member, isDeactivated: res.data?.member?.isActive === false },
-      temporaryPassword: res.data?.temporaryPassword,
-      setupLink: res.data?.setupLink,
+      setupLink: res.data?.setupLink ?? null,
       emailSent: res.data?.emailSent,
+      emailReason: res.data?.emailReason ?? null,
+      invitationStatus: res.data?.invitationStatus,
     };
   },
 
@@ -170,9 +181,10 @@ export const clientPortalApi = {
   },
 
   async resetTeamMemberPassword(userId: string): Promise<{
-    temporaryPassword?: string;
-    setupLink?: string;
+    setupLink?: string | null;
     emailSent?: boolean;
+    emailReason?: string | null;
+    invitationStatus?: string;
   }> {
     const res = await axios.post(
       `/api/portal/team/${encodeURIComponent(userId)}/reset-password`,
@@ -180,9 +192,10 @@ export const clientPortalApi = {
       { withCredentials: true },
     );
     return {
-      temporaryPassword: res.data?.temporaryPassword,
-      setupLink: res.data?.setupLink,
+      setupLink: res.data?.setupLink ?? null,
       emailSent: res.data?.emailSent,
+      emailReason: res.data?.emailReason ?? null,
+      invitationStatus: res.data?.invitationStatus,
     };
   },
 

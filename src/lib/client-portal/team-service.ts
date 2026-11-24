@@ -13,6 +13,7 @@ import {
 import { hashPassword } from '../crypto.js';
 import { CLIENT_PORTAL_ROLE_SEEDS, isClientPortalRole } from './roles.js';
 import { getOrganization } from './organizations.js';
+import { deriveInvitationStatus } from './invitation-status.js';
 
 export const CLIENT_TEAM_ROLES = ['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER'] as const;
 export type ClientTeamRole = (typeof CLIENT_TEAM_ROLES)[number];
@@ -60,9 +61,19 @@ export function toTeamMemberView(user: Record<string, unknown> & { id: string })
 export async function listOrganizationUsers(organizationId: string): Promise<TeamMemberView[]> {
   const users = await getDocsDirect('users', []);
   return users
-    .filter((u) => userOrganizationId(u) === organizationId)
+    .filter((u) => userOrganizationId(u) === organizationId && isClientPortalRole(u.role))
     .map((u) => toTeamMemberView(u as any))
     .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+}
+
+export function portalUserListItem(user: Record<string, unknown> & { id: string }) {
+  const view = toTeamMemberView(user);
+  return {
+    ...view,
+    invitationStatus: deriveInvitationStatus(user as any),
+    invitationEmailReason:
+      typeof user.invitationEmailReason === 'string' ? user.invitationEmailReason : null,
+  };
 }
 
 export async function countActiveClientAdmins(
@@ -144,11 +155,11 @@ export async function createOrInviteTeamMember(params: {
   invitedBy: string;
 }): Promise<{
   member: TeamMemberView;
-  setupToken: string;
+  /** Present only for the inviting admin UI — never log or email as a secret alone. */
   setupLink: string;
-  temporaryPassword: string;
   emailSent: boolean;
   emailReason?: string;
+  invitationStatus: 'pending' | 'sent' | 'failed';
   created: boolean;
 }> {
   const org = await getOrganization(params.organizationId);
@@ -163,13 +174,34 @@ export async function createOrInviteTeamMember(params: {
   ]);
 
   const { token, expiresAt } = buildSetupToken();
-  const temporaryPassword = randomBytes(12).toString('base64url');
-  const passwordHash = await hashPassword(temporaryPassword);
   const setupLink = buildSetupLink(token);
   const now = new Date().toISOString();
 
   let userId: string;
   let created = false;
+
+  const inviteFields = {
+    name: params.name,
+    role: params.role,
+    roleId,
+    organizationId: params.organizationId,
+    organization_id: params.organizationId,
+    is_admin: false,
+    isDeactivated: false,
+    can_create_tickets: true,
+    can_view_knowledgebase: params.role !== 'CLIENT_USER',
+    authMethod: 'password' as const,
+    // No usable password until the invitee completes the setup link.
+    passwordHash: null,
+    password: null,
+    activationToken: token,
+    activationTokenExpires: expiresAt,
+    invitedBy: params.invitedBy,
+    invitationEmailSent: false,
+    invitationEmailFailed: false,
+    invitationEmailReason: null as string | null,
+    updatedAt: now,
+  };
 
   if (existing.length > 0) {
     const user = existing[0];
@@ -186,42 +218,15 @@ export async function createOrInviteTeamMember(params: {
       );
     }
     await updateDocDirect('users', user.id, {
-      name: params.name,
-      role: params.role,
-      roleId,
-      organizationId: params.organizationId,
-      organization_id: params.organizationId,
-      is_admin: false,
-      isDeactivated: false,
-      can_create_tickets: true,
-      can_view_knowledgebase: params.role !== 'CLIENT_USER',
+      ...inviteFields,
       authMethod: user.authMethod || 'password',
-      password: passwordHash,
-      activationToken: token,
-      activationTokenExpires: expiresAt,
-      invitedBy: params.invitedBy,
-      updatedAt: now,
     });
     userId = user.id;
   } else {
     const createdDoc = await addDocDirect('users', {
-      name: params.name,
+      ...inviteFields,
       email,
-      role: params.role,
-      roleId,
-      organizationId: params.organizationId,
-      organization_id: params.organizationId,
-      is_admin: false,
-      isDeactivated: false,
-      can_create_tickets: true,
-      can_view_knowledgebase: params.role !== 'CLIENT_USER',
-      authMethod: 'password',
-      password: passwordHash,
-      activationToken: token,
-      activationTokenExpires: expiresAt,
-      invitedBy: params.invitedBy,
       createdAt: now,
-      updatedAt: now,
     });
     userId = createdDoc.id;
     created = true;
@@ -236,23 +241,28 @@ export async function createOrInviteTeamMember(params: {
       `Sie wurden zum Kunden-Portal von ${org.name} eingeladen.`,
       `Rolle: ${params.role}`,
       '',
-      `Einrichtungslink (48 Stunden gültig):`,
+      `Bitte richten Sie Ihr Passwort über diesen einmaligen Link ein (48 Stunden gültig):`,
       setupLink,
       '',
-      `Temporäres Passwort: ${temporaryPassword}`,
-      '',
-      'Bitte melden Sie sich an und ändern Sie Ihr Passwort.',
+      'Der Link ist an Ihre E-Mail-Adresse gebunden und gilt nur für dieses Unternehmen.',
+      'Es wird kein Passwort per E-Mail versendet.',
     ].join('\n'),
+  });
+
+  await updateDocDirect('users', userId, {
+    invitationEmailSent: mail.sent,
+    invitationEmailFailed: !mail.sent,
+    invitationEmailReason: mail.reason || null,
+    updatedAt: new Date().toISOString(),
   });
 
   const memberDoc = await getDocDirect('users', userId);
   return {
     member: toTeamMemberView({ id: userId, ...(memberDoc || {}) }),
-    setupToken: token,
     setupLink,
-    temporaryPassword,
     emailSent: mail.sent,
     emailReason: mail.reason,
+    invitationStatus: mail.sent ? 'sent' : 'failed',
     created,
   };
 }
@@ -263,11 +273,10 @@ export async function resetTeamMemberPassword(params: {
   requestedBy: string;
 }): Promise<{
   member: TeamMemberView;
-  setupToken: string;
   setupLink: string;
-  temporaryPassword: string;
   emailSent: boolean;
   emailReason?: string;
+  invitationStatus: 'pending' | 'sent' | 'failed';
 }> {
   const user = await getDocDirect('users', params.userId);
   if (!user) {
@@ -283,43 +292,120 @@ export async function resetTeamMemberPassword(params: {
   }
 
   const { token, expiresAt } = buildSetupToken();
-  const temporaryPassword = randomBytes(12).toString('base64url');
-  const passwordHash = await hashPassword(temporaryPassword);
   const setupLink = buildSetupLink(token);
   const now = new Date().toISOString();
 
   await updateDocDirect('users', params.userId, {
-    password: passwordHash,
+    // Invalidate current credentials until the user completes the setup link.
+    passwordHash: null,
+    password: null,
     activationToken: token,
     activationTokenExpires: expiresAt,
     passwordResetBy: params.requestedBy,
     passwordResetAt: now,
+    invitationEmailSent: false,
+    invitationEmailFailed: false,
+    invitationEmailReason: null,
     updatedAt: now,
   });
 
   const org = await getOrganization(params.organizationId);
   const mail = await sendPortalTeamEmail({
     to: String(user.email || ''),
-    subject: `Passwort-Reset — Hubcom Kunden-Portal`,
+    subject: `Passwort neu setzen — Hubcom Kunden-Portal`,
     body: [
       `Hallo ${user.name || ''},`,
       '',
-      `Für Ihr Konto bei ${org?.name || 'Ihrer Organisation'} wurde ein Passwort-Reset ausgelöst.`,
+      `Für Ihr Konto bei ${org?.name || 'Ihrer Organisation'} wurde ein Passwort-Reset angefordert.`,
       '',
-      `Einrichtungslink (48 Stunden gültig):`,
+      `Bitte setzen Sie Ihr Passwort über diesen einmaligen Link (48 Stunden gültig):`,
       setupLink,
       '',
-      `Temporäres Passwort: ${temporaryPassword}`,
+      'Es wird kein Passwort per E-Mail versendet.',
     ].join('\n'),
+  });
+
+  await updateDocDirect('users', params.userId, {
+    invitationEmailSent: mail.sent,
+    invitationEmailFailed: !mail.sent,
+    invitationEmailReason: mail.reason || null,
+    updatedAt: new Date().toISOString(),
   });
 
   const refreshed = await getDocDirect('users', params.userId);
   return {
     member: toTeamMemberView({ id: params.userId, ...(refreshed || user) }),
-    setupToken: token,
     setupLink,
-    temporaryPassword,
     emailSent: mail.sent,
     emailReason: mail.reason,
+    invitationStatus: mail.sent ? 'sent' : 'failed',
+  };
+}
+
+/**
+ * Complete a single-use invitation / password-setup token.
+ * Token is org-bound via the user document's organizationId.
+ */
+export async function completePortalSetup(params: {
+  token: string;
+  password: string;
+}): Promise<{ userId: string; email: string; organizationId: string | null }> {
+  const token = String(params.token || '').trim();
+  const password = String(params.password || '');
+  if (!token.startsWith('act-') || token.length < 20) {
+    throw Object.assign(new Error('Invalid or expired setup link.'), { status: 400 });
+  }
+  if (password.length < 10 || password.length > 200) {
+    throw Object.assign(new Error('Password must be between 10 and 200 characters.'), {
+      status: 400,
+    });
+  }
+
+  const users = await getDocsDirect('users', [
+    { type: 'where', field: 'activationToken', op: '==', value: token },
+  ]);
+  const user = users[0];
+  if (!user) {
+    throw Object.assign(new Error('Invalid or expired setup link.'), { status: 400 });
+  }
+  if (!isClientPortalRole(user.role) && user.role !== 'customer') {
+    throw Object.assign(new Error('Invalid or expired setup link.'), { status: 400 });
+  }
+
+  const expiresAt = user.activationTokenExpires
+    ? new Date(String(user.activationTokenExpires)).getTime()
+    : 0;
+  if (!expiresAt || expiresAt < Date.now()) {
+    throw Object.assign(new Error('This setup link has expired. Ask your admin to resend.'), {
+      status: 400,
+    });
+  }
+
+  const organizationId = userOrganizationId(user);
+  if (organizationId) {
+    const org = await getOrganization(organizationId);
+    if (!org || !org.is_active) {
+      throw Object.assign(new Error('Organization is inactive.'), { status: 400 });
+    }
+  }
+
+  const passwordHash = await hashPassword(password);
+  const now = new Date().toISOString();
+  await updateDocDirect('users', user.id, {
+    passwordHash,
+    password: null,
+    activationToken: null,
+    activationTokenExpires: null,
+    invitationEmailSent: true,
+    invitationEmailFailed: false,
+    invitationEmailReason: null,
+    passwordSetAt: now,
+    updatedAt: now,
+  });
+
+  return {
+    userId: user.id,
+    email: String(user.email || ''),
+    organizationId,
   };
 }

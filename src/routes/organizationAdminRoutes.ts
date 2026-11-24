@@ -22,7 +22,7 @@ import {
 import { getDocDirect, getDocsDirect, updateDocDirect } from '../lib/postgres-backend.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
-import { isHubcomStaffRole } from '../lib/client-portal/roles.js';
+import { isClientPortalRole, isHubcomStaffRole } from '../lib/client-portal/roles.js';
 import {
   parseAndValidateLogoDataUrl,
   resolvePortalTitle,
@@ -34,6 +34,7 @@ import {
   createOrInviteTeamMember,
   ensureClientRoleDoc,
   isClientTeamRole,
+  portalUserListItem,
   resetTeamMemberPassword,
   userOrganizationId,
   type ClientTeamRole,
@@ -127,7 +128,15 @@ router.post('/', requireRole(['SYSTEM_ADMIN']), async (req: Request, res: Respon
     });
   }
   try {
-    let organization = await createOrganization(parsed.data);
+    const payload = { ...parsed.data };
+    if (payload.logo_url && String(payload.logo_url).startsWith('data:')) {
+      const logoCheck = parseAndValidateLogoDataUrl(payload.logo_url);
+      if (logoCheck.ok === false) {
+        return res.status(400).json({ error: logoCheck.error });
+      }
+      payload.logo_url = logoCheck.dataUrl;
+    }
+    let organization = await createOrganization(payload);
     const crmCompanyId = await ensureCompanyForOrganization(organization);
     organization = (await getOrganization(organization.id)) || organization;
     return res.status(201).json({
@@ -153,21 +162,24 @@ router.get('/:id/users', requireHubcomStaff, async (req: Request, res: Response)
   try {
     const organization = await getOrganization(id);
     if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+
+    // getDocsDirect already flattens `data` onto the document — do not re-spread u.data.
     const users = await getDocsDirect('users', []);
     const portalUsers = users
-      .map((u) => ({ id: u.id, ...(u.data || {}) }))
-      .filter((u: any) => {
-        const oid = String(u.organizationId || u.organization_id || '');
-        const role = String(u.role || '');
-        return oid === id && /^CLIENT_/i.test(role);
+      .filter((u: any) => userOrganizationId(u) === id && isClientPortalRole(u.role))
+      .map((u: any) => {
+        const item = portalUserListItem(u);
+        return {
+          id: item.id,
+          name: item.name,
+          email: item.email,
+          role: item.role,
+          isDeactivated: !item.isActive,
+          invitationStatus: item.invitationStatus,
+          invitationEmailReason: item.invitationEmailReason,
+        };
       })
-      .map((u: any) => ({
-        id: u.id,
-        name: u.name || u.displayName || '',
-        email: u.email || '',
-        role: u.role || '',
-        isDeactivated: Boolean(u.isDeactivated),
-      }));
+      .sort((a, b) => a.name.localeCompare(b.name, 'de'));
 
     let emailChannel: any = null;
     try {
@@ -356,9 +368,14 @@ router.post('/:id/invite-client-admin', requireRole(['SYSTEM_ADMIN']), async (re
         name: invited.member.name,
         role: invited.member.role,
         organizationId,
+        invitationStatus: invited.invitationStatus,
       },
-      temporaryPassword: invited.temporaryPassword,
-      setupLink: invited.setupLink,
+      emailSent: invited.emailSent,
+      emailReason: invited.emailReason || null,
+      invitationStatus: invited.invitationStatus,
+      // setupLink is returned only so admins can copy a resend when mail failed —
+      // never a password. Prefer email delivery.
+      setupLink: invited.emailSent ? null : invited.setupLink,
       organization,
     });
   } catch (err: any) {
@@ -464,8 +481,10 @@ router.post(
       });
       return res.json({
         ok: true,
-        temporaryPassword: result.temporaryPassword,
-        setupLink: result.setupLink,
+        emailSent: result.emailSent,
+        emailReason: result.emailReason || null,
+        invitationStatus: result.invitationStatus,
+        setupLink: result.emailSent ? null : result.setupLink,
       });
     } catch (err: any) {
       const status = Number(err?.status) || 500;

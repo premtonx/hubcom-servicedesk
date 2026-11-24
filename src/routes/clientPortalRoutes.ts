@@ -4,21 +4,13 @@
 
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { randomBytes } from 'crypto';
 import { authenticate } from '../middleware/authMiddleware.js';
 import {
   attachClientOrganizationContext,
   requireClientPortalRole,
 } from '../middleware/clientPortalMiddleware.js';
-import {
-  addDocDirect,
-  getDocsDirect,
-  setDocDirect,
-  updateDocDirect,
-} from '../lib/postgres-backend.js';
-import { hashPassword } from '../lib/crypto.js';
+import { getDocsDirect } from '../lib/postgres-backend.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
-import { CLIENT_PORTAL_ROLE_SEEDS, isClientPortalRole } from '../lib/client-portal/roles.js';
 import { resolveOrganizationIdFromUser } from '../lib/client-portal/ticket-visibility.js';
 import {
   getOrganization,
@@ -205,10 +197,9 @@ const inviteMemberSchema = z.object({
   email: z.string().email().max(320),
   name: z.string().min(1).max(200),
   role: z.enum(['CLIENT_SUPPORTER', 'CLIENT_USER']),
-  temporaryPassword: z.string().min(10).max(200).optional(),
 });
 
-/** POST /api/portal/members — CLIENT_ADMIN invites a colleague. */
+/** POST /api/portal/members — CLIENT_ADMIN invites a colleague (secure setup link). */
 router.post(
   '/members',
   requireClientPortalRole(['CLIENT_ADMIN']),
@@ -227,91 +218,34 @@ router.post(
         return res.status(403).json({ error: 'Organization missing.' });
       }
 
-      const roleSeed = CLIENT_PORTAL_ROLE_SEEDS.find((r) => r.name === parsed.data.role)!;
-      await setDocDirect('roles', roleSeed.id, {
-        ...roleSeed,
-        updatedAt: new Date().toISOString(),
-      });
-
-      const email = parsed.data.email.toLowerCase().trim();
-      const existing = await getDocsDirect('users', [
-        { type: 'where', field: 'email', op: '==', value: email },
-      ]);
-      const tempPassword =
-        parsed.data.temporaryPassword || randomBytes(12).toString('base64url');
-      const passwordHash = await hashPassword(tempPassword);
-      const now = new Date().toISOString();
-
-      if (existing.length > 0) {
-        const user = existing[0];
-        const existingOrg =
-          (typeof user.organizationId === 'string' && user.organizationId) ||
-          (typeof user.organization_id === 'string' && user.organization_id) ||
-          '';
-        if (existingOrg && existingOrg !== organizationId) {
-          return res.status(409).json({
-            error: 'User already belongs to another organization.',
-          });
-        }
-        if (isClientPortalRole(user.role) === false && user.role && user.role !== 'customer') {
-          return res.status(409).json({
-            error: 'Cannot convert a Hubcom staff account into a client member.',
-          });
-        }
-        await updateDocDirect('users', user.id, {
-          name: parsed.data.name,
-          role: parsed.data.role,
-          roleId: roleSeed.id,
-          organizationId,
-          organization_id: organizationId,
-          is_admin: false,
-          can_create_tickets: true,
-          password: passwordHash,
-          authMethod: user.authMethod || 'password',
-          updatedAt: now,
-        });
-        return res.json({
-          success: true,
-          member: {
-            id: user.id,
-            name: parsed.data.name,
-            email,
-            role: parsed.data.role,
-          },
-          temporaryPassword: tempPassword,
-        });
-      }
-
-      const created = await addDocDirect('users', {
-        name: parsed.data.name,
-        email,
-        role: parsed.data.role,
-        roleId: roleSeed.id,
+      const { createOrInviteTeamMember } = await import('../lib/client-portal/team-service.js');
+      const result = await createOrInviteTeamMember({
         organizationId,
-        organization_id: organizationId,
-        is_admin: false,
-        can_create_tickets: true,
-        can_view_knowledgebase: parsed.data.role === 'CLIENT_SUPPORTER',
-        authMethod: 'password',
-        password: passwordHash,
-        isDeactivated: false,
-        createdAt: now,
-        updatedAt: now,
+        name: parsed.data.name,
+        email: parsed.data.email,
+        role: parsed.data.role,
+        invitedBy: String(req.user!.id),
       });
 
-      return res.status(201).json({
+      return res.status(result.created ? 201 : 200).json({
         success: true,
         member: {
-          id: created.id,
-          name: parsed.data.name,
-          email,
-          role: parsed.data.role,
+          id: result.member.id,
+          name: result.member.name,
+          email: result.member.email,
+          role: result.member.role,
         },
-        temporaryPassword: tempPassword,
+        emailSent: result.emailSent,
+        emailReason: result.emailReason || null,
+        invitationStatus: result.invitationStatus,
+        setupLink: result.emailSent ? null : result.setupLink,
       });
     } catch (err: any) {
+      const status = Number(err?.status) || 500;
       safeLog('error', '[portal] invite member failed', err?.message || err);
-      return res.status(500).json({ error: safeErrorMessage(err, 'Failed to invite member') });
+      return res
+        .status(status >= 400 && status < 600 ? status : 500)
+        .json({ error: safeErrorMessage(err, 'Failed to invite member') });
     }
   },
 );

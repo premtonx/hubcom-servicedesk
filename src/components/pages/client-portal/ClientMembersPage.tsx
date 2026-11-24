@@ -79,9 +79,10 @@ export default function ClientMembersPage() {
   const [formEmail, setFormEmail] = useState('');
   const [formRole, setFormRole] = useState<PortalTeamRole>('CLIENT_USER');
   const [inviteResult, setInviteResult] = useState<{
-    temporaryPassword?: string;
-    setupLink?: string;
+    setupLink?: string | null;
     emailSent?: boolean;
+    emailReason?: string | null;
+    invitationStatus?: string;
   } | null>(null);
   const [pendingDeactivate, setPendingDeactivate] = useState<PortalMember | null>(null);
 
@@ -141,11 +142,20 @@ export default function ClientMembersPage() {
         role: formRole,
       });
       setInviteResult({
-        temporaryPassword: result.temporaryPassword,
         setupLink: result.setupLink,
         emailSent: result.emailSent,
+        emailReason: result.emailReason,
+        invitationStatus: result.invitationStatus,
       });
-      toast.success('Mitarbeiter hinzugefügt.');
+      if (result.emailSent) {
+        toast.success('Einladung gesendet.');
+      } else {
+        toast.error(
+          `Mitarbeiter angelegt, aber E-Mail fehlgeschlagen${
+            result.emailReason ? `: ${result.emailReason}` : '.'
+          }`,
+        );
+      }
       await load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Anlegen fehlgeschlagen');
@@ -199,13 +209,17 @@ export default function ClientMembersPage() {
     setSaving(true);
     try {
       const result = await clientPortalApi.resetTeamMemberPassword(member.id);
-      toast.success(
-        result.emailSent
-          ? 'Reset-E-Mail gesendet.'
-          : `Temporäres Passwort: ${result.temporaryPassword || '—'}`,
-      );
-      if (result.setupLink) {
-        toast.message('Setup-Link', { description: result.setupLink });
+      if (result.emailSent) {
+        toast.success('Reset-/Einladungs-E-Mail gesendet.');
+      } else {
+        toast.error(
+          `E-Mail fehlgeschlagen${result.emailReason ? `: ${result.emailReason}` : '.'}`,
+        );
+        if (result.setupLink) {
+          toast.message('Setup-Link (nur bei Versandfehler)', {
+            description: result.setupLink,
+          });
+        }
       }
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Reset fehlgeschlagen');
@@ -410,21 +424,25 @@ export default function ClientMembersPage() {
               </div>
             </div>
             {inviteResult ? (
-              <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-900 space-y-1">
+              <div
+                className={`rounded-xl border px-3 py-2 text-xs space-y-1 ${
+                  inviteResult.emailSent
+                    ? 'border-emerald-100 bg-emerald-50/70 text-emerald-900'
+                    : 'border-amber-100 bg-amber-50/70 text-amber-950'
+                }`}
+              >
                 {inviteResult.emailSent ? (
-                  <p>Einladungs-E-Mail wurde gesendet.</p>
+                  <p>Einladungs-E-Mail wurde gesendet. Es wird kein Passwort angezeigt.</p>
                 ) : (
-                  <p>E-Mail-Versand nicht konfiguriert — bitte Setup-Daten manuell weitergeben.</p>
-                )}
-                {inviteResult.temporaryPassword ? (
                   <p>
-                    Temporäres Passwort:{' '}
-                    <code className="font-mono font-bold">{inviteResult.temporaryPassword}</code>
+                    E-Mail-Versand fehlgeschlagen — Benutzer ist angelegt, aber nicht benachrichtigt.
+                    {inviteResult.emailReason ? ` (${inviteResult.emailReason})` : ''}
                   </p>
-                ) : null}
-                {inviteResult.setupLink ? (
+                )}
+                {!inviteResult.emailSent && inviteResult.setupLink ? (
                   <p className="break-all">
-                    Setup-Link: <code className="font-mono">{inviteResult.setupLink}</code>
+                    Autorisierter Setup-Link:{' '}
+                    <code className="font-mono">{inviteResult.setupLink}</code>
                   </p>
                 ) : null}
               </div>

@@ -209,6 +209,9 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+  const [setupToken, setSetupToken] = useState<string | null>(null);
+  const [setupPassword, setSetupPassword] = useState('');
+  const [setupPasswordConfirm, setSetupPasswordConfirm] = useState('');
   
   // Mouse interaction state for creative interactive layout background
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
@@ -260,7 +263,52 @@ export default function LoginPage() {
       toast.error(decodeURIComponent(err));
       window.history.replaceState({}, '', window.location.pathname);
     }
+    const setup = params.get('setup');
+    if (setup) {
+      setSetupToken(setup);
+    }
   }, []);
+
+  const handleCompleteSetup = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!setupToken) return;
+    if (setupPassword.length < 10) {
+      toast.error(
+        activeLang === 'de'
+          ? 'Passwort muss mindestens 10 Zeichen haben.'
+          : 'Password must be at least 10 characters.',
+      );
+      return;
+    }
+    if (setupPassword !== setupPasswordConfirm) {
+      toast.error(activeLang === 'de' ? 'Passwörter stimmen nicht überein.' : 'Passwords do not match.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/complete-setup', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: setupToken, password: setupPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Setup failed.');
+      }
+      toast.success(
+        activeLang === 'de'
+          ? 'Passwort gesetzt — Sie sind angemeldet.'
+          : 'Password set — you are signed in.',
+      );
+      window.history.replaceState({}, '', window.location.pathname);
+      window.location.assign('/');
+    } catch (error: any) {
+      toast.error(error.message || texts.toasts.authFailed);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleEmailAuth = async (e: FormEvent) => {
     e.preventDefault();
@@ -662,7 +710,55 @@ export default function LoginPage() {
             </div>
           ) : null}
 
+          {setupToken ? (
+            <form onSubmit={handleCompleteSetup} className="space-y-3.5">
+              <div className="rounded-xl border border-sky-100 bg-sky-50/80 px-3 py-2.5 text-xs text-sky-900 font-semibold">
+                {activeLang === 'de'
+                  ? 'Richten Sie Ihr Passwort über den Einladungslink ein. Der Link ist einmalig und zeitlich begrenzt.'
+                  : 'Set your password via the invitation link. The link is single-use and time-limited.'}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="setup-password" className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                  {activeLang === 'de' ? 'Neues Passwort' : 'New password'}
+                </Label>
+                <Input
+                  id="setup-password"
+                  type="password"
+                  value={setupPassword}
+                  onChange={(e) => setSetupPassword(e.target.value)}
+                  disabled={loading}
+                  minLength={10}
+                  required
+                  className="h-11 rounded-xl bg-slate-50 border-slate-200/80 text-xs font-semibold"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="setup-password-confirm" className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                  {activeLang === 'de' ? 'Passwort bestätigen' : 'Confirm password'}
+                </Label>
+                <Input
+                  id="setup-password-confirm"
+                  type="password"
+                  value={setupPasswordConfirm}
+                  onChange={(e) => setSetupPasswordConfirm(e.target.value)}
+                  disabled={loading}
+                  minLength={10}
+                  required
+                  className="h-11 rounded-xl bg-slate-50 border-slate-200/80 text-xs font-semibold"
+                />
+              </div>
+              <Button type="submit" disabled={loading} className="w-full h-11 rounded-xl font-bold">
+                {loading
+                  ? '…'
+                  : activeLang === 'de'
+                    ? 'Passwort setzen & anmelden'
+                    : 'Set password & sign in'}
+              </Button>
+            </form>
+          ) : null}
+
           {/* Login Action Form */}
+          {!setupToken ? (
           <form onSubmit={handleEmailAuth} className="space-y-3.5">
             
             {/* Email Address field */}
@@ -756,8 +852,10 @@ export default function LoginPage() {
             </Button>
 
           </form>
+          ) : null}
 
           {/* Toggle credentials state link */}
+          {!setupToken ? (
           <div className="text-center text-xs">
             <button 
               type="button" 
@@ -768,6 +866,7 @@ export default function LoginPage() {
               {isRegister ? texts.registerSwitchIn : texts.registerSwitchUp}
             </button>
           </div>
+          ) : null}
 
           {/* Divider */}
           <div className="relative my-4 xl:my-6 flex items-center justify-center">

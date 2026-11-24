@@ -64,11 +64,21 @@ import { hydrateCompany } from './companies/utils';
 import axios from 'axios';
 import CSVImporter from '../CSVImporter';
 import { useTranslation } from '../../lib/context/I18nContext';
+import { useAuth } from '../../lib/hooks';
+import { isHubcomStaffRole } from '../../lib/client-portal/roles';
+import {
+  blankNewCompanyForm,
+  type NewCompanyFormState,
+} from '../../lib/company-form-defaults';
+import { parseAndValidateLogoDataUrl } from '../../lib/client-portal/org-branding';
 
 const BRANCHES = ['Tech', 'Finance', 'Healthcare', 'Manufacturing', 'Retail', 'Services', 'Other'];
 
+type StaffOption = { id: string; name: string; email: string; role: string };
+
 export default function CustomersPage() {
   const { t } = useTranslation();
+  const { user: authUser } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
@@ -115,36 +125,10 @@ export default function CustomersPage() {
     });
   };
 
-  // Forms states
-  const [newCompany, setNewCompany] = useState({
-    name: '',
-    slug: '',
-    domain: '',
-    website: '',
-    logoUrl: '',
-    branche: 'Tech' as any,
-    companySize: '201–500',
-    tier: 'Enterprise',
-    primaryContactName: 'John Smith',
-    primaryContactEmail: 'john.smith@acme.com',
-    primaryContactPhone: '+49 123 456 7890',
-    primaryContactTitle: 'IT Director',
-    country: 'Germany',
-    timezone: 'Europe/Berlin (GMT+2)',
-    address: 'Friedrichstraße 123, 10117 Berlin, Germany',
-    accountOwner: 'Sarah James',
-    internalNotes: 'Strategic enterprise customer. Uses managed IT and cloud services. Priority support contract in place.',
-    wartungsvertragStatus: 'Active' as any,
-    healthScore: 85,
-    contractPlan: 'Enterprise Plus',
-    contractSla: '4h response',
-    contractRenewalDate: 'Jan 12, 2027 (218 days)',
-    monthlySpend: '€4,520',
-    usersCount: 142,
-    assetsCount: 87,
-    vaultEntriesCount: 23,
-    slaPerformance: '99.8%'
-  });
+  // Forms states — intentionally blank (no demo fixtures)
+  const [newCompany, setNewCompany] = useState<NewCompanyFormState>(() => blankNewCompanyForm());
+  const [staffOwners, setStaffOwners] = useState<StaffOption[]>([]);
+  const [enrichmentApplied, setEnrichmentApplied] = useState(false);
 
   const [newContact, setNewContact] = useState<any>({
     name: '',
@@ -176,6 +160,50 @@ export default function CustomersPage() {
   useEffect(() => {
     schemaService.getContactSchema().then(setContactSchema);
   }, []);
+
+  // Account-manager candidates: active Hubcom staff from authorized admin API
+  useEffect(() => {
+    if (!isCreateDialogOpen && !isEditDialogOpen) return;
+    let cancelled = false;
+    void axios
+      .get('/api/admin/users', { params: { page: 1, limit: 100 }, withCredentials: true })
+      .then((res) => {
+        if (cancelled) return;
+        const rows = (res.data?.users || []) as Array<Record<string, unknown>>;
+        const staff = rows
+          .filter((u) => {
+            const role = String(u.role || '');
+            const status = String(u.status || '').toLowerCase();
+            if (status === 'deactivated') return false;
+            return isHubcomStaffRole(role) || u.is_admin === true || role === 'SYSTEM_ADMIN';
+          })
+          .map((u) => ({
+            id: String(u.id),
+            name: String(u.name || u.email || ''),
+            email: String(u.email || ''),
+            role: String(u.role || ''),
+          }))
+          .filter((u) => u.id && u.name)
+          .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+        setStaffOwners(staff);
+
+        // Default to signed-in admin only when eligible and nothing chosen yet
+        setNewCompany((prev) => {
+          if (prev.accountOwnerId) return prev;
+          const selfId = authUser?.uid || (authUser as any)?.id;
+          if (!selfId) return prev;
+          const self = staff.find((s) => s.id === selfId);
+          if (!self) return prev;
+          return { ...prev, accountOwnerId: self.id, accountOwner: self.name };
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setStaffOwners([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isCreateDialogOpen, isEditDialogOpen, authUser]);
 
   // Subscribe to all companies in the DB
   useEffect(() => {
@@ -506,133 +534,61 @@ export default function CustomersPage() {
     });
   };
 
-  // Smart enrichment simulation
+  /**
+   * Smart Enrichment — only after an admin enters a domain and clicks Enrich.
+   * Results are suggestions for review; they are not saved until Create.
+   * Does not invent account managers or Hubcom staff.
+   */
   const handleSmartEnrich = () => {
     if (!newCompany.domain) {
-      toast.error("Please enter a domain first (e.g. stripe.com)");
+      toast.error(t('companies.enrich.needDomain', 'Bitte zuerst eine Domain eingeben.'));
       return;
     }
     setIsEnriching(true);
-    const toastId = toast.loading("Invoking Company360 Enrichment APIs...");
-    
+    const toastId = toast.loading(
+      t('companies.enrich.loading', 'Anreicherungsvorschläge werden geladen…'),
+    );
+
     setTimeout(() => {
       const dLower = newCompany.domain.toLowerCase().trim();
-      let enrichedData: any = {};
-      
-      if (dLower.includes('stripe')) {
-        enrichedData = {
-          name: "Stripe, Inc.",
-          branche: "Finance",
-          companySize: "1000+",
-          tier: "Enterprise",
-          website: "https://www.stripe.com",
-          country: "United States",
-          timezone: "US/Pacific (GMT-8)",
-          address: "354 Oyster Point Blvd, South San Francisco, CA 94080, USA",
-          logoUrl: "https://logo.clearbit.com/stripe.com",
-          internalNotes: "Tier-1 high volume online payment terminal aggregator. Linked infrastructure VPC.",
-          primaryContactName: "John Collison",
-          primaryContactEmail: "john@stripe.com",
-          primaryContactTitle: "Co-Founder",
-          primaryContactPhone: "+1 650 435 0000"
-        };
-      } else if (dLower.includes('google')) {
-        enrichedData = {
-          name: "Google LLC",
-          branche: "Tech",
-          companySize: "1000+",
-          tier: "Enterprise",
-          website: "https://www.google.com",
-          country: "United States",
-          timezone: "US/Pacific (GMT-8)",
-          address: "1600 Amphitheatre Pkwy, Mountain View, CA 94043, USA",
-          logoUrl: "https://logo.clearbit.com/google.com",
-          internalNotes: "Strategic multi-national search, hardware & cloud provider. High contract MSP client.",
-          primaryContactName: "Sundar Pichai",
-          primaryContactEmail: "sundar@google.com",
-          primaryContactTitle: "CEO",
-          primaryContactPhone: "+1 650 253 0000"
-        };
-      } else if (dLower.includes('microsoft')) {
-        enrichedData = {
-          name: "Microsoft Corporation",
-          branche: "Tech",
-          companySize: "1000+",
-          tier: "Enterprise",
-          website: "https://www.microsoft.com",
-          country: "United States",
-          timezone: "US/Pacific (GMT-8)",
-          address: "One Microsoft Way, Redmond, WA 98052, USA",
-          logoUrl: "https://logo.clearbit.com/microsoft.com",
-          internalNotes: "Standard enterprise accounts suite. Deployed across hybrid Azure instances.",
-          primaryContactName: "Satya Nadella",
-          primaryContactEmail: "satya@microsoft.com",
-          primaryContactTitle: "CEO",
-          primaryContactPhone: "+1 425 882 8080"
-        };
-      } else if (dLower.includes('acme')) {
-        enrichedData = {
-          name: "Acme Global Solutions",
-          branche: "Tech",
-          companySize: "201–500",
-          tier: "Enterprise",
-          website: "https://www.acme.com",
-          country: "Germany",
-          timezone: "Europe/Berlin (GMT+2)",
-          address: "Friedrichstraße 123, 10117 Berlin, Germany",
-          logoUrl: "",
-          internalNotes: "Prioritized industrial manufacturing systems vendor. Active SLA monitoring contract.",
-          primaryContactName: "John Smith",
-          primaryContactEmail: "john.smith@acme.com",
-          primaryContactTitle: "IT Director",
-          primaryContactPhone: "+49 123 456 7890"
-        };
-      } else {
-        const prefix = dLower.split('.')[0];
-        const capName = prefix.charAt(0).toUpperCase() + prefix.slice(1);
-        enrichedData = {
-          name: `${capName} Technologies`,
-          branche: "Tech",
-          companySize: "51–200",
-          tier: "Pro",
-          website: `https://www.${dLower}`,
-          country: "United Kingdom",
-          timezone: "Europe/London (GMT+1)",
-          address: `10 Bruton St, London W1J 6PX, UK`,
-          logoUrl: `https://logo.clearbit.com/${dLower}`,
-          internalNotes: `Enriched via standard intelligence registry API. Domain registered under ${dLower}.`,
-          primaryContactName: "Jane Doe",
-          primaryContactEmail: `jane@${dLower}`,
-          primaryContactTitle: "CTO",
-          primaryContactPhone: "+44 20 7946 0192"
-        };
-      }
+      const prefix = dLower.split('.')[0] || 'company';
+      const capName = prefix.charAt(0).toUpperCase() + prefix.slice(1);
+      // Conservative suggestion from domain only — admin must review before save.
+      const suggestion: Partial<NewCompanyFormState> = {
+        name: newCompany.name.trim() ? newCompany.name : `${capName}`,
+        website: newCompany.website.trim()
+          ? newCompany.website
+          : `https://www.${dLower}`,
+        logoUrl: newCompany.logoUrl.trim()
+          ? newCompany.logoUrl
+          : `https://logo.clearbit.com/${dLower}`,
+      };
 
-      setNewCompany(prev => ({
-        ...prev,
-        ...enrichedData
-      }));
+      setNewCompany((prev) => ({ ...prev, ...suggestion }));
+      setEnrichmentApplied(true);
       toast.dismiss(toastId);
-      toast.success("Intelligence record loaded! Form auto-populated.");
+      toast.message(
+        t(
+          'companies.enrich.review',
+          'Vorschläge eingefügt — bitte prüfen und bei Bedarf korrigieren, bevor Sie speichern.',
+        ),
+      );
       setIsEnriching(false);
-    }, 1000);
+    }, 400);
   };
 
-  // Logo file drag operations
+  // Logo file drag operations — PNG / JPEG / WebP ≤ 512 KB (matches backend policy)
   const handleLogoFile = (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      toast.error("Please upload an image file (PNG, JPG, SVG)");
-      return;
-    }
     const reader = new FileReader();
     reader.onload = (e) => {
-      if (e.target?.result) {
-        setNewCompany(prev => ({
-          ...prev,
-          logoUrl: e.target.result as string
-        }));
-        toast.success("Design asset / Logo saved dynamically!");
+      const dataUrl = String(e.target?.result || '');
+      const check = parseAndValidateLogoDataUrl(dataUrl);
+      if (check.ok === false) {
+        toast.error(check.error);
+        return;
       }
+      setNewCompany((prev) => ({ ...prev, logoUrl: check.dataUrl }));
+      toast.success(t('companies.logo.ready', 'Logo bereit — wird beim Speichern übernommen.'));
     };
     reader.readAsDataURL(file);
   };
@@ -641,8 +597,23 @@ export default function CustomersPage() {
   const handleCreateCompany = async (e: FormEvent, isDraft = false) => {
     if (e) e.preventDefault();
     if (!newCompany.name || !newCompany.domain) {
-      toast.error("Company name and domain are required");
+      toast.error(t('companies.create.required', 'Firmenname und Domain sind erforderlich.'));
       return;
+    }
+    if (!newCompany.accountOwnerId) {
+      toast.error(
+        t('companies.create.needOwner', 'Bitte einen Account Manager aus der Mitarbeiterliste wählen.'),
+      );
+      return;
+    }
+    let logoUrl = newCompany.logoUrl.trim() || null;
+    if (logoUrl && logoUrl.startsWith('data:')) {
+      const check = parseAndValidateLogoDataUrl(logoUrl);
+      if (check.ok === false) {
+        toast.error(check.error);
+        return;
+      }
+      logoUrl = check.dataUrl;
     }
     setIsSaving(true);
     try {
@@ -658,7 +629,7 @@ export default function CustomersPage() {
           tier: newCompany.tier || null,
           sla: newCompany.contractSla || null,
           contract_renewal: newCompany.contractRenewalDate || null,
-          logo_url: newCompany.logoUrl || null,
+          logo_url: logoUrl,
           is_active: !isDraft,
           settings: {},
         },
@@ -670,9 +641,27 @@ export default function CustomersPage() {
         throw new Error('Organization created without CRM company link');
       }
 
+      const owner = staffOwners.find((s) => s.id === newCompany.accountOwnerId);
       await customerService.updateCompany(companyId, {
-        ...newCompany,
+        name: newCompany.name.trim(),
         slug,
+        domain: newCompany.domain.trim().toLowerCase(),
+        website: newCompany.website || '',
+        logoUrl: logoUrl || organization?.logo_url || '',
+        logo_url: logoUrl || organization?.logo_url || '',
+        branche: newCompany.branche || '',
+        companySize: newCompany.companySize || '',
+        tier: newCompany.tier || '',
+        country: newCompany.country || '',
+        timezone: newCompany.timezone || '',
+        address: newCompany.address || '',
+        accountOwner: owner?.name || newCompany.accountOwner || '',
+        accountOwnerId: newCompany.accountOwnerId,
+        internalNotes: newCompany.internalNotes || '',
+        wartungsvertragStatus: newCompany.wartungsvertragStatus || '',
+        contractPlan: newCompany.contractPlan || '',
+        contractSla: newCompany.contractSla || '',
+        contractRenewalDate: newCompany.contractRenewalDate || '',
         organizationId: organization.id,
         organization_id: organization.id,
         phoneNumbers: newCompany.primaryContactPhone ? [newCompany.primaryContactPhone] : [],
@@ -693,57 +682,31 @@ export default function CustomersPage() {
             address: newCompany.address || '',
             metadata: {
               role: 'primary_contact',
-              enriched: true
-            }
+              enriched: enrichmentApplied,
+            },
           });
         } catch (contactErr) {
-          console.warn("Failed to create associated contact record", contactErr);
+          console.warn('Failed to create associated contact record', contactErr);
         }
       }
 
       setIsCreateDialogOpen(false);
       setSelectedCompanyId(companyId);
-      
+      setEnrichmentApplied(false);
+
       if (isDraft) {
-        toast.success("Company profile draft saved successfully in corporate registry!");
+        toast.success(t('companies.create.draftSaved', 'Entwurf gespeichert.'));
       } else {
-        toast.success("New organization registered in 360 Workspace!");
+        toast.success(t('companies.create.success', 'Unternehmen erfolgreich angelegt.'));
       }
 
-      // Reset form
-      setNewCompany({
-        name: '',
-        slug: '',
-        domain: '',
-        website: '',
-        logoUrl: '',
-        branche: 'Tech' as any,
-        companySize: '201–500',
-        tier: 'Enterprise',
-        primaryContactName: 'John Smith',
-        primaryContactEmail: 'john.smith@acme.com',
-        primaryContactPhone: '+49 123 456 7890',
-        primaryContactTitle: 'IT Director',
-        country: 'Germany',
-        timezone: 'Europe/Berlin (GMT+2)',
-        address: 'Friedrichstraße 123, 10117 Berlin, Germany',
-        accountOwner: 'Sarah James',
-        internalNotes: 'Strategic enterprise customer. Uses managed IT and cloud services. Priority support contract in place.',
-        wartungsvertragStatus: 'Active' as any,
-        healthScore: 85,
-        contractPlan: 'Enterprise Plus',
-        contractSla: '4h response',
-        contractRenewalDate: 'Jan 12, 2027 (218 days)',
-        monthlySpend: '€4,520',
-        usersCount: 142,
-        assetsCount: 87,
-        vaultEntriesCount: 23,
-        slaPerformance: '99.8%'
-      });
+      setNewCompany(blankNewCompanyForm());
     } catch (error: any) {
       toast.error(
         error?.response?.data?.error ||
-          (isDraft ? "Failed to save draft" : "Failed to create company"),
+          (isDraft
+            ? t('companies.create.draftFailed', 'Entwurf konnte nicht gespeichert werden.')
+            : t('companies.create.failed', 'Unternehmen konnte nicht angelegt werden.')),
       );
     } finally {
       setIsSaving(false);
@@ -1161,7 +1124,7 @@ export default function CustomersPage() {
                     <div className="space-y-1.5">
                       <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Industry Sector</Label>
                       <Select 
-                        value={newCompany.branche} 
+                        value={newCompany.branche || undefined} 
                         onValueChange={(val) => setNewCompany({...newCompany, branche: val as any})}
                       >
                         <SelectTrigger className="rounded-xl border border-slate-200 h-10 font-semibold text-slate-700 text-xs bg-white">
@@ -1178,7 +1141,7 @@ export default function CustomersPage() {
                     <div className="space-y-1.5">
                       <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Company Size</Label>
                       <Select 
-                        value={newCompany.companySize} 
+                        value={newCompany.companySize || undefined} 
                         onValueChange={(val) => setNewCompany({...newCompany, companySize: val})}
                       >
                         <SelectTrigger className="rounded-xl border border-slate-200 h-10 font-semibold text-slate-700 text-xs bg-white">
@@ -1195,7 +1158,7 @@ export default function CustomersPage() {
                     <div className="space-y-1.5 col-span-2">
                       <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Customer Tier</Label>
                       <Select 
-                        value={newCompany.tier} 
+                        value={newCompany.tier || undefined} 
                         onValueChange={(val) => setNewCompany({...newCompany, tier: val})}
                       >
                         <SelectTrigger className="rounded-xl border border-slate-200 h-10 font-black text-slate-800 text-xs bg-white">
@@ -1281,7 +1244,7 @@ export default function CustomersPage() {
                     <div className="space-y-1.5">
                       <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Country</Label>
                       <Select
-                        value={newCompany.country}
+                        value={newCompany.country || undefined}
                         onValueChange={(val) => setNewCompany({...newCompany, country: val})}
                       >
                         <SelectTrigger className="rounded-xl border border-slate-200 h-10 font-semibold text-slate-700 text-xs bg-white">
@@ -1298,7 +1261,7 @@ export default function CustomersPage() {
                     <div className="space-y-1.5">
                       <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Timezone</Label>
                       <Select
-                        value={newCompany.timezone}
+                        value={newCompany.timezone || undefined}
                         onValueChange={(val) => setNewCompany({...newCompany, timezone: val})}
                       >
                         <SelectTrigger className="rounded-xl border border-slate-200 h-10 font-semibold text-slate-700 text-xs bg-white">
@@ -1335,21 +1298,56 @@ export default function CustomersPage() {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5 col-span-2">
-                      <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Assigned Account Manager</Label>
+                      <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        {t('companies.form.accountManager', 'Account Manager')}
+                      </Label>
                       <Select
-                        value={newCompany.accountOwner}
-                        onValueChange={(val) => setNewCompany({...newCompany, accountOwner: val})}
+                        value={newCompany.accountOwnerId || undefined}
+                        onValueChange={(val) => {
+                          const owner = staffOwners.find((s) => s.id === val);
+                          setNewCompany({
+                            ...newCompany,
+                            accountOwnerId: val,
+                            accountOwner: owner?.name || '',
+                          });
+                        }}
                       >
                         <SelectTrigger className="rounded-xl border border-slate-200 h-10 font-semibold text-slate-700 text-xs bg-white">
-                          <SelectValue placeholder="Select account owner" />
+                          <SelectValue
+                            placeholder={t(
+                              'companies.form.selectAccountManager',
+                              'Mitarbeiter wählen…',
+                            )}
+                          />
                         </SelectTrigger>
                         <SelectContent className="rounded-xl shadow-lg border-slate-100">
-                          {['Sarah James', 'Michael Scott', 'Jim Halpert', 'Dwight Schrute', 'Pam Beesly'].map(owner => (
-                            <SelectItem key={owner} value={owner} className="rounded-lg font-semibold text-xs py-2">{owner}</SelectItem>
-                          ))}
+                          {staffOwners.length === 0 ? (
+                            <SelectItem value="__none" disabled>
+                              {t(
+                                'companies.form.noStaff',
+                                'Keine Hubcom-Mitarbeiter geladen',
+                              )}
+                            </SelectItem>
+                          ) : (
+                            staffOwners.map((owner) => (
+                              <SelectItem
+                                key={owner.id}
+                                value={owner.id}
+                                className="rounded-lg font-semibold text-xs py-2"
+                              >
+                                {owner.name}
+                                {owner.email ? ` · ${owner.email}` : ''}
+                              </SelectItem>
+                            ))
+                          )}
                         </SelectContent>
                       </Select>
-                      <p className="text-[9px] text-slate-400 font-semibold mt-1">Responsible for this account</p>
+                      <p className="text-[9px] text-slate-400 font-semibold mt-1">
+                        {t(
+                          'companies.form.accountManagerHint',
+                          'Nur aktive Hubcom-Mitarbeiter — keine Portal-Kunden.',
+                        )}
+                      </p>
                     </div>
 
                     <div className="space-y-1.5 col-span-2">
@@ -1391,7 +1389,8 @@ export default function CustomersPage() {
                     )}
                     <div className="min-w-0">
                       <h4 className="text-sm font-black text-slate-900 truncate leading-tight tracking-tight">
-                        {newCompany.name || "Acme Global Solutions"}
+                        {newCompany.name ||
+                          t('companies.preview.unnamed', 'Neues Unternehmen')}
                       </h4>
                       {newCompany.domain && (
                         <a 
@@ -1418,7 +1417,9 @@ export default function CustomersPage() {
                         <Briefcase className="w-3.5 h-3.5 text-slate-400" />
                         <span>Industry</span>
                       </div>
-                      <span className="font-bold text-slate-800">{newCompany.branche || "Technology"}</span>
+                      <span className="font-bold text-slate-800">
+                        {newCompany.branche || '—'}
+                      </span>
                     </div>
 
                     <div className="flex items-center justify-between text-[11px]">
@@ -1426,7 +1427,9 @@ export default function CustomersPage() {
                         <Users className="w-3.5 h-3.5 text-slate-400" />
                         <span>Company Size</span>
                       </div>
-                      <span className="font-bold text-slate-800">{newCompany.companySize || "201–500"} emp</span>
+                      <span className="font-bold text-slate-800">
+                        {newCompany.companySize || '—'}
+                      </span>
                     </div>
 
                     <div className="flex items-center justify-between text-[11px]">
@@ -1440,7 +1443,7 @@ export default function CustomersPage() {
                         newCompany.tier === 'Pro' ? "text-blue-700 bg-blue-50 border-blue-200" :
                         "text-slate-700 bg-slate-50 border-slate-200"
                       )}>
-                        {newCompany.tier || "Enterprise"}
+                        {newCompany.tier || '—'}
                       </span>
                     </div>
 
@@ -1450,10 +1453,20 @@ export default function CustomersPage() {
                         <span>Website</span>
                       </div>
                       <span className="font-bold text-slate-800 max-w-[140px] truncate" title={newCompany.website}>
-                        {newCompany.website ? newCompany.website.replace(/^https?:\/\//, '') : "www.acme.com"}
+                        {newCompany.website
+                          ? newCompany.website.replace(/^https?:\/\//, '')
+                          : '—'}
                       </span>
                     </div>
                   </div>
+                  {enrichmentApplied ? (
+                    <p className="text-[10px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5">
+                      {t(
+                        'companies.preview.enrichmentBanner',
+                        'Enriched suggestion — not saved until you create the company.',
+                      )}
+                    </p>
+                  ) : null}
                 </div>
 
                 {/* Primary Contact Group */}
@@ -1462,14 +1475,20 @@ export default function CustomersPage() {
                   <div className="border border-slate-100 rounded-2xl p-3.5 bg-slate-50/50 flex flex-col gap-2.5">
                     <div className="flex items-center gap-3">
                       <div className="w-8.5 h-8.5 rounded-full bg-slate-200/80 text-slate-600 font-bold text-xs flex items-center justify-center select-none uppercase shadow-inner">
-                        {newCompany.primaryContactName ? newCompany.primaryContactName.split(' ').map(n => n[0]).slice(0, 2).join('') : "A"}
+                        {newCompany.primaryContactName
+                          ? newCompany.primaryContactName
+                              .split(' ')
+                              .map((n) => n[0])
+                              .slice(0, 2)
+                              .join('')
+                          : '—'}
                       </div>
                       <div className="min-w-0">
                         <h5 className="text-xs font-black text-slate-800 tracking-tight leading-tight truncate">
-                          {newCompany.primaryContactName || "John Smith"}
+                          {newCompany.primaryContactName || '—'}
                         </h5>
                         <p className="text-[10px] text-slate-500 font-bold leading-tight truncate mt-0.5">
-                          {newCompany.primaryContactTitle || "IT Director"}
+                          {newCompany.primaryContactTitle || '—'}
                         </p>
                       </div>
                     </div>
@@ -1477,11 +1496,11 @@ export default function CustomersPage() {
                     <div className="border-t border-slate-100 pt-2 space-y-1 text-[10px] text-slate-500 font-semibold leading-relaxed">
                       <div className="flex items-center gap-2 truncate">
                         <Mail className="w-3 h-3 text-slate-400 shrink-0" />
-                        <span>{newCompany.primaryContactEmail || "john.smith@acme.com"}</span>
+                        <span>{newCompany.primaryContactEmail || '—'}</span>
                       </div>
                       <div className="flex items-center gap-2 truncate mt-1">
                         <Phone className="w-3 h-3 text-slate-400 shrink-0" />
-                        <span>{newCompany.primaryContactPhone || "+49 123 456 7890"}</span>
+                        <span>{newCompany.primaryContactPhone || '—'}</span>
                       </div>
                     </div>
                   </div>
@@ -1492,9 +1511,17 @@ export default function CustomersPage() {
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Account Manager</span>
                   <div className="flex items-center gap-2.5 px-1 py-1">
                     <div className="w-7 h-7 rounded-full bg-[#1A73E8]/10 text-primary text-[11px] font-bold flex items-center justify-center select-none uppercase shadow-inner border border-[#1A73E8]/5">
-                      {newCompany.accountOwner ? newCompany.accountOwner.split(' ').map(n => n[0]).join('') : "SJ"}
+                      {newCompany.accountOwner
+                        ? newCompany.accountOwner
+                            .split(' ')
+                            .map((n) => n[0])
+                            .join('')
+                        : '—'}
                     </div>
-                    <span className="text-xs font-bold text-slate-700">{newCompany.accountOwner || "Sarah James"}</span>
+                    <span className="text-xs font-bold text-slate-700">
+                      {newCompany.accountOwner ||
+                        t('companies.preview.noOwner', 'Nicht zugewiesen')}
+                    </span>
                   </div>
                 </div>
 

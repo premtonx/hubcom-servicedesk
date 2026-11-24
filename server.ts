@@ -405,6 +405,41 @@ async function startServer() {
     }
   });
 
+  /**
+   * POST /api/auth/complete-setup
+   * Single-use invitation / password-reset token → set passwordHash, clear token.
+   * Never accepts or returns a temporary password.
+   */
+  app.post("/api/auth/complete-setup", authRateLimiter, credentialRateLimiter, async (req: any, res) => {
+    const token = String(req.body?.token || "").trim();
+    const password = String(req.body?.password || "");
+    if (!token || !password) {
+      return res.status(400).json({ error: "token and password are required" });
+    }
+    try {
+      const { completePortalSetup } = await import("./src/lib/client-portal/team-service.js");
+      const result = await completePortalSetup({ token, password });
+      const userDoc = await getDocDirect("users", result.userId);
+      if (!userDoc || userDoc.isDeactivated) {
+        return res.status(403).json({ error: "Account is not available." });
+      }
+      const session = issueSessionToken({ id: userDoc.id, email: userDoc.email });
+      setSessionCookie(res, session);
+      return res.json({
+        success: true,
+        user: sanitizeUserDoc(userDoc),
+        organizationId: result.organizationId,
+      });
+    } catch (e: any) {
+      const status = Number(e?.status) || 500;
+      if (status >= 400 && status < 500) {
+        return res.status(status).json({ error: e?.message || "Setup failed." });
+      }
+      safeLog("error", "[Auth/CompleteSetup] Failed:", e?.message || e);
+      return res.status(500).json({ error: "Setup failed." });
+    }
+  });
+
   app.post("/api/auth/logout", (_req, res) => {
     clearSessionCookie(res);
     return res.json({ success: true });
