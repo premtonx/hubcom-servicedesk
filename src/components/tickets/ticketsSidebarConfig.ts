@@ -174,6 +174,26 @@ export const WAITING_QUEUE_VIEW_IDS = [
 
 export const ARCHIVE_VIEW_IDS = ['status_resolved', 'status_closed'] as const;
 
+/** Compact left-nav section ids — used for collapse prefs (not display labels). */
+export const COMPACT_SIDEBAR_SECTION = {
+  favorites: 'favorites',
+  primaryViews: 'primaryViews',
+  urgency: 'urgency',
+  statusQueues: 'statusQueues',
+  kunden: 'kunden',
+} as const;
+
+export type CompactSidebarSectionId =
+  (typeof COMPACT_SIDEBAR_SECTION)[keyof typeof COMPACT_SIDEBAR_SECTION];
+
+export const COMPACT_COLLAPSE_SECTION_IDS: CompactSidebarSectionId[] = [
+  COMPACT_SIDEBAR_SECTION.favorites,
+  COMPACT_SIDEBAR_SECTION.primaryViews,
+  COMPACT_SIDEBAR_SECTION.urgency,
+  COMPACT_SIDEBAR_SECTION.statusQueues,
+  COMPACT_SIDEBAR_SECTION.kunden,
+];
+
 export const COMPACT_PRIMARY_VIEWS: SidebarItemConfig[] = [
   { id: 'assigned_me', label: 'Assigned to me', icon: User },
   { id: 'unassigned', label: 'Unassigned', icon: UserPlus },

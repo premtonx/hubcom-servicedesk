@@ -11,8 +11,14 @@ import {
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { useTranslation } from '../../lib/context/I18nContext';
-import { FAVORITES_SECTION_ID, TICKETS_SIDEBAR_GROUPS } from './ticketsSidebarConfig';
+import {
+  COMPACT_COLLAPSE_SECTION_IDS,
+  COMPACT_SIDEBAR_SECTION,
+  FAVORITES_SECTION_ID,
+  TICKETS_SIDEBAR_GROUPS,
+} from './ticketsSidebarConfig';
 import type { CustomTicketView, CustomTicketViewFilters } from '../../lib/ticketsSidebarPreferences';
+import { DEFAULT_COLLAPSED_GROUPS } from '../../lib/ticketsSidebarPreferences';
 import { cn } from '../../lib/utils';
 
 interface TicketsSidebarManageSheetProps {
@@ -58,7 +64,8 @@ export function TicketsSidebarManageSheet({
     .map((id) => TICKETS_SIDEBAR_GROUPS.find((g) => g.id === id))
     .filter(Boolean);
 
-  const collapseSectionIds = [FAVORITES_SECTION_ID, ...groupOrder];
+  /** Compact left-nav sections — matches TicketsLeftSidebar collapse prefs. */
+  const collapseSectionIds = [...COMPACT_COLLAPSE_SECTION_IDS];
 
   const onGroupDragEnd = (result: DropResult) => {
     if (!result.destination) return;
@@ -79,8 +86,19 @@ export function TicketsSidebarManageSheet({
   };
 
   const sectionLabel = (id: string) => {
-    if (id === FAVORITES_SECTION_ID) {
+    if (id === COMPACT_SIDEBAR_SECTION.favorites || id === FAVORITES_SECTION_ID) {
       return t('tickets.groups.favorites', 'Favorites');
+    }
+    if (id === COMPACT_SIDEBAR_SECTION.kunden) {
+      return t('tickets.groups.kunden', 'Kunden');
+    }
+    const compactFallback: Record<string, string> = {
+      primaryViews: 'Hauptansichten',
+      urgency: 'Dringlichkeit & SLA',
+      statusQueues: 'Status & Queues',
+    };
+    if (compactFallback[id]) {
+      return t(`tickets.groups.${id}`, compactFallback[id]);
     }
     const group = TICKETS_SIDEBAR_GROUPS.find((g) => g.id === id);
     return group ? t(`tickets.groups.${group.id}`, group.label) : id;
@@ -108,8 +126,12 @@ export function TicketsSidebarManageSheet({
             </p>
             <ul className="space-y-1 rounded-lg border border-border divide-y divide-border overflow-hidden">
               {collapseSectionIds.map((id) => {
-                const collapsed = collapsedGroups[id] ?? true;
-                const hidden = id !== FAVORITES_SECTION_ID && hiddenGroupIds.includes(id);
+                const collapsed =
+                  collapsedGroups[id] ?? DEFAULT_COLLAPSED_GROUPS[id] ?? true;
+                const hidden =
+                  id !== COMPACT_SIDEBAR_SECTION.favorites &&
+                  id !== COMPACT_SIDEBAR_SECTION.kunden &&
+                  hiddenGroupIds.includes(id);
                 return (
                   <li
                     key={id}

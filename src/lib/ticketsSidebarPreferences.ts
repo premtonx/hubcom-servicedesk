@@ -83,14 +83,45 @@ export const DEFAULT_GROUP_ORDER = [
   'ai_views',
 ];
 
+/**
+ * `true` = collapsed. Compact left-nav section ids (`primaryViews`, `urgency`,
+ * `statusQueues`, `kunden`) plus legacy Manage-Sheet group ids.
+ * Favoriten starts expanded; the other compact sections start collapsed.
+ */
 export const DEFAULT_COLLAPSED_GROUPS: Record<string, boolean> = {
   favorites: false,
+  primaryViews: true,
+  urgency: true,
+  statusQueues: true,
+  kunden: true,
+  // Legacy Manage-Sheet / groupOrder keys
   my_work: true,
   inbox: true,
   status: true,
   customers_sla: true,
   ai_views: true,
 };
+
+const LEGACY_KUNDEN_OPEN_KEY = 'hubcom.tickets.kundenSidebarOpen';
+
+/** Hide items whose view id is already pinned in Favoriten (identity-based). */
+export function excludeFavoritedViews<T extends { id: string }>(
+  items: readonly T[],
+  favoriteViewIds: readonly string[],
+): T[] {
+  if (!favoriteViewIds.length) return [...items];
+  const fav = new Set(favoriteViewIds.map(normalizeFavoriteId).filter(Boolean));
+  return items.filter((item) => !fav.has(normalizeFavoriteId(item.id)));
+}
+
+export function isViewFavorited(
+  viewId: string,
+  favoriteViewIds: readonly string[],
+): boolean {
+  const id = normalizeFavoriteId(viewId);
+  if (!id) return false;
+  return favoriteViewIds.some((f) => normalizeFavoriteId(f) === id);
+}
 
 const PRIORITY_RANK: Record<string, number> = {
   low: 1,
@@ -101,6 +132,22 @@ const PRIORITY_RANK: Record<string, number> = {
 
 function storageKey(userId: string) {
   return `geistdesk_tickets_sidebar_${userId || 'anonymous'}`;
+}
+
+function migrateLegacyKundenCollapse(
+  collapsedGroups: Record<string, boolean>,
+): Record<string, boolean> {
+  if (Object.prototype.hasOwnProperty.call(collapsedGroups, 'kunden')) {
+    return collapsedGroups;
+  }
+  try {
+    const raw = localStorage.getItem(LEGACY_KUNDEN_OPEN_KEY);
+    if (raw === null) return collapsedGroups;
+    const wasOpen = raw === '1' || raw === 'true';
+    return { ...collapsedGroups, kunden: !wasOpen };
+  } catch {
+    return collapsedGroups;
+  }
 }
 
 function loadPreferences(userId: string): TicketsSidebarPreferences {
@@ -115,7 +162,7 @@ function loadPreferences(userId: string): TicketsSidebarPreferences {
         favoriteViewIds,
         hiddenGroupIds: [],
         groupOrder: [...DEFAULT_GROUP_ORDER],
-        collapsedGroups: { ...DEFAULT_COLLAPSED_GROUPS },
+        collapsedGroups: migrateLegacyKundenCollapse({ ...DEFAULT_COLLAPSED_GROUPS }),
         customViews: [],
       };
     }
@@ -129,7 +176,10 @@ function loadPreferences(userId: string): TicketsSidebarPreferences {
       favoriteViewIds,
       hiddenGroupIds: parsed.hiddenGroupIds ?? [],
       groupOrder: parsed.groupOrder ?? [...DEFAULT_GROUP_ORDER],
-      collapsedGroups: { ...DEFAULT_COLLAPSED_GROUPS, ...parsed.collapsedGroups },
+      collapsedGroups: migrateLegacyKundenCollapse({
+        ...DEFAULT_COLLAPSED_GROUPS,
+        ...parsed.collapsedGroups,
+      }),
       customViews: parsed.customViews ?? [],
     };
   } catch {
@@ -139,7 +189,7 @@ function loadPreferences(userId: string): TicketsSidebarPreferences {
       favoriteViewIds,
       hiddenGroupIds: [],
       groupOrder: [...DEFAULT_GROUP_ORDER],
-      collapsedGroups: { ...DEFAULT_COLLAPSED_GROUPS },
+      collapsedGroups: migrateLegacyKundenCollapse({ ...DEFAULT_COLLAPSED_GROUPS }),
       customViews: [],
     };
   }
@@ -264,22 +314,31 @@ export function useTicketsSidebarPreferences(userId: string | undefined) {
 
   const setGroupCollapsed = useCallback(
     (groupId: string, collapsed: boolean) => {
+      const current = prefsRef.current;
       persist({
-        ...prefs,
+        ...current,
         collapsedGroups: {
-          ...prefs.collapsedGroups,
+          ...current.collapsedGroups,
           [groupId]: collapsed,
         },
       });
     },
-    [prefs, persist],
+    [persist],
   );
 
   const toggleGroupCollapsed = useCallback(
     (groupId: string) => {
-      setGroupCollapsed(groupId, !prefs.collapsedGroups[groupId]);
+      const current = prefsRef.current;
+      const collapsed = current.collapsedGroups[groupId] ?? DEFAULT_COLLAPSED_GROUPS[groupId] ?? true;
+      persist({
+        ...current,
+        collapsedGroups: {
+          ...current.collapsedGroups,
+          [groupId]: !collapsed,
+        },
+      });
     },
-    [prefs.collapsedGroups, setGroupCollapsed],
+    [persist],
   );
 
   const addCustomView = useCallback(
