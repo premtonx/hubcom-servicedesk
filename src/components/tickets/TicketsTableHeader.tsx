@@ -38,14 +38,13 @@ export function TicketsTableHeader({
         />
       </div>
 
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.customer', 'Customer').toUpperCase()}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.subjectPreview', 'Subject & Preview').toUpperCase()}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.status', 'Status').toUpperCase()}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.priority', 'Priority').toUpperCase()}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.category', 'Kategorie').toUpperCase()}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.assignee', 'Assignee').toUpperCase()}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.lastUpdate', 'Last Update').toUpperCase()}</div>
-      <div className="justify-self-center" aria-hidden />
+      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.customer', 'Kunde')}</div>
+      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.subject', 'Betreff')}</div>
+      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.status', 'Status')}</div>
+      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.priority', 'Priorität')}</div>
+      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.category', 'Kategorie')}</div>
+      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.assignee', 'Zuständiger')}</div>
+      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.activity', 'Aktivität')}</div>
     </div>
   );
 }

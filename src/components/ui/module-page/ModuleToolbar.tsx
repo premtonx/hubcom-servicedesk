@@ -45,7 +45,7 @@ export function ModuleToolbar({
       <div className={cn(MODULE_PAGE_INNER, 'h-full flex items-center gap-2 min-w-0')}>
         <div className="flex flex-1 items-center gap-1.5 min-w-0">
           {onSearchChange !== undefined ? (
-            <div className="relative flex-1 min-w-[120px] max-w-sm">
+            <div className="relative flex-1 min-w-[120px] max-w-xs">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
               <Input
                 value={searchValue}
@@ -56,40 +56,42 @@ export function ModuleToolbar({
             </div>
           ) : null}
 
-          {onFilterClick ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onFilterClick}
-              className={cn(
-                'h-8 gap-1 rounded-md border-slate-200/80 text-slate-600 font-medium shrink-0 px-2.5',
-                filterActive && 'border-blue-200 bg-blue-50/50 text-blue-700',
-              )}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline text-xs">{t('actions.filter', 'Filter')}</span>
-            </Button>
-          ) : null}
-
-          {sortControl ?? (
-            filtersSlot ? null : (
+          <div className="ml-auto flex items-center gap-1.5 shrink-0">
+            {onFilterClick ? (
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled
-                className="h-8 gap-1 rounded-md border-slate-200/80 text-slate-400 font-medium shrink-0 hidden sm:flex px-2.5"
+                onClick={onFilterClick}
+                className={cn(
+                  'h-8 gap-1 rounded-md border-slate-200/80 text-slate-600 font-medium shrink-0 px-2.5',
+                  filterActive && 'border-blue-200 bg-blue-50/50 text-blue-700',
+                )}
               >
-                <ArrowUpDown className="w-3.5 h-3.5" />
-                <span className="text-xs">{t('modulePage.sort', 'Sort')}</span>
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline text-xs">{t('actions.filter', 'Filtern')}</span>
               </Button>
-            )
-          )}
+            ) : null}
 
-          {viewsSlot}
+            {sortControl ?? (
+              filtersSlot ? null : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled
+                  className="h-8 gap-1 rounded-md border-slate-200/80 text-slate-400 font-medium shrink-0 hidden sm:flex px-2.5"
+                >
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                  <span className="text-xs">{t('modulePage.sort', 'Sortieren')}</span>
+                </Button>
+              )
+            )}
 
-          {filtersSlot}
+            {viewsSlot}
+
+            {filtersSlot}
+          </div>
         </div>
 
         {createAction ? <div className="shrink-0 ml-1 sm:ml-2">{createAction}</div> : null}

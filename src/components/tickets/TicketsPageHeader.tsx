@@ -3,26 +3,14 @@ import { cn } from '../../lib/utils';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { MODULE_PAGE_PX } from '../ui/module-page/styles';
 
-interface MetaPillProps {
-  dotClass: string;
-  label: string;
-}
-
-function MetaPill({ dotClass, label }: MetaPillProps) {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200/80 bg-slate-50/80 px-2.5 py-1 text-[11px] font-medium text-slate-600 shrink-0">
-      <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', dotClass)} aria-hidden />
-      {label}
-    </span>
-  );
-}
-
 export interface TicketsHeaderStats {
   open: number;
   slaRisk?: number;
   pending?: number;
   urgent?: number;
   unassigned?: number;
+  /** Total tickets in the current filtered view (for count pill). */
+  total?: number;
 }
 
 interface TicketsPageHeaderProps {
@@ -33,12 +21,7 @@ interface TicketsPageHeaderProps {
 
 export function TicketsPageHeader({ trailing, className, stats }: TicketsPageHeaderProps) {
   const { t } = useTranslation();
-
-  const metaLine = stats
-    ? t('tickets.headerMetaSupport', 'Tickets • {{open}} Open • {{slaRisk}} SLA Risk')
-        .replace('{{open}}', String(stats.open))
-        .replace('{{slaRisk}}', String(stats.slaRisk ?? 0))
-    : null;
+  const total = stats?.total;
 
   return (
     <header
@@ -48,19 +31,18 @@ export function TicketsPageHeader({ trailing, className, stats }: TicketsPageHea
         className,
       )}
     >
-      <div className="flex items-center gap-3 min-w-0 flex-wrap">
+      <div className="flex items-center gap-2.5 min-w-0">
         <h1 className="text-base font-bold tracking-tight text-slate-900 shrink-0">
           {t('tickets.pageTitle', 'Tickets')}
         </h1>
-        {metaLine ? (
-          <p className="hidden sm:block text-[11px] font-semibold text-slate-500 truncate">{metaLine}</p>
-        ) : (
-          <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
-            <MetaPill dotClass="bg-blue-500" label={t('tickets.metaPillOpen', 'Open')} />
-            <MetaPill dotClass="bg-orange-500" label={t('tickets.metaPillInProgress', 'In Progress')} />
-            <MetaPill dotClass="bg-red-500" label={t('tickets.metaPillUrgent', 'Urgent')} />
-          </div>
-        )}
+        {typeof total === 'number' ? (
+          <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600 tabular-nums shrink-0">
+            {t('tickets.headerTotalCount', '{{count}} insgesamt').replace(
+              '{{count}}',
+              String(total),
+            )}
+          </span>
+        ) : null}
       </div>
       {trailing ? <div className="shrink-0 flex items-center gap-2">{trailing}</div> : null}
     </header>

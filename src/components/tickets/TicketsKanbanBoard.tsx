@@ -31,6 +31,7 @@ export function TicketsKanbanBoard({
     const buckets: Record<KanbanLaneId, TicketType[]> = {
       offen: [],
       in_bearbeitung: [],
+      wartend: [],
       geloest: [],
     };
     for (const ticket of tickets) {
@@ -64,7 +65,7 @@ export function TicketsKanbanBoard({
           <div
             key={col.id}
             className={cn(
-              'flex-1 min-w-[240px] max-w-[320px] flex flex-col rounded-xl bg-slate-50/80 border border-slate-200/80 transition-colors',
+              'flex-1 min-w-[220px] max-w-[300px] flex flex-col rounded-xl bg-slate-50/80 border border-slate-200/80 transition-colors',
               isDropActive && 'border-blue-400 bg-blue-50/40 ring-2 ring-blue-200/60',
             )}
             onDragOver={(e) => {
@@ -89,7 +90,7 @@ export function TicketsKanbanBoard({
             <div className="p-2 space-y-2 flex-1 overflow-y-auto max-h-[calc(100vh-280px)]">
               {items.length === 0 ? (
                 <p className="text-[10px] text-slate-400 font-medium px-1 py-6 text-center">
-                  {t('tickets.kanban.emptyLane', 'No tickets in this lane')}
+                  {t('tickets.kanban.emptyLane', 'Keine Tickets in dieser Spalte')}
                 </p>
               ) : null}
               {items.map((ticket) => (

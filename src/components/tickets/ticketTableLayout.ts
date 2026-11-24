@@ -1,26 +1,29 @@
 import { cn } from '../../lib/utils';
 
-/** Support workspace — customer-centric columns (+ Kategorie) */
+/**
+ * Streamlined columns: Checkbox | Kunde | Betreff | Status | Priorität | Kategorie | Zuständiger | Aktivität
+ * Wider fixed tracks so status/assignee/activity labels are not truncated mid-word.
+ */
 export const TICKET_TABLE_GRID_SUPPORT =
-  'grid items-center gap-x-3 grid-cols-[36px_140px_minmax(200px,1fr)_110px_90px_120px_130px_110px_50px]';
+  'grid items-center gap-x-3 grid-cols-[36px_minmax(140px,180px)_minmax(220px,1.4fr)_minmax(130px,150px)_minmax(100px,120px)_minmax(120px,140px)_minmax(140px,160px)_minmax(100px,120px)]';
 
 export function getTicketTableGridClass(): string {
   return TICKET_TABLE_GRID_SUPPORT;
 }
 
 export function getTicketTableMinWidth(): string {
-  return 'min-w-[1040px]';
+  return 'min-w-[1100px]';
 }
 
 export const TICKET_TABLE_HEADER_CELL =
-  'font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider text-left truncate';
+  'font-semibold text-[10px] text-slate-500 uppercase tracking-wider text-left truncate';
 
 export const TICKET_TABLE_ROW_BASE =
-  'hover:bg-muted/60 cursor-pointer group transition-colors duration-150 border-l-2 border-transparent py-1.5 min-h-[36px]';
+  'hover:bg-slate-50/80 cursor-pointer group transition-colors duration-150 border-l-2 border-transparent py-2 min-h-[44px]';
 
 export function ticketTableRowClass(selected: boolean): string {
   return cn(
     TICKET_TABLE_ROW_BASE,
-    selected && 'bg-primary/5 hover:bg-primary/10 border-l-primary',
+    selected && 'bg-blue-50/50 hover:bg-blue-50/70 border-l-blue-500',
   );
 }

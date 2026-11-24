@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronDown, Ticket, X } from 'lucide-react';
+import { Ticket, X } from 'lucide-react';
 import axios from 'axios';
 import {
   executeTicketDeepDiveAnalysis,
@@ -22,8 +22,6 @@ import { stripHtml } from '../kb/kb-utils';
 import { logDraftDiffIfSubstantial } from '../../lib/ai/human-diff-learning';
 import { AIAdapter } from '../../lib/ai/provider-adapter';
 import { subscribeOrchestratorConfig, startOrchestratorConfigSync } from '../../lib/aiOrchestratorClient';
-import { useWorkspaceModuleConfig } from '../../hooks/useWorkspaceModuleConfig';
-import { getActiveSupportedLanguages } from '../../lib/polyglot-bridge';
 
 interface AiDraftMetaState {
   rawDraft: string;
@@ -77,13 +75,6 @@ import { useTranslation } from '../../lib/context/I18nContext';
 
 import { validateDraft, LegalValidationResult } from '../../services/legalService';
 import { CreateTicketDialog } from '../CreateTicketDialog';
-import { FlagIcon, languageToFlagCode } from '../ui/FlagIcon';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '../ui/dropdown-menu';
 import { TicketsLeftSidebar, type KundenSidebarOrg } from '../tickets/TicketsLeftSidebar';
 import { TicketsSidebarManageSheet } from '../tickets/TicketsSidebarManageSheet';
 import { TicketListView } from '../tickets/TicketListView';
@@ -96,7 +87,19 @@ import { TicketsLayoutMode } from '../tickets/TicketsViewModeSelector';
 import { isReadonlyTerminalStatus } from '../../lib/ticket-status';
 import { ticketsShareCustomer } from '../../lib/ticketMerge';
 import { isClientPortalRole, isHubcomStaffRole } from '../../lib/client-portal/roles';
-import { buildAssigneePayload } from '../../lib/ticketAssignee';
+import { buildAssigneePayload, isTicketAssignedToUser } from '../../lib/ticketAssignee';
+
+/** Sidebar views that already scope to the signed-in agent — Kanban Gelöst extras must respect that. */
+const KANBAN_MINE_VIEWS = new Set([
+  'assigned_me',
+  'my_queue',
+  'my_open',
+  'my_paused',
+  'my_qs',
+  'waiting_my_response',
+  'due_today',
+  'waiting_customer',
+]);
 
 const matchStatus = (status: string | undefined, target: string): boolean => {
   if (!status) return false;
@@ -479,11 +482,6 @@ export default function TicketsPage() {
   const [activeDetailTab, setActiveDetailTab] = useState<string>('conversation');
 
   // Polyglot Bridge State
-  const { config: moduleConfig } = useWorkspaceModuleConfig();
-  const activePolyglotLanguages = useMemo(
-    () => getActiveSupportedLanguages(moduleConfig.languages),
-    [moduleConfig.languages],
-  );
   const [agentLanguage, setAgentLanguage] = useState<string>(() => {
     return localStorage.getItem('agentLanguage') || 'English';
   });
@@ -842,8 +840,116 @@ export default function TicketsPage() {
     activeView,
   ]);
 
+  /**
+   * Kanban board pool: when viewing "Alle" (or any lane-full board), include resolved/closed
+   * tickets so dragging into Gelöst keeps the card visible. Respects org scope (via
+   * scopedSupportTickets), search, Mir-zugewiesen views, and drawer filters.
+   */
+  const kanbanBoardTickets = useMemo(() => {
+    if (!user) return [];
+    if (topStatusFilter !== 'all') return finalRenderedTickets;
+
+    const existingIds = new Set(finalRenderedTickets.map((t) => t.id));
+    const assigneeCtx = {
+      userId: user.uid ?? '',
+      userEmail: user.email ?? '',
+      userName: user.displayName || user.email?.split('@')[0] || '',
+    };
+
+    let extras = scopedSupportTickets.filter((t) => {
+      if (existingIds.has(t.id)) return false;
+      const status = String(t.status || '')
+        .toLowerCase()
+        .trim();
+      if (status !== 'resolved' && status !== 'closed') return false;
+      if (KANBAN_MINE_VIEWS.has(activeView) && !isTicketAssignedToUser(t, assigneeCtx)) {
+        return false;
+      }
+      return true;
+    });
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      extras = extras.filter(
+        (t) =>
+          String(t.subject ?? '')
+            .toLowerCase()
+            .includes(query) ||
+          String(t.id ?? '')
+            .toLowerCase()
+            .includes(query) ||
+          (t.customerName && String(t.customerName).toLowerCase().includes(query)) ||
+          (t.company && String(t.company).toLowerCase().includes(query)) ||
+          (t.tags && t.tags.some((tag) => String(tag).toLowerCase().includes(query))) ||
+          (t.description && String(t.description).toLowerCase().includes(query)),
+      );
+    }
+
+    if (filters.agent !== 'any') {
+      extras = extras.filter((t) => t.agentName === filters.agent || t.agentId === filters.agent);
+    }
+    if (filters.priority !== 'any') {
+      extras = extras.filter((t) => t.priority === filters.priority);
+    }
+    if (filters.category !== 'any') {
+      extras = extras.filter(
+        (t) =>
+          t.categoryId === filters.category ||
+          t.categorySlug === filters.category ||
+          t.categoryName === filters.category,
+      );
+    }
+    if (filters.teamCategories === 'mine') {
+      extras = extras.filter((t) => ticketMatchesTeamCategories(t, teamAccess));
+    }
+    if (filters.company !== 'any') {
+      extras = extras.filter((t) => t.company === filters.company);
+    }
+    if (filters.source !== 'any') {
+      extras = extras.filter((t) => t.channel === filters.source);
+    }
+    if (filters.tags !== 'any') {
+      extras = extras.filter((t) => hasTagCaseInsensitive(t.tags, filters.tags));
+    }
+    if (filters.contacts !== 'any') {
+      extras = extras.filter((t) => t.customerName === filters.contacts);
+    }
+
+    const merged = [...finalRenderedTickets, ...extras];
+    merged.sort((a, b) => {
+      if (listSort === 'priority') {
+        const rank = (p?: string) =>
+          priorityRankByKey.get(String(p || '').toLowerCase()) ?? -1;
+        return rank(b.priority) - rank(a.priority);
+      }
+      const aTime = a.updatedAt?.toDate ? a.updatedAt.toDate().getTime() : 0;
+      const bTime = b.updatedAt?.toDate ? b.updatedAt.toDate().getTime() : 0;
+      return listSort === 'oldest' ? aTime - bTime : bTime - aTime;
+    });
+    return merged;
+  }, [
+    user,
+    topStatusFilter,
+    finalRenderedTickets,
+    scopedSupportTickets,
+    activeView,
+    searchQuery,
+    filters,
+    teamAccess,
+    listSort,
+    priorityRankByKey,
+  ]);
+
+  const organizationNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const org of kundenOrgs) {
+      if (org.id) map[org.id] = org.name;
+    }
+    return map;
+  }, [kundenOrgs]);
+
   const getFilteredTickets = () => {
-    return finalRenderedTickets;
+    return layoutMode === 'kanban' ? kanbanBoardTickets : finalRenderedTickets;
   };
 
   const getViewCount = (view: string) => {
@@ -1813,50 +1919,6 @@ export default function TicketsPage() {
         kundenOrgs={isStaffUser ? kundenOrgsWithCounts : undefined}
         selectedOrganizationId={selectedOrganizationId}
         onSelectOrganization={isStaffUser ? setSelectedOrganizationId : undefined}
-        footer={
-          moduleConfig.polyglotEnabled && activePolyglotLanguages.length > 0 ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <button
-                    type="button"
-                    title={`${t('settings.polyglotBridge', 'Polyglot Bridge')}: ${agentLanguage}`}
-                    className={cn(
-                      'w-full flex items-center gap-2 h-8 px-2 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors min-w-0',
-                      effectiveCollapsed && 'justify-center px-0',
-                    )}
-                  />
-                }
-              >
-                <FlagIcon
-                  code={
-                    activePolyglotLanguages.find((f) => f.lang === agentLanguage)?.flagCode
-                    || languageToFlagCode(agentLanguage)
-                  }
-                  className="w-5 h-3.5 shrink-0"
-                />
-                {!effectiveCollapsed && (
-                  <>
-                    <span className="truncate flex-1 text-left">{agentLanguage}</span>
-                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  </>
-                )}
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-48">
-                {activePolyglotLanguages.map((f) => (
-                  <DropdownMenuItem
-                    key={f.isoCode || f.lang}
-                    className="text-xs font-medium cursor-pointer"
-                    onClick={() => setAgentLanguage(f.lang)}
-                  >
-                    <FlagIcon code={f.flagCode || languageToFlagCode(f.lang)} className="w-5 h-3.5" />
-                    <span className="flex-1 truncate">{f.lang}</span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : undefined
-        }
       />
 
       <TicketsSidebarManageSheet
@@ -2042,6 +2104,7 @@ export default function TicketsPage() {
         openFullTicketView={openFullTicketView}
         ticketService={ticketService}
         teamCategoryLabels={teamCategoryLabels}
+        organizationNameById={organizationNameById}
       />
         )}
 

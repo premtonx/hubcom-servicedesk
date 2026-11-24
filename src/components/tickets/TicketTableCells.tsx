@@ -58,8 +58,8 @@ export function TicketStatusChip({ status, onChange, statuses: statusesProp }: T
     return (
       <span
         title={t('tickets.merge.readonlyMerged', 'Zusammengeführt — nur lesbar')}
-        className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold max-w-full"
-        style={tint}
+        className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium max-w-full border-0"
+        style={{ backgroundColor: tint.backgroundColor, color: tint.color }}
       >
         <span
           className="h-1.5 w-1.5 rounded-full shrink-0"
@@ -86,8 +86,8 @@ export function TicketStatusChip({ status, onChange, statuses: statusesProp }: T
                     label,
                   )
             }
-            className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition-colors hover:opacity-90 max-w-full"
-            style={tint}
+            className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors hover:opacity-90 max-w-full border-0"
+            style={{ backgroundColor: tint.backgroundColor, color: tint.color }}
           >
             <span
               className="h-1.5 w-1.5 rounded-full shrink-0"
@@ -155,10 +155,13 @@ export function TicketPriorityChip({
                     '{{label}} (inaktiv — noch auf Tickets vorhanden)',
                   ).replace('{{label}}', label)
             }
-            className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-700 hover:text-slate-900 transition-colors rounded-md px-1 py-0.5 max-w-full"
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 transition-colors rounded-md px-1 py-0.5 max-w-full"
           >
+            <span className="text-slate-400 shrink-0" aria-hidden>
+              •
+            </span>
             <span
-              className="h-2 w-2 rounded-full shrink-0 border border-black/5"
+              className="h-1.5 w-1.5 rounded-full shrink-0"
               style={{ backgroundColor: resolved.color }}
               aria-hidden
             />
@@ -226,7 +229,7 @@ export function TicketAssigneeChip({
           <button
             type="button"
             className={cn(
-              'inline-flex items-center gap-1.5 max-w-[130px] text-[11px] font-medium hover:bg-slate-50 rounded-md px-1 py-0.5 transition-colors',
+              'inline-flex items-center gap-1.5 max-w-[150px] text-[11px] font-medium hover:bg-slate-50 rounded-md px-1 py-0.5 transition-colors',
               isUnassigned ? 'text-slate-400' : 'text-slate-700',
             )}
           >
@@ -344,19 +347,23 @@ export function TicketCategoryChip({
               title={error || displayTitle}
               disabled={saving || disabled}
               className={cn(
-                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold max-w-full transition-opacity',
+                'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium max-w-full transition-opacity',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1',
                 'disabled:opacity-60 disabled:cursor-not-allowed',
-                hasCategory ? 'text-white' : 'text-slate-600 border border-slate-200 bg-slate-50',
+                hasCategory ? 'text-slate-700' : 'text-slate-400',
               )}
-              style={hasCategory ? { backgroundColor: color } : undefined}
+              style={
+                hasCategory
+                  ? softTintStyles(color)
+                  : { backgroundColor: 'transparent', color: undefined }
+              }
             >
               {saving ? (
                 <Loader2 className="w-3 h-3 shrink-0 animate-spin" aria-hidden />
               ) : null}
-              <span className="truncate">{label}</span>
+              <span className="truncate">{hasCategory ? label : '—'}</span>
               <ChevronDown
-                className={cn('w-3 h-3 shrink-0', hasCategory ? 'opacity-80' : 'opacity-40')}
+                className={cn('w-3 h-3 shrink-0', hasCategory ? 'opacity-50' : 'opacity-30')}
                 aria-hidden
               />
             </button>

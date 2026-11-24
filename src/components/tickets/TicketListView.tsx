@@ -1,8 +1,8 @@
 import { useMemo, type MutableRefObject, type MouseEvent } from 'react';
 import {
   AlertTriangle, Angry, Box, Building2, CheckCircle2, ChevronDown, ChevronLeft,
-  ChevronRight, Clock, FolderTree, Frown, GitMerge, Globe, Hash, History, Link2, List, Mail, Meh,
-  MessageCircleHeart, MessageSquare, MoreVertical, PhoneCall, RefreshCw, Settings2,
+  ChevronRight, Clock, FolderTree, Frown, GitMerge, Globe, Hash, History, List, Mail, Meh,
+  MessageCircleHeart, MessageSquare, PhoneCall, RefreshCw, Settings2,
   Share2, SlidersHorizontal, Smile, Sparkles, Tag, Ticket, UserCheck, UserRound, Users, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -98,6 +98,8 @@ export interface TicketListViewProps {
   ticketService: { setPresence: (id: string, present: boolean) => void };
   /** Labels of ticket categories linked to the agent's functional teams. */
   teamCategoryLabels?: string[];
+  /** Map of organizationId → display name for the Kunde column company line. */
+  organizationNameById?: Record<string, string>;
 }
 
 export function TicketListView(props: TicketListViewProps) {
@@ -158,12 +160,24 @@ export function TicketListView(props: TicketListViewProps) {
     openFullTicketView,
     ticketService,
   } = props;
+  const organizationNameById = props.organizationNameById || {};
 
   const paginatedTickets = tickets.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const totalTicketsCount = tickets.length;
   const startIdx = totalTicketsCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
   const endIdx = Math.min(currentPage * pageSize, totalTicketsCount);
   const totalPages = Math.ceil(totalTicketsCount / pageSize) || 1;
+
+  const resolveCompanyLabel = (ticket: TicketType) => {
+    const orgId = String(ticket.organizationId || (ticket as any).organization_id || '').trim();
+    if (orgId && organizationNameById[orgId]) return organizationNameById[orgId];
+    const company = safeString(ticket.company);
+    if (company && company.toLowerCase() !== 'privat' && company.toLowerCase() !== 'private') {
+      return company;
+    }
+    if (orgId) return organizationNameById[orgId] || company || '—';
+    return company || t('tickets.privateCustomer', 'Privat');
+  };
 
   const selectedTickets = allTickets.filter(
     (ticket) => selectedTicketIds.includes(ticket.id) && ticket.status !== 'merged',
@@ -198,35 +212,46 @@ export function TicketListView(props: TicketListViewProps) {
                 pending: ticketQueueStats.pending,
                 urgent: ticketQueueStats.urgent,
                 unassigned: ticketQueueStats.unassigned,
+                total: totalTicketsCount,
               }}
               trailing={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setIsMobileSidebarOpen(true)}
-                  className="flex lg:hidden h-8 w-8 rounded-md shrink-0"
-                  aria-label={t('tickets.detail.mobileMenu', 'Menu')}
-                >
-                  <List className="w-4 h-4" />
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsMobileSidebarOpen(true)}
+                    className="flex lg:hidden h-8 w-8 rounded-md shrink-0"
+                    aria-label={t('tickets.detail.mobileMenu', 'Menu')}
+                  >
+                    <List className="w-4 h-4" />
+                  </Button>
+                  <ModuleCreateButton
+                    ariaLabelKey="actions.createTicket"
+                    ariaLabelDefault="Ticket erstellen"
+                    shortLabelKey="tickets.createTicket"
+                    shortLabelDefault="Ticket erstellen"
+                    onClick={openCreateTicket}
+                    className="!rounded-lg !h-9 !w-auto !min-w-0 !px-3.5 gap-1.5"
+                  />
+                </div>
               }
             />
             <ModulePageTabs
               className="border-0 bg-transparent"
               tabs={[
-                { id: 'all', label: `${t('tickets.allTickets', 'All')} ${ticketQueueStats.all}` },
-                { id: 'open', label: `${t('tickets.open', 'Open')} ${ticketQueueStats.open}` },
-                { id: 'pending', label: `${t('tickets.inProgress', 'In Progress')} ${ticketQueueStats.pending}` },
-                { id: 'onhold', label: `${t('tickets.pendingOnHold', 'Pending')} ${ticketQueueStats.onhold}` },
-                { id: 'urgent', label: `${t('tickets.priorityUrgent', 'Urgent')} ${ticketQueueStats.urgent}` },
-                { id: 'unassigned', label: `${t('tickets.unassigned', 'Unassigned')} ${ticketQueueStats.unassigned}` },
+                { id: 'all', label: `${t('tickets.allTickets', 'Alle')} (${ticketQueueStats.all})` },
+                { id: 'open', label: `${t('tickets.open', 'Offen')} (${ticketQueueStats.open})` },
+                { id: 'pending', label: `${t('tickets.inProgress', 'In Bearbeitung')} (${ticketQueueStats.pending})` },
+                { id: 'onhold', label: `${t('tickets.pendingOnHold', 'Wartend')} (${ticketQueueStats.onhold})` },
+                { id: 'urgent', label: `${t('tickets.priorityUrgent', 'Dringend')} (${ticketQueueStats.urgent})` },
+                { id: 'unassigned', label: `${t('tickets.unassigned', 'Nicht zugewiesen')} (${ticketQueueStats.unassigned})` },
               ]}
               activeId={topStatusFilter}
               onChange={(id) => setTopStatusFilter(id as typeof topStatusFilter)}
             />
 
             <ModuleToolbar
-              searchPlaceholder={t('tickets.searchPlaceholderFull', 'Search tickets, customers, companies...')}
+              searchPlaceholder={t('tickets.searchPlaceholderShort', 'Suchen...')}
               searchValue={searchQuery}
               onSearchChange={setSearchQuery}
               onFilterClick={() => setIsFilterDrawerOpen(true)}
@@ -238,37 +263,31 @@ export function TicketListView(props: TicketListViewProps) {
               sortControl={
                 <div className="flex items-center gap-1 shrink-0">
                   <span className="hidden sm:inline text-[11px] font-medium text-slate-500">
-                    {t('modulePage.sort', 'Sort')}:
+                    {t('modulePage.sort', 'Sortieren')}
                   </span>
                   <ModuleToolbarSelect
                     value={listSort}
                     onChange={(v) => setListSort(v as typeof listSort)}
-                    aria-label={t('actions.sort', 'Sort')}
+                    aria-label={t('actions.sort', 'Sortieren')}
                   >
-                    <option value="newest">{t('tickets.sortNewest', 'Newest')}</option>
-                    <option value="oldest">{t('tickets.sortOldest', 'Oldest')}</option>
-                    <option value="priority">{t('tickets.sortPriority', 'Priority')}</option>
+                    <option value="newest">{t('tickets.sortNewest', 'Neueste')}</option>
+                    <option value="oldest">{t('tickets.sortOldest', 'Älteste')}</option>
+                    <option value="priority">{t('tickets.sortPriority', 'Priorität')}</option>
                   </ModuleToolbarSelect>
                 </div>
               }
               viewsSlot={
                 <TicketsViewModeSelector value={layoutMode} onChange={setLayoutMode} />
               }
-              createAction={
-                <ModuleCreateButton
-                  ariaLabelKey="actions.createTicket"
-                  ariaLabelDefault="Create Ticket"
-                  onClick={openCreateTicket}
-                  iconOnly
-                />
-              }
             />
-            <TicketsQueueAiChip
-              id="tickets-ai-chip"
-              ticketCount={tickets.length}
-              criticalCount={ticketQueueStats.critical}
-              className="mb-1 mt-1"
-            />
+            {ticketQueueStats.critical > 0 ? (
+              <TicketsQueueAiChip
+                id="tickets-ai-chip"
+                ticketCount={tickets.length}
+                criticalCount={ticketQueueStats.critical}
+                className="mb-1 mt-1"
+              />
+            ) : null}
 
             {teamCategoryLabels.length > 0 && (
               <div className="mx-4 sm:mx-6 mb-2 flex flex-wrap items-center gap-2">
@@ -1014,33 +1033,6 @@ export function TicketListView(props: TicketListViewProps) {
 
                   <div className="divide-y divide-border">
                     {paginatedTickets.map(ticket => {
-                      const sla = (() => {
-                        if (ticket.status === 'resolved' || ticket.status === 'closed') return null;
-                        const now = new Date();
-                        const due = ticket.slaDueAt || ticket.firstResponseDue;
-                        if (!due) return { label: t('tickets.noSla', 'No SLA'), color: 'text-muted-foreground border-border bg-slate-50' };
-                        
-                        const dueDate = due.toDate ? due.toDate() : new Date(due);
-                        const diffMs = dueDate.getTime() - now.getTime();
-                        if (diffMs < 0) {
-                          return { label: t('tickets.slaBreached', 'SLA Breached'), color: 'text-rose-600 bg-rose-50 border-rose-200 animate-pulse font-semibold' };
-                        }
-                        const diffHrs = Math.ceil(diffMs / (1000 * 60 * 60));
-                        if (diffHrs <= 12) {
-                          return { label: t('tickets.breachInHrs', 'Breach in {{hrs}}h').replace('{{hrs}}', String(diffHrs)), color: 'text-amber-600 bg-amber-50 border-amber-200 animate-pulse font-semibold' };
-                        }
-                        return { label: t('tickets.slaDueHrs', 'SLA Due {{hrs}}h').replace('{{hrs}}', String(diffHrs)), color: 'text-slate-600 bg-slate-50 border-slate-200' };
-                      })();
-
-                      const duplicatesCount = allTickets.filter(other => other.id !== ticket.id && (other.subject.toLowerCase() === ticket.subject.toLowerCase() || (ticket.tags && other.tags && ticket.tags.some(t => other.tags?.includes(t))))).length;
-
-                      const replies = (ticket.id.charCodeAt(1) % 5) + 2;
-                      const channelIcon = (() => {
-                        if (ticket.channel === 'whatsapp') return <span title={t('tickets.channels.whatsapp', 'WhatsApp-Kanal')}><MessageSquare className="w-3.5 h-3.5 text-emerald-500 animate-none shrink-0" /></span>;
-                        if (ticket.channel === 'chat') return <span title={t('tickets.channels.chat', 'Live-Chat')}><MessageSquare className="w-3.5 h-3.5 text-blue-500 animate-none shrink-0" /></span>;
-                        return <span title={t('tickets.channels.email', 'E-Mail-Kanal')}><Mail className="w-3.5 h-3.5 text-slate-500 animate-none shrink-0" /></span>;
-                      })();
-
                       return (
                         <motion.div 
                           key={ticket.id}
@@ -1082,11 +1074,11 @@ export function TicketListView(props: TicketListViewProps) {
                              </Avatar>
                              <div className="flex flex-col min-w-0">
                                 <span className={cn(
-                                  "font-bold text-foreground truncate",
+                                  "font-semibold text-foreground truncate",
                                   viewDensity === 'comfortable' ? "text-xs" : "text-[11px]"
                                 )}>{safeString(ticket.customerName)}</span>
                                 <div className="flex items-center gap-1 mt-0.5">
-                                  <span className="text-[10px] text-slate-500 truncate">{safeString(ticket.company) || t('tickets.privateCustomer', 'Private')}</span>
+                                  <span className="text-[10px] text-slate-500 truncate">{resolveCompanyLabel(ticket)}</span>
                                 </div>
                              </div>
                           </div>
@@ -1103,78 +1095,14 @@ export function TicketListView(props: TicketListViewProps) {
                              onMouseMove={handleMouseMove}
                           >
                              <h3 className={cn(
-                               "font-bold text-slate-900 dark:text-slate-100 truncate group-hover:text-primary transition-colors",
+                               "font-semibold text-slate-900 dark:text-slate-100 truncate group-hover:text-primary transition-colors",
                                viewDensity === 'comfortable' ? "text-xs" : "text-[11px]"
                              )}>
                               {safeString(ticket.subject)}
                              </h3>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                               <span className="text-[10px] text-slate-400 font-medium font-mono tabular-nums shrink-0">
-                                 {formatTicketRef(ticket.id)}
-                               </span>
-                               {sla && (
-                                 <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border border-blue-100 bg-blue-50 text-blue-700 shrink-0">
-                                   SLA
-                                 </span>
-                               )}
-                               {/* 3-Tier Agentic Graph — AI confidence badge */}
-                               {ticket.aiExecutionStatus === 'auto_dispatched' && (
-                                 <span
-                                   title={t('tickets.aiStatus.autoDispatched', 'KI-Antwort wurde automatisch gesendet')}
-                                   className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border border-blue-200 bg-blue-50 text-blue-700 shrink-0"
-                                 >
-                                   🔵 {t('tickets.aiStatus.autoDispatchedShort', 'Auto-gesendet')}
-                                 </span>
-                               )}
-                               {ticket.aiExecutionStatus === 'high_confidence' && (
-                                 <span
-                                   title={t('tickets.aiStatus.highConfidence', 'KI-Entwurf mit hoher Konfidenz ({{percent}}%)').replace('{{percent}}', String(ticket.aiConfidenceScore ?? 95))}
-                                   className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-700 shrink-0"
-                                 >
-                                   🟢 {t('tickets.aiStatus.high', 'Hoch')} ({ticket.aiConfidenceScore ?? 95}%)
-                                 </span>
-                               )}
-                               {ticket.aiExecutionStatus === 'nuanced' && (
-                                 <span
-                                   title={t('tickets.aiStatus.nuanced', 'Nuancenreicher KI-Entwurf ({{percent}}%) – Prüfung erforderlich').replace('{{percent}}', String(ticket.aiConfidenceScore ?? '<95'))}
-                                   className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-700 shrink-0"
-                                 >
-                                   🟡 {t('tickets.aiStatus.nuancedShort', 'Nuancenreich')} ({ticket.aiConfidenceScore ?? '<95'}%)
-                                 </span>
-                               )}
-                                {viewDensity === 'comfortable' && duplicatesCount > 0 && (
-                                  <Badge variant="outline" className="text-[8px] font-semibold bg-blue-50/50 border-blue-100 text-blue-700 h-4 flex items-center gap-0.5 shrink-0">
-                                    <Link2 className="w-2.5 h-2.5" />
-                                    <span>{duplicatesCount === 1 ? t('tickets.dup', '1 dup') : t('tickets.dups', '{{count}} dups').replace('{{count}}', String(duplicatesCount))}</span>
-                                  </Badge>
-                                )}
-                                <div className="flex items-center gap-1 shrink-0 ml-auto">
-                                  {channelIcon}
-                                  {viewDensity === 'comfortable' && (
-                                    <span className="text-[9.5px] text-muted-foreground font-medium">
-                                      {replies === 1 ? t('tickets.reply', '1 reply') : t('tickets.replies', '{{count}} replies').replace('{{count}}', String(replies))}
-                                    </span>
-                                  )}
-                                  {ticket.activeAgents && ticket.activeAgents
-                                    .filter(a => a.uid !== user?.uid)
-                                    .slice(0, 2)
-                                    .map(agent => (
-                                      <Avatar key={agent.uid} className="h-4 w-4 border border-background shrink-0">
-                                        <AvatarImage src={agent.avatar} alt={agent.name} />
-                                        <AvatarFallback className="text-[6px] bg-primary/10 text-primary font-bold">
-                                          {getInitials(agent.name)}
-                                        </AvatarFallback>
-                                      </Avatar>
-                                    ))
-                                  }
-                                </div>
-                             </div>
-
-                             {viewDensity === 'comfortable' && (
-                               <p className="text-[11px] text-muted-foreground truncate opacity-75 font-medium">
-                                  {stripHtml(safeString(ticket.description))}
-                                </p>
-                             )}
+                             <span className="text-[10px] text-slate-400 font-medium font-mono tabular-nums">
+                               {formatTicketRef(ticket.id)}
+                             </span>
                           </div>
 
                           {/* Status Column */}
@@ -1216,26 +1144,11 @@ export function TicketListView(props: TicketListViewProps) {
                             />
                           </div>
 
-                          {/* Last Update Column */}
-                          <div className="min-w-0 text-xs text-muted-foreground font-semibold text-left truncate">
-                             {ticket.updatedAt?.toDate ? ticket.updatedAt.toDate().toLocaleDateString([], { month: 'short', day: 'numeric' }) : t('tickets.today', 'Today')}
-                          </div>
-
-                          {/* Actions Menu Column */}
-                          <div className="justify-self-center" onClick={(e) => e.stopPropagation()}>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger className="h-8 w-8 p-0 rounded-full hover:bg-muted cursor-pointer flex items-center justify-center animate-none border-none bg-transparent outline-none ring-0">
-                                <MoreVertical className="w-4 h-4 text-slate-400 group-hover:text-slate-650 shrink-0" />
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-40 rounded-xl">
-                                <DropdownMenuItem className="text-xs cursor-pointer py-2 font-bold" onClick={() => handleTicketSelect(ticket.id)}>
-                                  {t('tickets.rowActions.open', 'Open')}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem className="text-xs cursor-pointer py-2 text-rose-600 focus:text-rose-650" onClick={() => handleInlineUpdate(ticket.id, { status: 'trash' })}>
-                                  {t('tickets.rowActions.delete', 'Delete')}
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                          {/* Activity Column */}
+                          <div className="min-w-0 text-xs text-muted-foreground font-medium text-left whitespace-nowrap">
+                             {ticket.updatedAt?.toDate
+                               ? ticket.updatedAt.toDate().toLocaleDateString('de-DE', { month: 'short', day: 'numeric' })
+                               : t('tickets.today', 'Heute')}
                           </div>
                         </motion.div>
                       );
@@ -1297,7 +1210,7 @@ export function TicketListView(props: TicketListViewProps) {
                             <div className="flex flex-col min-w-0">
                               <span className="font-extrabold text-xs text-foreground truncate">{safeString(ticket.customerName)}</span>
                               <div className="flex items-center gap-1">
-                                <span className="text-[10px] text-muted-foreground truncate">{safeString(ticket.company) || t('tickets.privateCustomer', 'Private')}</span>
+                                <span className="text-[10px] text-muted-foreground truncate">{resolveCompanyLabel(ticket)}</span>
                                 <Badge variant="outline" className={cn("text-[8px] h-3.5 px-1.5 pb-0 scale-90 select-none font-bold", tier.style)}>
                                   {tier.label}
                                 </Badge>
@@ -1397,17 +1310,30 @@ export function TicketListView(props: TicketListViewProps) {
               )}
             </ScrollArea>
 
-            {/* Data Table Pagination Footer (Sticky / Locked at the bottom) */}
+            {/* Data Table Pagination Footer — hidden in Kanban (full board lanes). */}
+            {layoutMode !== 'kanban' ? (
             <div className="h-14 border-t border-border bg-card px-6 flex items-center justify-between shrink-0 select-none">
-              {/* Left Side: Status display */}
+              {/* Left Side: Status display (1-based range; empty → "0 Tickets") */}
               <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                {t('tickets.pagination.showing', 'Showing')}{' '}
-                <span className="font-extrabold text-slate-800 dark:text-slate-100">{totalTicketsCount === 0 ? 0 : startIdx + 1}</span>{' '}
-                {t('tickets.pagination.to', 'to')}{' '}
-                <span className="font-extrabold text-slate-800 dark:text-slate-100">{Math.min(endIdx, totalTicketsCount)}</span>{' '}
-                {t('tickets.pagination.of', 'of')}{' '}
-                <span className="font-extrabold text-slate-800 dark:text-slate-100">{totalTicketsCount}</span>{' '}
-                {totalTicketsCount === 1 ? t('tickets.pagination.ticketSingular', 'ticket') : t('tickets.pagination.ticketPlural', 'tickets')}
+                {totalTicketsCount === 0 ? (
+                  <>
+                    {t('tickets.pagination.showing', 'Zeige')}{' '}
+                    <span className="font-extrabold text-slate-800 dark:text-slate-100">0</span>{' '}
+                    {t('tickets.pagination.ticketPlural', 'Tickets')}
+                  </>
+                ) : (
+                  <>
+                    {t('tickets.pagination.showing', 'Zeige')}{' '}
+                    <span className="font-extrabold text-slate-800 dark:text-slate-100">{startIdx}</span>{' '}
+                    {t('tickets.pagination.to', 'bis')}{' '}
+                    <span className="font-extrabold text-slate-800 dark:text-slate-100">{endIdx}</span>{' '}
+                    {t('tickets.pagination.of', 'von')}{' '}
+                    <span className="font-extrabold text-slate-800 dark:text-slate-100">{totalTicketsCount}</span>{' '}
+                    {totalTicketsCount === 1
+                      ? t('tickets.pagination.ticketSingular', 'Ticket')
+                      : t('tickets.pagination.ticketPlural', 'Tickets')}
+                  </>
+                )}
               </div>
 
               {/* Right Side: Zeilen pro Seite selector & Navigation buttons list */}
@@ -1474,6 +1400,7 @@ export function TicketListView(props: TicketListViewProps) {
                 </div>
               </div>
             </div>
+            ) : null}
 
             <TicketDetailDrawer
               ticket={drawerTicketId ? allTickets.find((tk) => tk.id === drawerTicketId) ?? null : null}

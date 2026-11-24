@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useTranslation } from '../../lib/context/I18nContext';
-import { TicketsAiQualityScore } from './TicketsAiQualityScore';
 import {
   ARCHIVE_VIEW_IDS,
   COMPACT_PRIMARY_VIEWS,
@@ -74,14 +73,17 @@ function FavoriteStar({
         onToggle();
       }}
       className={cn(
-        'relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md pointer-events-auto',
-        isFavorite
-          ? 'text-amber-500 opacity-100'
-          : 'text-slate-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
+        'relative z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded pointer-events-auto',
+        'opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
+        isFavorite && 'opacity-70',
+        isFavorite ? 'text-slate-500' : 'text-slate-400',
       )}
     >
       <Star
-        className={cn('h-4 w-4 pointer-events-none', isFavorite && 'fill-amber-400 text-amber-500')}
+        className={cn(
+          'h-3.5 w-3.5 pointer-events-none',
+          isFavorite && 'fill-slate-400/40 text-slate-500',
+        )}
       />
     </button>
   );
@@ -108,11 +110,15 @@ interface SidebarNavButtonProps {
 }
 
 function countBadgeClass(isActive: boolean, tone: BadgeTone = 'default') {
-  const base = 'font-mono tabular-nums text-[11px] font-semibold px-1.5 py-0.5 rounded-full';
-  if (isActive) return cn(base, 'bg-white/20 text-white');
-  if (tone === 'amber') return cn(base, 'bg-amber-50 text-amber-800');
-  if (tone === 'rose') return cn(base, 'bg-rose-50 text-rose-800');
-  return cn(base, 'bg-slate-100 text-slate-500');
+  const base = 'font-mono tabular-nums text-[11px] font-medium shrink-0';
+  if (isActive) return cn(base, 'text-white/80');
+  if (tone === 'amber') return cn(base, 'text-amber-700');
+  if (tone === 'rose') return cn(base, 'text-rose-600');
+  return cn(base, 'text-slate-400');
+}
+
+function formatCount(count: number): string {
+  return `(${count})`;
 }
 
 function SidebarNavButton({
@@ -192,16 +198,16 @@ function SidebarNavButton({
         {count > 0 && (
           <span
             className={cn(
-              'min-w-4 text-center leading-4',
+              'leading-4',
               helpChip
                 ? cn(
-                    'font-mono tabular-nums text-[11px] font-semibold',
-                    isActive ? 'text-white' : 'text-rose-600',
+                    'font-mono tabular-nums text-[11px] font-medium',
+                    isActive ? 'text-white/80' : 'text-rose-600',
                   )
                 : countBadgeClass(isActive, badgeTone),
             )}
           >
-            {count}
+            {formatCount(count)}
           </span>
         )}
       </button>
@@ -261,11 +267,11 @@ function ViewMenuItem({
         {count > 0 && (
           <span
             className={cn(
-              'font-mono tabular-nums text-[11px] font-semibold leading-none',
-              tone === 'rose' ? 'text-rose-600' : 'text-slate-500',
+              'font-mono tabular-nums text-[11px] font-medium leading-none',
+              tone === 'rose' ? 'text-rose-600' : 'text-slate-400',
             )}
           >
-            {count}
+            {formatCount(count)}
           </span>
         )}
         {onToggleFavorite && (
@@ -904,11 +910,11 @@ export function TicketsLeftSidebar({
                       {count > 0 && (
                         <span
                           className={cn(
-                            'font-mono tabular-nums text-[11px] font-semibold px-1.5 py-0.5 rounded-full shrink-0',
-                            active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600',
+                            'font-mono tabular-nums text-[11px] font-medium shrink-0',
+                            active ? 'text-white/80' : 'text-slate-400',
                           )}
                         >
-                          {count}
+                          {formatCount(count)}
                         </span>
                       )}
                     </button>
@@ -925,10 +931,9 @@ export function TicketsLeftSidebar({
         )}
       </div>
 
-      <div className="p-3 border-t border-slate-200 mt-auto shrink-0 space-y-2">
-        <TicketsAiQualityScore collapsed={effectiveCollapsed} />
-        {footer}
-      </div>
+      {footer ? (
+        <div className="p-3 border-t border-slate-200 mt-auto shrink-0">{footer}</div>
+      ) : null}
     </div>
   );
 }

@@ -12,9 +12,9 @@ interface TicketsViewModeSelectorProps {
 }
 
 const MODES: { id: TicketsLayoutMode; icon: ReactNode; labelKey: string; defaultLabel: string }[] = [
-  { id: 'list', icon: <List className="w-3.5 h-3.5" />, labelKey: 'tickets.layout.list', defaultLabel: 'List' },
+  { id: 'list', icon: <List className="w-3.5 h-3.5" />, labelKey: 'tickets.layout.list', defaultLabel: 'Liste' },
   { id: 'kanban', icon: <Columns3 className="w-3.5 h-3.5" />, labelKey: 'tickets.layout.kanban', defaultLabel: 'Kanban' },
-  { id: 'cards', icon: <LayoutGrid className="w-3.5 h-3.5" />, labelKey: 'tickets.layout.cards', defaultLabel: 'Cards' },
+  { id: 'cards', icon: <LayoutGrid className="w-3.5 h-3.5" />, labelKey: 'tickets.layout.cards', defaultLabel: 'Karten' },
 ];
 
 export function TicketsViewModeSelector({ value, onChange, className }: TicketsViewModeSelectorProps) {

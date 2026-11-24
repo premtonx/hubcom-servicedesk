@@ -1,7 +1,7 @@
 import type { TicketStatus } from '../types';
 
-/** Canonical Kanban lane buckets shown in the UI. */
-export type KanbanLaneId = 'offen' | 'in_bearbeitung' | 'geloest';
+/** Canonical Kanban lane buckets shown in the UI (4 columns matching real statuses). */
+export type KanbanLaneId = 'offen' | 'in_bearbeitung' | 'wartend' | 'geloest';
 
 /**
  * Normalize a raw ticket status string from the database / UI into a Kanban lane.
@@ -38,9 +38,28 @@ export function normalizeKanbanStatus(rawStatus: string | undefined | null): Kan
     normalized === 'closed' ||
     normalized === 'geschlossen' ||
     normalized === 'done' ||
-    normalized === 'fertig'
+    normalized === 'fertig' ||
+    normalized === 'deleted' ||
+    normalized === 'trash' ||
+    normalized === 'spam' ||
+    normalized === 'merged'
   ) {
     return 'geloest';
+  }
+
+  if (
+    normalized === 'waiting' ||
+    normalized === 'wartend' ||
+    normalized === 'paused' ||
+    normalized === 'on_hold' ||
+    normalized === 'onhold' ||
+    normalized === 'waiting_customer' ||
+    normalized === 'waiting_dev' ||
+    normalized === 'waiting_vendor' ||
+    normalized === 'hold' ||
+    normalized === 'pending_customer'
+  ) {
+    return 'wartend';
   }
 
   if (
@@ -49,25 +68,13 @@ export function normalizeKanbanStatus(rawStatus: string | undefined | null): Kan
     normalized === 'inprogress' ||
     normalized === 'in_bearbeitung' ||
     normalized === 'bearbeitung' ||
-    normalized === 'waiting' ||
-    normalized === 'wartend' ||
-    normalized === 'paused' ||
-    normalized === 'on_hold' ||
-    normalized === 'onhold' ||
-    normalized === 'qs' ||
-    normalized === 'waiting_customer' ||
-    normalized === 'waiting_dev' ||
-    normalized === 'waiting_vendor' ||
-    normalized === 'in_bearbeitung'
+    normalized === 'qs'
   ) {
     return 'in_bearbeitung';
   }
 
   // Fallback: treat unknown active statuses as in-progress; empty as open.
   if (!normalized) return 'offen';
-  if (normalized === 'deleted' || normalized === 'trash' || normalized === 'spam' || normalized === 'merged') {
-    return 'geloest';
-  }
   return 'in_bearbeitung';
 }
 
@@ -78,6 +85,9 @@ export function kanbanLaneToTicketStatus(lane: KanbanLaneId): TicketStatus {
       return 'open';
     case 'in_bearbeitung':
       return 'pending';
+    case 'wartend':
+      // Canonical hold status — matches tickets.pendingOnHold / isOnHoldTicket.
+      return 'on_hold';
     case 'geloest':
       return 'resolved';
     default:
@@ -106,6 +116,13 @@ export const KANBAN_LANES: Array<{
     defaultLabel: 'In Bearbeitung',
     systemStatus: 'pending',
     dot: 'bg-violet-500',
+  },
+  {
+    id: 'wartend',
+    labelKey: 'tickets.pendingOnHold',
+    defaultLabel: 'Wartend',
+    systemStatus: 'on_hold',
+    dot: 'bg-amber-500',
   },
   {
     id: 'geloest',
