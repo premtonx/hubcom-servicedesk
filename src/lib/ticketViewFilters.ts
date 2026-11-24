@@ -64,16 +64,23 @@ export function isTeamAllOpenTicket(ticket: Ticket): boolean {
   );
 }
 
+/**
+ * Canonical “Nicht zugewiesen” — shared by Dashboard KPI SQL (mirrored),
+ * /tickets sidebar, and top status tabs. Active ticket with no real assignee.
+ */
 export function isUnassignedTicket(ticket: Ticket): boolean {
-  return (
-    !hasAssignee(ticket) &&
-    matchStatusNot(ticket.status, 'resolved') &&
-    matchStatusNot(ticket.status, 'closed') &&
-    matchStatusNot(ticket.status, 'trash') &&
-    matchStatusNot(ticket.status, 'spam') &&
-    matchStatusNot(ticket.status, 'merged')
+  if (hasAssignee(ticket)) return false;
+  const status = String(ticket.status ?? '')
+    .toLowerCase()
+    .trim()
+    .replace(/-/g, '_');
+  return !['resolved', 'closed', 'trash', 'spam', 'merged', 'deleted', 'archived'].includes(
+    status,
   );
 }
+
+/** Alias — prefer this name in new call sites (Dashboard + /tickets). */
+export const isUnassigned = isUnassignedTicket;
 
 /** Open + in-progress queue (dashboard “Offen & in Bearbeitung”). */
 export function isOpenInProgressTicket(ticket: Ticket): boolean {
@@ -534,9 +541,9 @@ export function filterTicketsByTopStatus(
 ): Ticket[] {
   switch (filterId) {
     case 'open':
-      return tickets.filter((t) => matchStatus(t.status, 'open'));
+      return tickets.filter(isOpenQueueTicket);
     case 'pending':
-      return tickets.filter((t) => matchStatus(t.status, 'pending'));
+      return tickets.filter(isInProgressQueueTicket);
     case 'onhold':
       return tickets.filter(isOnHoldTicket);
     case 'urgent':
@@ -565,8 +572,8 @@ export function computeTicketQueueStats(pool: Ticket[]): TicketQueueStats {
   const activePool = pool.filter(isActiveSupportTicket);
   return {
     all: activePool.length,
-    open: activePool.filter((t) => matchStatus(t.status, 'open')).length,
-    pending: activePool.filter((t) => matchStatus(t.status, 'pending')).length,
+    open: activePool.filter(isOpenQueueTicket).length,
+    pending: activePool.filter(isInProgressQueueTicket).length,
     onhold: activePool.filter(isOnHoldTicket).length,
     urgent: activePool.filter(isUrgentPriorityTicket).length,
     unassigned: activePool.filter(isUnassignedTicket).length,

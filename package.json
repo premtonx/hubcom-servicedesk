@@ -134,6 +134,7 @@
     "test:dashboard-kpi-parity": "tsx scripts/test-dashboard-kpi-parity.ts",
     "test:tickets-sidebar-favorites": "tsx scripts/test-tickets-sidebar-favorites.ts",
     "test:ticket-assignee": "tsx scripts/test-ticket-assignee.ts",
+    "test:tickets-org-scope": "tsx scripts/test-tickets-org-scope-counts.ts",
     "test:ticket-config-status": "tsx scripts/test-ticket-config-status.ts",
     "migrate:unassigned-assignee": "tsx scripts/migrate-unassigned-assignee-sentinels.ts",
     "verify:inbound-smtp": "tsx scripts/verify-inbound-smtp.ts",

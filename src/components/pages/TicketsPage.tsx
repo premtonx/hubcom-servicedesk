@@ -60,6 +60,7 @@ import {
   isResolvedInPeriodTicket,
   type TopStatusFilterId,
 } from '../../lib/ticketViewFilters';
+import { filterTicketsByOrganization } from '../../lib/ticket-organization-scope';
 import {
   parseResolvedWithinDays,
   resolveTicketsListDeepLink,
@@ -69,6 +70,7 @@ import {
   customViewId,
   useTicketsSidebarPreferences,
 } from '../../lib/ticketsSidebarPreferences';
+import { COMPACT_SIDEBAR_SECTION } from '../tickets/ticketsSidebarConfig';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useCreateTicketCatalog } from '../../hooks/useCreateTicketCatalog';
 import { useTranslation } from '../../lib/context/I18nContext';
@@ -203,6 +205,18 @@ export default function TicketsPage() {
     () => filterTicketsByWorkspace(allTickets, 'support'),
     [allTickets],
   );
+
+  /** Client-scoped pool — every counter and list derives from this when org is set. */
+  const scopedSupportTickets = useMemo(
+    () => filterTicketsByOrganization(supportTickets, selectedOrganizationId),
+    [supportTickets, selectedOrganizationId],
+  );
+
+  // Deep-link / Dashboard navigation: expand Kunden accordion for the active org.
+  useEffect(() => {
+    if (!selectedOrganizationId || !isStaffUser) return;
+    setGroupCollapsed(COMPACT_SIDEBAR_SECTION.kunden, false);
+  }, [selectedOrganizationId, isStaffUser, setGroupCollapsed]);
 
   const [additionalCategory] = useState<string | null>(() => {
     return localStorage.getItem('geistdesk_additional_category') || null;
@@ -376,6 +390,10 @@ export default function TicketsPage() {
     const next = new URLSearchParams(searchParams);
     next.delete('status');
     next.set('view', view);
+    // Preserve active client scope across sidebar queue / status clicks.
+    if (selectedOrganizationId) {
+      next.set('organizationId', selectedOrganizationId);
+    }
     if (view !== 'status_resolved' && view !== 'status_closed') {
       next.delete('resolvedWithin');
     }
@@ -500,11 +518,11 @@ export default function TicketsPage() {
     [user?.uid, user?.email, user?.displayName, watchedTicketIds, allTickets, isAiReady, sidebarPrefs.customViews],
   );
 
-  // Compute tickets filtered ONLY by the current active sidebar view category
+  // View filter on the org-scoped pool (never the global support stream when org is set).
   const baseSidebarTickets = useMemo(() => {
     if (!user) return [];
-    return filterTicketsByView(supportTickets, activeView, viewFilterContext);
-  }, [supportTickets, activeView, user, viewFilterContext]);
+    return filterTicketsByView(scopedSupportTickets, activeView, viewFilterContext);
+  }, [scopedSupportTickets, activeView, user, viewFilterContext]);
 
   const ticketQueueStats = useMemo(
     () => computeTicketQueueStats(baseSidebarTickets),
@@ -645,15 +663,9 @@ export default function TicketsPage() {
   // Compute final tickets after applying the top sub-status filter, search query, and advanced filters drawer
   const finalRenderedTickets = useMemo(() => {
     if (!user) return [];
-    
-    let result = filterTicketsByTopStatus([...baseSidebarTickets], topStatusFilter);
 
-    if (selectedOrganizationId) {
-      result = result.filter((t) => {
-        const oid = String(t.organizationId || t.organization_id || '').trim();
-        return oid === selectedOrganizationId;
-      });
-    }
+    // baseSidebarTickets is already org-scoped via scopedSupportTickets.
+    let result = filterTicketsByTopStatus([...baseSidebarTickets], topStatusFilter);
 
     if (
       resolvedWithinDays &&
@@ -824,7 +836,6 @@ export default function TicketsPage() {
     user,
     listSort,
     allTickets,
-    selectedOrganizationId,
     priorityRankByKey,
     teamAccess,
     resolvedWithinDays,
@@ -837,7 +848,7 @@ export default function TicketsPage() {
 
   const getViewCount = (view: string) => {
     if (!user) return 0;
-    return countTicketsByView(supportTickets, view, viewFilterContext);
+    return countTicketsByView(scopedSupportTickets, view, viewFilterContext);
   };
 
   const tickets = getFilteredTickets();

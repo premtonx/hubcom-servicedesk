@@ -835,6 +835,21 @@ export function TicketsLeftSidebar({
                 aria-labelledby={`tickets-sidebar-section-${COMPACT_SIDEBAR_SECTION.kunden}-heading`}
                 className="space-y-0.5 pb-1"
               >
+                {selectedOrganizationId ? (
+                  <div className="mx-1 mb-1 flex items-center justify-between gap-2 rounded-md border border-blue-100 bg-blue-50/80 px-2 py-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-blue-700 truncate">
+                      {t('tickets.sidebar.scopedToClient', 'Gefiltert nach Kunde')}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onSelectOrganization?.(null)}
+                      className="shrink-0 text-[10px] font-bold text-blue-700 hover:underline"
+                      title={t('tickets.sidebar.clearClientFilter', 'Kundenfilter aufheben')}
+                    >
+                      {t('tickets.sidebar.showAllClients', 'Alle')} ×
+                    </button>
+                  </div>
+                ) : null}
                 {(kundenOrgs?.length || 0) > 8 && (
                   <input
                     type="search"
@@ -851,14 +866,21 @@ export function TicketsLeftSidebar({
                     <button
                       key={org.id}
                       type="button"
-                      onClick={() => onSelectOrganization?.(org.id)}
+                      onClick={() =>
+                        onSelectOrganization?.(active ? null : org.id)
+                      }
                       className={cn(
                         'flex h-8 w-full min-w-0 items-center justify-between gap-2 px-2.5 py-1.5 text-[13px] font-medium leading-none rounded-md transition-colors',
                         active
-                          ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                          ? 'bg-blue-600 text-white font-semibold shadow-sm ring-2 ring-blue-300 ring-offset-1'
                           : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100',
                       )}
-                      title={org.name}
+                      title={
+                        active
+                          ? t('tickets.sidebar.clickToClearClient', 'Erneut klicken zum Aufheben')
+                          : org.name
+                      }
+                      aria-pressed={active}
                     >
                       <span className="flex items-center gap-2 min-w-0">
                         {org.logo_url ? (

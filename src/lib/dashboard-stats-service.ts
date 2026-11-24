@@ -39,7 +39,7 @@ export interface DashboardRecentTicket {
   requesterName?: string | null;
 }
 
-/** SQL fragment: assignee field is empty or an unassigned sentinel (mirrors ticketAssignee). */
+/** SQL fragment: assignee field is empty or an unassigned sentinel (mirrors ticketAssignee.hasAssignee). */
 const SQL_ASSIGNEE_EMPTY = (field: string) => `
   (
     NULLIF(TRIM(COALESCE(data->>'${field}', '')), '') IS NULL
@@ -51,10 +51,11 @@ const SQL_ASSIGNEE_EMPTY = (field: string) => `
 
 /**
  * Unassigned = no real assignee across agentId/assigneeId/assignedTo/assignedToEmail/agentName
- * AND non-terminal status — same rules as `isUnassignedTicket` / ticket-list view.
+ * AND non-terminal status — must stay 1:1 with `isUnassignedTicket` in ticketViewFilters.
  */
 const SQL_IS_UNASSIGNED = `
-  LOWER(COALESCE(data->>'status', '')) NOT IN ('resolved', 'closed', 'trash', 'spam', 'merged')
+  LOWER(REPLACE(COALESCE(data->>'status', ''), '-', '_'))
+    NOT IN ('resolved', 'closed', 'trash', 'spam', 'merged', 'deleted', 'archived')
   AND ${SQL_ASSIGNEE_EMPTY('agentId')}
   AND ${SQL_ASSIGNEE_EMPTY('assigneeId')}
   AND ${SQL_ASSIGNEE_EMPTY('assignedTo')}
