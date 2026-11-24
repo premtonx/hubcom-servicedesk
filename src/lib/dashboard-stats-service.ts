@@ -25,8 +25,36 @@ export interface DashboardRecentTicket {
   organizationId?: string | null;
   agentId?: string | null;
   agentName?: string | null;
+  assigneeId?: string | null;
+  assignedTo?: string | null;
+  assignedToEmail?: string | null;
+  slaDueAt?: string | null;
+  firstResponseDue?: string | null;
   requesterName?: string | null;
 }
+
+/** SQL fragment: assignee field is empty or an unassigned sentinel (mirrors ticketAssignee). */
+const SQL_ASSIGNEE_EMPTY = (field: string) => `
+  (
+    NULLIF(TRIM(COALESCE(data->>'${field}', '')), '') IS NULL
+    OR LOWER(TRIM(data->>'${field}')) IN (
+      'unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen'
+    )
+  )
+`;
+
+/**
+ * Unassigned = no real assignee across agentId/assigneeId/assignedTo/assignedToEmail/agentName
+ * AND non-terminal status — same rules as `isUnassignedTicket` / ticket-list view.
+ */
+const SQL_IS_UNASSIGNED = `
+  LOWER(COALESCE(data->>'status', '')) NOT IN ('resolved', 'closed', 'trash', 'spam', 'merged')
+  AND ${SQL_ASSIGNEE_EMPTY('agentId')}
+  AND ${SQL_ASSIGNEE_EMPTY('assigneeId')}
+  AND ${SQL_ASSIGNEE_EMPTY('assignedTo')}
+  AND ${SQL_ASSIGNEE_EMPTY('assignedToEmail')}
+  AND ${SQL_ASSIGNEE_EMPTY('agentName')}
+`;
 
 export interface DashboardClientOrgSummary {
   id: string;
@@ -258,10 +286,13 @@ async function queryExtendedTicketStats() {
       COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE LOWER(data->>'status') = 'open')::int AS open,
       COUNT(*) FILTER (WHERE LOWER(data->>'status') = 'pending')::int AS pending,
-      COUNT(*) FILTER (WHERE LOWER(data->>'status') IN ('resolved', 'closed'))::int AS resolved,
-      COUNT(*) FILTER (WHERE COALESCE(data->>'agentId', '') = '')::int AS unassigned,
       COUNT(*) FILTER (
-        WHERE LOWER(data->>'status') NOT IN ('closed', 'resolved')
+        WHERE LOWER(REPLACE(COALESCE(data->>'status', ''), '-', '_')) = 'in_progress'
+      )::int AS in_progress,
+      COUNT(*) FILTER (WHERE LOWER(data->>'status') IN ('resolved', 'closed'))::int AS resolved,
+      COUNT(*) FILTER (WHERE ${SQL_IS_UNASSIGNED})::int AS unassigned,
+      COUNT(*) FILTER (
+        WHERE LOWER(COALESCE(data->>'status', '')) NOT IN ('closed', 'resolved', 'trash', 'spam', 'merged', 'deleted')
           AND (
             (NULLIF(data->>'slaDueAt', '') IS NOT NULL AND (data->>'slaDueAt')::timestamptz < NOW())
             OR (NULLIF(data->>'firstResponseDue', '') IS NOT NULL AND (data->>'firstResponseDue')::timestamptz < NOW())
@@ -307,10 +338,15 @@ async function queryExtendedTicketStats() {
   const positiveResolved = Number(row.positive_resolved) || 0;
   const satisfactionPct = resolvedTotal > 0 ? (positiveResolved / resolvedTotal) * 100 : 0;
 
+  const open = Number(row.open) || 0;
+  const pending = Number(row.pending) || 0;
+  const inProgress = Number(row.in_progress) || 0;
   return {
     total: Number(row.total) || 0,
-    open: Number(row.open) || 0,
-    pending: Number(row.pending) || 0,
+    open,
+    pending,
+    inProgress,
+    openInProgress: open + pending + inProgress,
     resolved: Number(row.resolved) || 0,
     unassigned: Number(row.unassigned) || 0,
     overdue: Number(row.overdue) || 0,
@@ -321,7 +357,7 @@ async function queryExtendedTicketStats() {
   };
 }
 
-async function queryRecentTickets(limit = 8): Promise<DashboardRecentTicket[]> {
+async function queryRecentTickets(limit = 40): Promise<DashboardRecentTicket[]> {
   const res = await queryDb(
     `
     SELECT
@@ -341,8 +377,13 @@ async function queryRecentTickets(limit = 8): Promise<DashboardRecentTicket[]> {
       COALESCE(data->>'company', data->>'customerCompany', data->>'organizationName') AS company,
       data->>'companyId' AS company_id,
       COALESCE(data->>'organizationId', data->>'organization_id') AS organization_id,
-      COALESCE(data->>'agentId', data->>'assignedTo') AS agent_id,
+      data->>'agentId' AS agent_id,
       data->>'agentName' AS agent_name,
+      data->>'assigneeId' AS assignee_id,
+      data->>'assignedTo' AS assigned_to,
+      data->>'assignedToEmail' AS assigned_to_email,
+      data->>'slaDueAt' AS sla_due_at,
+      data->>'firstResponseDue' AS first_response_due,
       COALESCE(data->>'customerName', data->>'requesterName', data->>'from_name') AS requester_name
     FROM geistdesk_documents
     WHERE collection = 'tickets'
@@ -365,6 +406,11 @@ async function queryRecentTickets(limit = 8): Promise<DashboardRecentTicket[]> {
     organizationId: row.organization_id || null,
     agentId: row.agent_id || null,
     agentName: row.agent_name || null,
+    assigneeId: row.assignee_id || null,
+    assignedTo: row.assigned_to || null,
+    assignedToEmail: row.assigned_to_email || null,
+    slaDueAt: row.sla_due_at || null,
+    firstResponseDue: row.first_response_due || null,
     requesterName: row.requester_name || null,
   }));
 }
@@ -653,7 +699,7 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
   ] = await Promise.all([
     queryExtendedTicketStats(),
     queryTicketTrendBuckets(7),
-    queryRecentTickets(8),
+    queryRecentTickets(40),
     queryPeriodComparison(7),
     getDocsDirect('kb_articles', []),
     getDocDirect('kb_settings', 'global'),
@@ -711,8 +757,8 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
     },
     buckets: {
       open: stats.open,
-      inProgress: stats.pending,
-      openInProgress: stats.open + stats.pending,
+      inProgress: stats.inProgress || stats.pending,
+      openInProgress: stats.openInProgress,
       unassigned: stats.unassigned,
       overdue: stats.overdue,
       resolvedInPeriod,

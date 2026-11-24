@@ -40,9 +40,37 @@ import {
   formatRelativeTime,
   organizationInitialsFromName,
 } from '../../lib/dashboard-format-utils';
+import { buildTicketsListUrl } from '../../lib/dashboard-ticket-nav';
 import { getModuleConfig } from '../../lib/module-config';
+import {
+  isTicketAssignedToUser,
+} from '../../lib/ticketAssignee';
+import {
+  isUnassignedTicket,
+} from '../../lib/ticketViewFilters';
+import type { Ticket } from '../../types';
 
 type TicketFilterTab = 'unassigned' | 'mine' | 'all';
+
+const DASHBOARD_LIST_LIMIT = 8;
+
+function recentTicketAsTicket(t: DashboardStatsPayload['recentTickets'][number]): Ticket {
+  return {
+    id: t.id,
+    subject: t.subject,
+    status: t.status,
+    priority: t.priority as Ticket['priority'],
+    agentId: t.agentId ?? undefined,
+    agentName: t.agentName ?? undefined,
+    assigneeId: t.assigneeId ?? undefined,
+    assignedTo: t.assignedTo ?? undefined,
+    assignedToEmail: t.assignedToEmail ?? undefined,
+    organizationId: t.organizationId ?? undefined,
+    company: t.company ?? undefined,
+    slaDueAt: t.slaDueAt ?? undefined,
+    firstResponseDue: t.firstResponseDue ?? undefined,
+  } as Ticket;
+}
 
 export default function DashboardPage() {
   const { t } = useTranslation();
@@ -94,15 +122,33 @@ export default function DashboardPage() {
 
   const filteredTickets = useMemo(() => {
     const all = dashboardStats?.recentTickets ?? [];
-    const uid = user?.uid;
     if (ticketTab === 'unassigned') {
-      return all.filter((t) => !t.agentId || t.agentId === '' || t.agentId === 'unassigned');
+      return all
+        .filter((t) => isUnassignedTicket(recentTicketAsTicket(t)))
+        .slice(0, DASHBOARD_LIST_LIMIT);
     }
-    if (ticketTab === 'mine' && uid) {
-      return all.filter((t) => t.agentId === uid);
+    if (ticketTab === 'mine' && user?.uid) {
+      const me = {
+        userId: user.uid,
+        userEmail: user.email,
+        userName: user.displayName || user.email?.split('@')[0] || '',
+      };
+      return all
+        .filter((t) => isTicketAssignedToUser(recentTicketAsTicket(t), me))
+        .slice(0, DASHBOARD_LIST_LIMIT);
     }
-    return all;
-  }, [dashboardStats?.recentTickets, ticketTab, user?.uid]);
+    return all.slice(0, DASHBOARD_LIST_LIMIT);
+  }, [dashboardStats?.recentTickets, ticketTab, user?.uid, user?.email, user?.displayName]);
+
+  const listSeeAllUrl = useMemo(() => {
+    if (ticketTab === 'unassigned') {
+      return buildTicketsListUrl({ kind: 'view', view: 'unassigned' });
+    }
+    if (ticketTab === 'mine') {
+      return buildTicketsListUrl({ kind: 'view', view: 'assigned_me' });
+    }
+    return buildTicketsListUrl({ kind: 'view', view: 'team_all_open' });
+  }, [ticketTab]);
 
   const displayName = userProfile?.name || user?.displayName || 'Operator';
 
@@ -201,28 +247,36 @@ export default function DashboardPage() {
             value={buckets?.unassigned ?? (loading ? '…' : 0)}
             icon={<Inbox className="w-4 h-4" />}
             danger={(buckets?.unassigned ?? 0) > 0}
-            onClick={() => navigate('/tickets?view=unassigned')}
+            onClick={() => navigate(buildTicketsListUrl({ kind: 'view', view: 'unassigned' }))}
           />
           <ActionKpiCard
             label="Überfällig / SLA-Risiko"
             value={buckets?.overdue ?? (loading ? '…' : 0)}
             icon={<AlertTriangle className="w-4 h-4" />}
             danger={(buckets?.overdue ?? 0) > 0}
-            onClick={() => navigate('/tickets?view=overdue')}
+            onClick={() => navigate(buildTicketsListUrl({ kind: 'view', view: 'overdue' }))}
           />
           <ActionKpiCard
             label="Offen & In Bearbeitung"
             value={buckets?.openInProgress ?? (loading ? '…' : 0)}
             subtitle={`Ø Lösungszeit: ${kpis?.avgResolutionTime ?? '—'}`}
             icon={<Clock className="w-4 h-4" />}
-            onClick={() => navigate('/tickets?view=open')}
+            onClick={() => navigate(buildTicketsListUrl({ kind: 'view', view: 'open_in_progress' }))}
           />
           <ActionKpiCard
             label="Gelöst (Zeitraum)"
             value={buckets?.resolvedInPeriod ?? (loading ? '…' : 0)}
             subtitle={`Lösungsquote: ${kpis?.resolutionRate ?? '—'}`}
             icon={<CheckCircle2 className="w-4 h-4" />}
-            onClick={() => navigate('/tickets?view=resolved')}
+            onClick={() =>
+              navigate(
+                buildTicketsListUrl({
+                  kind: 'view',
+                  view: 'status_resolved',
+                  resolvedWithinDays: 7,
+                }),
+              )
+            }
           />
         </div>
 
@@ -310,7 +364,7 @@ export default function DashboardPage() {
             <div className="pt-3 mt-2 border-t border-slate-100">
               <button
                 type="button"
-                onClick={() => navigate('/tickets')}
+                onClick={() => navigate(listSeeAllUrl)}
                 className="text-xs font-bold text-[#1B6CA8] hover:underline"
               >
                 Alle Tickets anzeigen →
@@ -333,7 +387,12 @@ export default function DashboardPage() {
                     <button
                       type="button"
                       onClick={() =>
-                        navigate(`/tickets?organizationId=${encodeURIComponent(org.id)}`)
+                        navigate(
+                          buildTicketsListUrl({
+                            kind: 'organization',
+                            organizationId: org.id,
+                          }),
+                        )
                       }
                       className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-100 transition-colors text-left"
                     >

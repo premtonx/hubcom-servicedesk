@@ -70,6 +70,65 @@ export function isUnassignedTicket(ticket: Ticket): boolean {
   );
 }
 
+/** Open + in-progress queue (dashboard “Offen & in Bearbeitung”). */
+export function isOpenInProgressTicket(ticket: Ticket): boolean {
+  return (
+    matchStatus(ticket.status, 'open') ||
+    matchStatus(ticket.status, 'pending') ||
+    matchStatus(ticket.status, 'in_progress') ||
+    matchStatus(ticket.status, 'in-progress')
+  );
+}
+
+function ticketTimestampMs(value: unknown): number {
+  if (!value) return 0;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? ms : 0;
+  }
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'object' && value !== null && 'toDate' in value) {
+    const date = (value as { toDate?: () => Date }).toDate?.();
+    return date ? date.getTime() : 0;
+  }
+  return 0;
+}
+
+/**
+ * SLA overdue by due timestamp — matches dashboard `buckets.overdue` SQL
+ * (slaDueAt / firstResponseDue in the past, non-terminal status).
+ */
+export function isOverdueTicket(ticket: Ticket, nowMs: number = Date.now()): boolean {
+  if (
+    matchStatus(ticket.status, 'resolved') ||
+    matchStatus(ticket.status, 'closed') ||
+    matchStatus(ticket.status, 'trash') ||
+    matchStatus(ticket.status, 'spam') ||
+    matchStatus(ticket.status, 'merged') ||
+    matchStatus(ticket.status, 'deleted')
+  ) {
+    return false;
+  }
+  const dueMs = ticketTimestampMs(ticket.slaDueAt) || ticketTimestampMs(ticket.firstResponseDue);
+  return dueMs > 0 && dueMs < nowMs;
+}
+
+/** Resolved/closed within [fromMs, toMs] — matches dashboard resolved-in-period. */
+export function isResolvedInPeriodTicket(
+  ticket: Ticket,
+  fromMs: number,
+  toMs: number = Date.now(),
+): boolean {
+  if (!matchStatus(ticket.status, 'resolved') && !matchStatus(ticket.status, 'closed')) {
+    return false;
+  }
+  const resolvedMs =
+    ticketTimestampMs(ticket.resolvedAt) ||
+    ticketTimestampMs(ticket.closedAt) ||
+    ticketTimestampMs(ticket.updatedAt);
+  return resolvedMs >= fromMs && resolvedMs <= toMs;
+}
+
 export function isNewTicket(ticket: Ticket): boolean {
   return matchStatus(ticket.status, 'open') && !hasAssignee(ticket);
 }
@@ -258,6 +317,10 @@ export function filterTicketsByView(
       return tickets.filter(isTeamAllOpenTicket);
     case 'unassigned':
       return tickets.filter(isUnassignedTicket);
+    case 'overdue':
+      return tickets.filter((t) => isOverdueTicket(t));
+    case 'open_in_progress':
+      return tickets.filter(isOpenInProgressTicket);
     case 'new_tickets':
       return tickets.filter(isNewTicket);
     case 'waiting_review':
