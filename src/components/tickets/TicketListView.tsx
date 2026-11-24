@@ -33,7 +33,12 @@ import { TicketsQueueAiChip } from './TicketsQueueAiChip';
 import { TicketsPageHeader } from './TicketsPageHeader';
 import { TicketsEmptyState } from './TicketsEmptyState';
 import { TicketDetailDrawer } from './TicketDetailDrawer';
-import { TicketStatusChip, TicketPriorityChip, TicketAssigneeChip } from './TicketTableCells';
+import {
+  TicketStatusChip,
+  TicketPriorityChip,
+  TicketAssigneeChip,
+  TicketCategoryChip,
+} from './TicketTableCells';
 import { TicketsTableHeader } from './TicketsTableHeader';
 import { getTicketTableGridClass, getTicketTableMinWidth, ticketTableRowClass } from './ticketTableLayout';
 import { TicketsViewModeSelector, type TicketsLayoutMode } from './TicketsViewModeSelector';
@@ -95,8 +100,6 @@ export interface TicketListViewProps {
 export function TicketListView(props: TicketListViewProps) {
   const { t } = useTranslation();
   const { categories: ticketCategories } = useTicketCategories(true);
-  const categoryColorById = Object.fromEntries(ticketCategories.map((c) => [c.id, c.color]));
-  const categoryColorByName = Object.fromEntries(ticketCategories.map((c) => [c.name, c.color]));
   const {
     ticketQueueStats,
     topStatusFilter,
@@ -750,6 +753,58 @@ export function TicketListView(props: TicketListViewProps) {
                         </DropdownMenuContent>
                       </DropdownMenu>
 
+                      {/* Change Category button */}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="inline-flex items-center justify-center h-8 px-3 rounded-full text-[10px] font-bold uppercase text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 gap-1 hover:bg-slate-50/65 shadow-xs cursor-pointer transition-colors">
+                          <FolderTree className="w-3.5 h-3.5 text-slate-500" />
+                          {t('tickets.bulk.changeCategory', 'Kategorie ändern')} <ChevronDown className="w-3 h-3 text-slate-400" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="w-56 rounded-xl max-h-64 overflow-y-auto">
+                          <DropdownMenuItem
+                            className="text-xs cursor-pointer py-2"
+                            onClick={() => {
+                              void handleBulkUpdate({
+                                categoryId: null,
+                                categoryName: null,
+                                categorySlug: null,
+                              });
+                              toast.success(
+                                t('tickets.bulk.categoryCleared', 'Kategorie für ausgewählte Tickets entfernt.'),
+                              );
+                            }}
+                          >
+                            {t('tickets.sidebar.noCategory', 'Keine Kategorie')}
+                          </DropdownMenuItem>
+                          <Separator className="my-1" />
+                          {ticketCategories.map((cat) => (
+                            <DropdownMenuItem
+                              key={cat.id}
+                              className="text-xs cursor-pointer py-2"
+                              onClick={() => {
+                                void handleBulkUpdate({
+                                  categoryId: cat.id,
+                                  categoryName: cat.name,
+                                  categorySlug: cat.slug,
+                                });
+                                toast.success(
+                                  t(
+                                    'tickets.bulk.categoryUpdated',
+                                    'Kategorie geändert auf: {{category}}',
+                                  ).replace('{{category}}', cat.name),
+                                );
+                              }}
+                            >
+                              <span
+                                className="inline-block w-2 h-2 rounded-full shrink-0 mr-2"
+                                style={{ backgroundColor: cat.color || '#1B6CA8' }}
+                                aria-hidden
+                              />
+                              {cat.name}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+
                       {/* AI Mass-Resolve button */}
                       <Button 
                         variant="outline" 
@@ -931,19 +986,6 @@ export function TicketListView(props: TicketListViewProps) {
                                <span className="text-[10px] text-slate-400 font-medium font-mono tabular-nums shrink-0">
                                  {formatTicketRef(ticket.id)}
                                </span>
-                               {ticket.categoryName && (
-                                 <span
-                                   className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full text-white shrink-0"
-                                   style={{
-                                     backgroundColor:
-                                       (ticket.categoryId && categoryColorById[ticket.categoryId]) ||
-                                       categoryColorByName[ticket.categoryName] ||
-                                       '#1B6CA8',
-                                   }}
-                                 >
-                                   {ticket.categoryName}
-                                 </span>
-                               )}
                                {sla && (
                                  <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border border-blue-100 bg-blue-50 text-blue-700 shrink-0">
                                    SLA
@@ -1022,6 +1064,16 @@ export function TicketListView(props: TicketListViewProps) {
                             <TicketPriorityChip
                               priority={ticket.priority ?? 'medium'}
                               onChange={(val) => handleInlineUpdate(ticket.id, { priority: val })}
+                            />
+                          </div>
+
+                          {/* Category Column */}
+                          <div className="min-w-0" onClick={(e) => e.stopPropagation()}>
+                            <TicketCategoryChip
+                              categoryId={ticket.categoryId}
+                              categoryName={ticket.categoryName}
+                              categories={ticketCategories}
+                              onChange={(patch) => handleInlineUpdate(ticket.id, patch)}
                             />
                           </div>
 
@@ -1147,19 +1199,14 @@ export function TicketListView(props: TicketListViewProps) {
                         <div className="space-y-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-[9px] font-bold font-mono tabular-nums text-muted-foreground bg-muted border rounded px-1">#{ticket.id.slice(0, 4)}</span>
-                            {ticket.categoryName && (
-                              <span
-                                className="text-[8px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full text-white"
-                                style={{
-                                  backgroundColor:
-                                    (ticket.categoryId && categoryColorById[ticket.categoryId]) ||
-                                    categoryColorByName[ticket.categoryName] ||
-                                    '#1B6CA8',
-                                }}
-                              >
-                                {ticket.categoryName}
-                              </span>
-                            )}
+                            <div onClick={(e) => e.stopPropagation()}>
+                              <TicketCategoryChip
+                                categoryId={ticket.categoryId}
+                                categoryName={ticket.categoryName}
+                                categories={ticketCategories}
+                                onChange={(patch) => handleInlineUpdate(ticket.id, patch)}
+                              />
+                            </div>
                             {sla && (
                               <Badge className={cn("text-[8px] px-1.5 py-0 h-4 border uppercase tracking-wider font-extrabold font-mono tabular-nums", sla.color)}>
                                 {sla.label}

@@ -42,6 +42,7 @@ export function TicketsTableHeader({
       <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.subjectPreview', 'Subject & Preview').toUpperCase()}</div>
       <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.status', 'Status').toUpperCase()}</div>
       <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.priority', 'Priority').toUpperCase()}</div>
+      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.category', 'Kategorie').toUpperCase()}</div>
       <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.assignee', 'Assignee').toUpperCase()}</div>
       <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.lastUpdate', 'Last Update').toUpperCase()}</div>
       <div className="justify-self-center" aria-hidden />

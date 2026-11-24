@@ -1,15 +1,15 @@
 import { cn } from '../../lib/utils';
 
-/** Support workspace — customer-centric columns */
+/** Support workspace — customer-centric columns (+ Kategorie) */
 export const TICKET_TABLE_GRID_SUPPORT =
-  'grid items-center gap-x-3 grid-cols-[36px_150px_minmax(240px,1fr)_120px_100px_140px_120px_50px]';
+  'grid items-center gap-x-3 grid-cols-[36px_140px_minmax(200px,1fr)_110px_90px_120px_130px_110px_50px]';
 
 export function getTicketTableGridClass(): string {
   return TICKET_TABLE_GRID_SUPPORT;
 }
 
 export function getTicketTableMinWidth(): string {
-  return 'min-w-[920px]';
+  return 'min-w-[1040px]';
 }
 
 export const TICKET_TABLE_HEADER_CELL =
