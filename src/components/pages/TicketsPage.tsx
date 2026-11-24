@@ -95,6 +95,8 @@ import { TicketsLayoutMode } from '../tickets/TicketsViewModeSelector';
 import { isReadonlyTerminalStatus } from '../../lib/ticket-status';
 import { ticketsShareCustomer } from '../../lib/ticketMerge';
 import { isClientPortalRole, isHubcomStaffRole } from '../../lib/client-portal/roles';
+import { buildAssigneePayload } from '../../lib/ticketAssignee';
+
 const matchStatus = (status: string | undefined, target: string): boolean => {
   if (!status) return false;
   return String(status).toLowerCase().trim() === target.toLowerCase().trim();
@@ -103,29 +105,6 @@ const matchStatus = (status: string | undefined, target: string): boolean => {
 const hasTagCaseInsensitive = (tags: string[] | undefined, target: string): boolean => {
   if (!tags) return false;
   return tags.some(tag => String(tag).toLowerCase().trim() === target.toLowerCase().trim());
-};
-
-/**
- * Normalize an assignee change into the full set of fields the ticket stores.
- * Writes agentId/agentName plus alias fields so every consumer (list, detail,
- * backend mirror, RAG) sees the same assignee regardless of which screen set it.
- * - `null`  → explicit unassignment (persisted as NULL)
- * - `undefined` → field not provided; preserved server-side (omitted)
- */
-const buildAssigneePayload = (
-  agentId: string | undefined | null,
-  agentName: string | undefined | null,
-  assignedToEmail?: string,
-): Partial<TicketType> => {
-  const payload: Partial<TicketType> = {};
-  if (agentId !== undefined) {
-    payload.agentId = agentId;
-    payload.assignedTo = agentId;
-    payload.assigneeId = agentId;
-  }
-  if (agentName !== undefined) payload.agentName = agentName;
-  if (assignedToEmail !== undefined) payload.assignedToEmail = assignedToEmail;
-  return payload;
 };
 
 export default function TicketsPage() {
@@ -433,9 +412,16 @@ export default function TicketsPage() {
 
     try {
       await ticketService.updateTicket(ticketId, payload);
-      toast.success(isAssigneeChange
-        ? t('tickets.assignedToast', 'Ticket erfolgreich zugewiesen')
-        : t('tickets.updatedToast', 'Ticket updated'));
+      if (isAssigneeChange) {
+        const cleared = payload.agentId == null && !payload.agentName;
+        toast.success(
+          cleared
+            ? t('tickets.unassignedToast', 'Zuweisung entfernt')
+            : t('tickets.assignedToast', 'Ticket erfolgreich zugewiesen'),
+        );
+      } else {
+        toast.success(t('tickets.updatedToast', 'Ticket updated'));
+      }
     } catch (error) {
       // Roll back the optimistic merge on failure so the UI never shows a
       // phantom assignment/status.

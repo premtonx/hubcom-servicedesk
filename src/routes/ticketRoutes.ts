@@ -13,6 +13,7 @@ import {
   sanitizeTicketForClient,
   stripClientSpoofFields,
 } from '../lib/client-portal/ticket-visibility.js';
+import { normalizeAssigneePatchForWrite } from '../lib/ticketAssignee.js';
 
 const router = Router();
 
@@ -55,44 +56,14 @@ router.patch('/:id', authenticate, attachClientOrganizationContext, async (req: 
       : (req.body || {})
   ) as Record<string, unknown>;
 
-  // Coerce assignee fields into the canonical set. `??` would mask an explicit
-  // `null` (unassignment), so detect presence field by field.
-  const hasAgentId = body.agentId !== undefined || body.assignedTo !== undefined || body.assigneeId !== undefined;
-  const rawAgentId = hasAgentId ? (body.agentId ?? body.assignedTo ?? body.assigneeId) : undefined;
-  const rawAgentName = body.agentName;
-  const rawAssignedToEmail = body.assignedToEmail;
-
+  // Canonical assignee patch: null / '' / sentinels clear all five fields;
+  // never invent a pseudo-user or touch status here.
   const data: Record<string, unknown> = {};
-
-  const assigneeChange = hasAgentId || rawAgentName !== undefined || rawAssignedToEmail !== undefined;
-  if (assigneeChange) {
-    const agentId =
-      rawAgentId === null
-        ? null
-        : typeof rawAgentId === 'string' && rawAgentId.trim()
-          ? rawAgentId
-          : undefined;
-    const agentName =
-      rawAgentName === null
-        ? null
-        : typeof rawAgentName === 'string' && rawAgentName.trim()
-          ? rawAgentName
-          : undefined;
-    const assignedToEmail =
-      rawAssignedToEmail === null
-        ? null
-        : typeof rawAssignedToEmail === 'string' && rawAssignedToEmail.trim()
-          ? rawAssignedToEmail
-          : undefined;
-    // Only write fields that were explicitly provided — `undefined` must stay
-    // out of the patch or the JSONB writer would corrupt the stored value.
+  const assigneePatch = normalizeAssigneePatchForWrite(body);
+  if (assigneePatch) {
     for (const field of ASSIGNEE_FIELDS) {
-      if (field === 'agentId' || field === 'assignedTo' || field === 'assigneeId') {
-        if (agentId !== undefined) data[field] = agentId;
-      } else if (field === 'agentName') {
-        if (agentName !== undefined) data[field] = agentName;
-      } else if (assignedToEmail !== undefined) {
-        data[field] = assignedToEmail;
+      if (assigneePatch[field] !== undefined) {
+        data[field] = assigneePatch[field];
       }
     }
   }
@@ -241,22 +212,12 @@ router.post('/bulk-update', authenticate, attachClientOrganizationContext, async
 
   const { ids, updates } = parsed.data;
 
-  // Normalize assignee aliases into the canonical set. `??` would mask an
-  // explicit `null` (unassignment), so detect presence field by field.
   const data: Record<string, unknown> = {};
-  const hasAgentId = updates.agentId !== undefined || updates.assignedTo !== undefined || updates.assigneeId !== undefined;
-  const agentId = hasAgentId ? (updates.agentId ?? updates.assignedTo ?? updates.assigneeId) : undefined;
-  const agentName = updates.agentName;
-  const assignedToEmail = updates.assignedToEmail;
-  if (hasAgentId || agentName !== undefined || assignedToEmail !== undefined) {
-    // Only write fields that were explicitly provided.
+  const assigneePatch = normalizeAssigneePatchForWrite(updates as Record<string, unknown>);
+  if (assigneePatch) {
     for (const field of ASSIGNEE_FIELDS) {
-      if (field === 'agentId' || field === 'assignedTo' || field === 'assigneeId') {
-        if (hasAgentId) data[field] = agentId;
-      } else if (field === 'agentName') {
-        if (agentName !== undefined) data[field] = agentName;
-      } else if (assignedToEmail !== undefined) {
-        data[field] = assignedToEmail;
+      if (assigneePatch[field] !== undefined) {
+        data[field] = assigneePatch[field];
       }
     }
   }

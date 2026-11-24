@@ -132,6 +132,8 @@
     "test:admin-hub-infra": "tsx scripts/test-admin-hub-infra-fixes.ts",
     "test:dashboard-ticket-filters": "tsx scripts/test-dashboard-ticket-filters.ts",
     "test:tickets-sidebar-favorites": "tsx scripts/test-tickets-sidebar-favorites.ts",
+    "test:ticket-assignee": "tsx scripts/test-ticket-assignee.ts",
+    "migrate:unassigned-assignee": "tsx scripts/migrate-unassigned-assignee-sentinels.ts",
     "verify:inbound-smtp": "tsx scripts/verify-inbound-smtp.ts",
     "verify:rag": "tsx scripts/verify-rag-pipeline.ts",
     "verify:mcp": "node scripts/verify-mcp-server.mjs"

@@ -43,6 +43,12 @@ import { getTicketKind } from '../../lib/ticketWorkspace';
 import { deriveAccountHealth } from '../../lib/account-health';
 import { getInitials, safeString } from '../../lib/utils';
 import { TICKET_DISPATCH_AGENTS } from '../../lib/ticketDispatchAgents';
+import {
+  buildAssigneePayload,
+  clearAssigneePayload,
+  resolveTicketAssignee,
+  scalarAssigneeId,
+} from '../../lib/ticketAssignee';
 import { useAuth } from '../../lib/hooks';
 import { AccountHealthSmiley, accountHealthAriaLabel } from './AccountHealthSmiley';
 import { DynamicSentimentGlyph } from './DynamicSentimentGlyph';
@@ -55,34 +61,6 @@ import {
   TicketPriorityChip,
   TicketCategoryChip,
 } from '../tickets/TicketTableCells';
-
-const UNASSIGNED_SENTINELS = new Set(['', 'unassigned', 'nicht-zugewiesen', 'nicht zugewiesen']);
-
-/** Pull a primitive id from a string or `{ id, uid, agentId }` object. */
-function scalarAssigneeId(val: unknown): string {
-  if (val === null || val === undefined) return '';
-  if (typeof val === 'object') {
-    const obj = val as Record<string, unknown>;
-    const nested = obj.id ?? obj.uid ?? obj.agentId ?? obj.assigneeId;
-    return scalarAssigneeId(nested);
-  }
-  const id = String(val).trim();
-  return UNASSIGNED_SENTINELS.has(id.toLowerCase()) ? '' : id;
-}
-
-function resolveTicketAssignee(ticket: TicketType): { id: string; name: string } | null {
-  const id =
-    scalarAssigneeId(ticket.agentId) ||
-    scalarAssigneeId(ticket.assignedTo) ||
-    scalarAssigneeId(ticket.assigneeId);
-  const name =
-    safeString(ticket.agentName).trim() ||
-    (ticket.assignedTo !== null && typeof ticket.assignedTo === 'object'
-      ? safeString(ticket.assignedTo).trim()
-      : '');
-  if (!id && !name) return null;
-  return { id, name };
-}
 
 function matchDispatchAgentId(
   assignee: { id: string; name: string } | null,
@@ -158,8 +136,10 @@ export function RedesignedSidebar({
   );
 
   const dispatchAgents = useMemo(() => {
-    const agents = TICKET_DISPATCH_AGENTS.map((a) => ({ ...a }));
-    const currentId = user?.uid || '';
+    const agents = TICKET_DISPATCH_AGENTS.map((a) => ({ ...a })).filter(
+      (a) => Boolean(scalarAssigneeId(a.id)),
+    );
+    const currentId = scalarAssigneeId(user?.uid || '');
     const currentName = user?.displayName || user?.email || '';
     if (currentId && !agents.some((a) => a.id === currentId)) {
       agents.unshift({
@@ -167,14 +147,16 @@ export function RedesignedSidebar({
         name: currentName || t('tickets.assigneeYourself', 'Yourself'),
       });
     }
+    // Inject the current real assignee if missing from the catalog — never
+    // inject sentinel / "Nicht zugewiesen" pseudo-users (empty option covers that).
     if (!ticketAssignee) return agents;
     const knownById = Boolean(ticketAssignee.id && agents.some((a) => a.id === ticketAssignee.id));
     const knownByName = Boolean(
       ticketAssignee.name && agents.some((a) => a.name.toLowerCase() === ticketAssignee.name.toLowerCase()),
     );
-    if (!knownById && !knownByName && (ticketAssignee.id || ticketAssignee.name)) {
+    if (!knownById && !knownByName && ticketAssignee.id) {
       agents.unshift({
-        id: ticketAssignee.id || ticketAssignee.name,
+        id: ticketAssignee.id,
         name: ticketAssignee.name || ticketAssignee.id,
       });
     }
@@ -322,21 +304,13 @@ export function RedesignedSidebar({
                 const val = e.target.value;
                 setDispatchAgentId(val);
                 if (val === '') {
-                  // Direct unassignment — no AI involvement. `null` (not
-                  // undefined) so JSON serialization persists the clearing.
-                  onUpdateTicketField({ agentId: null, agentName: null, assignedTo: null, assigneeId: null });
+                  // Clear assignee only — status and other fields stay put.
+                  onUpdateTicketField(clearAssigneePayload());
                 } else {
-                  // Direct assignment — persist immediately so the ticket is
-                  // never blocked on AI summary generation. Option `value`
-                  // is always the agent id so it matches `<option value>`.
                   const agent = dispatchAgents.find((a) => a.id === val);
-                  const agentName = agent?.name || val;
-                  onUpdateTicketField({
-                    agentId: val,
-                    agentName,
-                    assignedTo: val,
-                    assigneeId: val,
-                  });
+                  onUpdateTicketField(
+                    buildAssigneePayload(val, agent?.name || val) as Partial<TicketType>,
+                  );
                 }
               }}
             >
