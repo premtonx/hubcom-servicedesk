@@ -316,4 +316,116 @@ router.post(
   },
 );
 
+/**
+ * GET /api/portal/dashboard
+ * Role-aware first-page payload, strictly scoped to req.user.organization_id.
+ * CLIENT_USER sees only own/participant tickets; never returns internal notes
+ * or cross-tenant data.
+ */
+router.get(
+  '/dashboard',
+  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organisation fehlt.' });
+      }
+
+      // Reject spoofed cross-tenant query params.
+      const spoofed =
+        req.query.organizationId ||
+        req.query.organization_id ||
+        (req.body && (req.body.organizationId || req.body.organization_id));
+      if (spoofed && String(spoofed) !== organizationId) {
+        return res.status(403).json({ error: 'Mandantenübergreifender Zugriff verweigert.' });
+      }
+
+      const org = await getOrganization(organizationId);
+      if (!org || !org.is_active) {
+        return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+      }
+
+      const role = String(req.user!.role || '');
+      const userId = String(req.user!.id);
+      const { listTicketIdsForParticipant } = await import(
+        '../lib/client-portal/ticket-participants.js'
+      );
+      const { buildPortalDashboardPayload } = await import(
+        '../lib/client-portal/portal-dashboard-service.js'
+      );
+      const { listOrganizationUsers } = await import('../lib/client-portal/team-service.js');
+      const { findOrganizationEmailChannel } = await import(
+        '../lib/email-ingestion/channel-store.js'
+      );
+
+      const allTickets = await getDocsDirect('tickets', []);
+      const orgTickets = allTickets.filter((t) => {
+        const oid = String(t.organizationId || t.organization_id || '').trim();
+        return oid === organizationId;
+      });
+
+      let participantTicketIds: string[] = [];
+      if (role === 'CLIENT_USER') {
+        participantTicketIds = await listTicketIdsForParticipant(userId);
+      }
+
+      let teamSummary = null;
+      let emailStatus = null;
+
+      if (role === 'CLIENT_ADMIN') {
+        const members = await listOrganizationUsers(organizationId);
+        const active = members.filter((m) => m.isActive);
+        teamSummary = {
+          totalActive: active.length,
+          clientAdmins: active.filter((m) => m.role === 'CLIENT_ADMIN').length,
+          clientSupporters: active.filter((m) => m.role === 'CLIENT_SUPPORTER').length,
+          clientUsers: active.filter((m) => m.role === 'CLIENT_USER').length,
+        };
+
+        const channel = await findOrganizationEmailChannel(organizationId);
+        emailStatus = {
+          configured: Boolean(channel),
+          healthy:
+            Boolean(channel) &&
+            channel!.status !== 'disabled' &&
+            channel!.status !== 'auth_error' &&
+            channel!.status !== 'failed' &&
+            channel!.lastTestOk !== false,
+          mailbox: channel?.mailbox || channel?.email || null,
+          status: channel?.status || null,
+          sendAsEnabled: channel?.sendAsEnabled === true,
+        };
+      }
+
+      const payload = buildPortalDashboardPayload({
+        role,
+        userId,
+        userName: String(req.user!.name || req.user!.email || ''),
+        organizationId,
+        organization: {
+          id: org.id,
+          name: org.name,
+          logoUrl: org.logo_url,
+          portalTitle: resolvePortalTitle(org.name, org.portal_title),
+        },
+        tickets: orgTickets,
+        participantTicketIds,
+        teamSummary,
+        emailStatus,
+      });
+
+      return res.json(payload);
+    } catch (err: any) {
+      if (err?.status === 403) {
+        return res.status(403).json({ error: err.message || 'Zugriff verweigert.' });
+      }
+      safeLog('error', '[portal] dashboard failed', err?.message || err);
+      return res.status(500).json({
+        error: safeErrorMessage(err, 'Dashboard konnte nicht geladen werden'),
+      });
+    }
+  },
+);
+
 export default router;

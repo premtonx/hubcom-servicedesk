@@ -7,6 +7,7 @@ import {
   Mail,
   LogOut,
   Building2,
+  LayoutDashboard,
 } from 'lucide-react';
 import axios from 'axios';
 import { cn } from '../../lib/utils';
@@ -19,7 +20,8 @@ import {
 } from '../../lib/client-portal/org-branding';
 
 const NAV_ALL = [
-  { to: '/portal/tickets', label: 'Übersicht / Tickets', icon: Ticket, end: true },
+  { to: '/portal/dashboard', label: 'Übersicht', icon: LayoutDashboard, end: true },
+  { to: '/portal/tickets', label: 'Tickets', icon: Ticket, end: true },
   { to: '/portal/tickets/new', label: 'Neues Ticket erstellen', icon: PlusCircle, end: true },
 ] as const;
 

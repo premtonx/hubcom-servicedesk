@@ -32,6 +32,10 @@ import {
 import type { EmailChannelConfig } from '../src/lib/email-ingestion/types.js';
 import { redactSecrets } from '../src/lib/safe-log.js';
 import { isClientPortalRole } from '../src/lib/client-portal/roles.js';
+import {
+  assertPortalDashboardTenantIsolation,
+  buildPortalDashboardPayload,
+} from '../src/lib/client-portal/portal-dashboard-service.js';
 
 process.env.EMAIL_CHANNEL_SECRET_KEY =
   process.env.EMAIL_CHANNEL_SECRET_KEY ||
@@ -481,6 +485,151 @@ function testHubcomStaffBypass(): void {
   );
 }
 
+function testPortalDashboardIsolation(): void {
+  console.log('\n[8] Portal dashboard scoping (GET /api/portal/dashboard)');
+
+  const mixedTickets = [
+    ticketOrgA,
+    ticketOrgAColleague,
+    ticketOrgB,
+    {
+      id: 'ticket-a-waiting',
+      subject: 'Waiting customer',
+      organizationId: ORG_A,
+      requesterId: orgAUser.id,
+      status: 'waiting_customer',
+      updatedAt: new Date().toISOString(),
+    },
+    {
+      id: 'ticket-a-resolved',
+      subject: 'Resolved recently',
+      organizationId: ORG_A,
+      requesterId: orgAUser.id,
+      status: 'resolved',
+      resolvedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  ];
+
+  const adminDash = buildPortalDashboardPayload({
+    role: 'CLIENT_ADMIN',
+    userId: orgAAdmin.id,
+    userName: 'Admin A',
+    organizationId: ORG_A,
+    organization: { id: ORG_A, name: 'Org A', portalTitle: 'Org A ServiceDesk' },
+    tickets: mixedTickets,
+    teamSummary: {
+      totalActive: 3,
+      clientAdmins: 1,
+      clientSupporters: 1,
+      clientUsers: 1,
+    },
+    emailStatus: {
+      configured: true,
+      healthy: true,
+      mailbox: 'it@orga.test',
+      status: 'connected',
+      sendAsEnabled: true,
+    },
+  });
+
+  assert(adminDash.role === 'CLIENT_ADMIN', 'admin dashboard role');
+  assert(
+    Number(adminDash.kpis.openCompanyTickets) >= 2,
+    'CLIENT_ADMIN sees org-wide open tickets',
+  );
+  assert(
+    adminDash.tickets.every((t) => !String(t.id).includes('ticket-b')),
+    'CLIENT_ADMIN dashboard never includes Org B tickets',
+  );
+  assert(adminDash.team?.clientAdmins === 1, 'CLIENT_ADMIN receives team summary');
+  assert(adminDash.email?.mailbox === 'it@orga.test', 'CLIENT_ADMIN receives email status');
+  assert(
+    !JSON.stringify(adminDash).includes('Hubcom internal'),
+    'dashboard payload strips internal notes',
+  );
+  assert(
+    !JSON.stringify(adminDash).includes('secret diagnosis'),
+    'dashboard payload strips AI internal fields',
+  );
+
+  const isolation = assertPortalDashboardTenantIsolation(adminDash, ORG_A, mixedTickets);
+  assert(isolation.ok, `tenant isolation helper: ${isolation.reason || 'ok'}`);
+
+  const supporterDash = buildPortalDashboardPayload({
+    role: 'CLIENT_SUPPORTER',
+    userId: orgASupporter.id,
+    userName: 'Supporter A',
+    organizationId: ORG_A,
+    organization: { id: ORG_A, name: 'Org A' },
+    tickets: mixedTickets,
+  });
+  assert(supporterDash.team == null, 'CLIENT_SUPPORTER has no team admin card data');
+  assert(supporterDash.email == null, 'CLIENT_SUPPORTER has no M365 config card data');
+  assert(
+    Number(supporterDash.kpis.openCompanyTickets) >= 2,
+    'CLIENT_SUPPORTER sees org-wide open tickets',
+  );
+  assert(
+    supporterDash.tickets.every((t) => t.id !== 'ticket-b-1'),
+    'CLIENT_SUPPORTER cannot see Org B',
+  );
+
+  const userDash = buildPortalDashboardPayload({
+    role: 'CLIENT_USER',
+    userId: orgAUser.id,
+    userName: 'User A',
+    organizationId: ORG_A,
+    organization: { id: ORG_A, name: 'Org A' },
+    tickets: mixedTickets,
+    participantTicketIds: [],
+  });
+  assert(userDash.team == null && userDash.email == null, 'CLIENT_USER has no admin widgets');
+  assert(
+    (userDash.myOpenTickets || []).every(
+      (t) => t.id === 'ticket-a-1' || t.id === 'ticket-a-waiting',
+    ),
+    'CLIENT_USER only sees own open tickets (not colleague)',
+  );
+  assert(
+    !(userDash.myOpenTickets || []).some((t) => t.id === 'ticket-a-2'),
+    'CLIENT_USER cannot see colleague ticket without participation',
+  );
+  assert(
+    !(userDash.myOpenTickets || []).some((t) => t.id === 'ticket-b-1'),
+    'CLIENT_USER cannot see Org B tickets',
+  );
+
+  const participantDash = buildPortalDashboardPayload({
+    role: 'CLIENT_USER',
+    userId: orgAUser.id,
+    userName: 'User A',
+    organizationId: ORG_A,
+    organization: { id: ORG_A, name: 'Org A' },
+    tickets: mixedTickets,
+    participantTicketIds: ['ticket-a-2'],
+  });
+  assert(
+    (participantDash.myOpenTickets || []).some((t) => t.id === 'ticket-a-2'),
+    'CLIENT_USER can see tickets where they are a participant',
+  );
+
+  let threw = false;
+  try {
+    buildPortalDashboardPayload({
+      role: 'SYSTEM_ADMIN',
+      userId: hubcomAdmin.id,
+      userName: 'Staff',
+      organizationId: ORG_A,
+      organization: { id: ORG_A, name: 'Org A' },
+      tickets: mixedTickets,
+    });
+  } catch (err: any) {
+    threw = err?.status === 403 || /portal role/i.test(String(err?.message || ''));
+  }
+  assert(threw, 'non-portal roles are rejected with 403 semantics');
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -490,6 +639,7 @@ async function main(): Promise<void> {
   testSecretProtection();
   testOutboundFallback();
   testHubcomStaffBypass();
+  testPortalDashboardIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

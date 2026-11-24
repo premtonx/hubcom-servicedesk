@@ -4,26 +4,17 @@ import { Button } from '../../components/ui/button';
 import { cn } from '../../lib/utils';
 import { useNavigate } from 'react-router-dom';
 import {
-  TrendingUp,
-  TrendingDown,
   Clock,
   CheckCircle2,
-  Smile,
-  Sparkles,
   Calendar,
   ChevronDown,
   ArrowUpRight,
-  Radio,
-  Mail,
-  Lock,
-  HardDrive,
-  Terminal,
-  Search,
   BookOpen,
   Plus,
-  Users,
   AlertTriangle,
-  Bot,
+  Inbox,
+  Loader2,
+  Building2,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -33,24 +24,35 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  Legend,
 } from 'recharts';
 import { CreateTicketDialog } from '../CreateTicketDialog';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useAuth } from '../../lib/hooks';
 import { useTranslation } from '../../lib/context/I18nContext';
 import {
   executiveDashboardApi,
   type DashboardStatsPayload,
 } from '../../services/executiveDashboardApi';
-import { formatRelativeTime, formatTrendBadge } from '../../lib/dashboard-format-utils';
+import {
+  dashboardPriorityLabel,
+  dashboardTicketNumber,
+  formatRelativeTime,
+  organizationInitialsFromName,
+} from '../../lib/dashboard-format-utils';
 import { getModuleConfig } from '../../lib/module-config';
+
+type TicketFilterTab = 'unassigned' | 'mine' | 'all';
 
 export default function DashboardPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { userProfile } = usePermissions();
   const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
   const [dashboardStats, setDashboardStats] = useState<DashboardStatsPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [ticketTab, setTicketTab] = useState<TicketFilterTab>('unassigned');
   const [moduleFlags, setModuleFlags] = useState(() => getModuleConfig().platformModules);
 
   useEffect(() => {
@@ -82,649 +84,544 @@ export default function DashboardPage() {
     };
   }, [userProfile]);
 
-  const stats = dashboardStats?.kpis;
   const buckets = dashboardStats?.buckets;
+  const kpis = dashboardStats?.kpis;
   const trendChart = dashboardStats?.trendChart ?? [];
   const trendFooter = dashboardStats?.trendFooter;
   const kbHealth = dashboardStats?.kbHealth;
   const aiInsights = dashboardStats?.aiInsights;
+  const clientOrgs = dashboardStats?.clientOrganizations ?? [];
 
-  const recentTicketsList = useMemo(() => {
-    return (dashboardStats?.recentTickets ?? []).map((ticket) => {
-      const category = ticket.category || 'General';
-      let CatIcon = Mail;
-      let colors = 'bg-[#EFF6FF] text-[#2563EB] border-[#DBEAFE]';
-      if (category === 'Network' || category === 'engineering') {
-        CatIcon = Radio;
-        colors = 'bg-[#FDF2F8] text-[#DB2777] border-[#FCE7F3]';
-      } else if (category === 'Account' || category === 'Security' || category === 'Vault' || category === 'legal') {
-        CatIcon = Lock;
-        colors = 'bg-[#FAF5FF] text-[#7C3AED] border-[#F3E8FF]';
-      } else if (category === 'Storage') {
-        CatIcon = HardDrive;
-        colors = 'bg-[#ECFDF5] text-[#059669] border-[#D1FAE5]';
-      } else if (category === 'Software') {
-        CatIcon = Terminal;
-        colors = 'bg-[#FFFBEB] text-[#D97706] border-[#FEF3C7]';
-      }
+  const filteredTickets = useMemo(() => {
+    const all = dashboardStats?.recentTickets ?? [];
+    const uid = user?.uid;
+    if (ticketTab === 'unassigned') {
+      return all.filter((t) => !t.agentId || t.agentId === '' || t.agentId === 'unassigned');
+    }
+    if (ticketTab === 'mine' && uid) {
+      return all.filter((t) => t.agentId === uid);
+    }
+    return all;
+  }, [dashboardStats?.recentTickets, ticketTab, user?.uid]);
 
-      let priorityColor = 'bg-[#FFEDD5] text-[#D97706]';
-      if (ticket.priority === 'urgent' || ticket.priority === 'high') {
-        priorityColor = 'bg-[#FEE2E2] text-[#DC2626]';
-      } else if (ticket.priority === 'low') {
-        priorityColor = 'bg-[#ECFDF5] text-[#059669]';
-      }
+  const displayName = userProfile?.name || user?.displayName || 'Operator';
 
-      return {
-        id: ticket.id,
-        subject: ticket.subject,
-        category,
-        priority: ticket.priority || 'medium',
-        time: formatRelativeTime(ticket.updatedAt),
-        icon: CatIcon,
-        iconColor: colors,
-        priorityColor,
-      };
-    });
-  }, [dashboardStats?.recentTickets]);
+  const exportReport = () => {
+    if (!dashboardStats) return;
+    const rows = [
+      ['Kennzahl', 'Wert'],
+      ['Nicht zugewiesen', String(buckets?.unassigned ?? 0)],
+      ['Überfällig / SLA-Risiko', String(buckets?.overdue ?? 0)],
+      ['Offen & In Bearbeitung', String(buckets?.openInProgress ?? 0)],
+      ['Gelöst (Zeitraum)', String(buckets?.resolvedInPeriod ?? 0)],
+      ['Lösungsquote', kpis?.resolutionRate ?? '—'],
+      ['Ø Lösungszeit', kpis?.avgResolutionTime ?? '—'],
+      ['Eingehend', String(trendFooter?.incoming ?? 0)],
+      ['Gelöst', String(trendFooter?.resolved ?? 0)],
+    ];
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `hubcom-dashboard-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div id="dashboard-scroller" className="flex-1 overflow-y-auto min-h-0 bg-[#F8F9FA] custom-scrollbar">
-      <CreateTicketDialog 
-        isOpen={isNewTicketOpen} 
-        onClose={() => setIsNewTicketOpen(false)} 
-      />
+      <CreateTicketDialog isOpen={isNewTicketOpen} onClose={() => setIsNewTicketOpen(false)} />
 
-      <div className="p-4 sm:p-8 space-y-6 max-w-7xl mx-auto pb-20">
-        
-        {/* Dashboard Title Header & Filter Row */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div className="space-y-1">
-            <h1 className="text-2xl font-bold tracking-tight text-[#202124] flex items-center gap-2">
-              {t('dashboard.welcome', 'Welcome back, {{name}}! 👋').replace('{{name}}', userProfile?.name || 'Operator')}
+      <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto pb-20">
+        {/* Compact header */}
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#202124] truncate">
+              {t('dashboard.welcome', 'Willkommen zurück, {{name}}! 👋').replace(
+                '{{name}}',
+                displayName,
+              )}
             </h1>
-            <p className="text-sm text-[#5F6368] font-medium">
-              {t('dashboard.subtitle', "Here's what's happening with your support operations today.")}
+            <p className="text-sm text-[#5F6368] font-medium mt-0.5">
+              {t(
+                'dashboard.subtitle',
+                'Hier ist der aktuelle Stand Ihrer Support-Aktivitäten heute.',
+              )}
             </p>
           </div>
-          
+
           <div className="flex flex-wrap items-center gap-2">
-            <Button 
-              variant="outline" 
-              className="bg-white border-gray-200 text-gray-700 h-10 px-4 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm hover:bg-gray-50 hover:border-gray-300 transition-all"
+            <Button
+              variant="outline"
+              className="bg-white border-gray-200 text-gray-700 h-9 px-3 rounded-xl text-xs font-semibold gap-1.5 shadow-sm"
             >
-              <Calendar className="w-4 h-4 text-gray-500" />
-              {dashboardStats?.dateRange.label ?? t('dashboard.days7', '7 Days')}
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+              <Calendar className="w-3.5 h-3.5 text-gray-500" />
+              {dashboardStats?.dateRange.label ?? t('dashboard.days7', '7 Tage')}
+              <ChevronDown className="w-3 h-3 text-gray-400" />
             </Button>
-            
-            <Button 
-              variant="outline" 
-              className="bg-white border-gray-200 text-gray-700 h-10 px-4 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm hover:bg-gray-50 hover:border-gray-300 transition-all"
+            <Button
+              variant="outline"
+              onClick={exportReport}
+              className="bg-white border-gray-200 text-gray-700 h-9 px-3 rounded-xl text-xs font-semibold gap-1.5 shadow-sm"
             >
-              <ArrowUpRight className="w-4 h-4 text-gray-500" />
-              {t('dashboard.exportReport', 'Export Report')}
+              <ArrowUpRight className="w-3.5 h-3.5 text-gray-500" />
+              {t('dashboard.exportReport', 'Bericht exportieren')}
+            </Button>
+            <div className="w-px h-6 bg-slate-200 hidden sm:block" />
+            <Button
+              onClick={() => setIsNewTicketOpen(true)}
+              className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 bg-[#1B6CA8] hover:bg-[#155a8a] text-white"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Ticket erstellen
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => navigate('/kb')}
+              className="h-9 px-3 rounded-xl text-xs font-semibold gap-1.5 bg-white"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              Wissensdatenbank
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => navigate('/credentials')}
+              className="h-9 px-3 rounded-xl text-xs font-semibold gap-1.5 bg-white"
+            >
+              Tresor
             </Button>
           </div>
         </div>
 
-        {/* Five Key Metric Overview Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
-          
-          {/* 1. Resolution Rate */}
-          <CardWrapper>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-full bg-[#E8F0FE] text-[#1A73E8] border border-[#D2E3FC] flex items-center justify-center">
-                  <TrendingUp className="w-4.5 h-4.5" />
-                </div>
-                <span className="text-[13px] font-semibold text-[#5F6368]">{t('dashboard.resolutionRate', 'Resolution Rate')}</span>
-              </div>
-            </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-[26px] font-bold text-[#202124] tracking-tight">{stats?.resolutionRate ?? (loading ? '…' : '0%')}</span>
-              <TrendBadge value={stats?.trends.resolutionRate ?? null} />
-            </div>
-            <p className="text-[11px] text-[#80868B] mt-1 font-medium">{t('dashboard.vsLast7Days', 'vs last 7 days')}</p>
-          </CardWrapper>
-
-          {/* 2. Avg Resolution Time */}
-          <CardWrapper>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-full bg-[#F3E8FF] text-[#7C3AED] border border-[#F3E8FF] flex items-center justify-center">
-                  <Clock className="w-4.5 h-4.5" />
-                </div>
-                <span className="text-[13px] font-semibold text-[#5F6368]">{t('dashboard.avgResolutionTime', 'Avg. Resolution Time')}</span>
-              </div>
-            </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-[26px] font-bold text-[#202124] tracking-tight">{stats?.avgResolutionTime ?? (loading ? '…' : '—')}</span>
-              <TrendBadge value={stats?.trends.avgResolutionTime ?? null} invert />
-            </div>
-            <p className="text-[11px] text-[#80868B] mt-1 font-medium">{t('dashboard.vsLast7Days', 'vs last 7 days')}</p>
-          </CardWrapper>
-
-          {/* 3. Tickets Resolved */}
-          <CardWrapper>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-full bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6] flex items-center justify-center">
-                  <CheckCircle2 className="w-4.5 h-4.5" />
-                </div>
-                <span className="text-[13px] font-semibold text-[#5F6368]">{t('dashboard.ticketsResolved', 'Tickets Resolved')}</span>
-              </div>
-            </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-[26px] font-bold text-[#202124] tracking-tight">{stats?.resolvedCount ?? (loading ? '…' : 0)}</span>
-              <TrendBadge value={stats?.trends.resolvedCount ?? null} />
-            </div>
-            <p className="text-[11px] text-[#80868B] mt-1 font-medium">{t('dashboard.vsLast7Days', 'vs last 7 days')}</p>
-          </CardWrapper>
-
-          {/* 4. Customer Satisfaction */}
-          <CardWrapper>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-full bg-[#FEF3C7] text-[#D97706] border-[#FEF3C7] flex items-center justify-center">
-                  <Smile className="w-4.5 h-4.5" />
-                </div>
-                <span className="text-[13px] font-semibold text-[#5F6368]">{t('dashboard.customerSatisfaction', 'Customer Satisfaction')}</span>
-              </div>
-            </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-[26px] font-bold text-[#202124] tracking-tight">{stats?.satisfaction ?? (loading ? '…' : '—')}</span>
-              <TrendBadge value={stats?.trends.satisfaction ?? null} />
-            </div>
-            <p className="text-[11px] text-[#80868B] mt-1 font-medium">{t('dashboard.vsLast7Days', 'vs last 7 days')}</p>
-          </CardWrapper>
-
-          {/* 5. AI Suggestions */}
-          <CardWrapper>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-full bg-[#FCE7F3] text-[#DB2777] border border-[#FCE7F3] flex items-center justify-center">
-                  <Sparkles className="w-4.5 h-4.5" />
-                </div>
-                <span className="text-[13px] font-semibold text-[#5F6368]">{t('dashboard.aiSuggestions', 'AI Suggestions')}</span>
-              </div>
-            </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-[26px] font-bold text-[#202124] tracking-tight">{stats?.aiSuggestionsCount ?? (loading ? '…' : 0)}</span>
-              <TrendBadge value={stats?.trends.aiSuggestions ?? null} />
-            </div>
-            <p className="text-[11px] text-[#80868B] mt-1 font-medium">{t('dashboard.vsLast7Days', 'vs last 7 days')}</p>
-          </CardWrapper>
-
+        {/* 4 action KPI cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+          <ActionKpiCard
+            label="Nicht zugewiesen"
+            value={buckets?.unassigned ?? (loading ? '…' : 0)}
+            icon={<Inbox className="w-4 h-4" />}
+            danger={(buckets?.unassigned ?? 0) > 0}
+            onClick={() => navigate('/tickets?view=unassigned')}
+          />
+          <ActionKpiCard
+            label="Überfällig / SLA-Risiko"
+            value={buckets?.overdue ?? (loading ? '…' : 0)}
+            icon={<AlertTriangle className="w-4 h-4" />}
+            danger={(buckets?.overdue ?? 0) > 0}
+            onClick={() => navigate('/tickets?view=overdue')}
+          />
+          <ActionKpiCard
+            label="Offen & In Bearbeitung"
+            value={buckets?.openInProgress ?? (loading ? '…' : 0)}
+            subtitle={`Ø Lösungszeit: ${kpis?.avgResolutionTime ?? '—'}`}
+            icon={<Clock className="w-4 h-4" />}
+            onClick={() => navigate('/tickets?view=open')}
+          />
+          <ActionKpiCard
+            label="Gelöst (Zeitraum)"
+            value={buckets?.resolvedInPeriod ?? (loading ? '…' : 0)}
+            subtitle={`Lösungsquote: ${kpis?.resolutionRate ?? '—'}`}
+            icon={<CheckCircle2 className="w-4 h-4" />}
+            onClick={() => navigate('/tickets?view=resolved')}
+          />
         </div>
 
-        {/* Secondary Metric Badges / Sub-KPIs Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          
-          <BadgeCard border="border-l-4 border-l-[#2563EB] bg-white">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-50/60 text-[#2563EB] flex items-center justify-center">
-                <Radio className="w-5 h-5" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{t('dashboard.open', 'Open')}</span>
-                <span className="text-xl font-bold text-gray-900 leading-tight">{buckets?.open ?? 0}</span>
-                <span className="text-[11px] text-[#1A73E8] font-medium">{t('dashboard.needsAttention', 'Needs attention')}</span>
-              </div>
-            </div>
-          </BadgeCard>
-
-          <BadgeCard border="border-l-4 border-l-[#FFA000] bg-white">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-50/60 text-[#FFA000] flex items-center justify-center">
-                <Clock className="w-4.5 h-4.5" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{t('dashboard.pending', 'Pending')}</span>
-                <span className="text-xl font-bold text-gray-900 leading-tight">{buckets?.inProgress ?? 0}</span>
-                <span className="text-[11px] text-[#FFA000] font-medium">{t('dashboard.waitingResponse', 'Waiting response')}</span>
-              </div>
-            </div>
-          </BadgeCard>
-
-          <BadgeCard border="border-l-4 border-l-[#DC2626] bg-white">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-50/60 text-[#DC2626] flex items-center justify-center">
-                <Users className="w-4.5 h-4.5" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{t('dashboard.unassigned', 'Unassigned')}</span>
-                <span className="text-xl font-bold text-gray-900 leading-tight">{buckets?.unassigned ?? 0}</span>
-                <span className="text-[11px] text-[#DC2626] font-medium">{t('dashboard.requiresAssignment', 'Requires assignment')}</span>
-              </div>
-            </div>
-          </BadgeCard>
-
-          <BadgeCard border="border-l-4 border-l-[#D93025] bg-white">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-50/60 text-[#D93025] flex items-center justify-center">
-                <AlertTriangle className="w-4.5 h-4.5" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{t('dashboard.overdue', 'Overdue')}</span>
-                <span className="text-xl font-bold text-gray-900 leading-tight">{buckets?.overdue ?? 0}</span>
-                <span className="text-[11px] text-[#D93025] font-medium">{t('dashboard.urgent', 'Urgent')}</span>
-              </div>
-            </div>
-          </BadgeCard>
-
-        </div>
-
-        {/* Central Dashboard Layout Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* Left Area (Trends, Recent, Quick Actions) */}
-          <div className="lg:col-span-2 space-y-6">
-            
-            {/* Ticket Trends Chart Card */}
-            <div className="bg-white border border-gray-150 rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-6 py-5 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                <div className="space-y-0.5">
-                  <h3 className="text-[16px] font-bold text-[#202124]">{t('dashboard.ticketTrends', 'Ticket Trends')}</h3>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button className="bg-[#F8F9FA] border border-gray-250 text-gray-600 rounded-lg px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 hover:bg-gray-100 transition-all">
-                    {t('dashboard.incoming', 'Incoming')}
-                    <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+        {/* Main 2-column: tickets + clients */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <CardShell className="lg:col-span-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+              <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">
+                Aktuelle Tickets
+              </h2>
+              <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+                {(
+                  [
+                    { id: 'unassigned', label: 'Nicht zugewiesen' },
+                    { id: 'mine', label: 'Mir zugewiesen' },
+                    { id: 'all', label: 'Alle' },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setTicketTab(tab.id)}
+                    className={cn(
+                      'px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors',
+                      ticketTab === tab.id
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800',
+                    )}
+                  >
+                    {tab.label}
                   </button>
-                  <button className="bg-[#F8F9FA] border border-gray-250 text-gray-600 rounded-lg px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 hover:bg-gray-100 transition-all">
-                    {t('dashboard.days7', '7 Days')}
-                    <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
-                  </button>
-                </div>
-              </div>
-              
-              <div className="p-6">
-                <div className="h-[210px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trendChart} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="trendsColor" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#1A73E8" stopOpacity={0.16}/>
-                          <stop offset="95%" stopColor="#1A73E8" stopOpacity={0.0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ECEFF1" />
-                      <XAxis 
-                        dataKey="name" 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{ fontSize: 10, fill: '#80868B', fontWeight: 500 }} 
-                        dy={6}
-                      />
-                      <YAxis 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{ fontSize: 10, fill: '#80868B', fontWeight: 500 }} 
-                        dx={-8}
-                      />
-                      <Tooltip 
-                        contentStyle={{ 
-                          borderRadius: '12px', 
-                          border: '1px solid #ECEFF1', 
-                          boxShadow: '0 4px 20px rgba(0,0,0,0.06)',
-                          padding: '10px 14px',
-                          background: '#FFFFFF'
-                        }}
-                        itemStyle={{ fontSize: '12px', fontWeight: 'bold', color: '#1A73E8' }}
-                        labelStyle={{ fontSize: '10px', color: '#80868B', marginBottom: '3px' }}
-                      />
-                      <Area 
-                        type="monotone" 
-                        dataKey="tickets" 
-                        stroke="#1A73E8" 
-                        strokeWidth={3}
-                        fillOpacity={1} 
-                        fill="url(#trendsColor)" 
-                        activeDot={{ r: 6, stroke: '#FFFFFF', strokeWidth: 2 }}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-
-                {/* Chart Footer stats matches exactly */}
-                <div className="grid grid-cols-3 gap-4 mt-6 pt-5 border-t border-gray-100 text-center">
-                  <div>
-                    <span className="text-[11px] font-semibold text-gray-400 block uppercase tracking-wider">{t('dashboard.totalTickets', 'Total Tickets')}</span>
-                    <div className="flex items-center justify-center gap-1.5 mt-1">
-                      <span className="text-[17px] font-bold text-gray-900 leading-none">{trendFooter?.totalTickets ?? 0}</span>
-                    </div>
-                  </div>
-                  <div className="border-x border-gray-100">
-                    <span className="text-[11px] font-semibold text-gray-400 block uppercase tracking-wider">{t('dashboard.incoming', 'Incoming')}</span>
-                    <div className="flex items-center justify-center gap-1.5 mt-1">
-                      <span className="text-[17px] font-bold text-gray-900 leading-none">{trendFooter?.incoming ?? 0}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <span className="text-[11px] font-semibold text-gray-400 block uppercase tracking-wider">{t('tickets.solved', 'Resolved')}</span>
-                    <div className="flex items-center justify-center gap-1.5 mt-1">
-                      <span className="text-[17px] font-bold text-gray-900 leading-none">{trendFooter?.resolved ?? 0}</span>
-                    </div>
-                  </div>
-                </div>
-
+                ))}
               </div>
             </div>
 
-            {/* Recent Tickets Section */}
-            <div className="bg-white border border-gray-150 rounded-2xl shadow-sm overflow-hidden animate-fade-in">
-              <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                <h3 className="text-[16px] font-bold text-[#202124]">{t('dashboard.recentTickets', 'Recent Tickets')}</h3>
-                <button 
-                  onClick={() => navigate('/tickets')}
-                  className="text-xs font-bold text-[#1A73E8] hover:underline"
-                >
-                  {t('dashboard.viewAll', 'View All')}
-                </button>
+            {loading && filteredTickets.length === 0 ? (
+              <div className="flex items-center justify-center gap-2 py-16 text-slate-400 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" /> Tickets werden geladen…
               </div>
-
-              <div className="divide-y divide-gray-100">
-                {recentTicketsList.length === 0 ? (
-                  <div className="px-6 py-8 text-sm text-gray-500">{t('dashboard.noRecentTickets', 'No recent ticket activity.')}</div>
-                ) : (
-                recentTicketsList.map((ticket, idx) => {
-                  const IconComp = ticket.icon;
+            ) : filteredTickets.length === 0 ? (
+              <div className="py-14 text-center text-sm text-slate-500">
+                Keine Tickets in dieser Ansicht.
+              </div>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {filteredTickets.map((ticket) => {
+                  const company = ticket.company || 'Intern';
+                  const initials = organizationInitialsFromName(company);
                   return (
-                    <div 
-                      key={ticket.id || idx} 
-                      onClick={() => ticket.id && navigate(`/tickets?id=${ticket.id}`)}
-                      className="px-6 py-4 flex items-center justify-between hover:bg-gray-50/60 transition-colors cursor-pointer group"
-                    >
-                      <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                        <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center border shrink-0", ticket.iconColor)}>
-                          <IconComp className="w-5 h-5" />
+                    <li key={ticket.id}>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/tickets/${ticket.id}`)}
+                        className="w-full text-left py-3.5 flex items-start gap-3 hover:bg-slate-50/80 rounded-xl px-2 -mx-2 transition-colors"
+                      >
+                        <div className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-600 shrink-0">
+                          {initials}
                         </div>
-                        <div className="min-w-0 space-y-1">
-                          <p className="text-[13px] font-bold text-gray-900 truncate group-hover:text-[#1A73E8] transition-colors pr-2">
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-[11px] font-bold text-[#1B6CA8]">
+                              {dashboardTicketNumber(ticket)}
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                              <Building2 className="w-3 h-3 text-slate-400" />
+                              {company}
+                            </span>
+                            <PriorityBadge priority={ticket.priority} />
+                          </div>
+                          <p className="text-sm font-semibold text-slate-900 truncate">
                             {ticket.subject}
                           </p>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold text-[#1A73E8] bg-[#E8F0FE] px-2 py-0.5 rounded-md">
-                              {ticket.id || `#TKT-${idx}`}
-                            </span>
-                            <span className="text-xs text-[#5F6368] font-medium">
-                              • {ticket.category}
-                            </span>
+                          <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium">
+                            <span>{ticket.category || 'Allgemein'}</span>
+                            <span className="text-slate-300">·</span>
+                            <span>{formatRelativeTime(ticket.updatedAt, 'de')}</span>
                           </div>
                         </div>
-                      </div>
-
-                      <div className="flex items-center gap-4 shrink-0">
-                        <Badge className={cn("text-[10px] font-bold uppercase tracking-wider border-none px-2.5 h-6 rounded-full", ticket.priorityColor)}>
-                          {ticket.priority}
-                        </Badge>
-                        <span className="text-xs text-[#80868B] font-medium w-16 text-right">
-                          {ticket.time}
-                        </span>
-                      </div>
-                    </div>
+                      </button>
+                    </li>
                   );
-                })
-                )}
-              </div>
+                })}
+              </ul>
+            )}
+            <div className="pt-3 mt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => navigate('/tickets')}
+                className="text-xs font-bold text-[#1B6CA8] hover:underline"
+              >
+                Alle Tickets anzeigen →
+              </button>
             </div>
+          </CardShell>
 
-            {/* Custom Quick Access Cards Section */}
-            <div className="space-y-3">
-              <h4 className="text-[13px] font-bold text-[#202124]">{t('dashboard.quickAccess', 'Quick Access')}</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                
-                <QuickCard 
-                  onClick={() => setIsNewTicketOpen(true)}
-                  icon={Plus} 
-                  iconBg="bg-blue-50 text-[#1A73E8]"
-                  title={t('actions.createTicket', 'Create Ticket')} 
-                  description={t('dashboard.createTicketDesc', 'Submit a new request')} 
-                />
-
-                {moduleFlags.geistKB ? (
-                <QuickCard 
-                  onClick={() => navigate('/kb')}
-                  icon={BookOpen} 
-                  iconBg="bg-indigo-50 text-[#4F46E5]"
-                  title={t('dashboard.searchKb', 'Search Knowledge Base')} 
-                  description={t('dashboard.searchKbDesc', 'Find solutions')} 
-                />
-                ) : null}
-
-                {moduleFlags.geistVault ? (
-                <QuickCard 
-                  onClick={() => navigate('/credentials')}
-                  icon={Lock} 
-                  iconBg="bg-violet-50 text-[#7C3AED]"
-                  title={t('dashboard.geistVault', 'GeistVault')} 
-                  description={t('dashboard.geistVaultDesc', 'Store and retrieve system secrets')} 
-                />
-                ) : null}
-
-                <QuickCard 
-                  onClick={() => navigate('/insights')}
-                  icon={Bot} 
-                  iconBg="bg-pink-50 text-[#DB2777]"
-                  title={t('dashboard.aiAssistant', 'AI Assistant')} 
-                  description={t('dashboard.aiAssistantDesc', 'Get AI-powered help')} 
-                />
-
-              </div>
-            </div>
-
-          </div>
-
-          {/* Right Area (AI Insights, KB Health) */}
-          <div className="space-y-6">
-            
-            {/* AI Insights Card */}
-            <div className="bg-white border border-gray-150 rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-6 py-4.5 border-b border-gray-100 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-[15px] font-bold text-[#202124]">{t('dashboard.aiInsights', 'AI Insights')}</span>
-                  <span className="bg-[#E8F0FE] text-[#1A73E8] text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded tracking-wider">Beta</span>
-                </div>
-              </div>
-
-              <div className="p-6 space-y-6">
-                <div>
-                  <div className="flex items-center gap-2 text-[#202124]">
-                    <Search className="w-4 h-4 text-gray-500" />
-                    <h4 className="text-[13px] font-bold">{t('dashboard.problemDetection', 'Problem Detection')}</h4>
-                  </div>
-                  <p className="text-[12px] text-gray-500 font-medium mt-1.5 leading-relaxed">
-                    {aiInsights?.summary || t('dashboard.aiProblemDetectionDesc', 'AI has identified recurring issues that may require your attention.')}
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  {(aiInsights?.items ?? []).length > 0 ? (
-                    aiInsights!.items.map((item) => (
-                      <InsightItem
-                        key={item.id}
-                        title={item.title}
-                        impact={
-                          item.impact === 'high'
-                            ? t('dashboard.highImpact', 'High Impact')
-                            : item.impact === 'medium'
-                              ? t('dashboard.mediumImpact', 'Medium')
-                              : t('dashboard.lowImpact', 'Low')
-                        }
-                        count={t('dashboard.similarTickets', '{{count}} similar tickets').replace('{{count}}', String(item.count))}
-                        badgeColor={
-                          item.impact === 'high'
-                            ? 'bg-[#FEE2E2] text-[#DC2626]'
-                            : item.impact === 'medium'
-                              ? 'bg-[#FFEDD5] text-[#D97706]'
-                              : 'bg-[#ECFDF5] text-[#059669]'
-                        }
-                        onClick={() => navigate('/insights')}
-                      />
-                    ))
-                  ) : (
-                    <p className="text-[12px] text-gray-500">{t('dashboard.noInsightsYet', 'No clustered issue patterns detected yet.')}</p>
-                  )}
-                </div>
-
-                <Button 
-                  onClick={() => navigate('/insights')}
-                  className="w-full h-11 bg-[#F1F3F4] text-gray-800 hover:bg-gray-200 border-none font-bold text-xs uppercase tracking-wider rounded-xl transition-all"
-                >
-                  {t('dashboard.viewAllInsights', 'View All Insights →')}
-                </Button>
-              </div>
-            </div>
-
-            {/* Knowledge Base Health Card */}
-            {moduleFlags.geistKB ? (
-            <div className="bg-white border border-gray-150 rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-100">
-                <div className="flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-gray-500" />
-                  <span className="text-[15px] font-bold text-[#202124]">{t('dashboard.kbHealth', 'Knowledge Base Health')}</span>
-                </div>
-              </div>
-
-              <div className="p-6 space-y-6">
-                <div className="flex items-center justify-between gap-4">
-                  {/* Circular Gauge Ring */}
-                  <div className="relative w-20 h-20 flex items-center justify-center shrink-0">
-                    <svg className="w-20 h-20 transform -rotate-90" viewBox="0 0 100 100">
-                      <circle 
-                        cx="50" 
-                        cy="50" 
-                        r="40" 
-                        className="text-gray-100" 
-                        strokeWidth="10" 
-                        stroke="currentColor" 
-                        fill="transparent" 
-                      />
-                      <circle 
-                        cx="50" 
-                        cy="50" 
-                        r="40" 
-                        className="text-[#10B981]" 
-                        strokeWidth="10" 
-                        stroke="currentColor" 
-                        fill="transparent" 
-                        strokeDasharray="251.2"
-                        strokeDashoffset={251.2 * (1 - (kbHealth?.score ?? 0) / 100)}
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                    <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-lg font-black text-gray-800">{kbHealth?.score ?? 0}%</span>
-                    </div>
-                  </div>
-
-                  {/* Healthy details */}
-                  <div className="space-y-1">
-                    <span className="text-[15px] font-bold text-[#10B981] flex items-center gap-1">
-                      {kbHealth?.label === 'wellMaintained'
-                        ? t('dashboard.wellMaintained', 'Well Maintained')
-                        : kbHealth?.label === 'stable'
-                          ? t('dashboard.stable', 'Stable')
-                          : t('dashboard.needsAttention', 'Needs Attention')}
-                    </span>
-                    {typeof kbHealth?.trendPercent === 'number' ? (
-                      <p className="text-[11px] text-[#137333] font-bold">
-                        {kbHealth.trendPercent >= 0 ? '↗' : '↘'} {Math.abs(kbHealth.trendPercent)}% {t('dashboard.vsLastMonth', 'vs last month')}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-
-                <Button 
-                  onClick={() => navigate('/kb')}
-                  className="w-full h-11 bg-[#F1F3F4] text-gray-800 hover:bg-gray-200 border-none font-bold text-xs uppercase tracking-wider rounded-xl transition-all"
-                >
-                  {t('dashboard.viewKbAnalytics', 'View KB Analytics →')}
-                </Button>
-              </div>
-            </div>
-            ) : null}
-
-          </div>
-
+          <CardShell>
+            <h2 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-4">
+              Kunden-Übersicht
+            </h2>
+            {clientOrgs.length === 0 ? (
+              <p className="text-sm text-slate-500 py-8 text-center">
+                Noch keine aktiven Kundenorganisationen.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {clientOrgs.map((org) => (
+                  <li key={org.id}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigate(`/tickets?organizationId=${encodeURIComponent(org.id)}`)
+                      }
+                      className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-100 transition-colors text-left"
+                    >
+                      {org.logoUrl ? (
+                        <img
+                          src={org.logoUrl}
+                          alt=""
+                          className="w-9 h-9 rounded-xl object-contain border border-slate-100 bg-white shrink-0"
+                        />
+                      ) : (
+                        <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center text-[10px] font-black shrink-0">
+                          {organizationInitialsFromName(org.name)}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-slate-900 truncate">{org.name}</p>
+                        <p className="text-[11px] text-slate-500 font-medium">
+                          {org.openCount} offen
+                        </p>
+                      </div>
+                      <Badge
+                        className={cn(
+                          'text-[9px] font-black uppercase border shrink-0',
+                          org.slaStatus === 'risk'
+                            ? 'bg-rose-50 text-rose-700 border-rose-100'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-100',
+                        )}
+                      >
+                        {org.slaStatus === 'risk' ? 'SLA-Risiko' : 'Gesund'}
+                      </Badge>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardShell>
         </div>
 
+        {/* Lower analytics */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <CardShell>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">
+                Ticket-Trends
+              </h2>
+              <div className="flex items-center gap-3 text-[10px] font-bold text-slate-500">
+                <span>
+                  Eingehend: {trendFooter?.incoming ?? 0}
+                </span>
+                <span>
+                  Gelöst: {trendFooter?.resolved ?? 0}
+                </span>
+              </div>
+            </div>
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trendChart}>
+                  <defs>
+                    <linearGradient id="incomingFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#1B6CA8" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#1B6CA8" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="resolvedFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#059669" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#059669" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E8EAED" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#80868B' }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#80868B' }} />
+                  <Tooltip
+                    contentStyle={{
+                      borderRadius: 12,
+                      border: '1px solid #E8EAED',
+                      fontSize: 12,
+                    }}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: 11, fontWeight: 700 }}
+                    formatter={(value) =>
+                      value === 'incoming' ? 'Eingehend' : value === 'resolved' ? 'Gelöst' : value
+                    }
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="incoming"
+                    name="incoming"
+                    stroke="#1B6CA8"
+                    fill="url(#incomingFill)"
+                    strokeWidth={2}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="resolved"
+                    name="resolved"
+                    stroke="#059669"
+                    fill="url(#resolvedFill)"
+                    strokeWidth={2}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardShell>
+
+          <div className="space-y-4">
+            <CardShell>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">
+                  KI-Erkenntnisse
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => navigate('/insights')}
+                  className="text-[11px] font-bold text-[#1B6CA8] hover:underline"
+                >
+                  Alle anzeigen →
+                </button>
+              </div>
+              {aiInsights?.offline ? (
+                <p className="text-sm text-slate-500 py-4">
+                  KI-Analyse derzeit offline. Keine Cluster verfügbar.
+                </p>
+              ) : (aiInsights?.items?.length ?? 0) === 0 ? (
+                <p className="text-sm text-slate-500 py-4">
+                  Keine wiederkehrenden Problemmuster erkannt.
+                </p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {(aiInsights?.items || []).map((item) => (
+                    <li
+                      key={item.id}
+                      className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-900 truncate">{item.title}</p>
+                        <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          {item.count} ähnliche Tickets
+                        </p>
+                      </div>
+                      <Badge
+                        className={cn(
+                          'text-[9px] font-black uppercase border shrink-0',
+                          item.impact === 'high' && 'bg-rose-50 text-rose-700 border-rose-100',
+                          item.impact === 'medium' && 'bg-amber-50 text-amber-700 border-amber-100',
+                          item.impact === 'low' && 'bg-slate-100 text-slate-600 border-slate-200',
+                        )}
+                      >
+                        {item.impact === 'high'
+                          ? 'Hoch'
+                          : item.impact === 'medium'
+                            ? 'Mittel'
+                            : 'Niedrig'}
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {aiInsights?.summary && (aiInsights?.items?.length ?? 0) > 0 && (
+                <p className="text-[11px] text-slate-500 mt-3 leading-relaxed">
+                  {aiInsights.summary}
+                </p>
+              )}
+            </CardShell>
+
+            {moduleFlags.geistKB !== false && (
+              <CardShell>
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">
+                    KB-Abdeckung
+                  </h2>
+                  <span className="text-sm font-black text-slate-900">
+                    {kbHealth?.score ?? 0}%
+                  </span>
+                </div>
+                <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-[#1B6CA8] transition-all"
+                    style={{ width: `${Math.max(0, Math.min(100, kbHealth?.score ?? 0))}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium mt-2">
+                  {kbHealth?.label === 'wellMaintained'
+                    ? 'Gut gepflegt'
+                    : kbHealth?.label === 'stable'
+                      ? 'Stabil'
+                      : 'Aufmerksamkeit erforderlich'}
+                </p>
+              </CardShell>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-// Highly stylized White Inner wrapper
-function TrendBadge({ value, invert = false }: { value: number | null; invert?: boolean }) {
-  const badge = formatTrendBadge(value, invert);
-  if (!badge) return null;
-  return <span className={cn('text-xs font-bold flex items-center gap-0.5', badge.className)}>{badge.label}</span>;
-}
-
-function CardWrapper({ children }: { children: ReactNode }) {
-  return (
-    <div className="bg-white border border-gray-150 p-4.5 rounded-2xl shadow-sm hover:shadow-md transition-shadow">
-      {children}
-    </div>
-  );
-}
-
-// Side Badge card wrapper
-function BadgeCard({ border, children }: { border: string; children: ReactNode }) {
-  return (
-    <div className={cn("p-5 rounded-2xl border border-gray-150 shadow-sm transition-all hover:translate-y-[-2px]", border)}>
-      {children}
-    </div>
-  );
-}
-
-// Quick card helper
-function QuickCard({ onClick, icon: IconComp, iconBg, title, description }: {
-  onClick: () => void;
-  icon: any;
-  iconBg: string;
-  title: string;
-  description: string;
+function CardShell({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
 }) {
   return (
-    <div 
-      onClick={onClick}
-      className="bg-white border border-gray-150 p-4 rounded-xl shadow-sm hover:border-[#1A73E8] hover:shadow-md transition-all cursor-pointer group flex flex-col justify-between h-32"
+    <div
+      className={cn(
+        'bg-white border border-slate-200/80 rounded-2xl p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)]',
+        className,
+      )}
     >
-      <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center font-bold border border-transparent shrink-0", iconBg)}>
-        <IconComp className="w-5 h-5" />
-      </div>
-      <div>
-        <h5 className="text-xs font-bold text-gray-900 truncate mt-1 group-hover:text-[#1A73E8] transition-colors">{title}</h5>
-        <p className="text-[10px] text-[#5F6368] font-medium leading-relaxed truncate mt-0.5">{description}</p>
-      </div>
+      {children}
     </div>
   );
 }
 
-// AI Insight List component
-function InsightItem({ title, impact, count, badgeColor, onClick }: {
-  title: string;
-  impact: string;
-  count: string;
-  badgeColor: string;
+function ActionKpiCard({
+  label,
+  value,
+  subtitle,
+  icon,
+  onClick,
+  danger,
+}: {
+  label: string;
+  value: number | string;
+  subtitle?: string;
+  icon: ReactNode;
   onClick: () => void;
+  danger?: boolean;
 }) {
   return (
-    <div 
+    <button
+      type="button"
       onClick={onClick}
-      className="border-b border-gray-100 pb-3 last:border-0 last:pb-0 cursor-pointer group"
+      className={cn(
+        'text-left rounded-2xl border bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md',
+        danger
+          ? 'border-rose-200 ring-1 ring-rose-100'
+          : 'border-slate-200/80 hover:border-slate-300',
+      )}
     >
       <div className="flex items-center justify-between gap-2">
-        <h5 className="text-[12.5px] font-bold text-gray-900 group-hover:text-[#1A73E8] transition-colors truncate">
-          {title}
-        </h5>
-        <Badge className={cn("text-[9px] font-extrabold uppercase px-2 h-5 shrink-0 rounded border-none tracking-widest", badgeColor)}>
-          {impact}
-        </Badge>
+        <span
+          className={cn(
+            'w-9 h-9 rounded-xl flex items-center justify-center border',
+            danger
+              ? 'bg-rose-50 text-rose-600 border-rose-100'
+              : 'bg-slate-50 text-slate-600 border-slate-100',
+          )}
+        >
+          {icon}
+        </span>
+        <ArrowUpRight className="w-3.5 h-3.5 text-slate-300" />
       </div>
-      <span className="text-[11px] text-[#5F6368] font-medium leading-none block mt-1">{count}</span>
-    </div>
+      <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mt-3">
+        {label}
+      </p>
+      <p
+        className={cn(
+          'text-2xl font-black tracking-tight mt-1',
+          danger ? 'text-rose-600' : 'text-slate-900',
+        )}
+      >
+        {value}
+      </p>
+      {subtitle && (
+        <p className="text-[11px] text-slate-500 font-medium mt-1">{subtitle}</p>
+      )}
+    </button>
+  );
+}
+
+function PriorityBadge({ priority }: { priority: string }) {
+  const p = String(priority || 'medium').toLowerCase();
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold border',
+        p === 'urgent' || p === 'critical'
+          ? 'bg-rose-50 text-rose-700 border-rose-100'
+          : p === 'high'
+            ? 'bg-orange-50 text-orange-700 border-orange-100'
+            : p === 'low'
+              ? 'bg-slate-50 text-slate-600 border-slate-200'
+              : 'bg-sky-50 text-sky-700 border-sky-100',
+      )}
+    >
+      {dashboardPriorityLabel(priority)}
+    </span>
   );
 }
