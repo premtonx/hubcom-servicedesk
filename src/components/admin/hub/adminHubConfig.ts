@@ -132,6 +132,8 @@ export interface AdminHubSection {
   borderColor: string;
   badge: string;
   module: string;
+  /** When set, “Configure” scrolls to this element id on the current page instead of navigating. */
+  scrollTargetId?: string;
 }
 
 export interface AdminHubCategory {
@@ -352,14 +354,15 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
     tab: 'integrations',
     sections: [
       {
-        title: 'E-Mail-Kanäle / Absender',
-        description: 'Absender-Adressen, Anzeigename, SMTP und Standard-Absender für Ticket-Antworten.',
+        title: 'E-Mail-Kanäle',
+        description:
+          'Eingehende und ausgehende E-Mail: Kanäle, Absender, Anzeigename, SMTP und Standard-Absender für Ticket-Antworten.',
         icon: Mail,
         path: '/admin/email-channels',
         color: 'text-rose-500',
         bgColor: 'bg-rose-50',
         borderColor: 'border-rose-105',
-        badge: 'Absender',
+        badge: 'Kanäle',
         module: 'tickets',
       },
       {
@@ -388,12 +391,13 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         title: 'API & MCP',
         description: 'Enable the native MCP server, manage API tokens, and copy client configs.',
         icon: Radio,
-        path: '/admin?tab=integrations',
+        path: '#admin-hub-mcp-panel',
         color: 'text-rose-600',
         bgColor: 'bg-rose-50',
         borderColor: 'border-rose-105',
         badge: 'Protocol',
         module: 'rbac',
+        scrollTargetId: 'admin-hub-mcp-panel',
       },
       {
         title: 'Polyglot Bridge',
