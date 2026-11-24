@@ -14,6 +14,10 @@ import {
   unwrapOutlookSafeLinks,
 } from '../src/lib/email-html-prepare.ts';
 import { sanitizeInboundHtml } from '../src/lib/email-ingestion/sanitize-server.ts';
+import {
+  buildPortalInviteEmail,
+  buildPortalPasswordResetEmail,
+} from '../src/lib/client-portal/portal-auth-emails.ts';
 
 let passed = 0;
 let failed = 0;
@@ -152,6 +156,79 @@ check('htmlToAuditPlainText handles already-escaped HTML notes', () => {
   assert.ok(out.includes('Merged body'), out);
   assert.ok(!/elementToProof/i.test(out), out);
   assert.ok(!/</.test(out), out);
+});
+
+console.log('\n[4] Portal invite vs password-reset HTML templates');
+check('invite and reset use distinct subjects and copy', () => {
+  const invite = buildPortalInviteEmail({
+    recipientName: 'Anna Admin',
+    organizationName: 'Acme GmbH',
+    role: 'CLIENT_ADMIN',
+    setupLink: 'https://app.example/login?setup=act-invite',
+  });
+  const reset = buildPortalPasswordResetEmail({
+    recipientName: 'Anna Admin',
+    organizationName: 'Acme GmbH',
+    setupLink: 'https://app.example/login?setup=act-reset',
+  });
+
+  assert.equal(invite.kind, 'invite');
+  assert.equal(reset.kind, 'reset');
+  assert.notEqual(invite.subject, reset.subject);
+  assert.equal(
+    invite.subject,
+    'Willkommen im Acme GmbH ServiceDesk — Konto aktivieren',
+  );
+  assert.equal(reset.subject, 'Passwort zurücksetzen — Acme GmbH ServiceDesk');
+  assert.ok(
+    invite.html.includes('Konto aktivieren &amp; Passwort festlegen') ||
+      invite.html.includes('Konto aktivieren & Passwort festlegen'),
+    invite.html,
+  );
+  assert.ok(reset.html.includes('Neues Passwort festlegen'), reset.html);
+  assert.ok(invite.html.includes('Kunden-Administrator'), invite.html);
+  assert.ok(
+    invite.html.includes('Aus Sicherheitsgründen wird kein Passwort per E-Mail versendet.'),
+    invite.html,
+  );
+  assert.ok(
+    reset.html.includes('Falls Sie diese Anfrage nicht gestellt haben'),
+    reset.html,
+  );
+});
+
+check('portal auth emails are real HTML (no <pre>) and keep CTA href', () => {
+  const invite = buildPortalInviteEmail({
+    recipientName: 'Sam',
+    organizationName: 'Org A',
+    role: 'CLIENT_USER',
+    setupLink: 'https://portal.example/login?setup=tok-1',
+  });
+  const prepared = prepareOutboundEmailHtml(invite.html);
+  assert.ok(!/<pre\b/i.test(invite.html), 'invite must not wrap in <pre>');
+  assert.ok(!/<pre\b/i.test(prepared), 'prepared invite must not contain <pre>');
+  assert.ok(!invite.html.includes('&lt;table'), 'invite must not escape table tags');
+  assert.ok(/<table\b/i.test(invite.html), invite.html);
+  assert.ok(
+    invite.html.includes('href="https://portal.example/login?setup=tok-1"'),
+    invite.html,
+  );
+  assert.ok(invite.html.includes('Mitarbeiter'), invite.html);
+
+  const reset = buildPortalPasswordResetEmail({
+    recipientName: 'Sam',
+    organizationName: 'Org A',
+    setupLink: 'https://portal.example/login?setup=tok-2',
+  });
+  assert.ok(!/<pre\b/i.test(reset.html), 'reset must not wrap in <pre>');
+  assert.ok(
+    reset.html.includes('href="https://portal.example/login?setup=tok-2"'),
+    reset.html,
+  );
+  // Mimic trySendTransactionalEmail(contentType: 'HTML') — body stays raw HTML.
+  assert.equal(invite.html.includes('<pre'), false);
+  assert.ok(looksLikeHtml(invite.html));
+  assert.ok(looksLikeHtml(reset.html));
 });
 
 console.log('\n================================');

@@ -36,6 +36,12 @@ import {
   assertPortalDashboardTenantIsolation,
   buildPortalDashboardPayload,
 } from '../src/lib/client-portal/portal-dashboard-service.js';
+import {
+  buildClientPortalUserProfile,
+  buildClientPortalUserRole,
+  shouldFetchRolesCollection,
+} from '../src/lib/client-portal/portal-role-from-session.js';
+import { assertDbCollectionAccess } from '../src/lib/db-access-policy.js';
 
 process.env.EMAIL_CHANNEL_SECRET_KEY =
   process.env.EMAIL_CHANNEL_SECRET_KEY ||
@@ -630,6 +636,57 @@ function testPortalDashboardIsolation(): void {
   assert(threw, 'non-portal roles are rejected with 403 semantics');
 }
 
+function testPortalSessionBootstrapWithoutRolesDb(): void {
+  console.log('\n[9] Portal session bootstrap never needs /api/db "roles"');
+
+  for (const role of ['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER'] as const) {
+    assert(
+      shouldFetchRolesCollection(role) === false,
+      `${role} must not fetch /api/db collection "roles"`,
+    );
+    const deny = assertDbCollectionAccess({
+      collection: 'roles',
+      action: 'get_doc',
+      userIsAdmin: false,
+      userRole: role,
+      userId: `user-${role}`,
+      docId: 'role-client-admin',
+    });
+    assert(deny.allowed === false, `${role} get_doc roles remains 403`);
+    assert(
+      deny.allowed === false && deny.status === 403,
+      `${role} roles denial status is 403`,
+    );
+
+    const profile = buildClientPortalUserProfile(
+      {
+        id: `uid-${role}`,
+        name: 'Portal User',
+        email: `${role.toLowerCase()}@orga.test`,
+        role,
+        organizationId: ORG_A,
+      },
+      { uid: `uid-${role}`, email: `${role.toLowerCase()}@orga.test` },
+    );
+    assert(!!profile, `${role} profile builds from session`);
+    assert(profile!.role === role, `${role} profile role matches`);
+    assert(profile!.organizationId === ORG_A, `${role} profile org matches`);
+
+    const rbac = buildClientPortalUserRole(role);
+    assert(rbac.name === role, `${role} in-memory RBAC name`);
+    assert(rbac.permissions.tickets?.view === true, `${role} ticket view from seed`);
+  }
+
+  assert(
+    shouldFetchRolesCollection('SYSTEM_ADMIN') === true,
+    'Hubcom SYSTEM_ADMIN may still load roles docs',
+  );
+  assert(
+    shouldFetchRolesCollection('agent') === true,
+    'Hubcom agent may still load roles docs',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -640,6 +697,7 @@ async function main(): Promise<void> {
   testOutboundFallback();
   testHubcomStaffBypass();
   testPortalDashboardIsolation();
+  testPortalSessionBootstrapWithoutRolesDb();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

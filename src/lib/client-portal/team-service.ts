@@ -14,6 +14,10 @@ import { hashPassword } from '../crypto.js';
 import { CLIENT_PORTAL_ROLE_SEEDS, isClientPortalRole } from './roles.js';
 import { getOrganization } from './organizations.js';
 import { deriveInvitationStatus } from './invitation-status.js';
+import {
+  buildPortalInviteEmail,
+  buildPortalPasswordResetEmail,
+} from './portal-auth-emails.js';
 
 export const CLIENT_TEAM_ROLES = ['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER'] as const;
 export type ClientTeamRole = (typeof CLIENT_TEAM_ROLES)[number];
@@ -119,6 +123,7 @@ export function buildSetupLink(token: string): string {
 export async function sendPortalTeamEmail(params: {
   to: string;
   subject: string;
+  /** Full HTML body — always dispatched as Graph contentType HTML. */
   body: string;
   organizationId?: string | null;
 }): Promise<{ sent: boolean; reason?: string; via?: string }> {
@@ -129,7 +134,7 @@ export async function sendPortalTeamEmail(params: {
       subject: params.subject,
       body: params.body,
       organizationId: params.organizationId || null,
-      contentType: 'Text',
+      contentType: 'HTML',
     });
     return {
       sent: result.delivered === true,
@@ -226,22 +231,17 @@ export async function createOrInviteTeamMember(params: {
     created = true;
   }
 
+  const inviteMail = buildPortalInviteEmail({
+    recipientName: params.name,
+    organizationName: org.name,
+    role: params.role,
+    setupLink,
+  });
   const mail = await sendPortalTeamEmail({
     to: email,
     organizationId: params.organizationId,
-    subject: `Einladung zum Hubcom Kunden-Portal (${org.name})`,
-    body: [
-      `Hallo ${params.name},`,
-      '',
-      `Sie wurden zum Kunden-Portal von ${org.name} eingeladen.`,
-      `Rolle: ${params.role}`,
-      '',
-      `Bitte richten Sie Ihr Passwort über diesen einmaligen Link ein (48 Stunden gültig):`,
-      setupLink,
-      '',
-      'Der Link ist an Ihre E-Mail-Adresse gebunden und gilt nur für dieses Unternehmen.',
-      'Es wird kein Passwort per E-Mail versendet.',
-    ].join('\n'),
+    subject: inviteMail.subject,
+    body: inviteMail.html,
   });
 
   await updateDocDirect('users', userId, {
@@ -305,20 +305,16 @@ export async function resetTeamMemberPassword(params: {
   });
 
   const org = await getOrganization(params.organizationId);
+  const resetMail = buildPortalPasswordResetEmail({
+    recipientName: String(user.name || ''),
+    organizationName: org?.name || 'Ihrer Organisation',
+    setupLink,
+  });
   const mail = await sendPortalTeamEmail({
     to: String(user.email || ''),
     organizationId: params.organizationId,
-    subject: `Passwort neu setzen — Hubcom Kunden-Portal`,
-    body: [
-      `Hallo ${user.name || ''},`,
-      '',
-      `Für Ihr Konto bei ${org?.name || 'Ihrer Organisation'} wurde ein Passwort-Reset angefordert.`,
-      '',
-      `Bitte setzen Sie Ihr Passwort über diesen einmaligen Link (48 Stunden gültig):`,
-      setupLink,
-      '',
-      'Es wird kein Passwort per E-Mail versendet.',
-    ].join('\n'),
+    subject: resetMail.subject,
+    body: resetMail.html,
   });
 
   await updateDocDirect('users', params.userId, {

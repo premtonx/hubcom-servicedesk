@@ -9,6 +9,71 @@ import {
   isBetaAutoAdminEnabled,
   isStaleGuestAgentCache,
 } from '../lib/beta-admin-bypass';
+import { isClientPortalRole } from '../lib/client-portal/roles';
+import {
+  buildClientPortalUserProfile,
+  buildClientPortalUserRole,
+  shouldFetchRolesCollection,
+  type AuthSessionUser,
+} from '../lib/client-portal/portal-role-from-session';
+
+function legacyRoleFromProfile(profile: User): UserRole {
+  return {
+    id: 'legacy',
+    name: profile.role,
+    description: 'Legacy system role',
+    permissions: {
+      tickets: {
+        view: true,
+        create: true,
+        edit: true,
+        delete: profile.role === 'admin',
+        admin: profile.role === 'admin',
+      },
+      customers: {
+        view: true,
+        create: true,
+        edit: true,
+        delete: profile.role === 'admin',
+        admin: profile.role === 'admin',
+      },
+      vault: {
+        view: true,
+        create: true,
+        edit: true,
+        delete: profile.role === 'admin',
+        admin: profile.role === 'admin',
+      },
+      insights: {
+        view: profile.role !== 'agent',
+        create: false,
+        edit: false,
+        delete: false,
+        admin: profile.role === 'admin',
+      },
+    },
+    specialPermissions: {
+      overridePIIShield: profile.role === 'admin',
+      manageModelOrchestrator: profile.role === 'admin',
+      bypass2FA: false,
+      aiGovernance: profile.role === 'admin',
+    },
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+}
+
+function applyClientPortalSession(
+  sessionUser: AuthSessionUser,
+  authUser: { uid: string; email?: string | null; displayName?: string | null; photoURL?: string | null },
+): { profile: User; role: UserRole } | null {
+  const profile = buildClientPortalUserProfile(sessionUser, authUser);
+  if (!profile || !isClientPortalRole(profile.role)) return null;
+  return {
+    profile,
+    role: buildClientPortalUserRole(profile.role),
+  };
+}
 
 export function usePermissions() {
   const { user: authUser, loading: authLoading } = useAuth();
@@ -72,173 +137,152 @@ export function usePermissions() {
       }
     }
 
-    // Privileges are derived strictly from the database role; there is no
-    // email-based god-mode override.
-    const isGodMode = false;
+    let cancelled = false;
     let timeoutFired = false;
     let realProfileLoaded = false;
+    let unsubUsers: (() => void) | null = null;
 
-    // Safety timeout: if database connection is blocked or slow (common in sandboxed iframes),
-    // resolve with appropriate permission level to keep app functional
     const safetyTimeout = setTimeout(() => {
-      if (!realProfileLoaded) {
+      if (!realProfileLoaded && !cancelled) {
         timeoutFired = true;
-        console.warn("[Permissions Engine] Database connection delayed. Applying safe offline-first fallback...");
-        if (isGodMode) {
-          const godRole: UserRole = {
-            id: 'god-mode',
-            name: 'admin',
-            isSystem: true,
-            description: 'Master Administrator Blueprint (External Override)',
-            permissions: {},
+        console.warn(
+          '[Permissions Engine] Database connection delayed. Applying safe offline-first fallback...',
+        );
+        const guestSession = applyGuestAdminSession(authUser);
+        if (guestSession) {
+          setRole(guestSession.role);
+          setUserProfile(guestSession.profile);
+        } else {
+          const agentRole: UserRole = {
+            id: 'legacy',
+            name: 'agent',
+            description: 'Offline agent fallback',
+            permissions: {
+              tickets: { view: true, create: true, edit: true, delete: false, admin: false },
+              customers: { view: true, create: true, edit: true, delete: false, admin: false },
+              vault: { view: true, create: true, edit: true, delete: false, admin: false },
+              insights: { view: false, create: false, edit: false, delete: false, admin: false },
+            },
             specialPermissions: {
-              overridePIIShield: true,
-              manageModelOrchestrator: true,
-              bypass2FA: true,
-              aiGovernance: true
+              overridePIIShield: false,
+              manageModelOrchestrator: false,
+              bypass2FA: false,
+              aiGovernance: false,
             },
             createdAt: new Date(),
-            updatedAt: new Date()
+            updatedAt: new Date(),
           };
-          setRole(godRole);
-          localStorage.setItem('geistdesk_cached_user_role', JSON.stringify(godRole));
-          const p: User = {
+          setRole(agentRole);
+          setUserProfile({
             id: authUser.uid,
-            name: authUser.displayName || 'John Doe',
+            name: authUser.displayName || authUser.email?.split('@')[0] || 'Agent',
             email: authUser.email || '',
             avatar: authUser.photoURL || '',
-            role: 'admin',
-            is_admin: true,
-            createdAt: new Date()
-          };
-          setUserProfile(p);
-          localStorage.setItem('geistdesk_cached_user_profile', JSON.stringify(p));
-        } else {
-          const guestSession = applyGuestAdminSession(authUser);
-          if (guestSession) {
-            setRole(guestSession.role);
-            setUserProfile(guestSession.profile);
-          } else {
-            const agentRole: UserRole = {
-              id: 'legacy',
-              name: 'agent',
-              description: 'Offline agent fallback',
-              permissions: {
-                tickets: { view: true, create: true, edit: true, delete: false, admin: false },
-                customers: { view: true, create: true, edit: true, delete: false, admin: false },
-                vault: { view: true, create: true, edit: true, delete: false, admin: false },
-                insights: { view: false, create: false, edit: false, delete: false, admin: false },
-              },
-              specialPermissions: {
-                overridePIIShield: false,
-                manageModelOrchestrator: false,
-                bypass2FA: false,
-                aiGovernance: false,
-              },
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            };
-            setRole(agentRole);
-            setUserProfile({
-              id: authUser.uid,
-              name: authUser.displayName || authUser.email?.split('@')[0] || 'Agent',
-              email: authUser.email || '',
-              avatar: authUser.photoURL || '',
-              role: 'agent',
-              is_admin: false,
-              createdAt: new Date(),
-            });
-          }
+            role: 'agent',
+            is_admin: false,
+            createdAt: new Date(),
+          });
         }
         setLoading(false);
       }
     }, 1200);
 
-    const unsub = userService.subscribeToUsers((users) => {
-      const emailMatches = users.filter(u => u.email && authUser.email && u.email.toLowerCase().trim() === authUser.email.toLowerCase().trim());
-      // Resolve the canonical profile defensively. Prefer the record whose id
-      // matches the authenticated uid, then any record that carries admin
-      // rights, so a stale non-admin duplicate can never shadow the real
-      // account and lock an admin out of the Admin Hub.
-      const profile =
-        emailMatches.find(u => u.id === authUser.uid) ||
-        emailMatches.find(u => (u as any).is_admin === true || u.role === 'admin') ||
-        emailMatches[0];
-
-      if (isGodMode) {
-        clearTimeout(safetyTimeout);
-        realProfileLoaded = true;
-        const godRole: UserRole = {
-          id: 'god-mode',
-          name: 'admin',
-          isSystem: true,
-          description: 'Master Administrator Blueprint (External Override)',
-          permissions: {},
-          specialPermissions: {
-            overridePIIShield: true,
-            manageModelOrchestrator: true,
-            bypass2FA: true,
-            aiGovernance: true
-          },
-          createdAt: new Date(),
-          updatedAt: new Date()
-        };
-        setRole(godRole);
-        localStorage.setItem('geistdesk_cached_user_role', JSON.stringify(godRole));
-        const gp: User = profile || {
-          id: authUser.uid,
-          name: authUser.displayName || 'John Doe',
-          email: authUser.email || '',
-          avatar: authUser.photoURL || '',
-          role: 'admin',
-          is_admin: true,
-          createdAt: new Date()
-        };
-        setUserProfile(gp);
-        localStorage.setItem('geistdesk_cached_user_profile', JSON.stringify(gp));
-        setLoading(false);
+    const hydrateStaffRole = async (profile: User) => {
+      // CLIENT_* → in-memory seed role only (never /api/db "roles").
+      if (isClientPortalRole(profile.role) || !shouldFetchRolesCollection(profile.role)) {
+        const portalRole = isClientPortalRole(profile.role)
+          ? buildClientPortalUserRole(profile.role)
+          : legacyRoleFromProfile(profile);
+        if (!cancelled) {
+          setRole(portalRole);
+          localStorage.setItem('geistdesk_cached_user_role', JSON.stringify(portalRole));
+          setLoading(false);
+        }
         return;
       }
 
-      if (profile) {
-        clearTimeout(safetyTimeout);
-        realProfileLoaded = true;
-        setUserProfile(profile);
-        localStorage.setItem('geistdesk_cached_user_profile', JSON.stringify(profile));
-        
-        if (profile.roleId) {
-          rbacService.getRole(profile.roleId).then(r => {
-            setRole(r);
-            if (r) localStorage.setItem('geistdesk_cached_user_role', JSON.stringify(r));
-            setLoading(false);
-          });
-        } else {
-          // Fallback to legacy system role if roleId is not set
-          const mockRole: UserRole = {
-            id: 'legacy',
-            name: profile.role,
-            description: 'Legacy system role',
-            permissions: {
-              tickets: { view: true, create: true, edit: true, delete: profile.role === 'admin', admin: profile.role === 'admin' },
-              customers: { view: true, create: true, edit: true, delete: profile.role === 'admin', admin: profile.role === 'admin' },
-              vault: { view: true, create: true, edit: true, delete: profile.role === 'admin', admin: profile.role === 'admin' },
-              insights: { view: profile.role !== 'agent', create: false, edit: false, delete: false, admin: profile.role === 'admin' },
-            },
-            specialPermissions: {
-              overridePIIShield: profile.role === 'admin',
-              manageModelOrchestrator: profile.role === 'admin',
-              bypass2FA: false,
-              aiGovernance: profile.role === 'admin'
-            },
-            createdAt: new Date(),
-            updatedAt: new Date()
-          };
+      if (!profile.roleId) {
+        const mockRole = legacyRoleFromProfile(profile);
+        if (!cancelled) {
           setRole(mockRole);
           localStorage.setItem('geistdesk_cached_user_role', JSON.stringify(mockRole));
           setLoading(false);
         }
-      } else {
-        if (timeoutFired && !realProfileLoaded) {
+        return;
+      }
+
+      try {
+        const r = await rbacService.getRole(profile.roleId);
+        if (cancelled) return;
+        if (r) {
+          setRole(r);
+          localStorage.setItem('geistdesk_cached_user_role', JSON.stringify(r));
+        } else {
+          const mockRole = legacyRoleFromProfile(profile);
+          setRole(mockRole);
+          localStorage.setItem('geistdesk_cached_user_role', JSON.stringify(mockRole));
+        }
+      } catch (err) {
+        console.warn('[Permissions Engine] getRole failed; using legacy profile role.', err);
+        if (!cancelled) {
+          const mockRole = legacyRoleFromProfile(profile);
+          setRole(mockRole);
+          localStorage.setItem('geistdesk_cached_user_role', JSON.stringify(mockRole));
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    const startStaffUserSubscription = () => {
+      unsubUsers = userService.subscribeToUsers((users) => {
+        const emailMatches = users.filter(
+          (u) =>
+            u.email &&
+            authUser.email &&
+            u.email.toLowerCase().trim() === authUser.email.toLowerCase().trim(),
+        );
+        const profile =
+          emailMatches.find((u) => u.id === authUser.uid) ||
+          emailMatches.find((u) => (u as any).is_admin === true || u.role === 'admin') ||
+          emailMatches[0];
+
+        if (profile) {
+          clearTimeout(safetyTimeout);
+          realProfileLoaded = true;
+
+          // Portal accounts discovered via users list — still never hit "roles".
+          if (isClientPortalRole(profile.role)) {
+            const portal = applyClientPortalSession(
+              {
+                id: profile.id,
+                name: profile.name,
+                email: profile.email,
+                role: profile.role,
+                organizationId: profile.organizationId,
+                organization_id: profile.organization_id,
+                avatar: profile.avatar,
+                can_create_tickets: profile.can_create_tickets,
+                can_view_knowledgebase: profile.can_view_knowledgebase,
+              },
+              authUser,
+            );
+            if (portal && !cancelled) {
+              setUserProfile(portal.profile);
+              setRole(portal.role);
+              localStorage.setItem('geistdesk_cached_user_profile', JSON.stringify(portal.profile));
+              localStorage.setItem('geistdesk_cached_user_role', JSON.stringify(portal.role));
+              setLoading(false);
+            }
+            return;
+          }
+
+          if (!cancelled) {
+            setUserProfile(profile);
+            localStorage.setItem('geistdesk_cached_user_profile', JSON.stringify(profile));
+          }
+          void hydrateStaffRole(profile);
+        } else if (timeoutFired && !realProfileLoaded && !cancelled) {
           const guestSession = applyGuestAdminSession(authUser);
           if (guestSession) {
             setRole(guestSession.role);
@@ -246,46 +290,93 @@ export function usePermissions() {
           }
           setLoading(false);
         }
+      });
+    };
+
+    // Prefer server session for CLIENT_* so boot never touches /api/db "roles".
+    void (async () => {
+      try {
+        const res = await fetch('/api/auth/session', { credentials: 'include' });
+        if (res.ok) {
+          const data = (await res.json()) as { user?: AuthSessionUser };
+          const portal = data.user
+            ? applyClientPortalSession(data.user, authUser)
+            : null;
+          if (portal) {
+            clearTimeout(safetyTimeout);
+            realProfileLoaded = true;
+            if (!cancelled) {
+              setUserProfile(portal.profile);
+              setRole(portal.role);
+              localStorage.setItem(
+                'geistdesk_cached_user_profile',
+                JSON.stringify(portal.profile),
+              );
+              localStorage.setItem('geistdesk_cached_user_role', JSON.stringify(portal.role));
+              setLoading(false);
+            }
+            // Do not subscribe to full users list / roles for portal accounts.
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[Permissions Engine] /api/auth/session unavailable; falling back.', err);
       }
-    });
+
+      if (cancelled) return;
+      startStaffUserSubscription();
+    })();
 
     return () => {
+      cancelled = true;
       clearTimeout(safetyTimeout);
-      unsub();
+      if (unsubUsers) unsubUsers();
     };
   }, [authUser, authLoading]);
 
   const hasPermission = (module: string, action: 'view' | 'create' | 'edit' | 'delete' | 'admin') => {
-    // 1. Direct user-level overrides (derived from the database profile only)
     if (userProfile?.is_admin === true) return true;
-    
+
     if (module === 'tickets' && action === 'create' && userProfile?.can_create_tickets === false) {
       return false;
     }
-    if ((module === 'kb_articles' || module === 'kb') && action === 'view' && userProfile?.can_view_knowledgebase === false) {
+    if (
+      (module === 'kb_articles' || module === 'kb') &&
+      action === 'view' &&
+      userProfile?.can_view_knowledgebase === false
+    ) {
       return false;
     }
 
     if (!role) return false;
-    
-    // 2. Role-level overrides
-    if (role.name === 'admin' || role.isSystem || (role as any).is_admin === true) return true;
-    
+
+    if (role.name === 'admin' || role.isSystem || (role as any).is_admin === true) {
+      // CLIENT_* seeds are isSystem:true — do not treat them as Hubcom god-mode.
+      if (!isClientPortalRole(role.name)) return true;
+    }
+
     if (module === 'tickets' && action === 'create' && (role as any).can_create_tickets === false) {
       return false;
     }
-    if ((module === 'kb_articles' || module === 'kb') && action === 'view' && (role as any).can_view_knowledgebase === false) {
+    if (
+      (module === 'kb_articles' || module === 'kb') &&
+      action === 'view' &&
+      (role as any).can_view_knowledgebase === false
+    ) {
       return false;
     }
 
     const modulePerms = role.permissions[module];
     if (!modulePerms) return false;
-    
+
     return modulePerms[action] === true;
   };
 
   const hasSpecialPermission = (key: keyof UserRole['specialPermissions']) => {
     if (!role) return false;
+    if (isClientPortalRole(role.name)) {
+      return role.specialPermissions[key] === true;
+    }
     if (role.name === 'admin' || role.isSystem) return true;
     return role.specialPermissions[key] === true;
   };
