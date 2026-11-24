@@ -49,7 +49,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
-import { AdminBreadcrumbs } from '../../components/AdminBreadcrumbs';
 import { schemaService, CustomField } from '../../services/schemaService';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
@@ -184,9 +183,7 @@ export default function CompanySchemaPage() {
   return (
     <div className="flex-1 overflow-y-auto bg-[#fafafa] custom-scrollbar">
       <div className="p-8 max-w-6xl mx-auto space-y-8 pb-32">
-        <AdminBreadcrumbs />
-        
-        <div className="flex items-center justify-between">
+<div className="flex items-center justify-between">
           <div className="space-y-1">
             <div className="flex items-center gap-3">
                <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">

@@ -1,7 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { FolderTree, Loader2, Pencil, Plus, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { toast } from 'sonner';
-import { AdminBreadcrumbs } from '../AdminBreadcrumbs';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -114,8 +113,7 @@ export default function TicketCategoriesAdminPage() {
   return (
     <div className="flex-1 overflow-y-auto min-h-0 bg-[#fafafa]">
       <div className="p-8 max-w-5xl mx-auto space-y-8 pb-20">
-        <AdminBreadcrumbs />
-        <div className="flex items-center gap-3">
+<div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-[#E8F1F8] flex items-center justify-center">
             <FolderTree className="w-5 h-5 text-[#1B6CA8]" />
           </div>

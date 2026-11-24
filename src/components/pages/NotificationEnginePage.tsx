@@ -32,7 +32,6 @@ import {
   DropdownMenuItem, 
   DropdownMenuTrigger 
 } from '../../components/ui/dropdown-menu';
-import { AdminBreadcrumbs } from '../../components/AdminBreadcrumbs';
 import { notificationService, NotificationTemplate } from '../../services/notificationService';
 import { toast } from 'sonner';
 import axios from 'axios';
@@ -186,9 +185,7 @@ export default function NotificationEnginePage() {
   return (
     <div className="flex-1 overflow-y-auto bg-[#fafafa]">
       <div className="p-8 max-w-5xl mx-auto pb-32">
-        <AdminBreadcrumbs />
-
-        <AnimatePresence mode="wait">
+<AnimatePresence mode="wait">
           {!editingTemplate ? (
             <motion.div
               key="list"

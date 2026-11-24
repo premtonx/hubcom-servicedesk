@@ -21,7 +21,7 @@ export function AdminHubIntegrationsTab() {
           title={t('admin.hubInt.mailTitle', 'Inbound mail')}
           body={`${config.email.supportEmail || 'support@…'} · ${config.email.smtpHost || 'SMTP unset'}`}
           action={t('admin.hubInt.openChannels', 'Email channels')}
-          onClick={() => navigate('/email-channels')}
+          onClick={() => navigate('/admin/email-channels')}
         />
         <IntegrationTile
           icon={<Webhook className="w-4 h-4 text-indigo-500" />}

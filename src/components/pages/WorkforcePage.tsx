@@ -42,7 +42,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { AdminBreadcrumbs } from '../AdminBreadcrumbs';
 import { userService } from '../../services/userService';
 import { agentService } from '../../services/agentService';
 import { User } from '../../types';
@@ -249,9 +248,7 @@ export default function WorkforcePage() {
       <div className="p-8 max-w-7xl mx-auto space-y-8 pb-32">
         
         {/* Breadcrumb pathing */}
-        <AdminBreadcrumbs />
-
-        {/* Header section */}
+{/* Header section */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-slate-200 pb-6">
           <div className="space-y-1">
             <div className="flex items-center gap-3">

@@ -21,7 +21,6 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { AdminBreadcrumbs } from '../../components/AdminBreadcrumbs';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { toast } from 'sonner';
 import axios from 'axios';
@@ -270,9 +269,7 @@ export default function SovereigntyCenterPage() {
   return (
     <div className="flex-1 overflow-y-auto min-h-0 bg-[#fafafa] custom-scrollbar">
       <div className="p-8 max-w-7xl mx-auto space-y-8 pb-20">
-        <AdminBreadcrumbs />
-
-        {/* Page Header */}
+{/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">

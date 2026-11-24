@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Plus, Search, Shield, Trash2, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { AdminBreadcrumbs } from '../../components/AdminBreadcrumbs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Textarea } from '../../components/ui/textarea';
@@ -140,8 +139,7 @@ export default function VaultPortfolioManagementPage() {
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-[#FAFBFC]">
       <div className="px-6 py-4 border-b border-slate-200/80 bg-white shrink-0">
-        <AdminBreadcrumbs />
-        <div className="flex items-center justify-between mt-3">
+<div className="flex items-center justify-between mt-3">
           <div>
             <h1 className="text-lg font-bold text-slate-900">
               {t('vault.portfolio.title', 'Vault-Portfoliomanagement')}
