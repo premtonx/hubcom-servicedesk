@@ -1,207 +1,500 @@
-import type { ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import {
-  Activity,
-  Briefcase,
-  Cpu,
-  Database,
-  Globe,
-  Lock,
-  Sparkles,
-  Users,
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  CircleHelp,
+  ExternalLink,
+  Info,
+  RefreshCw,
+  XCircle,
 } from 'lucide-react';
 import { useTranslation } from '../../../lib/context/I18nContext';
-import type { AdminHubTelemetry } from './adminHubTelemetry';
+import { cn } from '../../../lib/utils';
+import {
+  overallStateLabelDe,
+  type AdminHubActionItem,
+  type AdminHubSubsystemState,
+  type AdminHubSubsystemStatus,
+  type AdminHubTelemetry,
+} from './adminHubTelemetry';
 
 interface AdminHubOverviewTabProps {
   telemetry: AdminHubTelemetry;
   onTelemetryRefresh?: () => void;
 }
 
-export function AdminHubOverviewTab({ telemetry }: AdminHubOverviewTabProps) {
+function formatCheckedAt(iso: string | undefined, locale = 'de-DE'): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime()) || d.getTime() === 0) return '—';
+  return d.toLocaleString(locale, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function stateMeta(state: AdminHubSubsystemState): {
+  label: string;
+  Icon: typeof CheckCircle2;
+  className: string;
+  badgeClass: string;
+} {
+  switch (state) {
+    case 'ok':
+      return {
+        label: 'OK',
+        Icon: CheckCircle2,
+        className: 'text-emerald-700',
+        badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+      };
+    case 'degraded':
+      return {
+        label: 'Eingeschränkt',
+        Icon: AlertTriangle,
+        className: 'text-amber-800',
+        badgeClass: 'bg-amber-50 text-amber-900 border-amber-200',
+      };
+    case 'error':
+      return {
+        label: 'Fehler',
+        Icon: XCircle,
+        className: 'text-red-700',
+        badgeClass: 'bg-red-50 text-red-800 border-red-200',
+      };
+    case 'not_configured':
+      return {
+        label: 'Nicht konfiguriert',
+        Icon: Info,
+        className: 'text-slate-700',
+        badgeClass: 'bg-slate-100 text-slate-800 border-slate-200',
+      };
+    default:
+      return {
+        label: 'Unbekannt',
+        Icon: CircleHelp,
+        className: 'text-slate-600',
+        badgeClass: 'bg-slate-50 text-slate-700 border-slate-200',
+      };
+  }
+}
+
+export function AdminHubOverviewTab({ telemetry, onTelemetryRefresh }: AdminHubOverviewTabProps) {
   const { t } = useTranslation();
+  const detailsId = useId();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  const subsystems = telemetry.subsystems ?? [];
+  const actionItems = telemetry.actionItems ?? [];
+  const overall = telemetry.overallState ?? 'unknown';
+  const overallMeta = stateMeta(overall);
+  const OverallIcon = overallMeta.Icon;
+  const loading = subsystems.length === 0 && !telemetry.loadError;
 
   return (
-    <div className="space-y-10">
-      <div className="bg-white border border-slate-200/80 rounded-[2rem] p-6 xl:p-8 shadow-[0_2px_12px_rgba(15,23,42,0.02)] overflow-hidden relative">
-        <div className="absolute inset-0 bg-[radial-gradient(#94A3B8_0.5px,transparent_0.5px)] bg-[size:16px_16px] opacity-10 pointer-events-none" />
-
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-100 pb-5 mb-6 relative z-10">
-          <div className="flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-slate-400" />
-            <h2 className="text-xs font-black uppercase tracking-widest text-slate-400 font-mono">
-              GeistControl Operations Overview v3.1
-            </h2>
-          </div>
-          <div className="flex items-center gap-4 text-[10px] text-slate-400 font-mono">
-            <span className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Local Model: {telemetry.primaryModel ?? '—'}
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Latency: {telemetry.latencyMs} ms
-            </span>
-          </div>
+    <div className="space-y-6 max-w-5xl">
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900 tracking-tight">
+            {t('admin.hubOverview.title', 'Übersicht')}
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            {t(
+              'admin.hubOverview.subtitle',
+              'Aktueller Betriebszustand und offene Aufgaben — ohne erfundene Verfügbarkeitswerte.',
+            )}
+          </p>
         </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 relative z-10 pb-2">
-          <MetricCard
-            label="Agents"
-            icon={<Users className="w-3.5 h-3.5 text-blue-500" />}
-            value={
-              <>
-                {telemetry.activeAgents} <span className="text-[10px] text-slate-400 font-normal">/ 12</span>
-              </>
-            }
-            hint={<span className="text-emerald-600 flex items-center gap-1"><span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" /> {telemetry.systemHealth}% Online</span>}
-          />
-          <MetricCard
-            label="Pipeline"
-            icon={<Briefcase className="w-3.5 h-3.5 text-slate-400" />}
-            value={telemetry.ticketsProcessed.toLocaleString()}
-            hint="Processed Tickets"
-          />
-          <MetricCard
-            label="Assets"
-            icon={<Database className="w-3.5 h-3.5 text-slate-400" />}
-            value={telemetry.assetsManaged.toLocaleString()}
-            hint="Managed Records"
-          />
-          <MetricCard
-            label="Vault"
-            icon={<Lock className="w-3.5 h-3.5 text-amber-500" />}
-            value={telemetry.vaultSecrets.toLocaleString()}
-            hint={<span className="text-amber-600">Secrets Redacted</span>}
-          />
-          <MetricCard
-            label="KB Index"
-            icon={<Globe className="w-3.5 h-3.5 text-teal-500" />}
-            value={telemetry.knowledgeArticles.toLocaleString()}
-            hint="Dynamic RAG Synced"
-          />
-          <MetricCard
-            label="AI Requests"
-            icon={<Sparkles className="w-3.5 h-3.5 text-indigo-500 fill-indigo-200/50 animate-pulse" />}
-            value={telemetry.aiRequests.toLocaleString()}
-            hint={<span className="text-indigo-600 flex items-center gap-1"><span className="inline-block w-1.5 h-1.5 bg-indigo-500 rounded-sm animate-bounce" /> Streaming Requests</span>}
-          />
-          <MetricCard
-            className="col-span-2 md:col-span-1"
-            label="SLA Uptime"
-            icon={<Activity className="w-3.5 h-3.5 text-emerald-500" />}
-            value={<span className="text-emerald-600">{telemetry.systemHealth}%</span>}
-            hint={<span className="text-emerald-600/90">Platform High-Availability</span>}
-          />
-        </div>
-
-        <div className="mt-5 pt-4 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center text-slate-400 text-[10px] font-mono gap-2 relative z-10">
-          <div className="flex items-center gap-1.5">
-            <span className="p-1 rounded bg-slate-100 border border-slate-200 flex items-center justify-center font-black">INFO</span>
-            <span>All nodes operating on a sandboxed local-first secure enterprise runtime container.</span>
-          </div>
-          <span>No data pipelines telemetry leaked.</span>
+        <div className="flex items-center gap-3 text-sm text-slate-600">
+          <span>
+            {t('admin.hubOverview.lastCheck', 'Stand')}:{' '}
+            <time dateTime={telemetry.checkedAt}>{formatCheckedAt(telemetry.checkedAt)}</time>
+          </span>
+          {onTelemetryRefresh ? (
+            <button
+              type="button"
+              onClick={() => onTelemetryRefresh()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            >
+              <RefreshCw className="w-3.5 h-3.5" aria-hidden />
+              {t('admin.hubOverview.refresh', 'Aktualisieren')}
+            </button>
+          ) : null}
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-[2.5rem] p-10 overflow-hidden relative shadow-sm">
-        <div className="absolute top-0 right-0 p-8 opacity-5">
-          <Activity className="w-32 h-32" />
+      {telemetry.loadError ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+        >
+          {t('admin.hubOverview.loadError', 'Status konnte nicht geladen werden')}: {telemetry.loadError}
         </div>
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8">
-          <div className="max-w-md">
-            <h3 className="text-xl font-bold text-slate-900 mb-2">{t('admin.resourceHealth', 'Resource Health')}</h3>
-            <p className="text-sm text-slate-500">{t('admin.resourceHealthDesc', 'Real-time status of embedded vectors and LLM availability.')}</p>
-            <div className="mt-6 space-y-4">
-              <HealthRow
-                label={t('admin.vectorIndex', 'Vektor-Index (Hubcom_KB)')}
-                status={telemetry.activeVectors > 0 ? t('admin.statusHealthy', 'Healthy') : t('admin.statusIdle', 'Idle')}
-                tone={telemetry.activeVectors > 0 ? 'emerald' : 'amber'}
-              />
-              {telemetry.providers.slice(0, 2).map((p) => (
-                <HealthRow
-                  key={p.provider}
-                  label={p.label}
-                  status={p.status === 'online' ? t('admin.statusAvailable', 'Available') : p.status === 'missing_key' ? t('admin.statusNoKey', 'No Key') : p.status === 'degraded' ? t('admin.statusDegraded', 'Degraded') : t('admin.statusOffline', 'Offline')}
-                  tone={p.status === 'online' ? 'emerald' : 'amber'}
-                />
-              ))}
-              {telemetry.providers.length === 0 && (
-                <HealthRow
-                  label={t('admin.noProviders', 'No AI providers configured')}
-                  status={t('admin.statusIdle', 'Idle')}
-                  tone="amber"
-                />
+      ) : null}
+
+      {/* Systemstatus */}
+      <section
+        aria-labelledby="admin-hub-systemstatus-heading"
+        className="rounded-xl border border-slate-200 bg-white shadow-sm"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
+          <div className="flex items-center gap-2 min-w-0">
+            <h3
+              id="admin-hub-systemstatus-heading"
+              className="text-base font-semibold text-slate-900"
+            >
+              {t('admin.hubOverview.systemStatus', 'Systemstatus')}
+            </h3>
+            <span
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-semibold',
+                overallMeta.badgeClass,
               )}
+            >
+              <OverallIcon className={cn('w-3.5 h-3.5', overallMeta.className)} aria-hidden />
+              {overallStateLabelDe(overall)}
+            </span>
+          </div>
+          <p className="text-sm text-slate-600">
+            {t(
+              'admin.hubOverview.systemStatusHint',
+              'Gesamtstatus = schwächstes Subsystem. Backups erscheinen hier nicht — es gibt keine Live-Backup-API.',
+            )}
+          </p>
+        </div>
+
+        {loading ? (
+          <p className="px-4 py-8 sm:px-5 text-sm text-slate-600" role="status">
+            {t('admin.hubOverview.loading', 'Status wird geladen …')}
+          </p>
+        ) : subsystems.length === 0 ? (
+          <p className="px-4 py-8 sm:px-5 text-sm text-slate-600" role="status">
+            {t('admin.hubOverview.noSubsystems', 'Keine Subsystem-Daten verfügbar.')}
+          </p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {subsystems.map((sub) => (
+              <SubsystemRow key={sub.id} subsystem={sub} />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* Handlungsbedarf */}
+      <section
+        aria-labelledby="admin-hub-actions-heading"
+        className="rounded-xl border border-slate-200 bg-white shadow-sm"
+      >
+        <div className="border-b border-slate-100 px-4 py-3 sm:px-5">
+          <h3 id="admin-hub-actions-heading" className="text-base font-semibold text-slate-900">
+            {t('admin.hubOverview.actionNeeded', 'Handlungsbedarf')}
+          </h3>
+          <p className="mt-0.5 text-sm text-slate-600">
+            {t(
+              'admin.hubOverview.actionNeededHint',
+              'Nur echte Störungen, Konfigurationslücken und Indexfehler aus aktuellen Systemdaten.',
+            )}
+          </p>
+        </div>
+        {actionItems.length === 0 ? (
+          <div
+            className="flex items-start gap-3 px-4 py-6 sm:px-5 text-sm text-slate-700"
+            role="status"
+          >
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" aria-hidden />
+            <div>
+              <p className="font-medium text-slate-900">
+                {t('admin.hubOverview.noActions', 'Kein Handlungsbedarf')}
+              </p>
+              <p className="mt-0.5 text-slate-600">
+                {t(
+                  'admin.hubOverview.noActionsDetail',
+                  'Alle geprüften Subsysteme melden derzeit keinen offenen Handlungsbedarf.',
+                )}
+              </p>
             </div>
           </div>
-          <div className="flex flex-wrap gap-4">
-            <GaugeCard icon={<Database className="w-5 h-5 text-slate-400 mb-3" />} value={telemetry.activeVectors.toLocaleString()} label={t('admin.activeVectors', 'Active Vectors')} />
-            <GaugeCard icon={<Users className="w-5 h-5 text-slate-400 mb-3" />} value={`${telemetry.latencyMs || 12} ms`} label={t('admin.redactionLatency', 'P99 Redaction Latency')} />
-            <GaugeCard icon={<Activity className="w-5 h-5 text-slate-400 mb-3" />} value={`${telemetry.systemHealth}%`} label={t('admin.uptime', 'Uptime (30d)')} />
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {actionItems.map((item) => (
+              <ActionRow key={item.id} item={item} />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* Secondary operational metrics */}
+      <section aria-labelledby="admin-hub-metrics-heading" className="space-y-3">
+        <div>
+          <h3 id="admin-hub-metrics-heading" className="text-base font-semibold text-slate-900">
+            {t('admin.hubOverview.metrics', 'Betriebskennzahlen')}
+          </h3>
+          <p className="text-sm text-slate-600">
+            {t(
+              'admin.hubOverview.metricsHint',
+              'Bestands- und Nutzungswerte aus der Datenbank — kein SLA und keine synthetische Latenz.',
+            )}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          <MetricTile
+            label={t('admin.hubOverview.metricAgents', 'Aktive Benutzer')}
+            value={telemetry.activeAgents.toLocaleString('de-DE')}
+            hint={t('admin.hubOverview.metricAgentsHint', 'Benutzer mit aktivem Status')}
+          />
+          <MetricTile
+            label={t('admin.hubOverview.metricTickets', 'Tickets gesamt')}
+            value={(telemetry.ticketsTotal ?? telemetry.ticketsProcessed ?? 0).toLocaleString('de-DE')}
+            hint={t('admin.hubOverview.metricTicketsHint', 'Anzahl Datensätze in tickets')}
+          />
+          <MetricTile
+            label={t('admin.hubOverview.metricKb', 'KB-Artikel')}
+            value={telemetry.knowledgeArticles.toLocaleString('de-DE')}
+            hint={t('admin.hubOverview.metricKbHint', 'Artikel in der Wissensdatenbank')}
+          />
+          <MetricTile
+            label={t('admin.hubOverview.metricVectors', 'Index-Chunks')}
+            value={telemetry.activeVectors.toLocaleString('de-DE')}
+            hint={t('admin.hubOverview.metricVectorsHint', 'Einträge in KnowledgeEmbedding')}
+          />
+        </div>
+      </section>
+
+      {/* Collapsible details */}
+      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 sm:px-5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
+          aria-expanded={detailsOpen}
+          aria-controls={detailsId}
+          onClick={() => setDetailsOpen((o) => !o)}
+        >
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">
+              {t('admin.hubOverview.details', 'Details')}
+            </h3>
+            <p className="text-sm text-slate-600">
+              {t(
+                'admin.hubOverview.detailsHint',
+                'Weitere Zähler, Anbieterliste und Hinweise zu nicht verfügbaren Metriken.',
+              )}
+            </p>
           </div>
+          {detailsOpen ? (
+            <ChevronDown className="w-5 h-5 text-slate-500 shrink-0" aria-hidden />
+          ) : (
+            <ChevronRight className="w-5 h-5 text-slate-500 shrink-0" aria-hidden />
+          )}
+        </button>
+        {detailsOpen ? (
+          <div id={detailsId} className="border-t border-slate-100 px-4 py-4 sm:px-5 space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <MetricTile
+                label={t('admin.hubOverview.metricVault', 'Vault-Einträge')}
+                value={telemetry.vaultSecrets.toLocaleString('de-DE')}
+                hint={t('admin.hubOverview.metricVaultHint', 'Verschlüsselte Tresorspeicher')}
+              />
+              <MetricTile
+                label={t('admin.hubOverview.metricAiReq', 'KI-Anfragen (Log)')}
+                value={telemetry.aiRequests.toLocaleString('de-DE')}
+                hint={t(
+                  'admin.hubOverview.metricAiReqHint',
+                  'Zeilen in ai_usage_log (Workspace default)',
+                )}
+              />
+              <MetricTile
+                label={t('admin.hubOverview.metricAvgLatency', 'Ø KI-Latenz')}
+                value={
+                  telemetry.avgAiLatencyMs != null
+                    ? `${telemetry.avgAiLatencyMs.toLocaleString('de-DE')} ms`
+                    : '—'
+                }
+                hint={t(
+                  'admin.hubOverview.metricAvgLatencyHint',
+                  'Mittelwert latency_ms aus ai_usage_log; „—“ wenn keine Samples',
+                )}
+              />
+              <MetricTile
+                label={t('admin.hubOverview.metricPrimaryModel', 'Primärmodell')}
+                value={telemetry.primaryModel ?? '—'}
+                hint={t('admin.hubOverview.metricPrimaryModelHint', 'Aus Orchestrator-Konfiguration')}
+              />
+            </div>
+
+            {telemetry.providers.length > 0 ? (
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900 mb-2">
+                  {t('admin.hubOverview.providers', 'KI-Anbieter (Live-Probe)')}
+                </h4>
+                <ul className="space-y-2">
+                  {telemetry.providers.map((p) => {
+                    const st =
+                      p.status === 'online'
+                        ? 'ok'
+                        : p.status === 'degraded' || p.status === 'missing_key'
+                          ? 'degraded'
+                          : 'error';
+                    const meta = stateMeta(st);
+                    const Icon = meta.Icon;
+                    return (
+                      <li
+                        key={p.provider}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2 text-sm"
+                      >
+                        <span className="font-medium text-slate-800">{p.label}</span>
+                        <span
+                          className={cn(
+                            'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-semibold',
+                            meta.badgeClass,
+                          )}
+                        >
+                          <Icon className={cn('w-3.5 h-3.5', meta.className)} aria-hidden />
+                          {p.status === 'online'
+                            ? 'Online'
+                            : p.status === 'missing_key'
+                              ? 'Kein Schlüssel'
+                              : p.status === 'degraded'
+                                ? 'Eingeschränkt'
+                                : 'Offline'}
+                          {p.latencyMs != null && p.status === 'online'
+                            ? ` · ${p.latencyMs} ms`
+                            : ''}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+              <p className="font-medium text-slate-900 mb-1">
+                {t('admin.hubOverview.unavailableTitle', 'Nicht verfügbare Metriken')}
+              </p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>
+                  {t(
+                    'admin.hubOverview.unavailableSla',
+                    'SLA-Uptime / 30-Tage-Verfügbarkeit — keine Messreihe im Backend.',
+                  )}
+                </li>
+                <li>
+                  {t(
+                    'admin.hubOverview.unavailableP99',
+                    'P99-Redaction-Latenz — wird nicht erfasst (nur Ø latency_ms in ai_usage_log).',
+                  )}
+                </li>
+                <li>
+                  {t(
+                    'admin.hubOverview.unavailableBackup',
+                    'Backup-Status — keine Live-Backup-Health-API; siehe Infrastruktur & Backups / Datenimport.',
+                  )}
+                </li>
+                <li>
+                  {t(
+                    'admin.hubOverview.unavailableProcessed',
+                    '„Verarbeitete Tickets“ als Durchsatz — nur Gesamtbestand (tickets) vorhanden.',
+                  )}
+                </li>
+              </ul>
+              <p className="mt-2">
+                <Link
+                  to="/admin?tab=system"
+                  className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded"
+                >
+                  {t('admin.hubOverview.gotoSystem', 'Zur Infrastruktur & Backups')}
+                </Link>
+              </p>
+            </div>
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function SubsystemRow({ subsystem }: { subsystem: AdminHubSubsystemStatus }) {
+  const meta = stateMeta(subsystem.state);
+  const Icon = meta.Icon;
+  return (
+    <li className="flex flex-col gap-2 px-4 py-3.5 sm:px-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-slate-900">{subsystem.label}</span>
+          <span
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-semibold',
+              meta.badgeClass,
+            )}
+          >
+            <Icon className={cn('w-3.5 h-3.5', meta.className)} aria-hidden />
+            {meta.label}
+          </span>
+        </div>
+        <p className="mt-1 text-sm text-slate-600">{subsystem.detail}</p>
+        <p className="mt-1 text-xs text-slate-500">
+          Letzte Prüfung: <time dateTime={subsystem.checkedAt}>{formatCheckedAt(subsystem.checkedAt)}</time>
+        </p>
+      </div>
+      <Link
+        to={subsystem.href}
+        className="inline-flex items-center gap-1.5 self-start sm:self-center shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+      >
+        Öffnen
+        <ExternalLink className="w-3.5 h-3.5" aria-hidden />
+      </Link>
+    </li>
+  );
+}
+
+function ActionRow({ item }: { item: AdminHubActionItem }) {
+  const isError = item.severity === 'error';
+  return (
+    <li className="flex flex-col gap-2 px-4 py-3.5 sm:px-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-start gap-3 min-w-0">
+        {isError ? (
+          <XCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" aria-hidden />
+        ) : (
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" aria-hidden />
+        )}
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-900">
+            <span className="sr-only">{isError ? 'Fehler: ' : 'Warnung: '}</span>
+            {item.title}
+          </p>
+          <p className="mt-0.5 text-sm text-slate-600">{item.detail}</p>
         </div>
       </div>
-    </div>
+      <Link
+        to={item.href}
+        className="inline-flex items-center gap-1.5 self-start sm:self-center shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+      >
+        Beheben
+        <ChevronRight className="w-3.5 h-3.5" aria-hidden />
+      </Link>
+    </li>
   );
 }
 
-function MetricCard({
+function MetricTile({
   label,
-  icon,
   value,
   hint,
-  className,
 }: {
   label: string;
-  icon: ReactNode;
   value: ReactNode;
-  hint: ReactNode;
-  className?: string;
+  hint: string;
 }) {
   return (
-    <div className={`p-3.5 bg-slate-50/50 hover:bg-slate-50 rounded-2xl border border-slate-100 transition-all duration-300 ${className || ''}`}>
-      <div className="flex items-center justify-between text-slate-400 mb-1.5">
-        <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 font-mono">{label}</span>
-        {icon}
-      </div>
-      <div className="text-xl font-black text-slate-900 font-mono leading-none tracking-tight">{value}</div>
-      <div className="text-[9px] font-bold text-slate-400 mt-2">{hint}</div>
-    </div>
-  );
-}
-
-function HealthRow({
-  label,
-  status,
-  tone,
-}: {
-  label: string;
-  status: string;
-  tone: 'emerald' | 'amber';
-}) {
-  return (
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-2">
-        <div className={`w-1.5 h-1.5 rounded-full ${tone === 'emerald' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-        <span className="text-xs font-bold text-slate-600">{label}</span>
-      </div>
-      <span
-        className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md ${
-          tone === 'emerald' ? 'text-emerald-600 bg-emerald-50' : 'text-amber-600 bg-amber-50'
-        }`}
-      >
-        {status}
-      </span>
-    </div>
-  );
-}
-
-function GaugeCard({ icon, value, label }: { icon: ReactNode; value: string; label: string }) {
-  return (
-    <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 flex-1 min-w-[160px]">
-      {icon}
-      <div className="text-2xl font-black text-slate-900">{value}</div>
-      <div className="text-[10px] items-center gap-1 flex font-bold text-slate-400 uppercase tracking-widest mt-1">
-        {label}
-      </div>
+    <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 text-xl font-semibold tabular-nums text-slate-900">{value}</p>
+      <p className="mt-1 text-xs text-slate-500 leading-snug">{hint}</p>
     </div>
   );
 }

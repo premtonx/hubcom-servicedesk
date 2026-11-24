@@ -11,26 +11,45 @@ import {
   tabLabel,
   type AdminHubTabId,
 } from './adminHubConfig';
-import type { AdminHubTelemetry } from './adminHubTelemetry';
+import {
+  EMPTY_TELEMETRY,
+  overallStateLabelDe,
+  type AdminHubSubsystemState,
+  type AdminHubTelemetry,
+} from './adminHubTelemetry';
 
-const EMPTY_TELEMETRY: AdminHubTelemetry = {
-  activeAgents: 0,
-  ticketsProcessed: 0,
-  assetsManaged: 0,
-  vaultSecrets: 0,
-  knowledgeArticles: 0,
-  aiRequests: 0,
-  systemHealth: 100,
-  latencyMs: 0,
-  activeVectors: 0,
-  primaryModel: null,
-  providers: [],
-};
-
-function controlPlaneLabel(health: number): string {
-  if (health >= 99) return 'CONTROL PLANE : ONLINE';
-  if (health >= 97) return 'CONTROL PLANE : DEGRADED';
-  return 'CONTROL PLANE : OFFLINE';
+function controlPlaneBadge(state: AdminHubSubsystemState): {
+  label: string;
+  ping: string;
+  dot: string;
+} {
+  switch (state) {
+    case 'ok':
+      return {
+        label: `CONTROL PLANE : ${overallStateLabelDe('ok').toUpperCase()}`,
+        ping: 'bg-emerald-400',
+        dot: 'bg-emerald-500',
+      };
+    case 'degraded':
+    case 'not_configured':
+      return {
+        label: `CONTROL PLANE : ${overallStateLabelDe('degraded').toUpperCase()}`,
+        ping: 'bg-amber-400',
+        dot: 'bg-amber-500',
+      };
+    case 'error':
+      return {
+        label: `CONTROL PLANE : ${overallStateLabelDe('error').toUpperCase()}`,
+        ping: 'bg-red-400',
+        dot: 'bg-red-500',
+      };
+    default:
+      return {
+        label: `CONTROL PLANE : ${overallStateLabelDe('unknown').toUpperCase()}`,
+        ping: 'bg-slate-400',
+        dot: 'bg-slate-500',
+      };
+  }
 }
 
 export default function AdminHubLayout() {
@@ -61,7 +80,7 @@ export default function AdminHubLayout() {
     navigate(`/admin?tab=${tabId}`);
   };
 
-  const health = telemetry.systemHealth ?? 100;
+  const plane = controlPlaneBadge(telemetry.overallState ?? 'unknown');
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-[#fafafa]">
@@ -89,23 +108,24 @@ export default function AdminHubLayout() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/80 px-3 py-1 rounded-full shadow-[0_1px_2px_rgba(0,0,0,0.02)] shrink-0">
-          <span className="relative flex h-2 w-2">
+        <div
+          className="flex items-center gap-2 bg-slate-50 border border-slate-200/80 px-3 py-1 rounded-full shadow-[0_1px_2px_rgba(0,0,0,0.02)] shrink-0"
+          title={t(
+            'admin.hubHeader.planeHint',
+            'Gesamtstatus aus dem schwächsten Subsystem (siehe Übersicht)',
+          )}
+        >
+          <span className="relative flex h-2 w-2" aria-hidden>
             <span
               className={cn(
                 'animate-ping absolute inline-flex h-full w-full rounded-full opacity-75',
-                health >= 99 ? 'bg-emerald-400' : health >= 97 ? 'bg-amber-400' : 'bg-red-400',
+                plane.ping,
               )}
             />
-            <span
-              className={cn(
-                'relative inline-flex rounded-full h-2 w-2',
-                health >= 99 ? 'bg-emerald-500' : health >= 97 ? 'bg-amber-500' : 'bg-red-500',
-              )}
-            />
+            <span className={cn('relative inline-flex rounded-full h-2 w-2', plane.dot)} />
           </span>
           <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 font-mono whitespace-nowrap">
-            {controlPlaneLabel(health)}
+            {plane.label}
           </span>
         </div>
       </header>

@@ -66,6 +66,7 @@ import type {
   AiPromptLibraryFeature,
   AiTrustLevel,
 } from "../types/ai-orchestrator";
+import { buildAdminHubOverview } from "../lib/admin-hub-overview.js";
 
 const router = Router();
 
@@ -74,54 +75,13 @@ router.use(authenticate, forbidClientPortalRoles);
 
 /**
  * GET /api/admin/hub-stats
- * Live control-plane counters for Admin Hub (PostgreSQL-backed).
+ * Live Admin-Hub Übersicht: categorical subsystem status + inventory counts.
+ * Does not invent SLA uptime or clamp latency.
  */
-router.get("/hub-stats", requireRole(["SYSTEM_ADMIN"]), async (_req: Request, res: Response): Promise<any> => {
+router.get("/hub-stats", requireRole(["SYSTEM_ADMIN"]), async (req: Request, res: Response): Promise<any> => {
   try {
-    const vectorCount = queryDb(
-      `SELECT COUNT(*)::int AS total FROM "KnowledgeEmbedding"`,
-    ).catch(() => ({ rows: [{ total: 0 }] }));
-
-    const [tickets, users, kbArticles, vaultStores, aiUsageRes, healthRes, vectorRes] = await Promise.all([
-      getDocsDirect("tickets", []),
-      getDocsDirect("users", []),
-      getDocsDirect("kb_articles", []),
-      getDocsDirect("geist_vault_encrypted_stores", []),
-      queryDb(
-        `SELECT COUNT(*)::int AS total,
-                COALESCE(AVG(latency_ms), 0)::int AS avg_latency
-         FROM ai_usage_log WHERE workspace_id = 'default'`,
-      ),
-      getOrchestratorHealth("default").catch(() => null),
-      vectorCount,
-    ]);
-
-    const activeAgents = users.filter(
-      (u: { status?: string; isActive?: boolean; role?: string }) =>
-        u.status === "active" || u.isActive === true || u.role === "agent" || u.role === "admin",
-    ).length;
-
-    const aiRow = aiUsageRes.rows[0] as { total?: number; avg_latency?: number } | undefined;
-    const avgLatency = Math.max(8, Math.min(25, Number(aiRow?.avg_latency) || 12));
-
-    return res.status(200).json({
-      activeAgents,
-      ticketsProcessed: tickets.length,
-      assetsManaged: tickets.length + vaultStores.length + kbArticles.length,
-      vaultSecrets: vaultStores.length,
-      knowledgeArticles: kbArticles.length,
-      aiRequests: Number(aiRow?.total) || 0,
-      systemHealth: healthRes?.status === 'offline' ? 95 : healthRes?.status === 'degraded' ? 98.5 : 99.98,
-      latencyMs: avgLatency,
-      activeVectors: Number((vectorRes.rows[0] as { total?: number } | undefined)?.total) || 0,
-      primaryModel: healthRes?.primaryModel ?? null,
-      providers: (healthRes?.providers ?? []).map((p) => ({
-        provider: p.provider,
-        label: p.label,
-        status: p.status,
-        latencyMs: p.latencyMs,
-      })),
-    });
+    const payload = await buildAdminHubOverview(req);
+    return res.status(200).json(payload);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     safeLog('error', "[Admin Hub Stats] Error:", message);

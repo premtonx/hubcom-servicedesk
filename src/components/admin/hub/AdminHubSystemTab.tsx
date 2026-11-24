@@ -5,7 +5,7 @@ import { AdminHubSectionGrid } from './AdminHubSectionGrid';
 import { AdminHubDemoDataCard } from './AdminHubDemoDataCard';
 import { AdminUnternehmenNavCard } from './AdminUnternehmenNavCard';
 import { categoriesForTab } from './adminHubConfig';
-import type { AdminHubTelemetry } from './adminHubTelemetry';
+import { overallStateLabelDe, type AdminHubTelemetry } from './adminHubTelemetry';
 
 interface AdminHubSystemTabProps {
   telemetry: AdminHubTelemetry;
@@ -14,6 +14,9 @@ interface AdminHubSystemTabProps {
 
 export function AdminHubSystemTab({ telemetry, onTelemetryRefresh }: AdminHubSystemTabProps) {
   const { t } = useTranslation();
+  const inventory =
+    telemetry.assetsManaged ??
+    (telemetry.ticketsTotal ?? 0) + (telemetry.vaultSecrets ?? 0) + (telemetry.knowledgeArticles ?? 0);
 
   return (
     <div className="space-y-10">
@@ -21,20 +24,26 @@ export function AdminHubSystemTab({ telemetry, onTelemetryRefresh }: AdminHubSys
         <SystemTile
           icon={<ShieldCheck className="w-4 h-4 text-emerald-500" />}
           label={t('admin.hubSys.health', 'Steuerungsebene')}
-          value={`${telemetry.systemHealth}%`}
-          hint={t('admin.hubSys.healthHint', 'SLA-Verfügbarkeit der Runtime')}
+          value={overallStateLabelDe(telemetry.overallState ?? 'unknown')}
+          hint={t(
+            'admin.hubSys.healthHint',
+            'Gesamtstatus aus Live-Subsystemen (siehe Übersicht) — kein SLA-Prozent',
+          )}
         />
         <SystemTile
           icon={<HardDrive className="w-4 h-4 text-slate-500" />}
           label={t('admin.hubSys.assets', 'Verwaltete Datensätze')}
-          value={telemetry.assetsManaged.toLocaleString()}
-          hint={t('admin.hubSys.assetsHint', 'Tickets, Tresor-Einträge und Verzeichnisdaten')}
+          value={inventory.toLocaleString('de-DE')}
+          hint={t('admin.hubSys.assetsHint', 'Tickets, Tresor-Einträge und KB-Artikel')}
         />
         <SystemTile
           icon={<Database className="w-4 h-4 text-cyan-600" />}
           label={t('admin.hubSys.backup', 'Import & Wiederherstellung')}
           value={t('admin.hubSys.backupValue', 'CSV / JSON')}
-          hint={t('admin.hubSys.backupHint', 'Nutzen Sie Datenimport für Tenant-Backups und Migrationen')}
+          hint={t(
+            'admin.hubSys.backupHint',
+            'Kein Live-Backup-Status — Datenimport für Migrationen nutzen',
+          )}
         />
       </div>
 
