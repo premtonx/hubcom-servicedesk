@@ -25,6 +25,7 @@ import {
   listHumanReviewPool,
   listPendingApprovals,
   listProviderSecretStatus,
+  deleteProviderSecret,
   resolveApprovalRequest,
   restoreConfigVersion,
   setProviderSecret,
@@ -544,6 +545,8 @@ router.post("/orchestrator/config", authenticate, requireRole(["SYSTEM_ADMIN"]),
 
     const payload = req.body as Partial<AiOrchestratorConfig> & {
       secrets?: Record<string, string>;
+      /** Provider ids whose stored secrets should be removed (values are never returned). */
+      clearSecrets?: string[];
     };
 
     if (payload.scope === "global" && req.user?.role !== "SYSTEM_ADMIN") {
@@ -726,6 +729,24 @@ router.post("/orchestrator/config", authenticate, requireRole(["SYSTEM_ADMIN"]),
             action: `Updated ${provider} API key`,
             fieldName: `${provider}_secret`,
             newValue: "••••••••",
+          });
+        }
+      }
+    }
+
+    if (Array.isArray(payload.clearSecrets)) {
+      for (const provider of payload.clearSecrets) {
+        const id = String(provider || "").trim();
+        if (!id) continue;
+        const removed = await deleteProviderSecret(id, workspaceId);
+        if (removed) {
+          await appendOrchestratorAudit({
+            workspaceId,
+            userId: req.user?.id,
+            userEmail: req.user?.email,
+            action: `Removed ${id} API key`,
+            fieldName: `${id}_secret`,
+            newValue: "(cleared)",
           });
         }
       }

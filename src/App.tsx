@@ -469,6 +469,7 @@ function AppRoutes() {
                       <Route path="customers" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Customers" />}><LazyPage><CustomersPage /></LazyPage></ErrorBoundary>} />
                       <Route path="rag/pipeline" element={<ErrorBoundary fallback={<ModuleCrashFallback module="RAG Pipeline" />}><LazyPage><AdminHubRagPipelinePage /></LazyPage></ErrorBoundary>} />
                       <Route path="rag/search" element={<ErrorBoundary fallback={<ModuleCrashFallback module="RAG Search" />}><LazyPage><AdminHubRagSearchPage /></LazyPage></ErrorBoundary>} />
+                      <Route path="insights" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Insights" />}><LazyPage><InsightsPage /></LazyPage></ErrorBoundary>} />
                     </Route>
                     <Route path="email-channels" element={<Navigate to="/admin/email-channels" replace />} />
                     <Route path="*" element={<Navigate to="/tickets" replace />} />
