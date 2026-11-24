@@ -25,6 +25,7 @@ import { ticketService } from '../services/ticketService';
 import { useAuth } from '../lib/hooks';
 import { toast } from 'sonner';
 import { logAudit } from '../services/auditService';
+import { buildAssigneePayload, clearAssigneePayload } from '../lib/ticketAssignee';
 const RichTextEditor = lazy(() =>
   import('./RichTextEditor').then((m) => ({ default: m.RichTextEditor }))
 );
@@ -225,8 +226,26 @@ export function CreateTicketDialog({
     
     setLoading(true);
     try {
+      const { assignee: formAssignee, ...restForm } = formData as typeof formData & {
+        assignee?: string;
+      };
+      const assigneeFields =
+        !formAssignee || formAssignee === 'unassigned'
+          ? clearAssigneePayload()
+          : formAssignee === user.uid
+            ? buildAssigneePayload(
+                user.uid,
+                user.displayName || user.email || t('tickets.assigneeYourself', 'Yourself'),
+                user.email || null,
+              )
+            : buildAssigneePayload(
+                formAssignee,
+                agents.find((a) => a.id === formAssignee)?.name || formAssignee,
+              );
+
       await ticketService.createTicket({
-        ...formData,
+        ...restForm,
+        ...assigneeFields,
         team: formData.ticketKind === 'bug' ? 'engineering' : 'support',
         ticketKind: formData.ticketKind,
         type: formData.ticketKind === 'bug' ? 'problem' : formData.type,

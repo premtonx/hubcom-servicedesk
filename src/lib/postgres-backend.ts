@@ -829,25 +829,46 @@ export async function getDocsDirect(
           }
         }
 
-        // 2. Harmonized Casing on 'Nicht zugewiesen' / 'unassigned' / 'nicht-zugewiesen' for statuses
+        // 2. Legacy clients that queried status=unassigned meant “no assignee”.
+        // Remap to the canonical assignee emptiness check — never treat unassigned as a status.
         if (field === 'status') {
           const valStr = String(value).toLowerCase().trim();
           if (valStr === 'unassigned' || valStr === 'nicht-zugewiesen' || valStr === 'nicht zugewiesen' || valStr === 'nicht_zugewiesen') {
             if (op === '==' || op === '===') {
               queryStr += ` AND (
-                LOWER(geistdesk_documents.data->>'status') = 'unassigned' 
-                OR LOWER(geistdesk_documents.data->>'status') = 'nicht-zugewiesen' 
-                OR LOWER(geistdesk_documents.data->>'status') = 'nicht zugewiesen'
-                OR LOWER(geistdesk_documents.data->>'status') = 'nicht_zugewiesen'
-                OR geistdesk_documents.data->>'status' IS NULL
+                (
+                  geistdesk_documents.data->>'agentId' IS NULL
+                  OR TRIM(geistdesk_documents.data->>'agentId') = ''
+                  OR LOWER(TRIM(geistdesk_documents.data->>'agentId')) IN ('unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen')
+                )
+                AND (
+                  geistdesk_documents.data->>'assignedTo' IS NULL
+                  OR TRIM(geistdesk_documents.data->>'assignedTo') = ''
+                  OR LOWER(TRIM(geistdesk_documents.data->>'assignedTo')) IN ('unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen')
+                )
+                AND (
+                  geistdesk_documents.data->>'assigneeId' IS NULL
+                  OR TRIM(geistdesk_documents.data->>'assigneeId') = ''
+                  OR LOWER(TRIM(geistdesk_documents.data->>'assigneeId')) IN ('unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen')
+                )
               )`;
             } else if (op === '!=') {
               queryStr += ` AND (
-                LOWER(geistdesk_documents.data->>'status') != 'unassigned' 
-                AND LOWER(geistdesk_documents.data->>'status') != 'nicht-zugewiesen' 
-                AND LOWER(geistdesk_documents.data->>'status') != 'nicht zugewiesen'
-                AND LOWER(geistdesk_documents.data->>'status') != 'nicht_zugewiesen'
-                AND geistdesk_documents.data->>'status' IS NOT NULL
+                (
+                  geistdesk_documents.data->>'agentId' IS NOT NULL
+                  AND TRIM(geistdesk_documents.data->>'agentId') != ''
+                  AND LOWER(TRIM(geistdesk_documents.data->>'agentId')) NOT IN ('unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen')
+                )
+                OR (
+                  geistdesk_documents.data->>'assignedTo' IS NOT NULL
+                  AND TRIM(geistdesk_documents.data->>'assignedTo') != ''
+                  AND LOWER(TRIM(geistdesk_documents.data->>'assignedTo')) NOT IN ('unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen')
+                )
+                OR (
+                  geistdesk_documents.data->>'assigneeId' IS NOT NULL
+                  AND TRIM(geistdesk_documents.data->>'assigneeId') != ''
+                  AND LOWER(TRIM(geistdesk_documents.data->>'assigneeId')) NOT IN ('unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen')
+                )
               )`;
             } else {
               throw new Error(`Unsupported query operator for status: ${op}`);
@@ -1090,7 +1111,29 @@ export async function getTicketStats(): Promise<TicketStats> {
       COUNT(*) FILTER (WHERE LOWER(geistdesk_documents.data->>'status') = 'pending')::int AS pending,
       COUNT(*) FILTER (WHERE LOWER(geistdesk_documents.data->>'status') = 'resolved')::int AS resolved,
       COUNT(*) FILTER (WHERE LOWER(geistdesk_documents.data->>'status') = 'closed')::int AS closed,
-      COUNT(*) FILTER (WHERE COALESCE(geistdesk_documents.data->>'agentId', '') = '')::int AS unassigned,
+      COUNT(*) FILTER (
+        WHERE LOWER(COALESCE(geistdesk_documents.data->>'status', '')) NOT IN ('resolved', 'closed', 'trash', 'spam', 'merged')
+          AND (
+            NULLIF(TRIM(COALESCE(geistdesk_documents.data->>'agentId', '')), '') IS NULL
+            OR LOWER(TRIM(geistdesk_documents.data->>'agentId')) IN ('unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen')
+          )
+          AND (
+            NULLIF(TRIM(COALESCE(geistdesk_documents.data->>'assigneeId', '')), '') IS NULL
+            OR LOWER(TRIM(geistdesk_documents.data->>'assigneeId')) IN ('unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen')
+          )
+          AND (
+            NULLIF(TRIM(COALESCE(geistdesk_documents.data->>'assignedTo', '')), '') IS NULL
+            OR LOWER(TRIM(geistdesk_documents.data->>'assignedTo')) IN ('unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen')
+          )
+          AND (
+            NULLIF(TRIM(COALESCE(geistdesk_documents.data->>'assignedToEmail', '')), '') IS NULL
+            OR LOWER(TRIM(geistdesk_documents.data->>'assignedToEmail')) IN ('unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen')
+          )
+          AND (
+            NULLIF(TRIM(COALESCE(geistdesk_documents.data->>'agentName', '')), '') IS NULL
+            OR LOWER(TRIM(geistdesk_documents.data->>'agentName')) IN ('unassigned', 'nicht-zugewiesen', 'nicht zugewiesen', 'nicht_zugewiesen')
+          )
+      )::int AS unassigned,
       COUNT(*) FILTER (WHERE LOWER(geistdesk_documents.data->>'priority') = 'urgent')::int AS urgent,
       COUNT(*) FILTER (
         WHERE LOWER(geistdesk_documents.data->>'status') IN ('resolved', 'closed')

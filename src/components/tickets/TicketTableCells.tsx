@@ -12,6 +12,7 @@ import { TicketPriority, TicketStatus } from '../../types';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { getInitials, safeString } from '../../lib/utils';
 import { TICKET_DISPATCH_AGENTS } from '../../lib/ticketDispatchAgents';
+import { hasAssignee } from '../../lib/ticketAssignee';
 import { isReadonlyTerminalStatus } from '../../lib/ticket-status';
 import type { TicketCategory } from '../../lib/ticket-categories/types';
 import type { TicketPriorityConfig, TicketStatusConfig } from '../../lib/ticket-config/types';
@@ -208,7 +209,13 @@ export function TicketAssigneeChip({
 }: TicketAssigneeChipProps) {
   const { t } = useTranslation();
   const unassignedLabel = t('tickets.unassigned', 'Unassigned');
-  const isUnassigned = !agentId && !safeString(agentName).trim();
+  const isUnassigned = !hasAssignee({
+    agentId,
+    agentName,
+    assignedTo: agentId,
+    assigneeId: agentId,
+    assignedToEmail: null,
+  });
   const display = isUnassigned ? unassignedLabel : safeString(agentName, unassignedLabel);
   const initial = isUnassigned ? '—' : getInitials(display);
 

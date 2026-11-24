@@ -1,12 +1,23 @@
 import type { Ticket } from '../types';
 
-const UNASSIGNED_SENTINELS = new Set([
+/**
+ * Canonical “unassigned” = no real assignee across agentId / assigneeId /
+ * assignedTo / assignedToEmail / agentName. Legacy string sentinels are
+ * normalized to empty/null — never a status and never a pseudo-user.
+ */
+export const UNASSIGNED_SENTINELS = new Set([
   '',
   'unassigned',
   'nicht-zugewiesen',
   'nicht zugewiesen',
   'nicht_zugewiesen',
 ]);
+
+export function isUnassignedSentinel(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === 'object') return false;
+  return UNASSIGNED_SENTINELS.has(String(value).trim().toLowerCase());
+}
 
 /** Pull a primitive id from a string or `{ id, uid, agentId }` object. */
 export function scalarAssigneeId(val: unknown): string {
@@ -51,7 +62,10 @@ export interface TicketAssigneeUser {
   userName?: string | null;
 }
 
-export function ticketAssigneeIds(ticket: Ticket): string[] {
+export function ticketAssigneeIds(ticket: Pick<
+  Ticket,
+  'agentId' | 'assigneeId' | 'assignedTo' | 'assignedToEmail'
+>): string[] {
   return [
     scalarAssigneeId(ticket.agentId),
     scalarAssigneeId(ticket.assigneeId),
@@ -61,12 +75,137 @@ export function ticketAssigneeIds(ticket: Ticket): string[] {
 }
 
 /** Displayed assignee label — `assignedTo` is an id alias, not a name. */
-export function ticketAssigneeNames(ticket: Ticket): string[] {
+export function ticketAssigneeNames(ticket: Pick<Ticket, 'agentName'>): string[] {
   return [scalarAssigneeName(ticket.agentName)].filter(Boolean);
 }
 
-export function hasAssignee(ticket: Ticket): boolean {
+export function hasAssignee(
+  ticket: Pick<Ticket, 'agentId' | 'assigneeId' | 'assignedTo' | 'assignedToEmail' | 'agentName'>,
+): boolean {
   return ticketAssigneeIds(ticket).length > 0 || ticketAssigneeNames(ticket).length > 0;
+}
+
+/**
+ * Resolve the current real assignee for UI controls.
+ * Returns null when unassigned (including legacy sentinels).
+ */
+export function resolveTicketAssignee(
+  ticket: Pick<Ticket, 'agentId' | 'assigneeId' | 'assignedTo' | 'assignedToEmail' | 'agentName'>,
+): { id: string; name: string } | null {
+  if (!hasAssignee(ticket)) return null;
+  const id =
+    scalarAssigneeId(ticket.agentId) ||
+    scalarAssigneeId(ticket.assignedTo) ||
+    scalarAssigneeId(ticket.assigneeId) ||
+    scalarAssigneeId(ticket.assignedToEmail);
+  const name = scalarAssigneeName(ticket.agentName) || id;
+  if (!id && !name) return null;
+  return { id, name };
+}
+
+export type AssigneeWriteFields = {
+  agentId: string | null;
+  agentName: string | null;
+  assignedTo: string | null;
+  assigneeId: string | null;
+  assignedToEmail: string | null;
+};
+
+/** Explicit clear — all assignee aliases null; never touches status. */
+export function clearAssigneePayload(): AssigneeWriteFields {
+  return {
+    agentId: null,
+    agentName: null,
+    assignedTo: null,
+    assigneeId: null,
+    assignedToEmail: null,
+  };
+}
+
+/**
+ * Normalize an assignee change into the full set of fields the ticket stores.
+ * - `null` / sentinel / empty → clear all assignee fields
+ * - real id → set id aliases + optional name/email
+ * Never includes `status` or other ticket fields.
+ */
+export function buildAssigneePayload(
+  agentId: string | undefined | null,
+  agentName?: string | null,
+  assignedToEmail?: string | null,
+): Partial<AssigneeWriteFields> {
+  if (agentId === undefined && agentName === undefined && assignedToEmail === undefined) {
+    return {};
+  }
+
+  const id = agentId === undefined ? undefined : scalarAssigneeId(agentId);
+  const name =
+    agentName === undefined ? undefined : scalarAssigneeName(agentName) || null;
+  const email =
+    assignedToEmail === undefined
+      ? undefined
+      : isUnassignedSentinel(assignedToEmail)
+        ? null
+        : String(assignedToEmail).trim() || null;
+
+  // Explicit clear: null/empty/sentinel id (or clear with empty name when id omitted)
+  const clearing =
+    agentId === null ||
+    (typeof agentId === 'string' && !scalarAssigneeId(agentId)) ||
+    (agentId === undefined && agentName === null);
+
+  if (clearing || (id !== undefined && !id)) {
+    return clearAssigneePayload();
+  }
+
+  const payload: Partial<AssigneeWriteFields> = {};
+  if (id !== undefined) {
+    payload.agentId = id;
+    payload.assignedTo = id;
+    payload.assigneeId = id;
+  }
+  if (name !== undefined) payload.agentName = name;
+  if (email !== undefined) payload.assignedToEmail = email;
+  return payload;
+}
+
+/**
+ * Server-side: coerce inbound assignee patch so sentinels/`''` become null
+ * and a clear always writes all five fields.
+ */
+export function normalizeAssigneePatchForWrite(
+  body: Record<string, unknown>,
+): Partial<AssigneeWriteFields> | null {
+  const hasAgentId =
+    body.agentId !== undefined || body.assignedTo !== undefined || body.assigneeId !== undefined;
+  const hasName = body.agentName !== undefined;
+  const hasEmail = body.assignedToEmail !== undefined;
+  if (!hasAgentId && !hasName && !hasEmail) return null;
+
+  const rawId = hasAgentId ? (body.agentId ?? body.assignedTo ?? body.assigneeId) : undefined;
+  return buildAssigneePayload(
+    rawId === undefined ? undefined : (rawId as string | null),
+    hasName ? (body.agentName as string | null) : undefined,
+    hasEmail ? (body.assignedToEmail as string | null) : undefined,
+  );
+}
+
+/**
+ * Read-path hydrate: convert legacy sentinel strings to null in memory.
+ * Idempotent; does not touch status or other fields.
+ */
+export function normalizeTicketAssigneeFields<T extends Record<string, unknown>>(doc: T): T {
+  const fields = ['agentId', 'agentName', 'assignedTo', 'assigneeId', 'assignedToEmail'] as const;
+  let changed = false;
+  const next: Record<string, unknown> = { ...doc };
+  for (const field of fields) {
+    if (!(field in next)) continue;
+    const value = next[field];
+    if (typeof value === 'string' && isUnassignedSentinel(value)) {
+      next[field] = null;
+      changed = true;
+    }
+  }
+  return (changed ? next : doc) as T;
 }
 
 function displayedNameMatchesUser(displayed: string, user: TicketAssigneeUser): boolean {

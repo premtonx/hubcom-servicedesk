@@ -27,8 +27,13 @@ import {
 } from '../lib/email-html-prepare';
 import { escapeHtmlText } from '../lib/email-plain-html';
 import { sanitizeInboundHtml } from '../lib/email-ingestion/sanitize-server';
+import { normalizeTicketAssigneeFields } from '../lib/ticketAssignee';
 
 const TICKETS_COLLECTION = 'tickets';
+
+function hydrateTicket(id: string, data: Record<string, unknown>): Ticket {
+  return normalizeTicketAssigneeFields({ id, ...data }) as Ticket;
+}
 
 function enqueueTicketVector(
   sourceId: string,
@@ -64,10 +69,9 @@ export const ticketService = {
     }
 
     return onSnapshot(q, (snapshot) => {
-      const tickets = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Ticket[];
+      const tickets = snapshot.docs.map((d) =>
+        hydrateTicket(d.id, d.data() as Record<string, unknown>),
+      );
       callback(tickets);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, TICKETS_COLLECTION);
@@ -82,10 +86,9 @@ export const ticketService = {
     );
 
     return onSnapshot(q, (snapshot) => {
-      const tickets = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Ticket[];
+      const tickets = snapshot.docs.map((d) =>
+        hydrateTicket(d.id, d.data() as Record<string, unknown>),
+      );
       callback(tickets);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, TICKETS_COLLECTION);
