@@ -515,6 +515,7 @@ async function purgePreviousSimulation(replaceLegacySamples: boolean): Promise<n
         OR collection LIKE $7
         OR collection = $8
         OR (data->>'isDemoData')::text = 'true'
+        OR (data->>'is_demo')::text = 'true'
         OR data->>'source' = 'demo-simulation'
         OR ($9::boolean AND (
              id LIKE 'tkt-sample-%'
@@ -536,7 +537,19 @@ async function purgePreviousSimulation(replaceLegacySamples: boolean): Promise<n
       replaceLegacySamples,
     ],
   );
-  return result.rowCount ?? 0;
+
+  // Fixture Unternehmen / organizations (Acme, CyberDyne, …) tagged is_demo
+  let orgPurged = 0;
+  try {
+    const orgResult = await queryDb(
+      `DELETE FROM organizations WHERE is_demo = TRUE`,
+    );
+    orgPurged = orgResult.rowCount ?? 0;
+  } catch {
+    /* organizations table may be absent on very old DBs */
+  }
+
+  return (result.rowCount ?? 0) + orgPurged;
 }
 
 async function seedTickets(specs: DemoTicketSpec[], opts: DemoSeedOptions): Promise<number> {

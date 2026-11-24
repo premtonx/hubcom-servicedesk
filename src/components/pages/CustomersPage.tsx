@@ -59,7 +59,9 @@ import CompanyHeader from './companies/CompanyHeader';
 import CompanyKPI from './companies/CompanyKPI';
 import CompanyOverviewTab from './companies/CompanyOverviewTab';
 import CompanyOtherTabs from './companies/CompanyOtherTabs';
+import CompanyPortalTab from './companies/CompanyPortalTab';
 import { hydrateCompany } from './companies/utils';
+import axios from 'axios';
 import CSVImporter from '../CSVImporter';
 import { useTranslation } from '../../lib/context/I18nContext';
 
@@ -78,6 +80,7 @@ export default function CustomersPage() {
   const [ticketHistoryMap, setTicketHistoryMap] = useState<Record<string, Ticket[]>>({});
 
   const [activeSubTab, setActiveSubTab] = useState('overview');
+  const [portalFocusInvite, setPortalFocusInvite] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -115,6 +118,7 @@ export default function CustomersPage() {
   // Forms states
   const [newCompany, setNewCompany] = useState({
     name: '',
+    slug: '',
     domain: '',
     website: '',
     logoUrl: '',
@@ -211,6 +215,14 @@ export default function CustomersPage() {
     }
   }, [selectedCompanyId, companies]);
 
+  const slugifyCompany = (input: string) =>
+    String(input || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80);
+
   // Seeding high-fidelity mockup companies and authors
   const seedSampleData = async () => {
     setIsSeeding(true);
@@ -237,7 +249,9 @@ export default function CustomersPage() {
         vaultEntriesCount: 23,
         slaPerformance: "99.8%",
         monthlySpend: "€4,520",
-        customerSince: "Jan 12, 2021"
+        customerSince: "Jan 12, 2021",
+        is_demo: true,
+        isDemoData: true,
       } as any);
 
       await customerService.createContact({
@@ -279,7 +293,9 @@ export default function CustomersPage() {
         vaultEntriesCount: 12,
         slaPerformance: "98.5%",
         monthlySpend: "€2,100",
-        customerSince: "Feb 20, 2022"
+        customerSince: "Feb 20, 2022",
+        is_demo: true,
+        isDemoData: true,
       } as any);
 
       await customerService.createContact({
@@ -312,7 +328,9 @@ export default function CustomersPage() {
         vaultEntriesCount: 48,
         slaPerformance: "92.1%",
         monthlySpend: "€8,900",
-        customerSince: "Jul 11, 2020"
+        customerSince: "Jul 11, 2020",
+        is_demo: true,
+        isDemoData: true,
       } as any);
 
       await customerService.createContact({
@@ -345,7 +363,9 @@ export default function CustomersPage() {
         vaultEntriesCount: 15,
         slaPerformance: "96.4%",
         monthlySpend: "€3,200",
-        customerSince: "Mar 05, 2021"
+        customerSince: "Mar 05, 2021",
+        is_demo: true,
+        isDemoData: true,
       } as any);
 
       // 5. Initech
@@ -370,7 +390,9 @@ export default function CustomersPage() {
         vaultEntriesCount: 8,
         slaPerformance: "99.1%",
         monthlySpend: "€1,250",
-        customerSince: "Oct 19, 2023"
+        customerSince: "Oct 19, 2023",
+        is_demo: true,
+        isDemoData: true,
       } as any);
 
       // 6. Umbrella Corp
@@ -395,8 +417,17 @@ export default function CustomersPage() {
         vaultEntriesCount: 92,
         slaPerformance: "88.2%",
         monthlySpend: "€12,500",
-        customerSince: "Apr 01, 2018"
+        customerSince: "Apr 01, 2018",
+        is_demo: true,
+        isDemoData: true,
       } as any);
+
+      // Bridge seeded CRM companies into canonical organizations (is_demo tagged).
+      try {
+        await axios.post('/api/admin/organizations/sync', {}, { withCredentials: true });
+      } catch {
+        /* non-fatal — boot sync will catch up */
+      }
 
       // Auto pin Acme Global is standard seed favorites behavior
       setFavorites([acmeId]);
@@ -411,16 +442,48 @@ export default function CustomersPage() {
     }
   };
 
-  // Submit edits back to firebase
+  // Submit edits back to firebase + mirror core fields onto linked organization
   const handleEditCompanySubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!selectedCompanyId) return;
     setIsSaving(true);
     try {
+      const slug =
+        (editCompanyData as any).slug ||
+        slugifyCompany(String(editCompanyData.name || ''));
       await customerService.updateCompany(selectedCompanyId, {
         ...editCompanyData,
+        slug,
         updatedAt: new Date()
-      });
+      } as any);
+
+      const orgId =
+        (editCompanyData as any).organizationId ||
+        (editCompanyData as any).organization_id ||
+        selectedCompany?.organizationId ||
+        selectedCompany?.organization_id;
+      if (orgId) {
+        try {
+          await axios.put(
+            `/api/admin/organizations/${encodeURIComponent(String(orgId))}`,
+            {
+              name: editCompanyData.name,
+              slug,
+              domain: editCompanyData.domain || null,
+              website: editCompanyData.website || null,
+              industry: editCompanyData.branche || null,
+              tier: (editCompanyData as any).tier || null,
+              sla: (editCompanyData as any).contractSla || null,
+              contract_renewal: (editCompanyData as any).contractRenewalDate || null,
+              logo_url: editCompanyData.logoUrl || null,
+            },
+            { withCredentials: true },
+          );
+        } catch {
+          /* CRM update already applied */
+        }
+      }
+
       setIsEditDialogOpen(false);
       toast.success("Support account metrics updated successfully!");
     } catch (error) {
@@ -574,7 +637,7 @@ export default function CustomersPage() {
     reader.readAsDataURL(file);
   };
 
-  // Create standard company
+  // Create company via canonical organizations API (also mirrors CRM company)
   const handleCreateCompany = async (e: FormEvent, isDraft = false) => {
     if (e) e.preventDefault();
     if (!newCompany.name || !newCompany.domain) {
@@ -583,10 +646,38 @@ export default function CustomersPage() {
     }
     setIsSaving(true);
     try {
-      const companyId = await customerService.createCompany({
+      const slug = newCompany.slug?.trim() || slugifyCompany(newCompany.name);
+      const orgRes = await axios.post(
+        '/api/admin/organizations',
+        {
+          name: newCompany.name.trim(),
+          slug,
+          domain: newCompany.domain.trim().toLowerCase(),
+          website: newCompany.website || null,
+          industry: newCompany.branche || null,
+          tier: newCompany.tier || null,
+          sla: newCompany.contractSla || null,
+          contract_renewal: newCompany.contractRenewalDate || null,
+          logo_url: newCompany.logoUrl || null,
+          is_active: !isDraft,
+          settings: {},
+        },
+        { withCredentials: true },
+      );
+      const organization = orgRes.data?.organization;
+      const companyId = String(organization?.crm_company_id || '');
+      if (!companyId) {
+        throw new Error('Organization created without CRM company link');
+      }
+
+      await customerService.updateCompany(companyId, {
         ...newCompany,
+        slug,
+        organizationId: organization.id,
+        organization_id: organization.id,
         phoneNumbers: newCompany.primaryContactPhone ? [newCompany.primaryContactPhone] : [],
-        isDraft: isDraft
+        isDraft: isDraft,
+        updatedAt: new Date(),
       } as any);
 
       // Create contact if specified
@@ -622,6 +713,7 @@ export default function CustomersPage() {
       // Reset form
       setNewCompany({
         name: '',
+        slug: '',
         domain: '',
         website: '',
         logoUrl: '',
@@ -648,8 +740,11 @@ export default function CustomersPage() {
         vaultEntriesCount: 23,
         slaPerformance: '99.8%'
       });
-    } catch (error) {
-      toast.error(isDraft ? "Failed to save draft" : "Failed to create company");
+    } catch (error: any) {
+      toast.error(
+        error?.response?.data?.error ||
+          (isDraft ? "Failed to save draft" : "Failed to create company"),
+      );
     } finally {
       setIsSaving(false);
     }
@@ -735,6 +830,14 @@ export default function CustomersPage() {
                   setIsEditDialogOpen(true);
                 }}
                 onViewContractClick={() => setActiveSubTab('contracts')}
+                onBrandingClick={() => {
+                  setPortalFocusInvite(false);
+                  setActiveSubTab('portal');
+                }}
+                onInviteClientAdminClick={() => {
+                  setPortalFocusInvite(true);
+                  setActiveSubTab('portal');
+                }}
               />
 
               {/* KPI Cards Grid Component */}
@@ -742,17 +845,25 @@ export default function CustomersPage() {
 
               {/* Navigation Tabs */}
               <div className="border-b border-muted">
-                <Tabs value={activeSubTab} onValueChange={setActiveSubTab} className="w-full">
+                <Tabs
+                  value={activeSubTab}
+                  onValueChange={(val) => {
+                    setActiveSubTab(val);
+                    if (val !== 'portal') setPortalFocusInvite(false);
+                  }}
+                  className="w-full"
+                >
                   <TabsList className="bg-transparent border-none p-0 h-auto flex gap-4 sm:gap-6 select-none w-full max-w-full overflow-x-auto flex-nowrap whitespace-nowrap no-scrollbar">
                     {[
                       { value: 'overview', label: t('nav.overview', 'Overview') },
-                      { value: 'contacts', label: t('companies.contacts', 'Contacts'), count: employees.length },
+                      { value: 'contacts', label: t('companies.contacts', 'Kontakte'), count: employees.length },
                       { value: 'tickets', label: t('nav.tickets', 'Tickets'), count: ticketHistory.length },
-                      { value: 'assets', label: t('companies.assetOverview', 'Assets'), count: hydratedCompany.assetsCount },
-                      { value: 'contracts', label: t('companies.supportContract', 'Contracts') },
+                      { value: 'assets', label: t('companies.assetOverview', 'Asset-Übersicht'), count: hydratedCompany.assetsCount },
+                      { value: 'contracts', label: t('companies.supportContract', 'Support-Vertrag') },
                       { value: 'vault', label: t('nav.vault', 'Vault'), count: hydratedCompany.vaultEntriesCount },
-                      { value: 'insights', label: t('companies.aiInsights', 'AI Insights'), icon: Sparkles },
-                      { value: 'activity', label: t('companies.activityTimeline', 'Activity') }
+                      { value: 'insights', label: t('companies.aiInsights', 'KI-Erkenntnisse'), icon: Sparkles },
+                      { value: 'activity', label: t('companies.activityTimeline', 'Aktivitätschronik') },
+                      { value: 'portal', label: t('companies.portalTab', 'Kunden-Portal & Branding'), icon: Globe },
                     ].map(tab => {
                       const Icon = tab.icon;
                       return (
@@ -783,6 +894,17 @@ export default function CustomersPage() {
                   onTabChange={setActiveSubTab}
                   onOpenVaultClick={() => setActiveSubTab('vault')}
                   onViewAllTicketsClick={() => setActiveSubTab('tickets')}
+                />
+              ) : activeSubTab === 'portal' ? (
+                <CompanyPortalTab
+                  organizationId={
+                    hydratedCompany.organizationId ||
+                    hydratedCompany.organization_id ||
+                    null
+                  }
+                  companyName={hydratedCompany.name}
+                  focusInvite={portalFocusInvite}
+                  onOpenEmailConfig={() => navigate('/admin/email-channels')}
                 />
               ) : (
                 <CompanyOtherTabs 
@@ -953,16 +1075,51 @@ export default function CustomersPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5 col-span-2">
                       <Label htmlFor="name" className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                        Company Name <span className="text-red-500">*</span>
+                        Name <span className="text-red-500">*</span>
                       </Label>
                       <Input 
                         id="name" 
                         required
                         placeholder="e.g. Acme Global Solutions" 
                         value={newCompany.name}
-                        onChange={(e) => setNewCompany({...newCompany, name: e.target.value})}
+                        onChange={(e) => {
+                          const name = e.target.value;
+                          setNewCompany((prev) => ({
+                            ...prev,
+                            name,
+                            slug:
+                              !prev.slug || prev.slug === slugifyCompany(prev.name)
+                                ? slugifyCompany(name)
+                                : prev.slug,
+                          }));
+                        }}
                         className="rounded-xl border border-slate-200 h-10 font-semibold text-slate-800 text-xs focus-visible:ring-primary"
                       />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="slug" className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Slug <span className="text-red-500">*</span>
+                      </Label>
+                      <Input
+                        id="slug"
+                        required
+                        placeholder="acme-global"
+                        value={newCompany.slug}
+                        onChange={(e) =>
+                          setNewCompany({
+                            ...newCompany,
+                            slug: e.target.value
+                              .toLowerCase()
+                              .replace(/[^a-z0-9-]+/g, '-')
+                              .replace(/^-+|-+$/g, ''),
+                          })
+                        }
+                        className="rounded-xl border border-slate-200 h-10 font-semibold text-slate-800 text-xs focus-visible:ring-primary font-mono"
+                      />
+                      <p className="text-[9px] text-slate-400 font-semibold mt-1">
+                        Portal-Tenant-Kennung (eindeutig)
+                      </p>
                     </div>
 
                     <div className="space-y-1.5">
@@ -1410,11 +1567,39 @@ export default function CustomersPage() {
           <form onSubmit={handleEditCompanySubmit} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs text-foreground font-semibold">
               <div className="space-y-1.5 col-span-2">
-                <Label htmlFor="edit-name" className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Company Name</Label>
+                <Label htmlFor="edit-name" className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Name</Label>
                 <Input 
                   id="edit-name" 
                   value={editCompanyData.name || ''}
                   onChange={(e) => setEditCompanyData({...editCompanyData, name: e.target.value})}
+                  className="rounded-xl border border-muted-foreground/15 h-10 font-semibold"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-slug" className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Slug</Label>
+                <Input
+                  id="edit-slug"
+                  value={(editCompanyData as any).slug || ''}
+                  onChange={(e) =>
+                    setEditCompanyData({
+                      ...editCompanyData,
+                      slug: e.target.value
+                        .toLowerCase()
+                        .replace(/[^a-z0-9-]+/g, '-')
+                        .replace(/^-+|-+$/g, ''),
+                    } as any)
+                  }
+                  className="rounded-xl border border-muted-foreground/15 h-10 font-semibold font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-domain" className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Domain</Label>
+                <Input 
+                  id="edit-domain" 
+                  value={editCompanyData.domain || ''}
+                  onChange={(e) => setEditCompanyData({...editCompanyData, domain: e.target.value})}
                   className="rounded-xl border border-muted-foreground/15 h-10 font-semibold"
                 />
               </div>
@@ -1425,16 +1610,6 @@ export default function CustomersPage() {
                   id="edit-website" 
                   value={editCompanyData.website || ''}
                   onChange={(e) => setEditCompanyData({...editCompanyData, website: e.target.value})}
-                  className="rounded-xl border border-muted-foreground/15 h-10 font-semibold"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-domain" className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Primary Domain</Label>
-                <Input 
-                  id="edit-domain" 
-                  value={editCompanyData.domain || ''}
-                  onChange={(e) => setEditCompanyData({...editCompanyData, domain: e.target.value})}
                   className="rounded-xl border border-muted-foreground/15 h-10 font-semibold"
                 />
               </div>

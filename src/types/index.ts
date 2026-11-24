@@ -199,6 +199,13 @@ export interface Company {
   phoneNumbers: string[];
   createdAt: any;
   updatedAt?: any;
+  /** Linked MSP portal organization (SQL `organizations.id`). */
+  organizationId?: string | null;
+  organization_id?: string | null;
+  /** Optional slug for portal tenant (synced to organizations.slug). */
+  slug?: string | null;
+  is_demo?: boolean;
+  isDemoData?: boolean;
 }
 
 export interface Contact {

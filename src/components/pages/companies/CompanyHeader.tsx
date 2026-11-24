@@ -10,7 +10,9 @@ import {
   FileText,
   BadgeAlert,
   HelpCircle,
-  ExternalLink
+  ExternalLink,
+  ImagePlus,
+  UserPlus,
 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
@@ -22,12 +24,16 @@ interface CompanyHeaderProps {
   company: HydratedCompany;
   onEditCompanyClick: () => void;
   onViewContractClick: () => void;
+  onBrandingClick?: () => void;
+  onInviteClientAdminClick?: () => void;
 }
 
 export default function CompanyHeader({
   company,
   onEditCompanyClick,
-  onViewContractClick
+  onViewContractClick,
+  onBrandingClick,
+  onInviteClientAdminClick,
 }: CompanyHeaderProps) {
   const { t } = useTranslation();
   // Initials for avatar fallback
@@ -44,7 +50,29 @@ export default function CompanyHeader({
         </div>
         
         {/* Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {onBrandingClick ? (
+            <Button
+              onClick={onBrandingClick}
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-xl border-muted-foreground/15 text-foreground hover:bg-muted font-bold text-xs gap-1.5 px-3 cursor-pointer"
+            >
+              <ImagePlus className="w-3.5 h-3.5" />
+              {t('companies.branding', 'Branding')}
+            </Button>
+          ) : null}
+          {onInviteClientAdminClick ? (
+            <Button
+              onClick={onInviteClientAdminClick}
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-xl border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold text-xs gap-1.5 px-3 cursor-pointer"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              {t('companies.inviteClientAdmin', 'CLIENT_ADMIN einladen')}
+            </Button>
+          ) : null}
           <Button 
             variant="outline" 
             size="icon" 
@@ -59,7 +87,7 @@ export default function CompanyHeader({
             className="h-9 rounded-xl border-muted-foreground/15 text-foreground hover:bg-muted font-bold text-xs gap-1.5 px-4 cursor-pointer"
           >
             <Edit3 className="w-3.5 h-3.5" />
-            {t('companies.editCompany', 'Edit Company')}
+            {t('companies.editCompany', 'Unternehmen bearbeiten')}
           </Button>
         </div>
       </div>

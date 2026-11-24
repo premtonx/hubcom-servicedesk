@@ -331,8 +331,21 @@ export async function initDb() {
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS sso_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS logo_url TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS portal_title TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS industry TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS website TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS tier TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS sla TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contract_renewal TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS crm_company_id TEXT;
     CREATE INDEX IF NOT EXISTS idx_organizations_active_name
       ON organizations (is_active, name);
+    CREATE INDEX IF NOT EXISTS idx_organizations_crm_company
+      ON organizations (crm_company_id)
+      WHERE crm_company_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_organizations_is_demo
+      ON organizations (is_demo)
+      WHERE is_demo = TRUE;
     CREATE INDEX IF NOT EXISTS idx_organizations_domain
       ON organizations (domain)
       WHERE domain IS NOT NULL;
@@ -352,6 +365,19 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_ticket_participants_ticket
       ON ticket_participants (ticket_id);
   `);
+
+  // Unify CRM companies ↔ MSP organizations (idempotent; non-fatal on fresh DB).
+  try {
+    const { syncCompaniesAndOrganizations } = await import(
+      './client-portal/org-company-sync.js'
+    );
+    await syncCompaniesAndOrganizations();
+  } catch (syncErr: any) {
+    console.warn(
+      '[initDb] org↔company sync skipped:',
+      syncErr?.message || syncErr,
+    );
+  }
 
   // pgvector RAG store (KnowledgeEmbedding) — mirrored from prisma/migrations.
   try {
