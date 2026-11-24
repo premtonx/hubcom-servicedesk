@@ -65,7 +65,45 @@ async function dbAction<T = unknown>(payload: Record<string, unknown>): Promise<
   return res.data?.result as T;
 }
 
+export interface PortalDashboardResponse {
+  role: string;
+  organization: {
+    id: string;
+    name: string;
+    logoUrl: string | null;
+    portalTitle: string;
+  };
+  user: { id: string; name: string };
+  kpis: Record<string, number | string>;
+  tickets: Array<{
+    id: string;
+    customId: string | null;
+    subject: string;
+    status: string;
+    priority: string;
+    updatedAt: string;
+    requesterName: string | null;
+    waitingOnCustomer: boolean;
+  }>;
+  myOpenTickets?: PortalDashboardResponse['tickets'];
+  recentlyResolved?: PortalDashboardResponse['tickets'];
+  activity?: Array<{ date: string; name: string; created: number; resolved: number }>;
+  team?: PortalTeamSummary | null;
+  email?: {
+    configured: boolean;
+    healthy: boolean;
+    mailbox: string | null;
+    status: string | null;
+    sendAsEnabled: boolean;
+  } | null;
+}
+
 export const clientPortalApi = {
+  async getDashboard(): Promise<PortalDashboardResponse> {
+    const res = await axios.get('/api/portal/dashboard', { withCredentials: true });
+    return res.data as PortalDashboardResponse;
+  },
+
   async listMembers(): Promise<PortalMember[]> {
     const res = await axios.get('/api/portal/members', { withCredentials: true });
     return res.data?.members || [];

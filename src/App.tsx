@@ -61,6 +61,9 @@ const PortalLayout = lazy(() => import('./components/portal/PortalLayout'));
 const PortalTicketsPage = lazy(() => import('./components/portal/PortalTicketsPage'));
 const PortalTicketDetailPage = lazy(() => import('./components/portal/PortalTicketDetailPage'));
 const PortalCreateTicketPage = lazy(() => import('./components/portal/PortalCreateTicketPage'));
+const PortalDashboardPage = lazy(
+  () => import('./components/pages/client-portal/PortalDashboardPage'),
+);
 const ClientTicketsPage = lazy(() => import('./components/pages/client-portal/ClientTicketsPage'));
 const ClientCreateTicketPage = lazy(
   () => import('./components/pages/client-portal/ClientCreateTicketPage'),
@@ -99,7 +102,7 @@ function AdminRoute({ children }: { children: ReactNode }) {
   }
 
   if (isClient) {
-    return <Navigate to="/portal/tickets" replace />;
+    return <Navigate to="/portal/dashboard" replace />;
   }
 
   if (!isAdmin) {
@@ -139,7 +142,7 @@ function ClientAdminRoute({ children }: { children: ReactNode }) {
     );
   }
   if (!isClient) return <Navigate to="/dashboard" replace />;
-  if (!isClientAdmin) return <Navigate to="/portal/tickets" replace />;
+  if (!isClientAdmin) return <Navigate to="/portal/dashboard" replace />;
   return <>{children}</>;
 }
 
@@ -153,7 +156,7 @@ function StaffShellRedirect({ children }: { children: ReactNode }) {
       </div>
     );
   }
-  if (isClient) return <Navigate to="/portal/tickets" replace />;
+  if (isClient) return <Navigate to="/portal/dashboard" replace />;
   return <>{children}</>;
 }
 
@@ -166,7 +169,7 @@ function ClientAwareHomeRedirect() {
       </div>
     );
   }
-  return <Navigate to={isClient ? '/portal/tickets' : '/dashboard'} replace />;
+  return <Navigate to={isClient ? '/portal/dashboard' : '/dashboard'} replace />;
 }
 
 function OnboardingGate({ children }: { children: ReactNode }) {
@@ -350,7 +353,17 @@ function AppRoutes() {
                         </ClientPortalRoute>
                       }
                     >
-                      <Route index element={<Navigate to="tickets" replace />} />
+                      <Route index element={<Navigate to="dashboard" replace />} />
+                      <Route
+                        path="dashboard"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Dashboard" />}>
+                            <LazyPage>
+                              <PortalDashboardPage />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
                       <Route
                         path="tickets"
                         element={
@@ -405,7 +418,7 @@ function AppRoutes() {
                           </ClientAdminRoute>
                         }
                       />
-                      <Route path="*" element={<Navigate to="tickets" replace />} />
+                      <Route path="*" element={<Navigate to="dashboard" replace />} />
                     </Route>
 
                     <Route

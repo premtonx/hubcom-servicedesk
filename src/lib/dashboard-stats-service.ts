@@ -7,16 +7,33 @@ const MS_PER_HOUR = 60 * 60 * 1000;
 export interface DashboardTrendPoint {
   name: string;
   tickets: number;
+  incoming: number;
+  resolved: number;
   date: string;
 }
 
 export interface DashboardRecentTicket {
   id: string;
+  customId?: string | null;
   subject: string;
   category: string;
   priority: string;
   status: string;
   updatedAt: string;
+  company?: string | null;
+  companyId?: string | null;
+  organizationId?: string | null;
+  agentId?: string | null;
+  agentName?: string | null;
+  requesterName?: string | null;
+}
+
+export interface DashboardClientOrgSummary {
+  id: string;
+  name: string;
+  logoUrl: string | null;
+  openCount: number;
+  slaStatus: 'healthy' | 'risk';
 }
 
 export interface DashboardInsightItem {
@@ -47,8 +64,10 @@ export interface DashboardStatsPayload {
   buckets: {
     open: number;
     inProgress: number;
+    openInProgress: number;
     unassigned: number;
     overdue: number;
+    resolvedInPeriod: number;
   };
   trendChart: DashboardTrendPoint[];
   trendFooter: {
@@ -57,10 +76,12 @@ export interface DashboardStatsPayload {
     resolved: number;
   };
   recentTickets: DashboardRecentTicket[];
+  clientOrganizations: DashboardClientOrgSummary[];
   aiInsights: {
     summary: string;
     items: DashboardInsightItem[];
     cachedAt: string | null;
+    offline: boolean;
   };
   kbHealth: {
     score: number;
@@ -146,6 +167,7 @@ function buildInsightClusters(tickets: Array<{ subject?: string; status?: string
   }
 
   return Array.from(tokenCounts.entries())
+    .filter(([, meta]) => meta.count >= 2)
     .sort((a, b) => b[1].count - a[1].count)
     .slice(0, 5)
     .map(([key, meta], index) => ({
@@ -158,27 +180,56 @@ function buildInsightClusters(tickets: Array<{ subject?: string; status?: string
 }
 
 async function queryTicketTrendBuckets(days = 7): Promise<DashboardTrendPoint[]> {
-  const res = await queryDb(
-    `
-    SELECT
-      DATE(COALESCE(
-        NULLIF(data->>'createdAt', '')::timestamptz,
-        created_at
-      )) AS bucket_date,
-      COUNT(*)::int AS ticket_count
-    FROM geistdesk_documents
-    WHERE collection = 'tickets'
-      AND COALESCE(NULLIF(data->>'createdAt', '')::timestamptz, created_at) >= (CURRENT_DATE - $1::int)
-    GROUP BY 1
-    ORDER BY 1 ASC
-    `,
-    [days - 1],
-  );
+  const [incomingRes, resolvedRes] = await Promise.all([
+    queryDb(
+      `
+      SELECT
+        DATE(COALESCE(
+          NULLIF(data->>'createdAt', '')::timestamptz,
+          created_at
+        )) AS bucket_date,
+        COUNT(*)::int AS ticket_count
+      FROM geistdesk_documents
+      WHERE collection = 'tickets'
+        AND COALESCE(NULLIF(data->>'createdAt', '')::timestamptz, created_at) >= (CURRENT_DATE - $1::int)
+      GROUP BY 1
+      ORDER BY 1 ASC
+      `,
+      [days - 1],
+    ),
+    queryDb(
+      `
+      SELECT
+        DATE(COALESCE(
+          NULLIF(data->>'resolvedAt', '')::timestamptz,
+          NULLIF(data->>'closedAt', '')::timestamptz,
+          updated_at
+        )) AS bucket_date,
+        COUNT(*)::int AS ticket_count
+      FROM geistdesk_documents
+      WHERE collection = 'tickets'
+        AND LOWER(data->>'status') IN ('resolved', 'closed')
+        AND COALESCE(
+          NULLIF(data->>'resolvedAt', '')::timestamptz,
+          NULLIF(data->>'closedAt', '')::timestamptz,
+          updated_at
+        ) >= (CURRENT_DATE - $1::int)
+      GROUP BY 1
+      ORDER BY 1 ASC
+      `,
+      [days - 1],
+    ),
+  ]);
 
-  const byDate = new Map<string, number>();
-  for (const row of res.rows) {
+  const incomingByDate = new Map<string, number>();
+  for (const row of incomingRes.rows) {
     const key = new Date(row.bucket_date).toISOString().slice(0, 10);
-    byDate.set(key, row.ticket_count ?? 0);
+    incomingByDate.set(key, row.ticket_count ?? 0);
+  }
+  const resolvedByDate = new Map<string, number>();
+  for (const row of resolvedRes.rows) {
+    const key = new Date(row.bucket_date).toISOString().slice(0, 10);
+    resolvedByDate.set(key, row.ticket_count ?? 0);
   }
 
   const points: DashboardTrendPoint[] = [];
@@ -188,10 +239,14 @@ async function queryTicketTrendBuckets(days = 7): Promise<DashboardTrendPoint[]>
     const d = new Date(end);
     d.setDate(end.getDate() - i);
     const iso = d.toISOString().slice(0, 10);
+    const incoming = incomingByDate.get(iso) ?? 0;
+    const resolved = resolvedByDate.get(iso) ?? 0;
     points.push({
       date: iso,
-      name: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-      tickets: byDate.get(iso) ?? 0,
+      name: d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' }),
+      tickets: incoming,
+      incoming,
+      resolved,
     });
   }
   return points;
@@ -266,16 +321,29 @@ async function queryExtendedTicketStats() {
   };
 }
 
-async function queryRecentTickets(limit = 5): Promise<DashboardRecentTicket[]> {
+async function queryRecentTickets(limit = 8): Promise<DashboardRecentTicket[]> {
   const res = await queryDb(
     `
     SELECT
       id,
+      data->>'customId' AS custom_id,
       data->>'subject' AS subject,
-      COALESCE(data->>'category', data->>'team', 'General') AS category,
+      COALESCE(
+        data->>'categoryName',
+        data->>'category',
+        data->>'categorySlug',
+        data->>'team',
+        'Allgemein'
+      ) AS category,
       COALESCE(data->>'priority', 'medium') AS priority,
       COALESCE(data->>'status', 'open') AS status,
-      COALESCE(NULLIF(data->>'updatedAt', '')::timestamptz, updated_at) AS updated_at
+      COALESCE(NULLIF(data->>'updatedAt', '')::timestamptz, updated_at) AS updated_at,
+      COALESCE(data->>'company', data->>'customerCompany', data->>'organizationName') AS company,
+      data->>'companyId' AS company_id,
+      COALESCE(data->>'organizationId', data->>'organization_id') AS organization_id,
+      COALESCE(data->>'agentId', data->>'assignedTo') AS agent_id,
+      data->>'agentName' AS agent_name,
+      COALESCE(data->>'customerName', data->>'requesterName', data->>'from_name') AS requester_name
     FROM geistdesk_documents
     WHERE collection = 'tickets'
     ORDER BY COALESCE(NULLIF(data->>'updatedAt', '')::timestamptz, updated_at) DESC
@@ -286,12 +354,60 @@ async function queryRecentTickets(limit = 5): Promise<DashboardRecentTicket[]> {
 
   return res.rows.map((row) => ({
     id: row.id,
-    subject: row.subject ?? 'Untitled ticket',
-    category: row.category ?? 'General',
+    customId: row.custom_id || null,
+    subject: row.subject ?? 'Ohne Betreff',
+    category: row.category ?? 'Allgemein',
     priority: row.priority ?? 'medium',
     status: row.status ?? 'open',
     updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+    company: row.company || null,
+    companyId: row.company_id || null,
+    organizationId: row.organization_id || null,
+    agentId: row.agent_id || null,
+    agentName: row.agent_name || null,
+    requesterName: row.requester_name || null,
   }));
+}
+
+async function queryClientOrgOverview(): Promise<DashboardClientOrgSummary[]> {
+  try {
+    const { listOrganizations } = await import('./client-portal/organizations.js');
+    const orgs = await listOrganizations({ includeInactive: false });
+    const tickets = await getDocsDirect('tickets', []);
+    const now = Date.now();
+
+    const summaries: DashboardClientOrgSummary[] = orgs.map((org) => {
+      const orgTickets = tickets.filter((t) => {
+        const oid = String(t.organizationId || t.organization_id || '').trim();
+        return oid === org.id;
+      });
+      const openTickets = orgTickets.filter((t) => {
+        const status = String(t.status || '').toLowerCase();
+        return status !== 'closed' && status !== 'resolved' && status !== 'merged' && status !== 'deleted';
+      });
+      const hasSlaRisk = openTickets.some((t) => {
+        const due = t.slaDueAt || t.firstResponseDue || t.sla_due_at;
+        if (!due) return false;
+        const ts = new Date(String(due)).getTime();
+        return Number.isFinite(ts) && ts < now;
+      });
+      return {
+        id: org.id,
+        name: org.name,
+        logoUrl: org.logo_url || null,
+        openCount: openTickets.length,
+        slaStatus: hasSlaRisk ? 'risk' : 'healthy',
+      };
+    });
+
+    return summaries
+      .filter((o) => o.openCount > 0 || true)
+      .sort((a, b) => b.openCount - a.openCount)
+      .slice(0, 8);
+  } catch (err) {
+    console.warn('[Dashboard] client org overview skipped:', err);
+    return [];
+  }
 }
 
 async function queryPeriodComparison(days = 7) {
@@ -329,37 +445,58 @@ export async function getCachedAiInsights(): Promise<{
   summary: string;
   items: DashboardInsightItem[];
   cachedAt: string | null;
+  offline: boolean;
 }> {
-  const cached = await getDocDirect('platform_analytics', 'cached_ai_insights');
-  const evaluatedAt = typeof cached?.evaluatedAt === 'string' ? cached.evaluatedAt : null;
-  const isFresh =
-    evaluatedAt && Date.now() - new Date(evaluatedAt).getTime() < MS_PER_DAY;
+  try {
+    const cached = await getDocDirect('platform_analytics', 'cached_ai_insights');
+    const evaluatedAt = typeof cached?.evaluatedAt === 'string' ? cached.evaluatedAt : null;
+    const isFresh =
+      evaluatedAt && Date.now() - new Date(evaluatedAt).getTime() < MS_PER_DAY;
 
-  if (isFresh && Array.isArray(cached?.items) && cached.items.length > 0) {
+    const normalizeItems = (raw: unknown): DashboardInsightItem[] => {
+      if (!Array.isArray(raw)) return [];
+      return (raw as DashboardInsightItem[]).filter((item) => Number(item?.count || 0) >= 2);
+    };
+
+    if (isFresh && Array.isArray(cached?.items)) {
+      const items = normalizeItems(cached.items);
+      return {
+        summary:
+          items.length > 0
+            ? `${items.length} wiederkehrende Problemmuster in aktiven Tickets erkannt.`
+            : 'Keine wiederkehrenden Problemmuster in der aktiven Ticket-Warteschlange.',
+        items,
+        cachedAt: evaluatedAt,
+        offline: false,
+      };
+    }
+
+    const tickets = await getDocsDirect('tickets', []);
+    const items = buildInsightClusters(tickets);
+    const summary =
+      items.length > 0
+        ? `${items.length} wiederkehrende Problemmuster in aktiven Tickets erkannt.`
+        : 'Keine wiederkehrenden Problemmuster in der aktiven Ticket-Warteschlange.';
+
+    const payload = {
+      summary,
+      items,
+      evaluatedAt: new Date().toISOString(),
+      nextEvaluationAt: new Date(Date.now() + MS_PER_DAY).toISOString(),
+      source: 'cluster_analysis',
+    };
+    await setDocDirect('platform_analytics', 'cached_ai_insights', payload);
+
+    return { summary, items, cachedAt: payload.evaluatedAt, offline: false };
+  } catch (err) {
+    console.warn('[Dashboard] AI insights unavailable:', err);
     return {
-      summary: typeof cached.summary === 'string' ? cached.summary : '',
-      items: cached.items as DashboardInsightItem[],
-      cachedAt: evaluatedAt,
+      summary: 'KI-Analyse derzeit nicht verfügbar.',
+      items: [],
+      cachedAt: null,
+      offline: true,
     };
   }
-
-  const tickets = await getDocsDirect('tickets', []);
-  const items = buildInsightClusters(tickets);
-  const summary =
-    items.length > 0
-      ? `AI clustering identified ${items.length} recurring issue pattern${items.length === 1 ? '' : 's'} across active tickets.`
-      : 'No recurring issue clusters detected in the active ticket queue.';
-
-  const payload = {
-    summary,
-    items,
-    evaluatedAt: new Date().toISOString(),
-    nextEvaluationAt: new Date(Date.now() + MS_PER_DAY).toISOString(),
-    source: 'cluster_analysis',
-  };
-  await setDocDirect('platform_analytics', 'cached_ai_insights', payload);
-
-  return { summary, items, cachedAt: payload.evaluatedAt };
 }
 
 export interface TicketQualityScorePayload {
@@ -504,16 +641,25 @@ export async function getTicketQualityScore(forceRefresh = false): Promise<Ticke
 }
 
 export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
-  const [stats, trendChart, recentTickets, comparison, articles, kbSettings, aiInsights] =
-    await Promise.all([
-      queryExtendedTicketStats(),
-      queryTicketTrendBuckets(7),
-      queryRecentTickets(5),
-      queryPeriodComparison(7),
-      getDocsDirect('kb_articles', []),
-      getDocDirect('kb_settings', 'global'),
-      getCachedAiInsights(),
-    ]);
+  const [
+    stats,
+    trendChart,
+    recentTickets,
+    comparison,
+    articles,
+    kbSettings,
+    aiInsights,
+    clientOrganizations,
+  ] = await Promise.all([
+    queryExtendedTicketStats(),
+    queryTicketTrendBuckets(7),
+    queryRecentTickets(8),
+    queryPeriodComparison(7),
+    getDocsDirect('kb_articles', []),
+    getDocDirect('kb_settings', 'global'),
+    getCachedAiInsights(),
+    queryClientOrgOverview(),
+  ]);
 
   const kbMetrics = computeDashboardMetrics(
     articles,
@@ -522,10 +668,17 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
   const kbScore = kbMetrics.healthScore;
   const kbTrend = kbMetrics.trends.health;
 
-  const resolutionRateValue = stats.total > 0 ? (stats.resolved / stats.total) * 100 : 0;
+  const resolvedInPeriod = Number(comparison.current_resolved) || 0;
+  const incomingInPeriod = Number(comparison.current_incoming) || 0;
+  const resolutionRateValue =
+    incomingInPeriod > 0
+      ? (resolvedInPeriod / incomingInPeriod) * 100
+      : stats.total > 0
+        ? (stats.resolved / stats.total) * 100
+        : 0;
   const previousResolution =
-    stats.total > 0
-      ? ((Number(comparison.previous_resolved) || 0) / Math.max(stats.total, 1)) * 100
+    Number(comparison.previous_incoming) > 0
+      ? ((Number(comparison.previous_resolved) || 0) / Number(comparison.previous_incoming)) * 100
       : 0;
 
   const from = new Date();
@@ -537,7 +690,7 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
     kpis: {
       resolutionRate: formatPercent(resolutionRateValue),
       avgResolutionTime: formatHours(stats.avgResolutionHours),
-      resolvedCount: stats.resolved,
+      resolvedCount: resolvedInPeriod,
       satisfaction:
         stats.avgSatisfactionRating > 0
           ? `${stats.avgSatisfactionRating.toFixed(1)}/5`
@@ -549,7 +702,7 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
         resolutionRate: momDelta(resolutionRateValue, previousResolution),
         avgResolutionTime: null,
         resolvedCount: momDelta(
-          Number(comparison.current_resolved) || 0,
+          resolvedInPeriod,
           Number(comparison.previous_resolved) || 0,
         ),
         satisfaction: null,
@@ -559,26 +712,31 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
     buckets: {
       open: stats.open,
       inProgress: stats.pending,
+      openInProgress: stats.open + stats.pending,
       unassigned: stats.unassigned,
       overdue: stats.overdue,
+      resolvedInPeriod,
     },
     trendChart,
     trendFooter: {
       totalTickets: stats.total,
-      incoming: Number(comparison.current_incoming) || 0,
-      resolved: Number(comparison.current_resolved) || 0,
+      incoming: incomingInPeriod,
+      resolved: resolvedInPeriod,
     },
     recentTickets,
+    clientOrganizations,
     aiInsights,
     kbHealth: {
       score: kbScore,
       label: healthLabel(kbScore),
-      trendPercent: kbTrend ? Number.parseInt(kbTrend.label.replace(/[^\d-]/g, ''), 10) || null : null,
+      trendPercent: kbTrend
+        ? Number.parseInt(kbTrend.label.replace(/[^\d-]/g, ''), 10) || null
+        : null,
     },
     dateRange: {
       from: from.toISOString(),
       to: to.toISOString(),
-      label: `${from.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${to.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`,
+      label: `${from.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })} – ${to.toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' })}`,
     },
   };
 }
