@@ -448,6 +448,7 @@ function AppRoutes() {
                       <Route path="schema" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Company Schema" />}><LazyPage><CompanySchemaPage /></LazyPage></ErrorBoundary>} />
                       <Route path="contact-schema" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Contact Schema" />}><LazyPage><ContactSchemaPage /></LazyPage></ErrorBoundary>} />
                       <Route path="pii" element={<ErrorBoundary fallback={<ModuleCrashFallback module="PII Shield" />}><LazyPage><PIIShieldPage /></LazyPage></ErrorBoundary>} />
+                      <Route path="audit" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Audit Log" />}><LazyPage><AuditLogPage /></LazyPage></ErrorBoundary>} />
                       <Route path="sovereignty" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Sovereignty Center" />}><LazyPage><SovereigntyCenterPage /></LazyPage></ErrorBoundary>} />
                       <Route path="integrations" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Integrations" />}><LazyPage><IntegrationsPage /></LazyPage></ErrorBoundary>} />
                       <Route path="polyglot" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Polyglot Bridge" />}><LazyPage><PolyglotBridgeAdminPage /></LazyPage></ErrorBoundary>} />

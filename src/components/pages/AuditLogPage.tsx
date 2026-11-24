@@ -68,12 +68,22 @@ export default function AuditLogPage() {
     };
   }, [isAuthorized, checking, permissionsLoading]);
 
-  if (checking || permissionsLoading) return <div className="p-8 h-screen flex items-center justify-center font-mono text-xs uppercase tracking-widest text-slate-400">Authenticating Governance Layer...</div>;
-  if (!isAuthorized) return <div className="p-8 text-black font-black h-screen flex flex-col items-center justify-center bg-red-50">
-    <ShieldAlert className="w-12 h-12 text-red-600 mb-4" />
-    <h1 className="text-2xl uppercase tracking-tighter">Access Denied</h1>
-    <p className="text-xs text-red-600/70 font-mono mt-2">SEC_REJECT: ADMINISTRATOR_LEVEL_REQUIRED</p>
-  </div>;
+  if (checking || permissionsLoading) {
+    return (
+      <div className="flex-1 min-h-[40vh] flex items-center justify-center p-8 font-mono text-xs uppercase tracking-widest text-slate-400">
+        Authenticating Governance Layer...
+      </div>
+    );
+  }
+  if (!isAuthorized) {
+    return (
+      <div className="flex-1 min-h-[40vh] flex flex-col items-center justify-center p-8 text-black font-black bg-red-50">
+        <ShieldAlert className="w-12 h-12 text-red-600 mb-4" />
+        <h1 className="text-2xl uppercase tracking-tighter">Access Denied</h1>
+        <p className="text-xs text-red-600/70 font-mono mt-2">SEC_REJECT: ADMINISTRATOR_LEVEL_REQUIRED</p>
+      </div>
+    );
+  }
 
   const getModuleIcon = (module: string) => {
     switch (module) {
@@ -115,8 +125,8 @@ export default function AuditLogPage() {
   ];
 
   return (
-    <div className="flex-1 overflow-y-auto bg-[#F8F9FA] p-6 lg:p-10 custom-scrollbar">
-      <div className="max-w-7xl mx-auto space-y-10 pb-20">
+    <div className="flex-1 min-w-0 bg-[#F8F9FA] p-4 sm:p-6 lg:p-10 custom-scrollbar">
+      <div className="max-w-7xl mx-auto space-y-8 sm:space-y-10 pb-20 min-w-0">
         
         {/* Superior Header */}
         <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-8 border-b-2 border-black pb-8">
