@@ -2235,6 +2235,14 @@
         "title": "Integrations-Hub",
         "description": "Personio, Slack, Webhooks und externe API-Verbindungen."
       },
+      "e-mail-kanäle": {
+        "title": "E-Mail-Kanäle",
+        "description": "Eingehende und ausgehende E-Mail: Kanäle, Absender, Anzeigename, SMTP und Standard-Absender für Ticket-Antworten."
+      },
+      "api_and_mcp": {
+        "title": "API & MCP",
+        "description": "Nativen MCP-Server aktivieren, API-Tokens verwalten und Client-Konfigurationen kopieren."
+      },
       "communication": {
         "title": "Kommunikation",
         "description": "E-Mail-Kanäle, SMTP/IMAP-Einstellungen und Routing-Regeln."
@@ -2259,6 +2267,7 @@
       "routing": "Routing",
       "connectivity": "Konnektivität",
       "inbound": "Inbound",
+      "kanäle": "Kanäle",
       "global": "Global",
       "restricted": "Eingeschränkt",
       "core_engine": "Haupt-Engine"

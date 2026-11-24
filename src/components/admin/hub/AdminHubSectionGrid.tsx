@@ -43,7 +43,15 @@ export function AdminHubSectionGrid({ categories }: AdminHubSectionGridProps) {
                     color={section.color}
                     bgColor={section.bgColor}
                     borderColor={section.borderColor}
-                    onClick={() => isAllowed && navigate(section.path)}
+                    onClick={() => {
+                      if (!isAllowed) return;
+                      if (section.scrollTargetId) {
+                        const el = document.getElementById(section.scrollTargetId);
+                        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        return;
+                      }
+                      navigate(section.path);
+                    }}
                     actionLabel={t('admin.configureSection', 'Configure Section')}
                   />
                 </div>

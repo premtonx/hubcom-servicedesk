@@ -195,7 +195,10 @@ export function AdminHubMcpPanel() {
   };
 
   return (
-    <section className="bg-white border border-slate-200/80 rounded-[2rem] p-6 shadow-sm space-y-6">
+    <section
+      id="admin-hub-mcp-panel"
+      className="bg-white border border-slate-200/80 rounded-[2rem] p-4 sm:p-6 shadow-sm space-y-6 scroll-mt-4"
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
           <div className="h-10 w-10 rounded-xl bg-rose-50 border border-rose-100 text-rose-600 flex items-center justify-center">
