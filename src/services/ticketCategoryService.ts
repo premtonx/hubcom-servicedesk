@@ -2,7 +2,13 @@ import type { TicketCategory, TicketCategoryInput } from '../lib/ticket-categori
 
 async function parseJson(res: Response): Promise<any> {
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err: any = new Error(data?.error || `HTTP ${res.status}`);
+    err.code = data?.code;
+    err.usageCount = data?.usageCount;
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -25,7 +31,10 @@ export const ticketCategoryService = {
     return data.category as TicketCategory;
   },
 
-  async update(id: string, patch: Partial<TicketCategoryInput>): Promise<TicketCategory> {
+  async update(
+    id: string,
+    patch: Partial<TicketCategoryInput> & { replacementId?: string },
+  ): Promise<TicketCategory> {
     const res = await fetch(`/api/ticket-categories/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       credentials: 'include',
@@ -36,8 +45,9 @@ export const ticketCategoryService = {
     return data.category as TicketCategory;
   },
 
-  async remove(id: string): Promise<void> {
-    const res = await fetch(`/api/ticket-categories/${encodeURIComponent(id)}`, {
+  async remove(id: string, replacementId?: string): Promise<void> {
+    const qs = replacementId ? `?replacementId=${encodeURIComponent(replacementId)}` : '';
+    const res = await fetch(`/api/ticket-categories/${encodeURIComponent(id)}${qs}`, {
       method: 'DELETE',
       credentials: 'include',
     });

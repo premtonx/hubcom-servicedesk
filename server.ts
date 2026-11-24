@@ -237,6 +237,12 @@ async function startServer() {
     safeLog('warn', '[ticket-categories] Seed übersprungen:', catSeedErr?.message || String(catSeedErr));
   }
   try {
+    const { ensureDefaultTicketConfig } = await import('./src/lib/ticket-config/store.js');
+    await ensureDefaultTicketConfig();
+  } catch (cfgSeedErr: any) {
+    safeLog('warn', '[ticket-config] Seed übersprungen:', cfgSeedErr?.message || String(cfgSeedErr));
+  }
+  try {
     const { ensureStorageDirs } = await import("./src/lib/kb/document-store.js");
     ensureStorageDirs();
   } catch (storageErr: any) {
@@ -903,6 +909,8 @@ async function startServer() {
   app.use("/api/time-entries", timeEntryRoutes);
   const { default: ticketCategoryRoutes } = await import("./src/routes/ticketCategoryRoutes.js");
   app.use("/api/ticket-categories", ticketCategoryRoutes);
+  const { default: ticketConfigRoutes } = await import("./src/routes/ticketConfigRoutes.js");
+  app.use("/api/ticket-config", ticketConfigRoutes);
   const { default: portalRoutes } = await import("./src/routes/portalRoutes.js");
   app.use("/api/portal", portalRoutes);
 

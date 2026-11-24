@@ -6,6 +6,7 @@ import {
   createTicketCategory,
   deleteTicketCategory,
   getTicketCategory,
+  getTicketCategoryUsage,
   listTicketCategories,
   updateTicketCategory,
 } from '../lib/ticket-categories/store.js';
@@ -21,13 +22,23 @@ const createSchema = z.object({
   slug: z.string().max(120).optional(),
 });
 
-const updateSchema = createSchema.partial();
+const updateSchema = createSchema.partial().extend({
+  replacementId: z.string().max(120).optional(),
+});
 
 /** GET /api/ticket-categories — alle authentifizierten Nutzer */
 router.get('/', authenticate, async (req: Request, res: Response) => {
   const activeOnly = req.query.activeOnly === '1' || req.query.activeOnly === 'true';
+  const withUsage = req.query.withUsage === '1' || req.query.withUsage === 'true';
   const categories = await listTicketCategories({ activeOnly });
-  res.json({ categories });
+  if (!withUsage) return res.json({ categories });
+  const enriched = await Promise.all(
+    categories.map(async (c) => ({
+      ...c,
+      usageCount: await getTicketCategoryUsage(c.id),
+    })),
+  );
+  res.json({ categories: enriched });
 });
 
 /** GET /api/ticket-categories/:id */
@@ -67,10 +78,15 @@ router.patch(
       return res.status(400).json({ error: 'Ungültige Eingabe.', details: parsed.error.flatten() });
     }
     try {
-      const category = await updateTicketCategory(routeParam(req.params.id), parsed.data);
+      const category = await updateTicketCategory(routeParam(req.params.id), parsed.data as any);
       res.json({ category });
     } catch (err: any) {
-      res.status(404).json({ error: err?.message || 'Aktualisierung fehlgeschlagen.' });
+      const status = err?.code === 'REPLACEMENT_REQUIRED' ? 409 : err?.message?.includes('nicht gefunden') ? 404 : 400;
+      res.status(status).json({
+        error: err?.message || 'Aktualisierung fehlgeschlagen.',
+        code: err?.code,
+        usageCount: err?.usageCount,
+      });
     }
   },
 );
@@ -84,8 +100,23 @@ router.delete(
     const id = routeParam(req.params.id);
     const existing = await getTicketCategory(id);
     if (!existing) return res.status(404).json({ error: 'Kategorie nicht gefunden.' });
-    await deleteTicketCategory(id);
-    res.json({ ok: true });
+    const replacementId =
+      typeof req.query.replacementId === 'string'
+        ? req.query.replacementId
+        : typeof req.body?.replacementId === 'string'
+          ? req.body.replacementId
+          : undefined;
+    try {
+      const result = await deleteTicketCategory(id, replacementId);
+      res.json(result);
+    } catch (err: any) {
+      const status = err?.code === 'REPLACEMENT_REQUIRED' ? 409 : 400;
+      res.status(status).json({
+        error: err?.message || 'Löschen fehlgeschlagen.',
+        code: err?.code,
+        usageCount: err?.usageCount,
+      });
+    }
   },
 );
 
