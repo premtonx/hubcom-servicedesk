@@ -27,6 +27,8 @@ import {
 import { Ticket as TicketType } from '../../types';
 import { cn, safeString } from '../../lib/utils';
 import { toast } from 'sonner';
+import { useTicketPriorities } from '../../hooks/useTicketPriorities';
+import { resolvePriorityConfig, softTintStyles } from '../../lib/ticket-config/display';
 
 interface DetailsHeaderProps {
   ticket: TicketType;
@@ -67,6 +69,9 @@ export function DetailsHeader({
   isSpam,
 }: DetailsHeaderProps) {
   const { t } = useTranslation();
+  const { priorities } = useTicketPriorities();
+  const priorityDisplay = resolvePriorityConfig(ticket.priority, priorities);
+  const priorityTint = softTintStyles(priorityDisplay.color);
   const [timeLeftStr, setTimeLeftStr] = useState(() => t('tickets.detail.slaDuePending', 'Due in —'));
   const [slaPercent, setSlaPercent] = useState(65);
   const [slaStatus, setSlaStatus] = useState<'healthy' | 'warning' | 'breached'>('warning');
@@ -171,20 +176,18 @@ export function DetailsHeader({
               {safeString(ticket.company, t('tickets.detail.defaultCompany', 'Enterprise Corp'))}
             </span>
 
-            {/* Priority Badge */}
-            <span className={cn(
-              "uppercase text-[10.5px] font-black h-5.5 px-3 rounded-md border flex items-center justify-center gap-1",
-              ticket.priority === 'urgent' || ticket.priority === 'high'
-                ? "bg-rose-50 text-rose-700 border-rose-250"
-                : "bg-blue-50 text-blue-700 border-blue-200"
-            )}>
-              {ticket.priority === 'urgent' 
-                ? t('tickets.detail.priorityCritical', 'P1 — Critical') 
-                : ticket.priority === 'high' 
-                ? t('tickets.detail.priorityHigh', 'High Priority') 
-                : ticket.priority === 'medium' 
-                ? t('tickets.detail.priorityMedium', 'Medium') 
-                : t('tickets.detail.priorityLow', 'Low')}
+            {/* Priority Badge — configured colour + label */}
+            <span
+              className="text-[10.5px] font-bold h-5.5 px-3 rounded-md border flex items-center justify-center gap-1.5"
+              style={priorityTint}
+              title={priorityDisplay.name}
+            >
+              <span
+                className="h-1.5 w-1.5 rounded-full shrink-0"
+                style={{ backgroundColor: priorityDisplay.color }}
+                aria-hidden
+              />
+              <span>{priorityDisplay.name}</span>
             </span>
           </div>
         </div>

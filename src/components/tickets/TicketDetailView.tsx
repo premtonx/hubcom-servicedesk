@@ -39,6 +39,13 @@ import type { LegalValidationResult } from '../../services/legalService';
 import type { AiComposerMeta } from '../ticket-details/EmailComposer';
 import type { SuggestedLink } from '../../services/neuralLinkService';
 import { sanitizeTimelineHtml } from '../../lib/sanitize-html';
+import { useTicketStatuses } from '../../hooks/useTicketStatuses';
+import { useTicketPriorities } from '../../hooks/useTicketPriorities';
+import {
+  resolvePriorityConfig,
+  resolveStatusConfig,
+  softTintStyles,
+} from '../../lib/ticket-config/display';
 
 export interface TicketDetailViewProps {
   selectedTicket: TicketType;
@@ -106,6 +113,8 @@ export interface TicketDetailViewProps {
 
 export function TicketDetailView(props: TicketDetailViewProps) {
   const { t } = useTranslation();
+  const { statuses: ticketStatuses } = useTicketStatuses();
+  const { priorities: ticketPriorities } = useTicketPriorities();
   const {
     selectedTicket,
     ticketContact,
@@ -252,12 +261,48 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                               {safeString(selectedTicket.subject)}
                             </h2>
                             <div className="flex items-center gap-1.5 mt-1 min-w-0 flex-wrap leading-none">
-                              <span className="inline-flex h-5 items-center px-2 text-[11px] font-medium rounded-full bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800 shrink-0 capitalize">
-                                {t(`tickets.status.${(selectedTicket.status || 'open').toLowerCase()}`, selectedTicket.status || 'Offen')}
-                              </span>
-                              <span className="inline-flex h-5 items-center px-2 text-[11px] font-medium rounded-full bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800 shrink-0 capitalize">
-                                {t(`tickets.priority.${(selectedTicket.priority || 'medium').toLowerCase()}`, selectedTicket.priority || 'Mittel')}
-                              </span>
+                              {(() => {
+                                const statusDisplay = resolveStatusConfig(
+                                  selectedTicket.status,
+                                  ticketStatuses,
+                                );
+                                const statusTint = softTintStyles(statusDisplay.color);
+                                return (
+                                  <span
+                                    className="inline-flex h-5 items-center gap-1.5 px-2 text-[11px] font-medium rounded-full border shrink-0"
+                                    style={statusTint}
+                                    title={statusDisplay.name}
+                                  >
+                                    <span
+                                      className="h-1.5 w-1.5 rounded-full shrink-0"
+                                      style={{ backgroundColor: statusDisplay.color }}
+                                      aria-hidden
+                                    />
+                                    {statusDisplay.name}
+                                  </span>
+                                );
+                              })()}
+                              {(() => {
+                                const priorityDisplay = resolvePriorityConfig(
+                                  selectedTicket.priority,
+                                  ticketPriorities,
+                                );
+                                const priorityTint = softTintStyles(priorityDisplay.color);
+                                return (
+                                  <span
+                                    className="inline-flex h-5 items-center gap-1.5 px-2 text-[11px] font-medium rounded-full border shrink-0"
+                                    style={priorityTint}
+                                    title={priorityDisplay.name}
+                                  >
+                                    <span
+                                      className="h-1.5 w-1.5 rounded-full shrink-0"
+                                      style={{ backgroundColor: priorityDisplay.color }}
+                                      aria-hidden
+                                    />
+                                    {priorityDisplay.name}
+                                  </span>
+                                );
+                              })()}
                               <span className="inline-flex h-5 items-center text-[11px] font-medium tracking-normal text-slate-500 min-w-0">
                                 {safeString(selectedTicket.company, 'Enterprise Corp')} &bull; {safeString(selectedTicket.customerName, 'PremtonXhafa')} &bull;{' '}
                                 <span className="font-mono tabular-nums text-slate-600 font-semibold">{ticketRef}</span>
