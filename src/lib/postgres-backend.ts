@@ -550,7 +550,8 @@ async function readAllDocs(collectionName: string): Promise<any[]> {
 // QUERY INTERPRETER / CONSTRAINTS PARSER
 // -----------------------------------------------------------------------------
 
-function applyQueryConstraints(docs: any[], constraints: any[]): any[] {
+/** Exported for unit tests — Firestore-compatible in-memory constraint filter. */
+export function applyQueryConstraints(docs: any[], constraints: any[]): any[] {
   let result = [...docs];
   
   for (const c of constraints) {
@@ -581,6 +582,16 @@ function applyQueryConstraints(docs: any[], constraints: any[]): any[] {
         }
         if (c.op === 'array-contains') {
           return Array.isArray(val) && val.includes(checkVal);
+        }
+        if (c.op === 'in') {
+          return Array.isArray(checkVal) && checkVal.some((v: any) => v === val);
+        }
+        if (c.op === 'array-contains-any') {
+          return (
+            Array.isArray(val) &&
+            Array.isArray(checkVal) &&
+            checkVal.some((v: any) => val.includes(v))
+          );
         }
         return true;
       });
@@ -718,7 +729,18 @@ export async function getDocsDirect(
         queryStr += ` AND COALESCE(geistdesk_documents.data->>'tenantId', geistdesk_documents.data->>'tenant_id', 'default') = $2`;
         queryParams.push(options.tenantId);
       }
-      const ALLOWED_OPS = new Set(['==', '===', '!=', '>', '>=', '<', '<=']);
+      const ALLOWED_OPS = new Set([
+        '==',
+        '===',
+        '!=',
+        '>',
+        '>=',
+        '<',
+        '<=',
+        'in',
+        'array-contains',
+        'array-contains-any',
+      ]);
 
       // Safe JSONB constraint compilation to guarantee alignment of unassigned accounts
       for (const c of constraints) {
@@ -730,6 +752,53 @@ export async function getDocsDirect(
 
         if (typeof field !== 'string' || !field.trim()) {
           throw new Error('Invalid query constraint: field must be a non-empty string');
+        }
+
+        // Firestore-compatible membership operators (Vault / agent pickers use `in`).
+        if (op === 'in') {
+          if (!Array.isArray(value) || value.length === 0) {
+            // Empty `in` never matches — short-circuit with a false predicate.
+            queryStr += ` AND FALSE`;
+            continue;
+          }
+          if (value.length > 30) {
+            throw new Error('Unsupported query operator: in (too many values, max 30)');
+          }
+          const fieldParam = queryParams.length + 1;
+          const placeholders: string[] = [];
+          queryParams.push(field);
+          for (const item of value) {
+            queryParams.push(item == null ? '' : String(item));
+            placeholders.push(`$${queryParams.length}`);
+          }
+          queryStr += ` AND geistdesk_documents.data->>$${fieldParam} IN (${placeholders.join(', ')})`;
+          continue;
+        }
+
+        if (op === 'array-contains') {
+          const fieldParam = queryParams.length + 1;
+          const valueParam = fieldParam + 1;
+          queryParams.push(field, value);
+          queryStr += ` AND geistdesk_documents.data->$${fieldParam} @> to_jsonb($${valueParam}::text)`;
+          continue;
+        }
+
+        if (op === 'array-contains-any') {
+          if (!Array.isArray(value) || value.length === 0) {
+            queryStr += ` AND FALSE`;
+            continue;
+          }
+          const fieldParam = queryParams.length + 1;
+          queryParams.push(field);
+          const ors: string[] = [];
+          for (const item of value) {
+            queryParams.push(item == null ? '' : String(item));
+            ors.push(
+              `geistdesk_documents.data->$${fieldParam} @> to_jsonb($${queryParams.length}::text)`,
+            );
+          }
+          queryStr += ` AND (${ors.join(' OR ')})`;
+          continue;
         }
 
         // 1. Unified Unassigned Check mapping both agentId / assignedTo / non-existent / empty keys

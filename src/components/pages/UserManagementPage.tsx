@@ -38,13 +38,17 @@ const ROLE_LABELS: Record<string, string> = {
   agent: 'Mitarbeiter',
   customer: 'Kunde',
   admin: 'Administrator',
-  team_lead: 'Mitarbeiter',
+  team_lead: 'Teamleitung',
+  CLIENT_ADMIN: 'Kunden-Admin',
+  CLIENT_SUPPORTER: 'Kunden-Supporter',
+  CLIENT_USER: 'Kunden-Benutzer',
 };
 
 function roleBadgeClass(role: string) {
   if (role === 'SYSTEM_ADMIN' || role === 'admin')
     return 'bg-indigo-50 text-indigo-800 border-indigo-100';
-  if (role === 'customer') return 'bg-emerald-50 text-emerald-800 border-emerald-100';
+  if (role === 'customer' || role.startsWith('CLIENT_'))
+    return 'bg-emerald-50 text-emerald-800 border-emerald-100';
   return 'bg-sky-50 text-sky-800 border-sky-100';
 }
 
@@ -350,6 +354,7 @@ export default function UserManagementPage() {
           <option value="admins">Admins</option>
           <option value="agent">Mitarbeiter</option>
           <option value="customer">Kunden</option>
+          <option value="client">Kundenportal</option>
         </select>
         <select
           value={typeFilter}

@@ -34,7 +34,9 @@ import {
 } from '../../components/ui/dropdown-menu';
 import { groupService } from '../../services/groupService';
 import { userService } from '../../services/userService';
+import { ticketCategoryService } from '../../services/ticketCategoryService';
 import { Group, User, GroupMember } from '../../types';
+import type { TicketCategory } from '../../lib/ticket-categories/types';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
@@ -44,7 +46,9 @@ import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar'
 export default function GroupsPage() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [agents, setAgents] = useState<User[]>([]);
+  const [categories, setCategories] = useState<TicketCategory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editingGroup, setEditingGroup] = useState<Partial<Group> | null>(null);
@@ -58,11 +62,25 @@ export default function GroupsPage() {
   }, []);
 
   const loadData = async () => {
+    setAgentsError(null);
     try {
-      const agentList = await userService.getAgents();
+      const [agentList, categoryList] = await Promise.all([
+        userService.getAgents(),
+        ticketCategoryService.list(true).catch(() => [] as TicketCategory[]),
+      ]);
       setAgents(agentList);
+      setCategories(categoryList);
+      if (agentList.length === 0) {
+        setAgentsError(
+          'Keine berechtigten Agenten gefunden. Prüfen Sie die Benutzerverwaltung.',
+        );
+      }
     } catch (error) {
-      toast.error('Failed to load agents');
+      setAgents([]);
+      setAgentsError(
+        'Mitglieder konnten nicht geladen werden. Bitte Seite neu laden oder Berechtigungen prüfen.',
+      );
+      toast.error('Mitglieder konnten nicht geladen werden');
     } finally {
       setLoading(false);
     }
@@ -95,34 +113,56 @@ export default function GroupsPage() {
     setEditingGroup({
       name: '',
       description: '',
-      isDefault: false
+      isDefault: false,
+      categoryIds: [],
     });
+    setAgentSearchQuery('');
     setIsEditing(true);
   };
 
   const handleEditGroup = (group: Group) => {
-    setEditingGroup(group);
+    setEditingGroup({
+      ...group,
+      categoryIds: Array.isArray(group.categoryIds) ? [...group.categoryIds] : [],
+    });
+    setAgentSearchQuery('');
     setIsEditing(true);
+  };
+
+  const toggleCategory = (categoryId: string) => {
+    setEditingGroup((prev) => {
+      if (!prev) return prev;
+      const current = Array.isArray(prev.categoryIds) ? prev.categoryIds : [];
+      const next = current.includes(categoryId)
+        ? current.filter((id) => id !== categoryId)
+        : [...current, categoryId];
+      return { ...prev, categoryIds: next };
+    });
   };
 
   const handleSaveGroup = async () => {
     if (!editingGroup?.name) {
-      toast.error("Group name is required");
+      toast.error('Teamname ist erforderlich');
       return;
     }
 
     try {
+      const payload = {
+        ...editingGroup,
+        categoryIds: Array.isArray(editingGroup.categoryIds)
+          ? editingGroup.categoryIds
+          : [],
+      };
       if (editingGroup.id) {
-        await groupService.updateGroup(editingGroup.id, editingGroup);
-        toast.success("Group updated");
+        await groupService.updateGroup(editingGroup.id, payload);
+        toast.success('Team aktualisiert');
       } else {
-        const id = await groupService.createGroup(editingGroup as any);
-        setEditingGroup(prev => ({ ...prev, id }));
-        toast.success("Group created");
+        const id = await groupService.createGroup(payload as any);
+        setEditingGroup((prev) => ({ ...prev, id }));
+        toast.success('Team angelegt — Mitglieder können jetzt zugewiesen werden');
       }
-      // Keep in editing mode to allow member assignment if just created
     } catch (error) {
-      toast.error("Failed to save group");
+      toast.error('Team konnte nicht gespeichert werden');
     }
   };
 
@@ -336,25 +376,82 @@ export default function GroupsPage() {
                           className="rounded-xl border-slate-200 min-h-[120px] py-4 text-slate-600"
                         />
                       </div>
+                      <div className="space-y-3 pt-2">
+                        <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">
+                          Ticket-Kategorien
+                        </Label>
+                        <p className="text-xs text-slate-500 leading-relaxed">
+                          Mitglieder dieses Teams sehen Tickets in den gewählten Kategorien in der
+                          Ticketliste (zusätzlich zu direkt zugewiesenen Tickets), sofern ihre Rolle
+                          das zulässt.
+                        </p>
+                        {categories.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
+                            Keine aktiven Ticket-Kategorien. Legen Sie welche unter Ticket Configuration an
+                            (z.&nbsp;B. First Level Support).
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {categories.map((cat) => {
+                              const selected = (editingGroup?.categoryIds || []).includes(cat.id);
+                              return (
+                                <button
+                                  key={cat.id}
+                                  type="button"
+                                  onClick={() => toggleCategory(cat.id)}
+                                  className={cn(
+                                    'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors',
+                                    selected
+                                      ? 'border-primary bg-primary/10 text-primary'
+                                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
+                                  )}
+                                  aria-pressed={selected}
+                                >
+                                  <span
+                                    className="h-2 w-2 rounded-full"
+                                    style={{ backgroundColor: cat.color || '#94a3b8' }}
+                                  />
+                                  {cat.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </CardContent>
                   </Card>
 
                   <Card className="rounded-[2.5rem] border-slate-200 overflow-hidden shadow-sm">
-                    <CardHeader className="bg-slate-50/50 border-b border-slate-100 p-8 flex flex-row items-center justify-between">
+                    <CardHeader className="bg-slate-50/50 border-b border-slate-100 p-8 flex flex-row items-center justify-between gap-4">
                        <div>
-                          <CardTitle className="text-lg font-bold">Member Assignment</CardTitle>
-                          <CardDescription>Select which agents belong to this functional team.</CardDescription>
+                          <CardTitle className="text-lg font-bold">Mitglieder zuweisen</CardTitle>
+                          <CardDescription>
+                            Agenten auswählen, die diesem funktionalen Team angehören.
+                          </CardDescription>
                        </div>
-                       <Badge variant="outline" className="rounded-full bg-white font-bold h-7 px-3 border-slate-200">
-                          {groupMembers.length} Selected
-                       </Badge>
+                       <div className="flex items-center gap-2">
+                         {agentSearchQuery && (
+                           <Button
+                             type="button"
+                             variant="ghost"
+                             size="sm"
+                             className="rounded-lg text-xs font-bold"
+                             onClick={() => setAgentSearchQuery('')}
+                           >
+                             Suche leeren
+                           </Button>
+                         )}
+                         <Badge variant="outline" className="rounded-full bg-white font-bold h-7 px-3 border-slate-200">
+                            {groupMembers.length} ausgewählt
+                         </Badge>
+                       </div>
                     </CardHeader>
                     <CardContent className="p-0">
                       <div className="p-6 border-b border-slate-100">
                          <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                             <Input 
-                               placeholder="Search agents by name or email..." 
+                               placeholder="Agenten nach Name oder E-Mail suchen…" 
                                value={agentSearchQuery}
                                onChange={(e) => setAgentSearchQuery(e.target.value)}
                                className="pl-10 h-12 rounded-xl bg-slate-50 border-none ring-0 focus-visible:ring-1 focus-visible:ring-primary"
@@ -362,6 +459,29 @@ export default function GroupsPage() {
                          </div>
                       </div>
                       <ScrollArea className="h-[400px]">
+                        {agentsError ? (
+                          <div className="p-10 text-center space-y-3">
+                            <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
+                            <p className="text-sm font-bold text-slate-800">{agentsError}</p>
+                            <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={() => void loadData()}>
+                              Erneut laden
+                            </Button>
+                          </div>
+                        ) : filteredAgents.length === 0 ? (
+                          <div className="p-10 text-center space-y-2">
+                            <Users className="w-8 h-8 text-slate-300 mx-auto" />
+                            <p className="text-sm font-bold text-slate-800">
+                              {agentSearchQuery
+                                ? 'Keine Agenten für diese Suche'
+                                : 'Keine Agenten verfügbar'}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {agentSearchQuery
+                                ? 'Suche anpassen oder leeren.'
+                                : 'Legen Sie Mitarbeiter in der Benutzerverwaltung an.'}
+                            </p>
+                          </div>
+                        ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-slate-100">
                            {filteredAgents.map(agent => {
                              const isMember = groupMembers.some(m => m.userId === agent.id);
@@ -389,21 +509,23 @@ export default function GroupsPage() {
                                    variant={isMember ? "ghost" : "outline"}
                                    size="sm"
                                    onClick={() => toggleMember(agent.id)}
+                                   disabled={!editingGroup?.id}
                                    className={cn(
                                      "rounded-lg font-bold h-9 px-4 text-xs",
                                      isMember ? "text-rose-600 hover:text-rose-700 hover:bg-rose-50" : "text-primary border-primary/20 hover:border-primary hover:bg-primary/5"
                                    )}
                                  >
                                    {isMember ? (
-                                     <> <UserMinus className="w-3.5 h-3.5 mr-2" /> Remove</>
+                                     <> <UserMinus className="w-3.5 h-3.5 mr-2" /> Entfernen</>
                                    ) : (
-                                     <> <UserPlus className="w-3.5 h-3.5 mr-2" /> Assign</>
+                                     <> <UserPlus className="w-3.5 h-3.5 mr-2" /> Zuweisen</>
                                    )}
                                  </Button>
                                </div>
                              );
                            })}
                         </div>
+                        )}
                       </ScrollArea>
                     </CardContent>
                   </Card>
@@ -456,19 +578,30 @@ export default function GroupsPage() {
                       <h3 className="font-bold text-lg mb-2">Routing Intelligence</h3>
                       <p className="text-xs text-slate-400 mb-6">How tickets reach this group.</p>
                       
-                      <div className="space-y-3">
+                       <div className="space-y-3">
                          <div className="flex items-center gap-2 text-xs font-medium bg-slate-800/50 p-2 rounded-xl border border-slate-800">
                             <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-                            Direct Assignment (@mentions)
+                            Direkte Zuweisung an Agenten
                          </div>
-                         <div className="flex items-center gap-2 text-xs font-medium bg-slate-800/50 p-2 rounded-xl border border-slate-800">
-                            <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-                            Topic: Billing & Invoicing
-                         </div>
-                         <div className="flex items-center gap-2 text-xs font-medium bg-slate-800/50 p-2 rounded-xl border border-slate-800">
-                            <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-                            Email Channel: billing@geistdesk.com
-                         </div>
+                         {(editingGroup?.categoryIds || []).length > 0 ? (
+                           (editingGroup?.categoryIds || []).map((cid) => {
+                             const cat = categories.find((c) => c.id === cid);
+                             return (
+                               <div
+                                 key={cid}
+                                 className="flex items-center gap-2 text-xs font-medium bg-slate-800/50 p-2 rounded-xl border border-slate-800"
+                               >
+                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                 Kategorie: {cat?.name || cid}
+                               </div>
+                             );
+                           })
+                         ) : (
+                           <div className="flex items-center gap-2 text-xs font-medium bg-slate-800/50 p-2 rounded-xl border border-slate-800 text-slate-400">
+                             <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                             Keine Kategorien verknüpft
+                           </div>
+                         )}
                       </div>
 
                       <div className="mt-8 pt-8 border-t border-slate-800">

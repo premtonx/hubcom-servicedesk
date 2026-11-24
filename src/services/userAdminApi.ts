@@ -1,7 +1,14 @@
 import axios from 'axios';
 
 export type AdminAuthMethod = 'password' | 'microsoft365';
-export type AdminRole = 'SYSTEM_ADMIN' | 'agent' | 'customer';
+export type AdminRole =
+  | 'SYSTEM_ADMIN'
+  | 'agent'
+  | 'customer'
+  | 'team_lead'
+  | 'CLIENT_ADMIN'
+  | 'CLIENT_SUPPORTER'
+  | 'CLIENT_USER';
 
 export interface AdminUser {
   id: string;
@@ -13,6 +20,7 @@ export interface AdminUser {
   role: AdminRole;
   company: string;
   companyId?: string | null;
+  organizationId?: string | null;
   authMethod: AdminAuthMethod;
   entraObjectId?: string | null;
   upn?: string | null;

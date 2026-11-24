@@ -3,7 +3,7 @@ import {
   AlertTriangle, Angry, Box, Building2, CheckCircle2, ChevronDown, ChevronLeft,
   ChevronRight, Clock, FolderTree, Frown, GitMerge, Globe, Hash, History, Link2, List, Mail, Meh,
   MessageCircleHeart, MessageSquare, MoreVertical, PhoneCall, RefreshCw, Settings2,
-  Share2, SlidersHorizontal, Smile, Sparkles, Tag, Ticket, UserCheck, UserRound, X,
+  Share2, SlidersHorizontal, Smile, Sparkles, Tag, Ticket, UserCheck, UserRound, Users, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AnimatePresence, motion } from 'motion/react';
@@ -96,10 +96,13 @@ export interface TicketListViewProps {
   kbArticles: KBArticle[];
   openFullTicketView: (id: string) => void;
   ticketService: { setPresence: (id: string, present: boolean) => void };
+  /** Labels of ticket categories linked to the agent's functional teams. */
+  teamCategoryLabels?: string[];
 }
 
 export function TicketListView(props: TicketListViewProps) {
   const { t } = useTranslation();
+  const teamCategoryLabels = props.teamCategoryLabels || [];
   // Load all categories (incl. inactive) so renamed/recoloured/inactive values resolve like detail.
   const { categories: allTicketCategories } = useTicketCategories(false);
   const ticketCategories = useMemo(
@@ -227,7 +230,11 @@ export function TicketListView(props: TicketListViewProps) {
               searchValue={searchQuery}
               onSearchChange={setSearchQuery}
               onFilterClick={() => setIsFilterDrawerOpen(true)}
-              filterActive={isFilterDrawerOpen}
+              filterActive={
+                isFilterDrawerOpen ||
+                filters.teamCategories === 'mine' ||
+                (filters.category && filters.category !== 'any')
+              }
               sortControl={
                 <div className="flex items-center gap-1 shrink-0">
                   <span className="hidden sm:inline text-[11px] font-medium text-slate-500">
@@ -262,6 +269,45 @@ export function TicketListView(props: TicketListViewProps) {
               criticalCount={ticketQueueStats.critical}
               className="mb-1 mt-1"
             />
+
+            {teamCategoryLabels.length > 0 && (
+              <div className="mx-4 sm:mx-6 mb-2 flex flex-wrap items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className="rounded-full border-primary/20 bg-primary/5 text-primary text-[10px] font-bold uppercase tracking-wide gap-1.5 px-2.5 py-1"
+                >
+                  <Users className="w-3 h-3" />
+                  {t('tickets.teamAccess.badge', 'Team-Kategorien')}
+                </Badge>
+                {teamCategoryLabels.map((label) => (
+                  <Badge
+                    key={label}
+                    variant="outline"
+                    className="rounded-full text-[10px] font-semibold text-slate-600 border-slate-200 bg-white"
+                  >
+                    {label}
+                  </Badge>
+                ))}
+                {filters.teamCategories === 'mine' && (
+                  <button
+                    type="button"
+                    className="text-[10px] font-bold uppercase tracking-wide text-primary hover:underline"
+                    onClick={() => setFilters({ ...filters, teamCategories: 'any' })}
+                  >
+                    {t('tickets.teamAccess.clearFilter', 'Filter aufheben')}
+                  </button>
+                )}
+                {filters.teamCategories !== 'mine' && (
+                  <button
+                    type="button"
+                    className="text-[10px] font-bold uppercase tracking-wide text-slate-500 hover:text-primary hover:underline"
+                    onClick={() => setFilters({ ...filters, teamCategories: 'mine' })}
+                  >
+                    {t('tickets.teamAccess.filterMine', 'Nur Team-Kategorien')}
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Filter Drawer Implementation using Sheet */}
             <Sheet open={isFilterDrawerOpen} onOpenChange={setIsFilterDrawerOpen}>
@@ -412,6 +458,45 @@ export function TicketListView(props: TicketListViewProps) {
                             </SelectContent>
                           </Select>
                         </div>
+
+                        {teamCategoryLabels.length > 0 && (
+                          <div className="space-y-2">
+                            <label className="text-[11px] font-bold text-foreground/70 uppercase tracking-wider flex items-center gap-2">
+                              <Users className="w-3.5 h-3.5 text-primary" />{' '}
+                              {t('tickets.filters.teamCategories', 'Team-Kategorien')}
+                            </label>
+                            <Select
+                              value={filters.teamCategories || 'any'}
+                              onValueChange={(v) => setFilters({ ...filters, teamCategories: v })}
+                            >
+                              <SelectTrigger className="w-full bg-muted/50 border-border rounded-xl h-11 font-medium">
+                                <SelectValue
+                                  placeholder={t(
+                                    'tickets.filters.teamCategoriesPlaceholder',
+                                    'Team-Sicht wählen',
+                                  )}
+                                />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="any">
+                                  {t('tickets.filters.teamCategoriesAll', 'Alle sichtbaren Tickets')}
+                                </SelectItem>
+                                <SelectItem value="mine">
+                                  {t(
+                                    'tickets.filters.teamCategoriesMine',
+                                    'Nur meine Team-Kategorien',
+                                  )}
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <p className="text-[10px] text-muted-foreground leading-relaxed">
+                              {t(
+                                'tickets.filters.teamCategoriesHint',
+                                'Ihre Teams: {{names}}',
+                              ).replace('{{names}}', teamCategoryLabels.join(', '))}
+                            </p>
+                          </div>
+                        )}
 
                         <div className="space-y-2">
                           <label className="text-[11px] font-bold text-foreground/70 uppercase tracking-wider flex items-center gap-2">
@@ -660,6 +745,8 @@ export function TicketListView(props: TicketListViewProps) {
                           status: 'any',
                           priority: 'any',
                           type: 'any',
+                          category: 'any',
+                          teamCategories: 'any',
                           source: 'any',
                           sourceInfo: '',
                           tags: 'any',
