@@ -2,6 +2,7 @@ import DOMPurify from 'dompurify';
 import { unwrapLegacyPreHtml } from './email-plain-html';
 import {
   cleanEmailHtmlForStorage,
+  htmlToAuditPlainText,
   looksLikeHtml as looksLikeHtmlShared,
 } from './email-html-prepare';
 
@@ -128,14 +129,10 @@ export function sanitizeTimelineHtml(raw: string): string {
   return sanitizeLinkifiedText(decodeHtmlEntities(content));
 }
 
-/** Plain-text preview that strips tags and converts entities (list/table snippets). */
+/**
+ * Plain-text preview / Verlauf audit summary:
+ * SafeLinks unwrap, block→newline, strip tags (incl. existing dirty merge notes).
+ */
 export function htmlToPlainText(raw: string): string {
-  if (!raw) return '';
-  const decoded = decodeHtmlEntities(raw);
-  return decoded
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
-    .replace(/[ \t]+\n/g, '\n')
-    .trim();
+  return htmlToAuditPlainText(raw);
 }

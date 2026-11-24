@@ -26,6 +26,7 @@ import {
   looksLikeHtml,
 } from '../lib/email-html-prepare';
 import { escapeHtmlText } from '../lib/email-plain-html';
+import { sanitizeInboundHtml } from '../lib/email-ingestion/sanitize-server';
 
 const TICKETS_COLLECTION = 'tickets';
 
@@ -469,10 +470,10 @@ export const ticketService = {
 
         for (const msg of messages) {
           const cleanedContent = looksLikeHtml(String(msg.content || ''))
-            ? cleanEmailHtmlForStorage(String(msg.content || ''))
+            ? sanitizeInboundHtml(cleanEmailHtmlForStorage(String(msg.content || '')))
             : String(msg.content || '');
           const cleanedHtml = msg.html_content
-            ? cleanEmailHtmlForStorage(String(msg.html_content))
+            ? sanitizeInboundHtml(cleanEmailHtmlForStorage(String(msg.html_content)))
             : looksLikeHtml(cleanedContent)
               ? cleanedContent
               : undefined;
@@ -501,7 +502,9 @@ export const ticketService = {
         for (const comment of sourceTicket.agentComments) {
           try {
             const raw = String(comment.content || '');
-            const cleaned = looksLikeHtml(raw) ? cleanEmailHtmlForStorage(raw) : raw;
+            const cleaned = looksLikeHtml(raw)
+              ? sanitizeInboundHtml(cleanEmailHtmlForStorage(raw))
+              : raw;
             await ticketService.addAgentComment(destinationId, {
               ...comment,
               content: `[Merged from #${sourceId.slice(-5)}]: ${cleaned}`,
@@ -522,16 +525,18 @@ export const ticketService = {
       const notesRaw = String(sourceTicket?.internalNotes || '').trim();
       const notesHtml = notesRaw
         ? looksLikeHtml(notesRaw)
-          ? cleanEmailHtmlForStorage(notesRaw)
+          ? sanitizeInboundHtml(cleanEmailHtmlForStorage(notesRaw))
           : `<p>${escapeHtmlText(notesRaw).replace(/\n/g, '<br />')}</p>`
         : '';
-      const timelineBlock = [
-        `<p><strong>[Zusammengeführt von ${escapeHtmlText(sourceRef)} am ${escapeHtmlText(stamp)}]</strong></p>`,
-        bodyHtml,
-        notesHtml ? `<p><strong>Notizen:</strong></p>${notesHtml}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
+      const timelineBlock = sanitizeInboundHtml(
+        [
+          `<p><strong>[Zusammengeführt von ${escapeHtmlText(sourceRef)} am ${escapeHtmlText(stamp)}]</strong></p>`,
+          bodyHtml,
+          notesHtml ? `<p><strong>Notizen:</strong></p>${notesHtml}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      );
 
       const destNotes = [destTicket?.internalNotes, timelineBlock]
         .filter(Boolean)

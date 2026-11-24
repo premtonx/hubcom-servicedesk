@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   cleanEmailHtmlForStorage,
   formatMergeSourceBodyHtml,
+  htmlToAuditPlainText,
   looksLikeHtml,
   prepareOutboundEmailHtml,
   stripBrokenCidRefs,
@@ -117,6 +118,32 @@ check('inbound sanitize strips XSS after SafeLinks clean', () => {
   assert.ok(!/<script/i.test(out), out);
   assert.ok(!/javascript:/i.test(out), out);
   assert.ok(/ok\.example/i.test(out) || /href="https:\/\/ok\.example"/i.test(out), out);
+});
+
+console.log('\n[3] Verlauf / audit plain-text (no raw tags)');
+check('htmlToAuditPlainText strips tags and keeps line breaks', () => {
+  const dirty =
+    '<div class="elementToProof"><p>Zeile eins</p><div>Zeile zwei</div><ul><li>Punkt</li></ul>' +
+    '<table><tr><td>A</td><td>B</td></tr></table>' +
+    '<img src="cid:logo@01" />' +
+    `<a href="https://nam.safelinks.protection.outlook.com/?url=https%3A%2F%2Fhubcom.de">Link</a></div>`;
+  const out = htmlToAuditPlainText(dirty);
+  assert.ok(out.includes('Zeile eins'), out);
+  assert.ok(out.includes('Zeile zwei'), out);
+  assert.ok(out.includes('Punkt'), out);
+  assert.ok(!/</.test(out), `must not contain raw tags: ${out}`);
+  assert.ok(!/cid:/i.test(out), out);
+  assert.ok(!/elementToProof/i.test(out), out);
+  assert.ok(!/safelinks/i.test(out), out);
+  assert.ok(/\n/.test(out) || out.includes('Zeile'), out);
+});
+
+check('htmlToAuditPlainText handles already-escaped HTML notes', () => {
+  const dirty = '&lt;div class="elementToProof"&gt;&lt;p&gt;Merged body&lt;/p&gt;&lt;/div&gt;';
+  const out = htmlToAuditPlainText(dirty);
+  assert.ok(out.includes('Merged body'), out);
+  assert.ok(!/elementToProof/i.test(out), out);
+  assert.ok(!/</.test(out), out);
 });
 
 console.log('\n================================');

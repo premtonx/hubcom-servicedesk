@@ -53,7 +53,7 @@ export function unwrapOutlookSafeLinks(input: string): string {
 
 /**
  * Strip common Outlook / Word noise wrappers while keeping readable structure.
- * - `elementToProof` / `MsoNormal` class noise
+ * - unwrap `elementToProof` / `MsoNormal` wrappers (not just drop the class)
  * - empty nested `<div></div>` / `<span></span>`
  * - Word conditional comments
  */
@@ -64,15 +64,24 @@ export function stripOutlookNoise(html: string): string {
   out = out.replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '');
   out = out.replace(/<!\[if[\s\S]*?<!\[endif\]>/gi, '');
 
-  // Drop Microsoft proofing / empty class attributes that only add noise.
+  // Unwrap Outlook proofing / MSO wrappers so children remain (before class strip).
+  for (let i = 0; i < 6; i++) {
+    const next = out.replace(
+      /<(div|span|p)\b([^>]*\b(?:elementToProof|MsoNormal|MsoListParagraph)\b[^>]*)>([\s\S]*?)<\/\1>/gi,
+      '$3',
+    );
+    if (next === out) break;
+    out = next;
+  }
+
+  // Drop leftover Microsoft proofing / empty class attributes.
   out = out.replace(/\sclass=(["'])(?:[^"']*\b)?(?:elementToProof|MsoNormal|MsoListParagraph)(?:[^"']*)?\1/gi, '');
   out = out.replace(/\sclass=(["'])\s*\1/gi, '');
+  out = out.replace(/\sstyle=(["'])[^"']*\1/gi, '');
 
   // Collapse empty wrappers repeatedly.
   for (let i = 0; i < 4; i++) {
-    const next = out
-      .replace(/<(div|span|p|font)(\s[^>]*)?>\s*<\/\1>/gi, '')
-      .replace(/<(div|span)(\s[^>]*)?>\s*(<(div|span)(\s[^>]*)?>\s*)+/gi, (m) => m); // no-op keep structure
+    const next = out.replace(/<(div|span|p|font)(\s[^>]*)?>\s*<\/\1>/gi, '');
     if (next === out) break;
     out = next;
   }
@@ -85,10 +94,12 @@ export function stripBrokenCidRefs(html: string): string {
   let out = String(html || '');
   if (!out || !/cid:/i.test(out)) return out;
 
-  // Drop <img src="cid:…"> entirely.
+  // Drop <img src="cid:…"> entirely (quoted or unquoted).
   out = out.replace(/<img\b[^>]*\bsrc\s*=\s*(["'])cid:[^"']*\1[^>]*>/gi, '');
+  out = out.replace(/<img\b[^>]*\bsrc\s*=\s*cid:[^\s>]+[^>]*>/gi, '');
   // Neutralize cid: href/src remaining attributes.
   out = out.replace(/\s(?:src|href)\s*=\s*(["'])cid:[^"']*\1/gi, '');
+  out = out.replace(/\s(?:src|href)\s*=\s*cid:[^\s>]+/gi, '');
   return out;
 }
 
@@ -123,7 +134,7 @@ export function prepareOutboundEmailHtml(body: string): string {
 
 /**
  * Format a merge note from a source ticket description (may be HTML or plain).
- * Returns sanitized-ready HTML that timeline can render.
+ * Returns allowlist-sanitized HTML safe for agent-note / timeline rendering.
  */
 export function formatMergeSourceBodyHtml(description: string, subject?: string): string {
   const parts: string[] = [];
@@ -134,9 +145,61 @@ export function formatMergeSourceBodyHtml(description: string, subject?: string)
   if (!desc) return parts.join('');
 
   if (looksLikeHtml(desc)) {
-    parts.push(cleanEmailHtmlForStorage(desc));
+    parts.push(sanitizeInboundHtml(cleanEmailHtmlForStorage(desc)));
   } else {
     parts.push(plainTextToEmailHtml(desc));
   }
   return parts.join('\n');
+}
+
+/**
+ * Convert HTML (or mixed Outlook noise) into clean human-readable plain text
+ * for Verlauf / audit summaries. Never leaves raw tags in the result.
+ */
+export function htmlToAuditPlainText(raw: string): string {
+  let out = String(raw || '');
+  if (!out) return '';
+
+  out = unwrapOutlookSafeLinks(out);
+  out = stripBrokenCidRefs(out);
+
+  // Decode common entities before structural rewrite.
+  out = out
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#160;/g, ' ')
+    .replace(/\u00a0/g, ' ');
+
+  // Block / list boundaries → newlines.
+  out = out
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|h[1-6]|li|tr|blockquote|pre|section|article|header|footer)>/gi, '\n')
+    .replace(/<(?:p|div|h[1-6]|li|tr|blockquote|pre|section|article)\b[^>]*>/gi, '')
+    .replace(/<\/?(?:ul|ol|table|thead|tbody|tfoot)\b[^>]*>/gi, '\n')
+    .replace(/<\/?(?:td|th)\b[^>]*>/gi, '\t')
+    .replace(/<hr\b[^>]*>/gi, '\n---\n');
+
+  // Drop remaining tags.
+  out = out.replace(/<[^>]+>/g, '');
+
+  out = out
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/gi, "'");
+
+  // If content was stored as escaped HTML (&lt;div&gt;…), strip one more pass.
+  if (/<\/?[a-z][\s\S]*>/i.test(out)) {
+    out = out
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(?:p|div|h[1-6]|li|tr)>/gi, '\n')
+      .replace(/<[^>]+>/g, '');
+  }
+
+  return out
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
 }
