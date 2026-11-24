@@ -33,13 +33,43 @@ export const userService = {
   },
 
   getAgents: async (): Promise<User[]> => {
+    const STAFF_ROLES = new Set([
+      'agent',
+      'team_lead',
+      'admin',
+      'SYSTEM_ADMIN',
+      'Administrator',
+    ]);
+    const isEligibleAgent = (u: User) => {
+      if (u.isDeactivated === true) return false;
+      const role = String(u.role || '');
+      if (/^CLIENT_/i.test(role) || role === 'customer') return false;
+      return STAFF_ROLES.has(role) || u.is_admin === true || role === 'admin';
+    };
+
     try {
-      const q = query(collection(db, USERS_COLLECTION), where('role', 'in', ['agent', 'team_lead', 'admin']), orderBy('name', 'asc'));
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+      // Prefer a full list + in-memory filter. The document engine historically
+      // rejected Firestore `in` operators (Vault / Teams pickers 500'd).
+      const snapshot = await getDocs(
+        query(collection(db, USERS_COLLECTION), orderBy('name', 'asc')),
+      );
+      return snapshot.docs
+        .map((d) => ({ id: d.id, ...d.data() } as User))
+        .filter(isEligibleAgent);
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, USERS_COLLECTION);
-      return [];
+      // Last resort: try role == agent only (no `in`).
+      try {
+        const fallback = await getDocs(
+          query(collection(db, USERS_COLLECTION), where('role', '==', 'agent')),
+        );
+        return fallback.docs
+          .map((d) => ({ id: d.id, ...d.data() } as User))
+          .filter(isEligibleAgent);
+      } catch (fallbackErr) {
+        handleFirestoreError(fallbackErr, OperationType.LIST, USERS_COLLECTION);
+        throw error;
+      }
     }
   },
 

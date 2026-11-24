@@ -26,11 +26,14 @@ import {
   deriveKuerzel,
   formatUserForAdmin,
   isAdminRole,
+  isClientPortalManagedRole,
   normalizeAuthMethod,
   normalizeRole,
 } from '../lib/entra/user-helpers.js';
+import { listOrganizations } from '../lib/client-portal/organizations.js';
 
 const router = Router();
+/** SYSTEM_ADMIN only — cross-company directory. Client portal users use /api/admin/organizations/:id/users. */
 const adminOnly = [authenticate, requireRole(['SYSTEM_ADMIN'])] as const;
 
 const roleEnum = z.enum(['SYSTEM_ADMIN', 'agent', 'customer', 'admin', 'team_lead']);
@@ -132,11 +135,25 @@ router.get('/users', ...adminOnly, async (req: Request, res: Response) => {
     const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
     const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit || '100'), 10) || 100));
 
-    let users = (await getDocsDirect('users', [])).map(formatUserForAdmin);
+    // SYSTEM_ADMIN scope: all tenant users (Hubcom staff + every client org).
+    // Organization display names are resolved so Firma/Organisation is visible.
+    const orgNameById = new Map<string, string>();
+    try {
+      const orgs = await listOrganizations({ includeInactive: true });
+      for (const org of orgs) {
+        if (org?.id) orgNameById.set(String(org.id), String(org.name || org.slug || org.id));
+      }
+    } catch (orgErr: any) {
+      safeLog('warn', '[user-admin] org name lookup failed', orgErr?.message || orgErr);
+    }
+
+    let users = (await getDocsDirect('users', [])).map((u) =>
+      formatUserForAdmin(u, orgNameById),
+    );
 
     if (q) {
       users = users.filter((u) =>
-        [u.name, u.email, u.kuerzel, u.company]
+        [u.name, u.email, u.kuerzel, u.company, (u as any).organizationId]
           .map((x) => String(x || '').toLowerCase())
           .some((x) => x.includes(q)),
       );
@@ -145,9 +162,17 @@ router.get('/users', ...adminOnly, async (req: Request, res: Response) => {
       if (roleFilter === 'admin' || roleFilter === 'system_admin' || roleFilter === 'admins') {
         users = users.filter((u) => u.role === 'SYSTEM_ADMIN');
       } else if (roleFilter === 'agent' || roleFilter === 'mitarbeiter') {
-        users = users.filter((u) => u.role === 'agent');
+        users = users.filter(
+          (u) => u.role === 'agent' || u.role === 'team_lead',
+        );
       } else if (roleFilter === 'customer' || roleFilter === 'kunden') {
-        users = users.filter((u) => u.role === 'customer');
+        users = users.filter(
+          (u) => u.role === 'customer' || isClientPortalManagedRole(u.role),
+        );
+      } else if (roleFilter === 'client' || roleFilter === 'portal') {
+        users = users.filter((u) => isClientPortalManagedRole(u.role));
+      } else {
+        users = users.filter((u) => String(u.role).toLowerCase() === roleFilter);
       }
     }
     if (typeFilter && typeFilter !== 'all') {

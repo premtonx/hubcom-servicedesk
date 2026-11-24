@@ -77,6 +77,8 @@ export const ADMIN_HUB_SUBROUTES: Array<{ path: string; meta: AdminHubSubRouteMe
   { path: '/admin/roles', meta: { parentTab: 'system', label: 'RBAC Command' } },
   { path: '/admin/import', meta: { parentTab: 'system', label: 'Data Import & Migration' } },
   { path: '/admin/customers', meta: { parentTab: 'system', label: 'Kunden' } },
+  { path: '/admin/settings', meta: { parentTab: 'system', label: 'Systemeinstellungen' } },
+  { path: '/admin/branding', meta: { parentTab: 'system', label: 'Firmenbranding' } },
   { path: '/admin/contact-schema', meta: { parentTab: 'system', label: 'Kontaktprofil' } },
   { path: '/admin/insights', meta: { parentTab: 'ai-engine', label: 'Sovereign AI Insights' } },
   { path: '/admin/sovereignty', meta: { parentTab: 'governance', label: 'Sovereignty Center' } },
@@ -400,10 +402,11 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
     tab: 'system',
     sections: [
       {
-        title: 'System Settings',
-        description: 'Identity management, global feature flags, and debug tools.',
+        title: 'Systemeinstellungen',
+        description:
+          'Identität, globale Feature-Flags, Workspace-Module und Debug-Werkzeuge.',
         icon: SettingsIcon,
-        path: '/settings',
+        path: '/admin/settings',
         color: 'text-slate-500',
         bgColor: 'bg-slate-50',
         borderColor: 'border-slate-105',
@@ -415,7 +418,7 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         description:
           'Firmenname Hubcom - Citadelle AG, Support-Domain und Logo (Platzhalter durch offizielles Logo ersetzen).',
         icon: Briefcase,
-        path: '/settings',
+        path: '/admin/branding',
         color: 'text-[#1B6CA8]',
         bgColor: 'bg-[#E8F1F8]',
         borderColor: 'border-[#1B6CA8]/20',
@@ -485,7 +488,7 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         description:
           'MSP-Kunden-Tenants anlegen und den initialen CLIENT_ADMIN für jede Organisation provisionieren.',
         icon: Building2,
-        path: '/admin?tab=system',
+        path: '/admin/customers',
         color: 'text-indigo-600',
         bgColor: 'bg-indigo-50',
         borderColor: 'border-indigo-105',

@@ -26,6 +26,7 @@ const TicketsPage = lazy(() => import('./components/pages/TicketsPage'));
 const KBPage = lazy(() => import('./components/pages/KBPage'));
 const CustomersPage = lazy(() => import('./components/pages/CustomersPage'));
 const SettingsPage = lazy(() => import('./components/pages/SettingsPage'));
+const BrandingAdminPage = lazy(() => import('./components/pages/BrandingAdminPage'));
 const VaultPage = lazy(() => import('./components/pages/VaultPage'));
 const CredentialVaultPage = lazy(() => import('./components/pages/CredentialVaultPage'));
 const InsightsPage = lazy(() => import('./components/pages/InsightsPage'));
@@ -467,6 +468,8 @@ function AppRoutes() {
                       <Route path="ticket-categories" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Ticket Configuration" />}><LazyPage><TicketCategoriesAdminPage /></LazyPage></ErrorBoundary>} />
                       <Route path="email-channels" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Email Channels" />}><LazyPage><EmailChannelsPage /></LazyPage></ErrorBoundary>} />
                       <Route path="customers" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Customers" />}><LazyPage><CustomersPage /></LazyPage></ErrorBoundary>} />
+                      <Route path="settings" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Systemeinstellungen" />}><LazyPage><SettingsPage /></LazyPage></ErrorBoundary>} />
+                      <Route path="branding" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Firmenbranding" />}><LazyPage><BrandingAdminPage /></LazyPage></ErrorBoundary>} />
                       <Route path="rag/pipeline" element={<ErrorBoundary fallback={<ModuleCrashFallback module="RAG Pipeline" />}><LazyPage><AdminHubRagPipelinePage /></LazyPage></ErrorBoundary>} />
                       <Route path="rag/search" element={<ErrorBoundary fallback={<ModuleCrashFallback module="RAG Search" />}><LazyPage><AdminHubRagSearchPage /></LazyPage></ErrorBoundary>} />
                       <Route path="insights" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Insights" />}><LazyPage><InsightsPage /></LazyPage></ErrorBoundary>} />

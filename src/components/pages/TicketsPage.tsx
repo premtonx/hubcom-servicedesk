@@ -39,6 +39,14 @@ import { kbService } from '../../services/kbService';
 import { ragService } from '../../services/ragService';
 import { customerService } from '../../services/customerService';
 import { schemaService, CustomField } from '../../services/schemaService';
+import { groupService } from '../../services/groupService';
+import { ticketCategoryService } from '../../services/ticketCategoryService';
+import {
+  filterTicketsForAgentTeamAccess,
+  ticketMatchesTeamCategories,
+  type TeamCategoryAccess,
+  type TicketVisibilityScope,
+} from '../../lib/ticket-team-visibility';
 import { useAuth } from '../../lib/hooks';
 import { useSidebar } from '../../lib/context/SidebarContext';
 import { useTicketPriorities } from '../../hooks/useTicketPriorities';
@@ -318,6 +326,8 @@ export default function TicketsPage() {
     priority: 'any',
     type: 'any',
     category: 'any',
+    /** `mine` = only tickets matching the agent's team categories */
+    teamCategories: 'any',
     source: 'any',
     sourceInfo: '',
     tags: 'any',
@@ -328,6 +338,8 @@ export default function TicketsPage() {
     aiConfidence: 'any',
     slaDue: 'any'
   });
+  const [teamAccess, setTeamAccess] = useState<TeamCategoryAccess>({ categoryIds: [] });
+  const [teamCategoryLabels, setTeamCategoryLabels] = useState<string[]>([]);
 
   const [suggestedTags] = useState<string[]>(['Billing', 'API_Error', 'Performance']);
   const [newTagInput, setNewTagInput] = useState('');
@@ -464,16 +476,80 @@ export default function TicketsPage() {
     [baseSidebarTickets],
   );
 
-  // Subscribe to all tickets
+  // Resolve functional-team category access for the signed-in agent.
+  useEffect(() => {
+    if (!user?.uid) {
+      setTeamAccess({ categoryIds: [] });
+      setTeamCategoryLabels([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const access = await groupService.getTeamCategoryAccessForUser(user.uid);
+        if (cancelled) return;
+        const categoryIds = access.categoryIds || [];
+        let slugs: string[] = [];
+        let names: string[] = [];
+        let labels: string[] = [];
+        if (categoryIds.length > 0) {
+          try {
+            const cats = await ticketCategoryService.list(false);
+            const matched = cats.filter((c) => categoryIds.includes(c.id));
+            slugs = matched.map((c) => c.slug).filter(Boolean);
+            names = matched.map((c) => c.name).filter(Boolean);
+            labels = matched.map((c) => c.name);
+          } catch {
+            /* categories optional for ID-only matching */
+          }
+        }
+        if (cancelled) return;
+        setTeamAccess({ categoryIds, categorySlugs: slugs, categoryNames: names });
+        setTeamCategoryLabels(labels);
+      } catch {
+        if (!cancelled) {
+          setTeamAccess({ categoryIds: [] });
+          setTeamCategoryLabels([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid]);
+
+  // Subscribe to tickets — widen to `all` when team categories grant extra visibility,
+  // then enforce assigned/group + category rules client-side (and in helpers).
   useEffect(() => {
     if (!user || permsLoading) return;
 
-    const scope = (role?.visibilityScope === 'assigned' || role?.name === 'Restricted Agent') ? 'assigned' : 'all';
+    const roleScope = String(
+      (role as { visibilityScope?: string } | null | undefined)?.visibilityScope || 'all',
+    );
+    const baseScope: TicketVisibilityScope =
+      roleScope === 'group'
+        ? 'group'
+        : roleScope === 'assigned' || role?.name === 'Restricted Agent'
+          ? 'assigned'
+          : 'all';
 
-    return ticketService.subscribeToTickets((tickets) => {
-      setAllTickets(tickets);
-    }, { scope, agentId: user.uid });
-  }, [user, permsLoading, role]);
+    const hasTeamCategories = (teamAccess.categoryIds || []).length > 0;
+    // Need the broader stream so category-matched tickets are available to filter.
+    const subscribeScope =
+      baseScope === 'all' || !hasTeamCategories ? (baseScope === 'group' ? 'all' : baseScope) : 'all';
+
+    return ticketService.subscribeToTickets(
+      (tickets) => {
+        const visible = filterTicketsForAgentTeamAccess(tickets, {
+          agentId: user.uid,
+          scope: baseScope,
+          teamAccess: hasTeamCategories ? teamAccess : undefined,
+        });
+        setAllTickets(visible);
+      },
+      { scope: subscribeScope === 'all' ? 'all' : 'assigned', agentId: user.uid },
+    );
+  }, [user, permsLoading, role, teamAccess]);
 
   // Subscribe to KB Articles
   useEffect(() => {
@@ -584,6 +660,9 @@ export default function TicketsPage() {
           t.categoryName === filters.category,
       );
     }
+    if (filters.teamCategories === 'mine') {
+      result = result.filter((t) => ticketMatchesTeamCategories(t, teamAccess));
+    }
     if (filters.language !== 'any') {
       result = result.filter(t => (t as any).originalLanguage === filters.language);
     }
@@ -691,7 +770,7 @@ export default function TicketsPage() {
     });
 
     return result;
-  }, [baseSidebarTickets, topStatusFilter, searchQuery, filters, user, listSort, allTickets, selectedOrganizationId, priorityRankByKey]);
+  }, [baseSidebarTickets, topStatusFilter, searchQuery, filters, user, listSort, allTickets, selectedOrganizationId, priorityRankByKey, teamAccess]);
 
   const getFilteredTickets = () => {
     return finalRenderedTickets;
@@ -1904,6 +1983,7 @@ export default function TicketsPage() {
         kbArticles={kbArticles}
         openFullTicketView={openFullTicketView}
         ticketService={ticketService}
+        teamCategoryLabels={teamCategoryLabels}
       />
         )}
 

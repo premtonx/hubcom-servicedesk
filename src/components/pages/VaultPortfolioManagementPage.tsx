@@ -48,14 +48,42 @@ export default function VaultPortfolioManagementPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [portfolioRes, agentList] = await Promise.all([
-        credentialVaultService.listPortfolios(),
-        userService.getAgents(),
-      ]);
+      let agentList: User[] = [];
+      let agentsFailed = false;
+      try {
+        agentList = await userService.getAgents();
+      } catch {
+        agentsFailed = true;
+        agentList = [];
+      }
+
+      const portfolioRes = await credentialVaultService.listPortfolios();
       setPortfolios(portfolioRes.portfolios);
       setUsers(agentList);
+
+      if (agentsFailed) {
+        toast.error(
+          t(
+            'vault.portfolio.usersLoadFailed',
+            'Benutzer für die Zuweisung konnten nicht geladen werden. Portfolios sind verfügbar; Zuweisungen ggf. später erneut versuchen.',
+          ),
+        );
+      }
     } catch (err: any) {
-      toast.error(err.message || 'Failed to load vault portfolios');
+      const raw = String(err?.message || err || '');
+      const isQueryOp =
+        /unsupported query operator/i.test(raw) || /\bin\b/i.test(raw);
+      toast.error(
+        isQueryOp
+          ? t(
+              'vault.portfolio.loadFailedQuery',
+              'Vault-Portfolios konnten nicht geladen werden. Bitte erneut versuchen oder den Administrator kontaktieren.',
+            )
+          : t(
+              'vault.portfolio.loadFailed',
+              'Vault-Portfolios konnten nicht geladen werden. Bitte später erneut versuchen.',
+            ),
+      );
     } finally {
       setLoading(false);
     }

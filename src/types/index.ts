@@ -132,6 +132,8 @@ export interface Group {
   description: string;
   businessHoursId?: string;
   isDefault?: boolean;
+  /** Ticket category IDs this team may see / receive (e.g. First Level Support). */
+  categoryIds?: string[];
   createdAt: any;
   updatedAt: any;
 }

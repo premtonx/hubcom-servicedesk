@@ -10,7 +10,6 @@ import {
   Users,
 } from 'lucide-react';
 import { useTranslation } from '../../../lib/context/I18nContext';
-import { AdminHubDemoDataCard } from './AdminHubDemoDataCard';
 import type { AdminHubTelemetry } from './adminHubTelemetry';
 
 interface AdminHubOverviewTabProps {
@@ -18,7 +17,7 @@ interface AdminHubOverviewTabProps {
   onTelemetryRefresh?: () => void;
 }
 
-export function AdminHubOverviewTab({ telemetry, onTelemetryRefresh }: AdminHubOverviewTabProps) {
+export function AdminHubOverviewTab({ telemetry }: AdminHubOverviewTabProps) {
   const { t } = useTranslation();
 
   return (
@@ -101,8 +100,6 @@ export function AdminHubOverviewTab({ telemetry, onTelemetryRefresh }: AdminHubO
           <span>No data pipelines telemetry leaked.</span>
         </div>
       </div>
-
-      <AdminHubDemoDataCard onChanged={onTelemetryRefresh} />
 
       <div className="bg-white border border-slate-200 rounded-[2.5rem] p-10 overflow-hidden relative shadow-sm">
         <div className="absolute top-0 right-0 p-8 opacity-5">
