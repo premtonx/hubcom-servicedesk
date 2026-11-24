@@ -130,6 +130,7 @@
     "test:email-signature": "tsx scripts/test-email-signature.ts",
     "test:admin-hub-layout": "tsx scripts/test-admin-hub-layout.ts",
     "test:admin-hub-infra": "tsx scripts/test-admin-hub-infra-fixes.ts",
+    "test:tickets-sidebar-favorites": "tsx scripts/test-tickets-sidebar-favorites.ts",
     "verify:inbound-smtp": "tsx scripts/verify-inbound-smtp.ts",
     "verify:rag": "tsx scripts/verify-rag-pipeline.ts",
     "verify:mcp": "node scripts/verify-mcp-server.mjs"

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   Archive,
   Building2,
@@ -15,15 +15,21 @@ import { TicketsAiQualityScore } from './TicketsAiQualityScore';
 import {
   ARCHIVE_VIEW_IDS,
   COMPACT_PRIMARY_VIEWS,
+  COMPACT_SIDEBAR_SECTION,
   COMPACT_STATUS_VIEWS,
   COMPACT_URGENCY_VIEWS,
   WAITING_QUEUE_VIEW_IDS,
   getCompactOverflowViews,
   getSidebarViewItem,
+  type CompactSidebarSectionId,
   type SidebarItemConfig,
 } from './ticketsSidebarConfig';
 import type { CustomTicketView } from '../../lib/ticketsSidebarPreferences';
-import { customViewId } from '../../lib/ticketsSidebarPreferences';
+import {
+  DEFAULT_COLLAPSED_GROUPS,
+  customViewId,
+  excludeFavoritedViews,
+} from '../../lib/ticketsSidebarPreferences';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,8 +37,6 @@ import {
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { organizationInitials } from '../../lib/client-portal/org-branding';
-
-const KUNDEN_COLLAPSE_KEY = 'hubcom.tickets.kundenSidebarOpen';
 
 export interface KundenSidebarOrg {
   id: string;
@@ -276,11 +280,39 @@ function ViewMenuItem({
   );
 }
 
-function SectionLabel({ children }: { children: ReactNode }) {
+function CollapsibleSectionHeader({
+  sectionId,
+  label,
+  collapsed,
+  onToggle,
+  leading,
+}: {
+  sectionId: string;
+  label: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  leading?: ReactNode;
+}) {
+  const panelId = `tickets-sidebar-section-${sectionId}`;
   return (
-    <div className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 select-none">
-      {children}
-    </div>
+    <button
+      type="button"
+      id={`${panelId}-heading`}
+      aria-expanded={!collapsed}
+      aria-controls={panelId}
+      onClick={onToggle}
+      className="w-full flex items-center justify-between gap-2 px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-1 rounded-md"
+    >
+      <span className="flex items-center gap-1.5 min-w-0 truncate select-none">
+        {leading}
+        {label}
+      </span>
+      {collapsed ? (
+        <ChevronRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+      ) : (
+        <ChevronDown className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+      )}
+    </button>
   );
 }
 
@@ -310,6 +342,8 @@ interface TicketsLeftSidebarProps {
 
 export function TicketsLeftSidebar({
   effectiveCollapsed,
+  collapsedGroups,
+  toggleGroup,
   activeView,
   onViewChange,
   getViewCount,
@@ -328,24 +362,10 @@ export function TicketsLeftSidebar({
   const { t } = useTranslation();
   const favoriteAriaLabel = t('tickets.sidebar.toggleFavorite', 'Toggle favorite');
   const showKunden = Boolean(kundenOrgs && onSelectOrganization);
-  const [kundenOpen, setKundenOpen] = useState(() => {
-    try {
-      const raw = localStorage.getItem(KUNDEN_COLLAPSE_KEY);
-      if (raw === null) return true;
-      return raw === '1' || raw === 'true';
-    } catch {
-      return true;
-    }
-  });
   const [kundenFilter, setKundenFilter] = useState('');
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(KUNDEN_COLLAPSE_KEY, kundenOpen ? '1' : '0');
-    } catch {
-      /* ignore */
-    }
-  }, [kundenOpen]);
+  const isSectionCollapsed = (sectionId: CompactSidebarSectionId) =>
+    collapsedGroups[sectionId] ?? DEFAULT_COLLAPSED_GROUPS[sectionId] ?? true;
 
   const filteredKunden = useMemo(() => {
     const list = kundenOrgs || [];
@@ -376,24 +396,70 @@ export function TicketsLeftSidebar({
     .map(resolveFavoriteItem)
     .filter((item): item is SidebarItemConfig => item != null);
 
-  const waitingCount = WAITING_QUEUE_VIEW_IDS.reduce((sum, id) => sum + getViewCount(id), 0);
-  const archiveCount = ARCHIVE_VIEW_IDS.reduce((sum, id) => sum + getViewCount(id), 0);
-  const waitingActive = WAITING_QUEUE_VIEW_IDS.includes(activeView as (typeof WAITING_QUEUE_VIEW_IDS)[number]);
-  const archiveActive = ARCHIVE_VIEW_IDS.includes(activeView as (typeof ARCHIVE_VIEW_IDS)[number]);
+  const primaryViews = useMemo(
+    () => excludeFavoritedViews(COMPACT_PRIMARY_VIEWS, favoriteViewIds),
+    [favoriteViewIds],
+  );
+  const urgencyViews = useMemo(
+    () => excludeFavoritedViews(COMPACT_URGENCY_VIEWS, favoriteViewIds),
+    [favoriteViewIds],
+  );
+  const statusViews = useMemo(
+    () => excludeFavoritedViews(COMPACT_STATUS_VIEWS, favoriteViewIds),
+    [favoriteViewIds],
+  );
+  const waitingViewIds = useMemo(
+    () => excludeFavoritedViews(
+      WAITING_QUEUE_VIEW_IDS.map((id) => ({ id })),
+      favoriteViewIds,
+    ).map((item) => item.id),
+    [favoriteViewIds],
+  );
+  const archiveViewIds = useMemo(
+    () => excludeFavoritedViews(
+      ARCHIVE_VIEW_IDS.map((id) => ({ id })),
+      favoriteViewIds,
+    ).map((item) => item.id),
+    [favoriteViewIds],
+  );
 
-  const overflowItems: SidebarItemConfig[] = [
-    ...getCompactOverflowViews(),
-    ...customViews.map(
-      (view) =>
-        ({
-          id: customViewId(view),
-          label: view.name,
-          icon: getSidebarViewItem(customViewId(view))?.icon ?? MoreHorizontal,
-        }) satisfies SidebarItemConfig,
-    ),
-  ];
+  const waitingCount = waitingViewIds.reduce((sum, id) => sum + getViewCount(id), 0);
+  const archiveCount = archiveViewIds.reduce((sum, id) => sum + getViewCount(id), 0);
+  const waitingActive = waitingViewIds.includes(activeView as (typeof waitingViewIds)[number]);
+  const archiveActive = archiveViewIds.includes(activeView as (typeof archiveViewIds)[number]);
 
-  const moreActive = overflowItems.some((item) => item.id === activeView);
+  const overflowItems: SidebarItemConfig[] = excludeFavoritedViews(
+    [
+      ...getCompactOverflowViews(),
+      ...customViews.map(
+        (view) =>
+          ({
+            id: customViewId(view),
+            label: view.name,
+            icon: getSidebarViewItem(customViewId(view))?.icon ?? MoreHorizontal,
+          }) satisfies SidebarItemConfig,
+      ),
+    ],
+    favoriteViewIds,
+  );
+
+  const moreInlineIds = excludeFavoritedViews(
+    (['watching', 'due_today', 'status_qs', 'status_paused', 'spam'] as const).map((id) => ({ id })),
+    favoriteViewIds,
+  ).map((item) => item.id);
+
+  const moreActive =
+    overflowItems.some((item) => item.id === activeView) ||
+    moreInlineIds.includes(activeView as (typeof moreInlineIds)[number]);
+
+  const favoritesCollapsed = isSectionCollapsed(COMPACT_SIDEBAR_SECTION.favorites);
+  const primaryCollapsed = isSectionCollapsed(COMPACT_SIDEBAR_SECTION.primaryViews);
+  const urgencyCollapsed = isSectionCollapsed(COMPACT_SIDEBAR_SECTION.urgency);
+  const statusCollapsed = isSectionCollapsed(COMPACT_SIDEBAR_SECTION.statusQueues);
+  const kundenCollapsed = isSectionCollapsed(COMPACT_SIDEBAR_SECTION.kunden);
+
+  /** Icon-rail mode always shows rows; full sidebar respects collapse prefs. */
+  const showSectionBody = (collapsed: boolean) => effectiveCollapsed || !collapsed;
 
   const renderItem = (item: SidebarItemConfig, badgeTone?: BadgeTone, helpChip?: boolean, keyPrefix = '') => (
     <SidebarNavButton
@@ -456,134 +522,238 @@ export function TicketsLeftSidebar({
         {favoriteItems.length > 0 && (
           <div className="mb-1">
             {!effectiveCollapsed && (
-              <div className="px-3 pt-3 pb-1 flex items-center gap-1.5 min-w-0">
-                <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-500" />
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate select-none">
-                  {t('tickets.groups.favorites', 'Favoriten')}
-                </span>
+              <CollapsibleSectionHeader
+                sectionId={COMPACT_SIDEBAR_SECTION.favorites}
+                label={t('tickets.groups.favorites', 'Favoriten')}
+                collapsed={favoritesCollapsed}
+                onToggle={() => toggleGroup(COMPACT_SIDEBAR_SECTION.favorites)}
+                leading={<Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-500" aria-hidden="true" />}
+              />
+            )}
+            {showSectionBody(favoritesCollapsed) && (
+              <div
+                id={`tickets-sidebar-section-${COMPACT_SIDEBAR_SECTION.favorites}`}
+                role="region"
+                aria-labelledby={
+                  effectiveCollapsed
+                    ? undefined
+                    : `tickets-sidebar-section-${COMPACT_SIDEBAR_SECTION.favorites}-heading`
+                }
+                className={cn('space-y-0.5', effectiveCollapsed && 'space-y-2')}
+              >
+                {favoriteItems.map((item) => renderItem(item, undefined, undefined, 'fav-'))}
               </div>
             )}
-            <div className={cn('space-y-0.5', effectiveCollapsed && 'space-y-2')}>
-              {favoriteItems.map((item) => renderItem(item, undefined, undefined, 'fav-'))}
-            </div>
             {!effectiveCollapsed && <div className="mx-3 mt-2 border-b border-slate-100" />}
           </div>
         )}
 
-        {!effectiveCollapsed && (
-          <SectionLabel>{t('tickets.groups.primaryViews', 'Hauptansichten')}</SectionLabel>
+        {(primaryViews.length > 0 || effectiveCollapsed) && (
+          <div className="mb-0.5">
+            {!effectiveCollapsed && (
+              <CollapsibleSectionHeader
+                sectionId={COMPACT_SIDEBAR_SECTION.primaryViews}
+                label={t('tickets.groups.primaryViews', 'Hauptansichten')}
+                collapsed={primaryCollapsed}
+                onToggle={() => toggleGroup(COMPACT_SIDEBAR_SECTION.primaryViews)}
+              />
+            )}
+            {showSectionBody(primaryCollapsed) && primaryViews.length > 0 && (
+              <div
+                id={`tickets-sidebar-section-${COMPACT_SIDEBAR_SECTION.primaryViews}`}
+                role="region"
+                aria-labelledby={
+                  effectiveCollapsed
+                    ? undefined
+                    : `tickets-sidebar-section-${COMPACT_SIDEBAR_SECTION.primaryViews}-heading`
+                }
+                className={cn('space-y-0.5', effectiveCollapsed && 'space-y-2')}
+              >
+                {primaryViews.map((item) => renderItem(item))}
+              </div>
+            )}
+          </div>
         )}
-        <div className={cn('space-y-0.5', effectiveCollapsed && 'space-y-2')}>
-          {COMPACT_PRIMARY_VIEWS.map((item) => renderItem(item))}
-        </div>
 
-        {!effectiveCollapsed && (
-          <SectionLabel>{t('tickets.groups.urgency', 'Dringlichkeit & SLA')}</SectionLabel>
-        )}
-        <div className={cn('space-y-0.5', effectiveCollapsed && 'space-y-2')}>
-          {renderItem(COMPACT_URGENCY_VIEWS[0], 'amber')}
-          {renderItem(COMPACT_URGENCY_VIEWS[1], 'rose', true)}
-          {renderItem(COMPACT_URGENCY_VIEWS[2], 'rose')}
-        </div>
-
-        {!effectiveCollapsed && (
-          <SectionLabel>{t('tickets.groups.statusQueues', 'Status & Queues')}</SectionLabel>
-        )}
-        <div className={cn('space-y-0.5', effectiveCollapsed && 'space-y-2')}>
-          {COMPACT_STATUS_VIEWS.map((item) => renderItem(item))}
-
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <button
-                  type="button"
-                  title={t('tickets.items.waiting_queues', 'Wartend')}
-                  className={cn(
-                    'flex h-8 w-full min-w-0 items-center justify-between gap-2 px-2.5 py-1.5 text-[13px] font-medium leading-none rounded-md transition-colors',
-                    waitingActive ? 'bg-blue-600 text-white font-semibold shadow-sm' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100',
-                    effectiveCollapsed && 'justify-center px-0 h-8 w-8 mx-auto',
-                  )}
-                />
-              }
-            >
-              <span className="flex items-center gap-2 min-w-0">
-                <Hourglass className={cn('h-4 w-4 shrink-0', waitingActive ? 'text-white' : 'text-slate-500')} />
-                {!effectiveCollapsed && (
-                  <span className="truncate text-left">{t('tickets.items.waiting_queues', 'Wartend')}</span>
+        {(urgencyViews.length > 0 || effectiveCollapsed) && (
+          <div className="mb-0.5">
+            {!effectiveCollapsed && (
+              <CollapsibleSectionHeader
+                sectionId={COMPACT_SIDEBAR_SECTION.urgency}
+                label={t('tickets.groups.urgency', 'Dringlichkeit & SLA')}
+                collapsed={urgencyCollapsed}
+                onToggle={() => toggleGroup(COMPACT_SIDEBAR_SECTION.urgency)}
+              />
+            )}
+            {showSectionBody(urgencyCollapsed) && urgencyViews.length > 0 && (
+              <div
+                id={`tickets-sidebar-section-${COMPACT_SIDEBAR_SECTION.urgency}`}
+                role="region"
+                aria-labelledby={
+                  effectiveCollapsed
+                    ? undefined
+                    : `tickets-sidebar-section-${COMPACT_SIDEBAR_SECTION.urgency}-heading`
+                }
+                className={cn('space-y-0.5', effectiveCollapsed && 'space-y-2')}
+              >
+                {urgencyViews.map((item) =>
+                  renderItem(
+                    item,
+                    item.id === 'sla_risk'
+                      ? 'amber'
+                      : item.id === 'help_requested' || item.id === 'escalations'
+                        ? 'rose'
+                        : undefined,
+                    item.id === 'help_requested',
+                  ),
                 )}
-              </span>
-              {!effectiveCollapsed && (
-                <span className="flex items-center gap-1 shrink-0">
-                  {waitingCount > 0 && (
-                    <span
-                      className={cn(
-                        'font-mono tabular-nums text-[11px] font-semibold px-1.5 py-0.5 rounded-full',
-                        countBadgeClass(waitingActive),
-                      )}
-                    >
-                      {waitingCount}
-                    </span>
-                  )}
-                  <ChevronDown className={cn('w-3.5 h-3.5', waitingActive ? 'text-white/80' : 'text-slate-400')} />
-                </span>
-              )}
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56 min-w-56">
-              {WAITING_QUEUE_VIEW_IDS.map((id) => {
-                const item = getSidebarViewItem(id);
-                if (!item) return null;
-                return renderMenuItem(item);
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
+              </div>
+            )}
+          </div>
+        )}
 
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <button
-                  type="button"
-                  title={t('tickets.items.archive', 'Gelöst / Geschlossen')}
-                  className={cn(
-                    'flex h-8 w-full min-w-0 items-center justify-between gap-2 px-2.5 py-1.5 text-[13px] font-medium leading-none rounded-md transition-colors',
-                    archiveActive ? 'bg-blue-600 text-white font-semibold shadow-sm' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100',
-                    effectiveCollapsed && 'justify-center px-0 h-8 w-8 mx-auto',
-                  )}
-                />
+        <div className="mb-0.5">
+          {!effectiveCollapsed && (
+            <CollapsibleSectionHeader
+              sectionId={COMPACT_SIDEBAR_SECTION.statusQueues}
+              label={t('tickets.groups.statusQueues', 'Status & Queues')}
+              collapsed={statusCollapsed}
+              onToggle={() => toggleGroup(COMPACT_SIDEBAR_SECTION.statusQueues)}
+            />
+          )}
+          {showSectionBody(statusCollapsed) && (
+            <div
+              id={`tickets-sidebar-section-${COMPACT_SIDEBAR_SECTION.statusQueues}`}
+              role="region"
+              aria-labelledby={
+                effectiveCollapsed
+                  ? undefined
+                  : `tickets-sidebar-section-${COMPACT_SIDEBAR_SECTION.statusQueues}-heading`
               }
+              className={cn('space-y-0.5', effectiveCollapsed && 'space-y-2')}
             >
-              <span className="flex items-center gap-2 min-w-0">
-                <Archive className={cn('h-4 w-4 shrink-0', archiveActive ? 'text-white' : 'text-slate-500')} />
-                {!effectiveCollapsed && (
-                  <span className="truncate text-left">{t('tickets.items.archive', 'Gelöst / Geschlossen')}</span>
-                )}
-              </span>
-              {!effectiveCollapsed && (
-                <span className="flex items-center gap-1 shrink-0">
-                  {archiveCount > 0 && (
-                    <span
-                      className={cn(
-                        'font-mono tabular-nums text-[11px] font-semibold px-1.5 py-0.5 rounded-full',
-                        countBadgeClass(archiveActive),
+              {statusViews.map((item) => renderItem(item))}
+
+              {waitingViewIds.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <button
+                        type="button"
+                        title={t('tickets.items.waiting_queues', 'Wartend')}
+                        className={cn(
+                          'flex h-8 w-full min-w-0 items-center justify-between gap-2 px-2.5 py-1.5 text-[13px] font-medium leading-none rounded-md transition-colors',
+                          waitingActive
+                            ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100',
+                          effectiveCollapsed && 'justify-center px-0 h-8 w-8 mx-auto',
+                        )}
+                      />
+                    }
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <Hourglass
+                        className={cn('h-4 w-4 shrink-0', waitingActive ? 'text-white' : 'text-slate-500')}
+                      />
+                      {!effectiveCollapsed && (
+                        <span className="truncate text-left">
+                          {t('tickets.items.waiting_queues', 'Wartend')}
+                        </span>
                       )}
-                    >
-                      {archiveCount}
                     </span>
-                  )}
-                  <ChevronDown className={cn('w-3.5 h-3.5', archiveActive ? 'text-white/80' : 'text-slate-400')} />
-                </span>
+                    {!effectiveCollapsed && (
+                      <span className="flex items-center gap-1 shrink-0">
+                        {waitingCount > 0 && (
+                          <span
+                            className={cn(
+                              'font-mono tabular-nums text-[11px] font-semibold px-1.5 py-0.5 rounded-full',
+                              countBadgeClass(waitingActive),
+                            )}
+                          >
+                            {waitingCount}
+                          </span>
+                        )}
+                        <ChevronDown
+                          className={cn(
+                            'w-3.5 h-3.5',
+                            waitingActive ? 'text-white/80' : 'text-slate-400',
+                          )}
+                        />
+                      </span>
+                    )}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-56 min-w-56">
+                    {waitingViewIds.map((id) => {
+                      const item = getSidebarViewItem(id);
+                      if (!item) return null;
+                      return renderMenuItem(item);
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56 min-w-56">
-              {ARCHIVE_VIEW_IDS.map((id) => {
-                const item = getSidebarViewItem(id);
-                if (!item) return null;
-                return renderMenuItem(item);
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
+
+              {archiveViewIds.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <button
+                        type="button"
+                        title={t('tickets.items.archive', 'Gelöst / Geschlossen')}
+                        className={cn(
+                          'flex h-8 w-full min-w-0 items-center justify-between gap-2 px-2.5 py-1.5 text-[13px] font-medium leading-none rounded-md transition-colors',
+                          archiveActive
+                            ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100',
+                          effectiveCollapsed && 'justify-center px-0 h-8 w-8 mx-auto',
+                        )}
+                      />
+                    }
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <Archive
+                        className={cn('h-4 w-4 shrink-0', archiveActive ? 'text-white' : 'text-slate-500')}
+                      />
+                      {!effectiveCollapsed && (
+                        <span className="truncate text-left">
+                          {t('tickets.items.archive', 'Gelöst / Geschlossen')}
+                        </span>
+                      )}
+                    </span>
+                    {!effectiveCollapsed && (
+                      <span className="flex items-center gap-1 shrink-0">
+                        {archiveCount > 0 && (
+                          <span
+                            className={cn(
+                              'font-mono tabular-nums text-[11px] font-semibold px-1.5 py-0.5 rounded-full',
+                              countBadgeClass(archiveActive),
+                            )}
+                          >
+                            {archiveCount}
+                          </span>
+                        )}
+                        <ChevronDown
+                          className={cn(
+                            'w-3.5 h-3.5',
+                            archiveActive ? 'text-white/80' : 'text-slate-400',
+                          )}
+                        />
+                      </span>
+                    )}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-56 min-w-56">
+                    {archiveViewIds.map((id) => {
+                      const item = getSidebarViewItem(id);
+                      if (!item) return null;
+                      return renderMenuItem(item);
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+          )}
         </div>
 
-        {overflowItems.length > 0 && (
+        {(moreInlineIds.length > 0 || overflowItems.length > 0) && (
           <div className="mt-1">
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -601,32 +771,43 @@ export function TicketsLeftSidebar({
                 }
               >
                 <span className="flex items-center gap-2 min-w-0">
-                  <MoreHorizontal className={cn('h-4 w-4 shrink-0', moreActive ? 'text-white' : 'text-slate-500')} />
+                  <MoreHorizontal
+                    className={cn('h-4 w-4 shrink-0', moreActive ? 'text-white' : 'text-slate-500')}
+                  />
                   {!effectiveCollapsed && (
                     <span className="truncate">{t('tickets.sidebar.moreViews', 'Mehr')}</span>
                   )}
                 </span>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56 p-1.5 shadow-lg border border-slate-200 bg-white rounded-xl">
+              <DropdownMenuContent
+                align="start"
+                className="w-56 p-1.5 shadow-lg border border-slate-200 bg-white rounded-xl"
+              >
                 <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 select-none">
                   {t('tickets.sidebar.moreViewsSection', 'Weitere Ansichten')}
                 </div>
-                {(['watching', 'due_today', 'status_qs', 'status_paused'] as const).map((id) => {
-                  const item = getSidebarViewItem(id);
-                  if (!item) return null;
-                  return renderMenuItem(item, {
-                    label:
-                      id === 'status_qs'
-                        ? t('tickets.items.status_qs_long', 'In Qualitätssicherung (QS)')
-                        : resolveLabel(item),
-                  });
-                })}
-                <div className="my-1 border-t border-slate-100" />
-                {(() => {
-                  const item = getSidebarViewItem('spam');
-                  if (!item) return null;
-                  return renderMenuItem(item, { tone: 'rose' });
-                })()}
+                {(['watching', 'due_today', 'status_qs', 'status_paused'] as const)
+                  .filter((id) => moreInlineIds.includes(id))
+                  .map((id) => {
+                    const item = getSidebarViewItem(id);
+                    if (!item) return null;
+                    return renderMenuItem(item, {
+                      label:
+                        id === 'status_qs'
+                          ? t('tickets.items.status_qs_long', 'In Qualitätssicherung (QS)')
+                          : resolveLabel(item),
+                    });
+                  })}
+                {moreInlineIds.includes('spam') && (
+                  <>
+                    <div className="my-1 border-t border-slate-100" />
+                    {(() => {
+                      const item = getSidebarViewItem('spam');
+                      if (!item) return null;
+                      return renderMenuItem(item, { tone: 'rose' });
+                    })()}
+                  </>
+                )}
                 {overflowItems.length > 0 && (
                   <>
                     <div className="my-1 border-t border-slate-100" />
@@ -640,23 +821,20 @@ export function TicketsLeftSidebar({
 
         {showKunden && !effectiveCollapsed && (
           <div className="mt-2 pt-1 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setKundenOpen((v) => !v)}
-              className="w-full flex items-center justify-between gap-2 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-600"
-            >
-              <span className="flex items-center gap-1.5">
-                <Building2 className="w-3 h-3" />
-                {t('tickets.groups.kunden', 'Kunden')}
-              </span>
-              {kundenOpen ? (
-                <ChevronDown className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronRight className="w-3.5 h-3.5" />
-              )}
-            </button>
-            {kundenOpen && (
-              <div className="space-y-0.5 pb-1">
+            <CollapsibleSectionHeader
+              sectionId={COMPACT_SIDEBAR_SECTION.kunden}
+              label={t('tickets.groups.kunden', 'Kunden')}
+              collapsed={kundenCollapsed}
+              onToggle={() => toggleGroup(COMPACT_SIDEBAR_SECTION.kunden)}
+              leading={<Building2 className="w-3 h-3 shrink-0" aria-hidden="true" />}
+            />
+            {showSectionBody(kundenCollapsed) && (
+              <div
+                id={`tickets-sidebar-section-${COMPACT_SIDEBAR_SECTION.kunden}`}
+                role="region"
+                aria-labelledby={`tickets-sidebar-section-${COMPACT_SIDEBAR_SECTION.kunden}-heading`}
+                className="space-y-0.5 pb-1"
+              >
                 {(kundenOrgs?.length || 0) > 8 && (
                   <input
                     type="search"
