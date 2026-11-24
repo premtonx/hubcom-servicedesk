@@ -128,6 +128,7 @@
     "test:portal-isolation": "tsx scripts/test-client-portal-isolation.ts",
     "test:email-html": "tsx scripts/test-email-html.ts",
     "test:email-signature": "tsx scripts/test-email-signature.ts",
+    "test:admin-hub-layout": "tsx scripts/test-admin-hub-layout.ts",
     "verify:inbound-smtp": "tsx scripts/verify-inbound-smtp.ts",
     "verify:rag": "tsx scripts/verify-rag-pipeline.ts",
     "verify:mcp": "node scripts/verify-mcp-server.mjs"

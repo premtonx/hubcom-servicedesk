@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Download, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { AdminBreadcrumbs } from '../AdminBreadcrumbs';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Badge } from '../ui/badge';
@@ -61,8 +60,7 @@ export default function TimeTrackingOverviewPage() {
   return (
     <div className="flex-1 overflow-y-auto min-h-0 bg-[#fafafa]">
       <div className="p-8 max-w-6xl mx-auto space-y-6 pb-20">
-        <AdminBreadcrumbs />
-        <div className="flex flex-wrap items-start justify-between gap-4">
+<div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-[#0B1F3A] tracking-tight">
               {t('timeTracking.overviewTitle', 'Zeiterfassung Gesamt')}

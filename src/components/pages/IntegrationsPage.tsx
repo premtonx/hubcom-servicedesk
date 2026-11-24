@@ -5,7 +5,6 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Badge } from '../../components/ui/badge';
-import { AdminBreadcrumbs } from '../../components/AdminBreadcrumbs';
 import { useWorkspaceModuleConfig } from '../../hooks/useWorkspaceModuleConfig';
 import { toast } from 'sonner';
 import axios from 'axios';
@@ -48,9 +47,7 @@ export default function IntegrationsPage() {
   return (
     <div className="flex-1 overflow-y-auto bg-[#fafafa]">
       <div className="p-8 max-w-4xl mx-auto pb-20">
-        <AdminBreadcrumbs />
-
-        <div className="flex items-center justify-between mb-10">
+<div className="flex items-center justify-between mb-10">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <Webhook className="w-6 h-6 text-indigo-500" />

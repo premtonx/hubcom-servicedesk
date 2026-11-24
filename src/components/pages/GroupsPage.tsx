@@ -32,7 +32,6 @@ import {
   DropdownMenuItem, 
   DropdownMenuTrigger 
 } from '../../components/ui/dropdown-menu';
-import { AdminBreadcrumbs } from '../../components/AdminBreadcrumbs';
 import { groupService } from '../../services/groupService';
 import { userService } from '../../services/userService';
 import { Group, User, GroupMember } from '../../types';
@@ -177,9 +176,7 @@ export default function GroupsPage() {
   return (
     <div className="flex-1 overflow-y-auto bg-[#fafafa]">
       <div className="p-8 max-w-6xl mx-auto pb-32">
-        <AdminBreadcrumbs />
-
-        <AnimatePresence mode="wait">
+<AnimatePresence mode="wait">
           {!isEditing ? (
             <motion.div
               key="list"

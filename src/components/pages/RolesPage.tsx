@@ -45,7 +45,6 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator
 } from "../ui/dropdown-menu";
-import { AdminBreadcrumbs } from '../AdminBreadcrumbs';
 import { rbacService } from '../../services/rbacService';
 import { userService } from '../../services/userService';
 import { UserRole, User } from '../../types';
@@ -177,9 +176,7 @@ export default function RolesPage() {
   return (
     <div className="flex-1 overflow-y-auto bg-[#fafafa] custom-scrollbar pb-32">
       <div className="p-8 max-w-7xl mx-auto space-y-8">
-        <AdminBreadcrumbs />
-
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+<div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-3">
                <div className="w-12 h-12 rounded-2xl bg-indigo-600/10 flex items-center justify-center text-indigo-600 shadow-sm border border-indigo-600/20">

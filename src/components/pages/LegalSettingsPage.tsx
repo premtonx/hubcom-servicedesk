@@ -9,7 +9,6 @@ import { toast } from 'sonner';
 import { ShieldAlert, BookOpen, Save, History, Lock, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-import { AdminBreadcrumbs } from '../../components/AdminBreadcrumbs';
 
 import { usePermissions } from '../../hooks/usePermissions';
 
@@ -36,8 +35,7 @@ export default function LegalSettingsPage() {
   return (
     <div className="flex-1 overflow-y-auto min-h-0 bg-[#fafafa] custom-scrollbar">
       <div className="p-8 max-w-4xl mx-auto space-y-8 pb-20">
-        <AdminBreadcrumbs />
-        <div className="flex items-center justify-between">
+<div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-black text-[#0B1F3A] tracking-tight uppercase">Hubcom Legal Guardrail</h1>
             <p className="text-sm text-[#5A6A7A] font-medium">Definieren Sie algorithmische Grenzen und unzulässige rechtliche/finanzielle Antworten.</p>

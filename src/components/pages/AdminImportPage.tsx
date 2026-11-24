@@ -18,7 +18,6 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { AdminBreadcrumbs } from '../AdminBreadcrumbs';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Input } from '../ui/input';
@@ -378,9 +377,7 @@ export default function AdminImportPage() {
   return (
     <div className="flex-1 overflow-y-auto bg-[#fafafa]">
       <div className="p-8 max-w-5xl mx-auto pb-24">
-        <AdminBreadcrumbs />
-
-        <div className="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+<div className="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-black tracking-tight text-slate-900">
               Data Import & Migration

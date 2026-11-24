@@ -376,7 +376,7 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent>
              <div 
-               onClick={() => navigate('/email-channels')}
+               onClick={() => navigate('/admin/email-channels')}
                className="group flex items-center justify-between p-4 bg-[#F8F9FA] rounded-2xl border border-[#DADCE0] cursor-pointer hover:border-primary hover:bg-primary/5 transition-all"
              >
                 <div className="flex items-center gap-4">

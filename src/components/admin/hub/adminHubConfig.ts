@@ -53,6 +53,73 @@ export function resolveAdminHubTab(raw: string | null | undefined): AdminHubTabI
   return TAB_ALIASES[key] ?? 'uebersicht';
 }
 
+/** Sub-routes nested under AdminHubLayout → parent sidebar section + labels. */
+export interface AdminHubSubRouteMeta {
+  parentTab: AdminHubTabId;
+  label: string;
+  /** Optional German/English title override for content breadcrumb */
+  title?: string;
+}
+
+/**
+ * Longest-prefix wins. Keep more specific paths (e.g. time-tracking/overview) before parents.
+ */
+export const ADMIN_HUB_SUBROUTES: Array<{ path: string; meta: AdminHubSubRouteMeta }> = [
+  { path: '/admin/time-tracking/overview', meta: { parentTab: 'system', label: 'Zeiterfassung Gesamt' } },
+  { path: '/admin/time-tracking', meta: { parentTab: 'system', label: 'Zeiterfassung & Stundensätze' } },
+  { path: '/admin/ticket-categories', meta: { parentTab: 'system', label: 'Ticket-Kategorien' } },
+  { path: '/admin/vault-portfolio', meta: { parentTab: 'system', label: 'Vault-Portfoliomanagement' } },
+  { path: '/admin/workforce-legacy', meta: { parentTab: 'system', label: 'Workforce (Legacy)' } },
+  { path: '/admin/workforce', meta: { parentTab: 'system', label: 'Benutzerverwaltung' } },
+  { path: '/admin/users', meta: { parentTab: 'system', label: 'Benutzerverwaltung' } },
+  { path: '/admin/groups', meta: { parentTab: 'system', label: 'Functional Teams' } },
+  { path: '/admin/roles', meta: { parentTab: 'system', label: 'RBAC Command' } },
+  { path: '/admin/import', meta: { parentTab: 'system', label: 'Data Import & Migration' } },
+  { path: '/admin/customers', meta: { parentTab: 'system', label: 'Kunden' } },
+  { path: '/admin/contact-schema', meta: { parentTab: 'ai-engine', label: 'Contact Profile' } },
+  { path: '/admin/sovereignty', meta: { parentTab: 'governance', label: 'Sovereignty Center' } },
+  { path: '/admin/pii', meta: { parentTab: 'governance', label: 'PII Shield' } },
+  { path: '/admin/legal', meta: { parentTab: 'governance', label: 'Legal & Risk' } },
+  { path: '/admin/schema', meta: { parentTab: 'governance', label: 'Company Schema' } },
+  { path: '/admin/notifications', meta: { parentTab: 'integrations', label: 'Benachrichtigungen' } },
+  { path: '/admin/integrations', meta: { parentTab: 'integrations', label: 'Integrations-Hub' } },
+  { path: '/admin/polyglot', meta: { parentTab: 'integrations', label: 'Polyglot Bridge' } },
+  { path: '/admin/email-channels', meta: { parentTab: 'integrations', label: 'E-Mail-Kanäle' } },
+  { path: '/email-channels', meta: { parentTab: 'integrations', label: 'E-Mail-Kanäle' } },
+];
+
+export function findAdminHubSubRoute(pathname: string): AdminHubSubRouteMeta | null {
+  const path = String(pathname || '').replace(/\/+$/, '') || '/';
+  for (const entry of ADMIN_HUB_SUBROUTES) {
+    if (path === entry.path || path.startsWith(`${entry.path}/`)) {
+      return entry.meta;
+    }
+  }
+  return null;
+}
+
+export function tabLabel(tabId: AdminHubTabId): string {
+  return ADMIN_HUB_TABS.find((t) => t.id === tabId)?.label ?? tabId;
+}
+
+/** Resolve which left-sidebar section should be highlighted for the current location. */
+export function resolveActiveAdminHubSection(
+  pathname: string,
+  searchParams?: URLSearchParams | { get: (key: string) => string | null },
+): AdminHubTabId {
+  const path = String(pathname || '').replace(/\/+$/, '') || '/';
+  if (path === '/admin' || path === '/admin/') {
+    return resolveAdminHubTab(searchParams?.get('tab'));
+  }
+  const sub = findAdminHubSubRoute(path);
+  if (sub) return sub.parentTab;
+  // Nested under /admin but unknown → keep Übersicht only when truly on hub index aliases
+  if (path.startsWith('/admin')) {
+    return resolveAdminHubTab(searchParams?.get('tab'));
+  }
+  return 'uebersicht';
+}
+
 export interface AdminHubSection {
   title: string;
   description: string;
@@ -206,7 +273,7 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         title: 'Companies Directory',
         description: 'Manage corporate organizational accounts, domains, SLA tiers, and credentials.',
         icon: Building2,
-        path: '/customers',
+        path: '/admin/customers',
         color: 'text-indigo-600',
         bgColor: 'bg-indigo-50',
         borderColor: 'border-indigo-105',
@@ -286,7 +353,7 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         title: 'E-Mail-Kanäle / Absender',
         description: 'Absender-Adressen, Anzeigename, SMTP und Standard-Absender für Ticket-Antworten.',
         icon: Mail,
-        path: '/email-channels',
+        path: '/admin/email-channels',
         color: 'text-rose-500',
         bgColor: 'bg-rose-50',
         borderColor: 'border-rose-105',
