@@ -709,17 +709,14 @@ export function VaultEntryCreateWorkspace({
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-[#5F6368] uppercase tracking-widest pl-1 block">Link corporate client company</label>
                   <Select 
-                    value={newEntry.linkedCompany || 'Acme Global'} 
+                    value={newEntry.linkedCompany || 'None'} 
                     onValueChange={(val) => setNewEntry({ ...newEntry, linkedCompany: val })}
                   >
                     <SelectTrigger className="bg-white border-[#DADCE0] rounded-xl h-10 text-sm">
-                      <SelectValue />
+                      <SelectValue placeholder="Unternehmen wählen" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Acme Global">Acme Global Enterprise</SelectItem>
-                      <SelectItem value="Cyberdyne">Cyberdyne Systems</SelectItem>
-                      <SelectItem value="FinStream">FinStream Financials</SelectItem>
-                      <SelectItem value="None">None (Internal Infrastructure)</SelectItem>
+                      <SelectItem value="None">Keins (interne Infrastruktur)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

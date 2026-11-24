@@ -124,7 +124,6 @@ export default function CustomersPage() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   
   const [contactSchema, setContactSchema] = useState<CustomField[]>([]);
-  const [isSeeding, setIsSeeding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   // Pin / Favorite accounts
@@ -344,225 +343,6 @@ export default function CustomersPage() {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
       .slice(0, 80);
-
-  // Seeding high-fidelity mockup companies and authors
-  const seedSampleData = async () => {
-    setIsSeeding(true);
-    try {
-      // 1. Acme Global Solutions
-      const acmeId = await customerService.createCompany({
-        name: "Acme Global Solutions",
-        domain: "acme.com",
-        website: "www.acme.com",
-        logoUrl: "https://logo.clearbit.com/acme.com",
-        branche: "Manufacturing",
-        wartungsvertragStatus: "Active",
-        phoneNumbers: ["+1 555-0199"],
-        tier: "Enterprise",
-        healthScore: 92,
-        healthStatus: "Healthy",
-        accountOwner: "Sarah James",
-        contractPlan: "Enterprise Plus",
-        contractSla: "4h response",
-        contractRenewalDate: "Jan 12, 2027 (218 days)",
-        contractStatus: "ACTIVE",
-        usersCount: 142,
-        assetsCount: 87,
-        vaultEntriesCount: 23,
-        slaPerformance: "99.8%",
-        monthlySpend: "€4,520",
-        customerSince: "Jan 12, 2021",
-        is_demo: true,
-        isDemoData: true,
-      } as any);
-
-      await customerService.createContact({
-        companyId: acmeId,
-        name: "Wile E. Coyote",
-        email: "wile@acme.com",
-        title: "Head of R&D",
-        phoneWork: "+1 555-0200",
-        address: "Canyon Deserts Road, AZ"
-      });
-
-      await customerService.createContact({
-        companyId: acmeId,
-        name: "Road Runner",
-        email: "beep@acme.com",
-        title: "Fastest Delivery Specialist",
-        phoneMobile: "+1 555-0300"
-      });
-
-      // 2. FinStream Inc.
-      const finstreamId = await customerService.createCompany({
-        name: "FinStream Inc.",
-        domain: "finstream.com",
-        website: "www.finstream.com",
-        logoUrl: "https://logo.clearbit.com/finstream.com",
-        branche: "Finance",
-        wartungsvertragStatus: "Active",
-        phoneNumbers: ["+1 555-0210"],
-        tier: "Pro",
-        healthScore: 85,
-        healthStatus: "Healthy",
-        accountOwner: "Sarah James",
-        contractPlan: "Pro Support",
-        contractSla: "8h response",
-        contractRenewalDate: "Mar 10, 2027",
-        contractStatus: "ACTIVE",
-        usersCount: 45,
-        assetsCount: 32,
-        vaultEntriesCount: 12,
-        slaPerformance: "98.5%",
-        monthlySpend: "€2,100",
-        customerSince: "Feb 20, 2022",
-        is_demo: true,
-        isDemoData: true,
-      } as any);
-
-      await customerService.createContact({
-        companyId: finstreamId,
-        name: "Thomas Sterling",
-        email: "t.sterling@finstream.com",
-        title: "VP of Enterprise Security",
-        phoneWork: "+1 555-0212"
-      });
-
-      // 3. CyberDyne Systems
-      const cyberId = await customerService.createCompany({
-        name: "CyberDyne Systems",
-        domain: "cyberdyne.jp",
-        website: "www.cyberdyne.jp",
-        logoUrl: "https://logo.clearbit.com/cyberdyne.jp",
-        branche: "Manufacturing",
-        wartungsvertragStatus: "Active",
-        phoneNumbers: ["+81 3-1234-5678"],
-        tier: "Enterprise",
-        healthScore: 42,
-        healthStatus: "SLA Risk",
-        accountOwner: "Mike Chen",
-        contractPlan: "Enterprise Premium",
-        contractSla: "2h response",
-        contractRenewalDate: "Aug 15, 2026",
-        contractStatus: "ACTIVE",
-        usersCount: 198,
-        assetsCount: 254,
-        vaultEntriesCount: 48,
-        slaPerformance: "92.1%",
-        monthlySpend: "€8,900",
-        customerSince: "Jul 11, 2020",
-        is_demo: true,
-        isDemoData: true,
-      } as any);
-
-      await customerService.createContact({
-        companyId: cyberId,
-        name: "Sarah Connor",
-        email: "s.connor@cyberdyne.jp",
-        title: "Security Consultant",
-        phoneWork: "+81 3-9876-5432"
-      });
-
-      // 4. Globex Corporation
-      const globexId = await customerService.createCompany({
-        name: "Globex Corporation",
-        domain: "globex.com",
-        website: "www.globex.com",
-        logoUrl: "https://logo.clearbit.com/globex.com",
-        branche: "Other",
-        wartungsvertragStatus: "Active",
-        phoneNumbers: ["+1 555-0300"],
-        tier: "Enterprise",
-        healthScore: 78,
-        healthStatus: "Healthy",
-        accountOwner: "Mike Chen",
-        contractPlan: "Enterprise Standard",
-        contractSla: "4h response",
-        contractRenewalDate: "Nov 20, 2026",
-        contractStatus: "ACTIVE",
-        usersCount: 88,
-        assetsCount: 41,
-        vaultEntriesCount: 15,
-        slaPerformance: "96.4%",
-        monthlySpend: "€3,200",
-        customerSince: "Mar 05, 2021",
-        is_demo: true,
-        isDemoData: true,
-      } as any);
-
-      // 5. Initech
-      const initechId = await customerService.createCompany({
-        name: "Initech",
-        domain: "initech.com",
-        website: "www.initech.com",
-        logoUrl: "https://logo.clearbit.com/initech.com",
-        branche: "Services",
-        wartungsvertragStatus: "Active",
-        phoneNumbers: ["+1 555-0450"],
-        tier: "Pro",
-        healthScore: 94,
-        healthStatus: "Healthy",
-        accountOwner: "Sarah James",
-        contractPlan: "Pro Support Plan",
-        contractSla: "12h response",
-        contractRenewalDate: "Dec 05, 2026",
-        contractStatus: "ACTIVE",
-        usersCount: 24,
-        assetsCount: 15,
-        vaultEntriesCount: 8,
-        slaPerformance: "99.1%",
-        monthlySpend: "€1,250",
-        customerSince: "Oct 19, 2023",
-        is_demo: true,
-        isDemoData: true,
-      } as any);
-
-      // 6. Umbrella Corp
-      const umbrellaId = await customerService.createCompany({
-        name: "Umbrella Corp",
-        domain: "umbrellacorp.com",
-        website: "www.umbrellacorp.com",
-        logoUrl: "https://logo.clearbit.com/umbrellacorp.com",
-        branche: "Healthcare",
-        wartungsvertragStatus: "Expired",
-        phoneNumbers: ["+1 555-0999"],
-        tier: "Enterprise",
-        healthScore: 30,
-        healthStatus: "Contract Expiring",
-        accountOwner: "Mike Chen",
-        contractPlan: "Enterprise Gold",
-        contractSla: "4h response",
-        contractRenewalDate: "May 01, 2026",
-        contractStatus: "EXPIRED",
-        usersCount: 350,
-        assetsCount: 512,
-        vaultEntriesCount: 92,
-        slaPerformance: "88.2%",
-        monthlySpend: "€12,500",
-        customerSince: "Apr 01, 2018",
-        is_demo: true,
-        isDemoData: true,
-      } as any);
-
-      // Bridge seeded CRM companies into canonical organizations (is_demo tagged).
-      try {
-        await axios.post('/api/admin/organizations/sync', {}, { withCredentials: true });
-      } catch {
-        /* non-fatal — boot sync will catch up */
-      }
-
-      // Auto pin Acme Global is standard seed favorites behavior
-      setFavorites([acmeId]);
-      localStorage.setItem('geistdesk_favorite_companies_v2', JSON.stringify([acmeId]));
-
-      toast.success("Redesigned mockup directory (Initech, CyberDyne, Globex, Acme) seeded completely!");
-      setSelectedCompanyId(acmeId);
-    } catch (e) {
-      toast.error("Failed to seed sample environment");
-    } finally {
-      setIsSeeding(false);
-    }
-  };
 
   // Submit edits back to firebase + mirror core fields onto linked organization
   const handleEditCompanySubmit = async (e: FormEvent) => {
@@ -865,8 +645,6 @@ export default function CustomersPage() {
         setSearchQuery={setSearchQuery}
         onAddCompanyClick={() => setIsCreateDialogOpen(true)}
         onImportClick={() => setIsImportOpen(true)}
-        onSeedClick={seedSampleData}
-        isSeeding={isSeeding}
         ticketHistoryMap={ticketHistoryMap}
         collapsed={sidebarCollapsed}
         onToggleCollapse={toggleSidebarCollapsed}
@@ -1170,7 +948,7 @@ export default function CustomersPage() {
                       <Input 
                         id="name" 
                         required
-                        placeholder="e.g. Acme Global Solutions" 
+                        placeholder="z. B. Firmenname" 
                         value={newCompany.name}
                         onChange={(e) => {
                           const name = e.target.value;

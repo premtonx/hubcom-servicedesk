@@ -829,18 +829,8 @@ export function TicketListView(props: TicketListViewProps) {
                             {t('tickets.bulk.assignToMe', 'Mir zuweisen')}
                           </DropdownMenuItem>
                           <Separator className="my-1" />
-                          {['Sarah James', 'Mike Chen', 'Sarah Connor'].map(agent => (
-                            <DropdownMenuItem 
-                              key={agent} 
-                              className="text-xs cursor-pointer py-2" 
-                              onClick={() => {
-                                handleBulkUpdate({ agentName: agent, agentId: 'agent-' + agent.toLowerCase().replace(' ', '-') });
-                                toast.success(t('tickets.bulk.assignedTo', 'Tickets zugewiesen an {{agent}}').replace('{{agent}}', agent));
-                              }}
-                            >
-                              {t('tickets.bulk.assignTo', 'Zuweisen an')} {agent}
-                            </DropdownMenuItem>
-                          ))}
+                          {/* Bulk assign to named agents uses live workforce data elsewhere;
+                              avoid hardcoded mock agent names in production UI. */}
                         </DropdownMenuContent>
                       </DropdownMenu>
 

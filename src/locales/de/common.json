@@ -1366,7 +1366,7 @@
       }
     },
     "audit": {
-      "sarah_updated": "Sarah James hat „Erste-Schritte-Dokumente“ aktualisiert",
+      "sarah_updated": "Ein Agent hat „Erste-Schritte-Dokumente“ aktualisiert",
       "sarah_meta": "Vor 2 Tagen • Verifizierte SOC2-Audit-Protokolle",
       "anna_rotated": "Anna Bell hat Bearer-Token-Spezifikationen rotiert",
       "anna_meta": "Gestern • API-Authentifizierung",

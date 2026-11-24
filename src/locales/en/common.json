@@ -1366,7 +1366,7 @@
       }
     },
     "audit": {
-      "sarah_updated": "Sarah James updated \"Getting Started Docs\"",
+      "sarah_updated": "An agent updated \"Getting Started Docs\"",
       "sarah_meta": "2 hours ago • Verified SOC2 Audit logs",
       "anna_rotated": "Anna Bell rotated Bearer Token specifications",
       "anna_meta": "Yesterday • API Authentication",

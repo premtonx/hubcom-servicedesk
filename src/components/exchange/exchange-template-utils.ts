@@ -92,8 +92,8 @@ export function buildExpiringSoonSeedItems(): ExchangeItemRowSeed[] {
     return {
       id: `seed-expiring-${index + 1}`,
       name: `Expiring credential bundle #${index + 1}`,
-      recipient: `operator${index + 1}@acme.com`,
-      company: 'Acme Global Solutions',
+      recipient: `operator${index + 1}@example.com`,
+      company: 'Beispielunternehmen',
       ticketId: `TKT-E${100 + index}`,
       status: 'Active',
       expires: `in ${hours <= 48 ? `${hours}h` : `${Math.round(hours / 24)}d`}`,

@@ -149,14 +149,14 @@ import { buildKbArticleDeepLink } from '../kb/kb-content-format';
 import { trustScoreService, generateDefaultTrustScore } from '../../services/trustScoreService';
 import { AIRelationshipGraph2 } from '../AIRelationshipGraph2';
 
-// Preset Users for Owners & Reviewers allocation
-const ENTERPRISE_USERS = [
-  { uid: 'admin', name: 'Sarah James', role: 'Documentation Owner', email: 'sarah.j@geistdesk.io', avatar: 'SJ' },
-  { uid: 'agent-1', name: 'Mike Chen', role: 'Security Supervisor', email: 'mike.c@geistdesk.io', avatar: 'MC' },
-  { uid: 'agent-2', name: 'Anna Bell', role: 'DevOps Tech Writer', email: 'anna.b@geistdesk.io', avatar: 'AB' },
-  { uid: 'agent-3', name: 'John Doe', role: 'Customer Success lead', email: 'john.d@geistdesk.io', avatar: 'JD' },
-  { uid: 'agent-4', name: 'Will Coyote', role: 'Tier 3 Support Lead', email: 'will.c@geistdesk.io', avatar: 'WC' }
-];
+// Owners & reviewers come from the signed-in user — no hardcoded demo roster.
+const ENTERPRISE_USERS: Array<{
+  uid: string;
+  name: string;
+  role: string;
+  email: string;
+  avatar: string;
+}> = [];
 
 export default function KBPage() {
   const { t } = useTranslation();

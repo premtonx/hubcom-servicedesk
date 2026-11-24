@@ -24,7 +24,7 @@ const DEV_MOCK_UPLOADS: ExchangeItemRowSeed[] = [
     id: 'upload-mock-2',
     name: 'production_db_dump.sql',
     recipient: 'engineering-review@geistdesk.com',
-    company: 'Acme Global Solutions',
+    company: 'Beispielunternehmen',
     ticketId: 'TKT-443',
     status: 'Completed',
     expires: 'Expired',

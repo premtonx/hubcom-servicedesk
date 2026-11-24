@@ -30,8 +30,9 @@ interface CompanySidebarProps {
   setSearchQuery: (query: string) => void;
   onAddCompanyClick: () => void;
   onImportClick: () => void;
-  onSeedClick: () => void;
-  isSeeding: boolean;
+  /** Optional demo seeder — omit in production UI. */
+  onSeedClick?: () => void;
+  isSeeding?: boolean;
   ticketHistoryMap: Record<string, Ticket[]>;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
@@ -131,18 +132,18 @@ export default function CompanySidebar({
                 <PanelLeftClose className="w-4 h-4" />
               </Button>
             ) : null}
-            {companies.length === 0 && (
+            {companies.length === 0 && onSeedClick ? (
               <Button 
                 variant="ghost" 
                 size="icon" 
                 onClick={onSeedClick} 
-                disabled={isSeeding}
+                disabled={Boolean(isSeeding)}
                 className="h-8 w-8 rounded-full hover:bg-amber-50 text-amber-600 transition-all"
                 title={t('companies.seedPlaceholder', 'Beispieldaten laden')}
               >
                 <RefreshCw className={`w-4 h-4 ${isSeeding ? 'animate-spin' : ''}`} />
               </Button>
-            )}
+            ) : null}
             <Button 
               variant="ghost" 
               size="icon" 

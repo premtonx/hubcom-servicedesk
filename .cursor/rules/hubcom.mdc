@@ -1,0 +1,15 @@
+---
+description: Hubcom ServiceDesk agent invariants (git, tenancy, RBAC, verify)
+alwaysApply: true
+---
+
+# Hubcom ServiceDesk
+
+Follow `AGENTS.md` at repo root. Highlights:
+
+- Remote **`hubcom`** (`premtonx/hubcom-servicedesk`); PR base **`hubcom/main`**; never push features to GeistDesk unless asked.
+- Tenant key: **`organizations.id`**. Stamp tickets / vault / KB / exchange / channels from session org — never client body spoof.
+- Portal RBAC: `CLIENT_ADMIN` > `CLIENT_SUPPORTER` > `CLIENT_USER`. Tresor: `client_visible` default **false**; `CLIENT_USER` forbidden.
+- `VAULT_ENCRYPTION_KEY` AES-256-GCM; no SVG uploads; no portal `/api/db` roles bootstrap.
+- German UI; no mock fixture data in live paths.
+- Verify: `npx tsc --noEmit`, `npm run build`, `npm run test:portal-isolation`, `npm run test:lifecycle`, `npm run test:email-html`.

@@ -133,9 +133,9 @@ export const autopilotService = {
         subCategory: 'Autopilot Extracted',
         visibility: 'Public', // published after approval
         tags: ['autopilot-approved', ...sug.relatedSystems.map(s => s.toLowerCase())],
-        owner: owner || sug.suggestedOwner || 'Sarah James',
-        reviewer: auth.currentUser?.displayName || auth.currentUser?.email || 'Sarah James',
-        lastEditor: auth.currentUser?.displayName || auth.currentUser?.email || 'Sarah James',
+        owner: owner || sug.suggestedOwner || auth.currentUser?.displayName || auth.currentUser?.email || '',
+        reviewer: auth.currentUser?.displayName || auth.currentUser?.email || '',
+        lastEditor: auth.currentUser?.displayName || auth.currentUser?.email || '',
         status: 'Published',
         avgReadTime: '4m 00s'
       });
