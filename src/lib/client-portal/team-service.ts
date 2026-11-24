@@ -115,33 +115,27 @@ export function buildSetupLink(token: string): string {
   return `${base}/login?setup=${encodeURIComponent(token)}`;
 }
 
-/** Best-effort invite / reset email. Never throws. */
+/** Best-effort invite / reset email via configured Graph/SMTP channel. Never throws. */
 export async function sendPortalTeamEmail(params: {
   to: string;
   subject: string;
   body: string;
-}): Promise<{ sent: boolean; reason?: string }> {
-  const endpoint = (process.env.MAIL_DISPATCH_URL || '').trim();
-  if (!endpoint) {
-    return { sent: false, reason: 'MAIL_DISPATCH_URL not configured' };
-  }
+  organizationId?: string | null;
+}): Promise<{ sent: boolean; reason?: string; via?: string }> {
   try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        to: params.to,
-        subject: params.subject,
-        body: params.body,
-        from: process.env.MAIL_FROM_ADDRESS || process.env.SMTP_FROM || undefined,
-        autoSubmitted: 'no',
-      }),
+    const { trySendTransactionalEmail } = await import('../outbound-mail.js');
+    const result = await trySendTransactionalEmail({
+      to: params.to,
+      subject: params.subject,
+      body: params.body,
+      organizationId: params.organizationId || null,
+      contentType: 'Text',
     });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      return { sent: false, reason: `dispatch ${res.status}: ${detail.slice(0, 160)}` };
-    }
-    return { sent: true };
+    return {
+      sent: result.delivered === true,
+      reason: result.reason,
+      via: result.via,
+    };
   } catch (err: any) {
     return { sent: false, reason: err?.message || 'dispatch failed' };
   }
@@ -234,6 +228,7 @@ export async function createOrInviteTeamMember(params: {
 
   const mail = await sendPortalTeamEmail({
     to: email,
+    organizationId: params.organizationId,
     subject: `Einladung zum Hubcom Kunden-Portal (${org.name})`,
     body: [
       `Hallo ${params.name},`,
@@ -312,6 +307,7 @@ export async function resetTeamMemberPassword(params: {
   const org = await getOrganization(params.organizationId);
   const mail = await sendPortalTeamEmail({
     to: String(user.email || ''),
+    organizationId: params.organizationId,
     subject: `Passwort neu setzen — Hubcom Kunden-Portal`,
     body: [
       `Hallo ${user.name || ''},`,
@@ -403,9 +399,117 @@ export async function completePortalSetup(params: {
     updatedAt: now,
   });
 
+  if (organizationId) {
+    try {
+      const { ensureContactForPortalUser } = await import('./org-company-sync.js');
+      await ensureContactForPortalUser({
+        organizationId,
+        name: String(user.name || ''),
+        email: String(user.email || ''),
+        role: String(user.role || 'CLIENT_USER'),
+        userId: user.id,
+        invitationStatus: 'accepted',
+      });
+    } catch {
+      /* non-fatal */
+    }
+  }
+
   return {
     userId: user.id,
     email: String(user.email || ''),
     organizationId,
+  };
+}
+
+const PASSWORD_MIN = 10;
+const PASSWORD_MAX = 200;
+
+export function assertPortalPasswordPolicy(password: string): void {
+  const p = String(password || '');
+  if (p.length < PASSWORD_MIN || p.length > PASSWORD_MAX) {
+    throw Object.assign(
+      new Error(`Password must be between ${PASSWORD_MIN} and ${PASSWORD_MAX} characters.`),
+      { status: 400 },
+    );
+  }
+}
+
+/**
+ * Hubcom SYSTEM_ADMIN sets a portal user's password manually.
+ * Never returns or logs the password. Clears any pending setup token.
+ */
+export async function setTeamMemberPassword(params: {
+  organizationId: string;
+  userId: string;
+  password: string;
+  setBy: string;
+}): Promise<{ member: TeamMemberView }> {
+  assertPortalPasswordPolicy(params.password);
+  const user = await getDocDirect('users', params.userId);
+  if (!user) {
+    throw Object.assign(new Error('User not found.'), { status: 404 });
+  }
+  if (userOrganizationId(user) !== params.organizationId) {
+    throw Object.assign(new Error('User not found.'), { status: 404 });
+  }
+  if (!isClientPortalRole(user.role)) {
+    throw Object.assign(new Error('Cannot set password for a non–client-portal account here.'), {
+      status: 403,
+    });
+  }
+
+  const passwordHash = await hashPassword(params.password);
+  const now = new Date().toISOString();
+  await updateDocDirect('users', params.userId, {
+    passwordHash,
+    password: null,
+    activationToken: null,
+    activationTokenExpires: null,
+    invitationEmailSent: true,
+    invitationEmailFailed: false,
+    invitationEmailReason: null,
+    passwordSetAt: now,
+    passwordSetBy: params.setBy,
+    updatedAt: now,
+  });
+
+  try {
+    const { ensureContactForPortalUser } = await import('./org-company-sync.js');
+    await ensureContactForPortalUser({
+      organizationId: params.organizationId,
+      name: String(user.name || ''),
+      email: String(user.email || ''),
+      role: String(user.role || 'CLIENT_USER'),
+      userId: params.userId,
+      invitationStatus: 'accepted',
+    });
+  } catch {
+    /* non-fatal */
+  }
+
+  try {
+    await addDocDirect('audit_logs', {
+      module: 'workforce',
+      action: 'portal_user_password_set',
+      actorId: params.setBy,
+      targetUserId: params.userId,
+      organizationId: params.organizationId,
+      // Never store password or token material.
+      details: {
+        targetEmail: String(user.email || ''),
+        method: 'manual_admin_set',
+      },
+      severity: 'high',
+      timestamp: now,
+      createdAt: now,
+    });
+  } catch {
+    /* non-fatal */
+  }
+
+  const refreshed = await getDocDirect('users', params.userId);
+  return {
+    member: toTeamMemberView({ id: params.userId, ...(refreshed || user) }),
   };
 }

@@ -36,6 +36,7 @@ import {
   isClientTeamRole,
   portalUserListItem,
   resetTeamMemberPassword,
+  setTeamMemberPassword,
   userOrganizationId,
   type ClientTeamRole,
 } from '../lib/client-portal/team-service.js';
@@ -356,6 +357,7 @@ router.post('/:id/invite-client-admin', requireRole(['SYSTEM_ADMIN']), async (re
       email: parsed.data.email.toLowerCase().trim(),
       role,
       userId: invited.member.id,
+      invitationStatus: invited.invitationStatus,
     });
 
     return res.status(invited.created ? 201 : 200).json({
@@ -373,8 +375,7 @@ router.post('/:id/invite-client-admin', requireRole(['SYSTEM_ADMIN']), async (re
       emailSent: invited.emailSent,
       emailReason: invited.emailReason || null,
       invitationStatus: invited.invitationStatus,
-      // setupLink is returned only so admins can copy a resend when mail failed —
-      // never a password. Prefer email delivery.
+      // setupLink only after send failure — never a password; invalidate via resend.
       setupLink: invited.emailSent ? null : invited.setupLink,
       organization,
     });
@@ -479,6 +480,14 @@ router.post(
         userId,
         requestedBy: String(req.user?.id || 'system'),
       });
+      await ensureContactForPortalUser({
+        organizationId,
+        name: String(user.name || ''),
+        email: String(user.email || ''),
+        role: String(user.role || 'CLIENT_USER'),
+        userId,
+        invitationStatus: result.invitationStatus,
+      });
       return res.json({
         ok: true,
         emailSent: result.emailSent,
@@ -491,6 +500,61 @@ router.post(
       return res
         .status(status >= 400 && status < 600 ? status : 500)
         .json({ error: safeErrorMessage(err, 'Failed to reset password') });
+    }
+  },
+);
+
+/**
+ * POST /api/admin/organizations/:id/users/:userId/set-password
+ * SYSTEM_ADMIN deliberately sets a portal user password (never returned).
+ */
+router.post(
+  '/:id/users/:userId/set-password',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const organizationId = routeParam(req.params.id);
+    const userId = routeParam(req.params.userId);
+    const parsed = z
+      .object({
+        password: z.string().min(10).max(200),
+        confirm: z.boolean().optional(),
+      })
+      .safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Invalid password payload (10–200 characters required).',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    if (parsed.data.confirm !== true) {
+      return res.status(400).json({
+        error: 'Confirmation required: set confirm=true to apply the new password.',
+      });
+    }
+    try {
+      const organization = await getOrganization(organizationId);
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      const result = await setTeamMemberPassword({
+        organizationId,
+        userId,
+        password: parsed.data.password,
+        setBy: String(req.user?.id || 'system'),
+      });
+      return res.json({
+        ok: true,
+        user: {
+          id: result.member.id,
+          email: result.member.email,
+          name: result.member.name,
+          role: result.member.role,
+          invitationStatus: 'accepted',
+        },
+      });
+    } catch (err: any) {
+      const status = Number(err?.status) || 500;
+      return res
+        .status(status >= 400 && status < 600 ? status : 500)
+        .json({ error: safeErrorMessage(err, 'Failed to set password') });
     }
   },
 );

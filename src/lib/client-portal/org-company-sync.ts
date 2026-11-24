@@ -283,31 +283,45 @@ export async function ensureContactForPortalUser(params: {
   email: string;
   role: string;
   userId?: string;
+  invitationStatus?: string | null;
 }): Promise<string | null> {
   const org = await getOrganization(params.organizationId);
   if (!org) return null;
   const companyId =
     org.crm_company_id || (await ensureCompanyForOrganization(org));
   const email = params.email.toLowerCase().trim();
+  // getDocsDirect returns flattened docs — do not read hit.data.metadata.
   const existing = await getDocsDirect('contacts', [
     { type: 'where', field: 'email', op: '==', value: email },
   ]);
+  const sameCompany = existing.filter(
+    (c) => String(c.companyId || '') === String(companyId),
+  );
   const now = new Date().toISOString();
-  if (existing.length > 0) {
-    const hit = existing[0];
+  const metaPatch = {
+    portalRole: params.role,
+    portalUserId: params.userId || null,
+    syncedFromPortal: true,
+    role: 'portal_user',
+    invitationStatus: params.invitationStatus || null,
+  };
+
+  if (sameCompany.length > 0) {
+    const hit = sameCompany[0];
+    const prevMeta =
+      hit.metadata && typeof hit.metadata === 'object' && !Array.isArray(hit.metadata)
+        ? (hit.metadata as Record<string, unknown>)
+        : {};
     await updateDocDirect('contacts', hit.id, {
       companyId,
       name: params.name,
-      metadata: {
-        ...((hit.data as any)?.metadata || {}),
-        portalRole: params.role,
-        portalUserId: params.userId || null,
-        syncedFromPortal: true,
-      },
+      title: params.role || hit.title || '',
+      metadata: { ...prevMeta, ...metaPatch },
       updatedAt: now,
     });
     return hit.id;
   }
+
   const contactId = `ct-portal-${randomUUID().slice(0, 10)}`;
   await setDocDirect('contacts', contactId, {
     companyId,
@@ -317,12 +331,7 @@ export async function ensureContactForPortalUser(params: {
     phoneWork: '',
     phoneMobile: '',
     address: '',
-    metadata: {
-      portalRole: params.role,
-      portalUserId: params.userId || null,
-      syncedFromPortal: true,
-      role: 'portal_user',
-    },
+    metadata: metaPatch,
     createdAt: now,
     updatedAt: now,
   });

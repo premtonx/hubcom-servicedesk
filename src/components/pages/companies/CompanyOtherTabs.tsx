@@ -154,7 +154,15 @@ export default function CompanyOtherTabs({
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50 text-xs">
-                {employees.map(employee => (
+                {employees.map(employee => {
+                  const meta = (employee.metadata || {}) as Record<string, unknown>;
+                  const portalRole = meta.portalRole ? String(meta.portalRole) : null;
+                  const inviteStatus = meta.invitationStatus
+                    ? String(meta.invitationStatus)
+                    : meta.syncedFromPortal
+                      ? 'pending'
+                      : null;
+                  return (
                   <tr key={employee.id} className="hover:bg-muted/10 transition-colors group">
                     <td className="px-5 py-3.5 flex items-center gap-3">
                       <div className="w-9 h-9 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center text-xs">
@@ -162,7 +170,33 @@ export default function CompanyOtherTabs({
                       </div>
                       <div>
                         <p className="font-bold text-foreground text-sm leading-none">{employee.name}</p>
-                        <p className="text-[10px] text-muted-foreground mt-1">{employee.title || 'Stakeholder Team member'}</p>
+                        <p className="text-[10px] text-muted-foreground mt-1">{employee.title || 'Kontakt'}</p>
+                        {(portalRole || inviteStatus) && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {portalRole ? (
+                              <Badge className="text-[9px] font-extrabold uppercase bg-indigo-50 text-indigo-700 border-indigo-100">
+                                {portalRole}
+                              </Badge>
+                            ) : null}
+                            {inviteStatus ? (
+                              <Badge
+                                className={cn(
+                                  'text-[9px] font-extrabold uppercase border',
+                                  inviteStatus === 'accepted' &&
+                                    'bg-emerald-50 text-emerald-700 border-emerald-100',
+                                  inviteStatus === 'sent' &&
+                                    'bg-sky-50 text-sky-700 border-sky-100',
+                                  inviteStatus === 'failed' &&
+                                    'bg-rose-50 text-rose-700 border-rose-100',
+                                  (inviteStatus === 'pending' || inviteStatus === 'expired') &&
+                                    'bg-amber-50 text-amber-800 border-amber-100',
+                                )}
+                              >
+                                {inviteStatus}
+                              </Badge>
+                            ) : null}
+                          </div>
+                        )}
                       </div>
                     </td>
                     <td className="px-5 py-3.5">
@@ -209,7 +243,8 @@ export default function CompanyOtherTabs({
                        </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 {employees.length === 0 && (
                   <tr>
                     <td colSpan={4} className="px-5 py-12 text-center text-muted-foreground italic font-semibold">
@@ -402,7 +437,9 @@ export default function CompanyOtherTabs({
                   </div>
                   <div className="flex justify-between border-b pb-1">
                     <span className="text-muted-foreground">Committed Monthly Rate</span>
-                    <span className="text-foreground font-bold">{company.monthlySpend}</span>
+                    <span className="text-foreground font-bold">
+                      {company.monthlySpend || '—'}
+                    </span>
                   </div>
                 </div>
               </div>

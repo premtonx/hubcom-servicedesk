@@ -355,6 +355,132 @@ async function trySendViaSmtp(params: {
 }
 
 /**
+ * Send a transactional email (portal invites, password setup) through the
+ * platform's configured outbound channel — same Graph → Hubcom → SMTP order
+ * as ticket replies. Does not invent a sender when no channel can send.
+ */
+export async function trySendTransactionalEmail(params: {
+  to: string;
+  subject: string;
+  body: string;
+  /** Prefer this org's Send-As Graph channel when healthy. */
+  organizationId?: string | null;
+  /** Plain-text body is converted to simple HTML for Graph. */
+  contentType?: 'HTML' | 'Text';
+}): Promise<OutboundMailResult> {
+  const to = String(params.to || '').trim().toLowerCase();
+  if (!to.includes('@')) {
+    return { delivered: false, reason: 'Recipient email is missing or invalid.', via: 'none' };
+  }
+
+  const subject = String(params.subject || '').trim() || '(no subject)';
+  const rawBody = String(params.body || '');
+  // Plain invite bodies → minimal HTML so Graph renders newlines.
+  const htmlBody =
+    params.contentType === 'HTML'
+      ? rawBody
+      : `<pre style="font-family:system-ui,sans-serif;white-space:pre-wrap;font-size:14px;line-height:1.5">${rawBody
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')}</pre>`;
+
+  const orgId = (params.organizationId || '').trim() || null;
+  const graphFailures: string[] = [];
+
+  if (orgId) {
+    const orgChannel = await findOrganizationEmailChannel(orgId, {
+      includeSecrets: true,
+      requireSendAs: true,
+    });
+    if (orgChannel && isHealthySendAsGraph(orgChannel)) {
+      const orgResult = await trySendViaMicrosoftGraph({
+        ticketId: `txn-invite-${Date.now()}`,
+        to,
+        subject,
+        body: htmlBody,
+        channel: orgChannel,
+        signature: { appendSignature: false },
+      });
+      if (orgResult.delivered) {
+        return { ...orgResult, via: 'org_send_as' };
+      }
+      graphFailures.push(
+        `${orgChannel.mailbox || orgChannel.email || orgChannel.id}: ${orgResult.reason || 'Graph sendMail failed'}`,
+      );
+    } else if (orgChannel) {
+      graphFailures.push(
+        `Org Send-As channel unavailable (${orgChannel.email || orgChannel.id})`,
+      );
+    }
+  }
+
+  const globals = await listGlobalEmailChannels({ includeSecrets: true });
+  const graphCandidates = globals.filter((ch) => isGraphChannel(ch));
+  graphCandidates.sort((a, b) => {
+    const ah = isHealthySendAsGraph(a) ? 0 : 1;
+    const bh = isHealthySendAsGraph(b) ? 0 : 1;
+    return ah - bh;
+  });
+
+  let lastGraph: OutboundMailResult | null = null;
+  for (const channel of graphCandidates) {
+    const result = await trySendViaMicrosoftGraph({
+      ticketId: `txn-invite-${Date.now()}`,
+      to,
+      subject,
+      body: htmlBody,
+      channel,
+      signature: { appendSignature: false },
+    });
+    if (result.delivered) {
+      return { ...result, via: 'hubcom_fallback' };
+    }
+    lastGraph = result;
+    graphFailures.push(
+      `${channel.mailbox || channel.email || channel.id}: ${result.reason || 'Graph sendMail failed'}`,
+    );
+  }
+
+  // SMTP only when a configured channel / env actually supports it — not as a
+  // silent substitute for a healthy Graph mailbox that should have been used.
+  const smtpChannel =
+    graphCandidates[0] ||
+    (await findGlobalDefaultEmailChannel({ includeSecrets: true })) ||
+    null;
+  if (smtpConfigured(smtpChannel)) {
+    const smtpResult = await trySendViaSmtp({
+      ticketId: `txn-invite-${Date.now()}`,
+      to,
+      subject,
+      body: htmlBody,
+      channel: smtpChannel,
+      signature: { appendSignature: false },
+    });
+    if (smtpResult.delivered) return smtpResult;
+    graphFailures.push(smtpResult.reason || 'SMTP dispatch failed');
+  }
+
+  const reason =
+    [
+      ...graphFailures,
+      lastGraph && !graphFailures.length ? lastGraph.reason : null,
+      !graphCandidates.length && !smtpConfigured(smtpChannel)
+        ? 'No Microsoft Graph outbound channel is configured (and SMTP/MAIL_DISPATCH_URL is unavailable).'
+        : null,
+    ]
+      .filter(Boolean)
+      .join(' | ') || 'Outbound email channel unavailable.';
+
+  return {
+    delivered: false,
+    reason,
+    from: lastGraph?.from,
+    domainVerified: lastGraph?.domainVerified,
+    via: 'none',
+  };
+}
+
+/**
  * Attempt to dispatch a customer-facing reply email.
  * Prefer healthy org Send-As Graph → Hubcom global Graph → SMTP.
  * Graph failures fall through to the next option; missing config never throws.

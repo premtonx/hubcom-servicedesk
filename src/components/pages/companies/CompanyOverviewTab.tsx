@@ -87,46 +87,54 @@ export default function CompanyOverviewTab({
             </h3>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-black text-foreground tracking-tight">
-                {company.healthScore}
-              </span>
-              <span className="text-muted-foreground/50 text-base font-bold">/ 100</span>
-              <Badge className={`ml-2 h-5 rounded-md text-[9px] font-extrabold uppercase px-2 py-0 border-none ${
-                company.healthScore >= 80 ? 'bg-emerald-500/10 text-emerald-500' :
-                company.healthScore >= 50 ? 'bg-amber-500/10 text-amber-500' : 'bg-rose-500/10 text-rose-500'
-              }`}>
-                {company.healthScore >= 80 ? t('companies.healthy', 'Healthy') : t('companies.unhealthy', 'Attention Needed')}
-              </Badge>
-            </div>
-            
-            <p className="text-xs text-muted-foreground font-semibold leading-relaxed">
-              {company.healthScore >= 80 
-                ? t('companies.healthDescHealthy', 'Great! Your account is in good standing with positive metrics.') 
-                : t('companies.healthDescUnhealthy', 'Attention required! High volume SLA expirations or pending escalations.')}
-            </p>
+            {company.healthScore == null ? (
+              <>
+                <p className="text-2xl font-black text-foreground tracking-tight">—</p>
+                <p className="text-xs text-muted-foreground font-semibold leading-relaxed">
+                  {t(
+                    'companies.healthNoData',
+                    'Noch kein Health-Score für dieses Unternehmen — berechnet aus echten Ticket-/SLA-Daten, sobald vorhanden.',
+                  )}
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-black text-foreground tracking-tight">
+                    {company.healthScore}
+                  </span>
+                  <span className="text-muted-foreground/50 text-base font-bold">/ 100</span>
+                  <Badge
+                    className={`ml-2 h-5 rounded-md text-[9px] font-extrabold uppercase px-2 py-0 border-none ${
+                      company.healthScore >= 80
+                        ? 'bg-emerald-500/10 text-emerald-500'
+                        : company.healthScore >= 50
+                          ? 'bg-amber-500/10 text-amber-500'
+                          : 'bg-rose-500/10 text-rose-500'
+                    }`}
+                  >
+                    {company.healthScore >= 80
+                      ? t('companies.healthy', 'Healthy')
+                      : t('companies.unhealthy', 'Attention Needed')}
+                  </Badge>
+                </div>
+                <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      company.healthScore >= 80
+                        ? 'bg-emerald-500'
+                        : company.healthScore >= 50
+                          ? 'bg-amber-500'
+                          : 'bg-rose-500'
+                    }`}
+                    style={{ width: `${company.healthScore}%` }}
+                  />
+                </div>
+              </>
+            )}
 
-            {/* Health Bar */}
-            <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-              <div 
-                className={`h-full rounded-full transition-all duration-500 ${
-                  company.healthScore >= 80 ? 'bg-emerald-500' :
-                  company.healthScore >= 50 ? 'bg-amber-500' : 'bg-rose-500'
-                }`}
-                style={{ width: `${company.healthScore}%` }}
-              />
-            </div>
-
-            {/* Minor Health Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-muted text-center">
-              <div>
-                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">{t('companies.sentiment', 'Sentiment')}</p>
-                <p className="text-xs text-emerald-500 font-extrabold mt-1">Positive ↑</p>
-              </div>
-              <div>
-                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">{t('companies.slaPerf', 'SLA Perf')}</p>
-                <p className="text-xs text-emerald-500 font-extrabold mt-1">{company.slaPerformance} ↑</p>
-              </div>
+            {/* Live company-scoped ticket snapshot — no fabricated sentiment/SLA % */}
+            <div className="grid grid-cols-2 sm:grid-cols-2 gap-2 pt-3 border-t border-muted text-center">
               <div>
                 <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">{t('companies.open', 'Open')}</p>
                 <p className="text-xs text-foreground font-extrabold mt-1">{company.openTicketsCount}</p>

@@ -53,11 +53,9 @@ export function hydrateCompany(company: Company | null, ticketHistory: Ticket[])
     ...company,
     logoUrl,
     tier: raw.tier != null && String(raw.tier).trim() !== '' ? String(raw.tier) : '',
-    healthScore:
-      raw.healthScore !== undefined && raw.healthScore !== null && raw.healthScore !== ''
-        ? Number(raw.healthScore)
-        : null,
-    healthStatus: raw.healthStatus != null ? String(raw.healthStatus) : null,
+    // Never surface stored demo KPI fields — live metrics come from CompanyKPI props.
+    healthScore: null,
+    healthStatus: null,
     openTicketsCount,
     slaRisksCount,
     accountOwner: raw.accountOwner != null ? String(raw.accountOwner) : '',
@@ -66,22 +64,11 @@ export function hydrateCompany(company: Company | null, ticketHistory: Ticket[])
     contractSla: raw.contractSla != null ? String(raw.contractSla) : '',
     contractRenewalDate: raw.contractRenewalDate != null ? String(raw.contractRenewalDate) : '',
     contractStatus,
-    usersCount:
-      raw.usersCount !== undefined && raw.usersCount !== null && raw.usersCount !== ''
-        ? Number(raw.usersCount)
-        : null,
-    assetsCount:
-      raw.assetsCount !== undefined && raw.assetsCount !== null && raw.assetsCount !== ''
-        ? Number(raw.assetsCount)
-        : null,
-    vaultEntriesCount:
-      raw.vaultEntriesCount !== undefined &&
-      raw.vaultEntriesCount !== null &&
-      raw.vaultEntriesCount !== ''
-        ? Number(raw.vaultEntriesCount)
-        : null,
-    slaPerformance: raw.slaPerformance != null ? String(raw.slaPerformance) : '',
-    monthlySpend: raw.monthlySpend != null ? String(raw.monthlySpend) : '',
+    usersCount: null,
+    assetsCount: null,
+    vaultEntriesCount: null,
+    slaPerformance: '',
+    monthlySpend: '',
     customerSince: raw.customerSince != null ? String(raw.customerSince) : '',
   };
 }

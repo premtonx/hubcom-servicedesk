@@ -81,6 +81,10 @@ export default function CompanyPortalTab({
     invitationStatus?: string;
   } | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [setPasswordUser, setSetPasswordUser] = useState<PortalUserRow | null>(null);
+  const [manualPassword, setManualPassword] = useState('');
+  const [manualPasswordConfirm, setManualPasswordConfirm] = useState('');
+  const [manualConfirm, setManualConfirm] = useState(false);
 
   const load = useCallback(async () => {
     if (!organizationId) return;
@@ -246,6 +250,44 @@ export default function CompanyPortalTab({
     }
   };
 
+  const submitManualPassword = async () => {
+    if (!organizationId || !setPasswordUser) return;
+    if (manualPassword.length < 10) {
+      toast.error(t('companies.portal.passwordPolicy', 'Passwort: mindestens 10 Zeichen.'));
+      return;
+    }
+    if (manualPassword !== manualPasswordConfirm) {
+      toast.error(t('companies.portal.passwordMismatch', 'Passwörter stimmen nicht überein.'));
+      return;
+    }
+    if (!manualConfirm) {
+      toast.error(
+        t('companies.portal.passwordConfirmRequired', 'Bitte Bestätigung aktivieren.'),
+      );
+      return;
+    }
+    setBusyUserId(setPasswordUser.id);
+    try {
+      await axios.post(
+        `/api/admin/organizations/${encodeURIComponent(organizationId)}/users/${encodeURIComponent(setPasswordUser.id)}/set-password`,
+        { password: manualPassword, confirm: true },
+        { withCredentials: true },
+      );
+      toast.success(
+        t('companies.portal.passwordSet', 'Passwort gesetzt (wird nicht erneut angezeigt).'),
+      );
+      setSetPasswordUser(null);
+      setManualPassword('');
+      setManualPasswordConfirm('');
+      setManualConfirm(false);
+      await load();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Passwort setzen fehlgeschlagen');
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
   if (!organizationId) {
     return (
       <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
@@ -334,9 +376,29 @@ export default function CompanyPortalTab({
                         {busyUserId === u.id ? (
                           <Loader2 className="w-3 h-3 animate-spin" />
                         ) : (
-                          <KeyRound className="w-3 h-3" />
+                          <Mail className="w-3 h-3" />
                         )}
                         {t('companies.portal.resend', 'Erneut senden')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1 text-[10px] font-bold"
+                        disabled={busyUserId === u.id}
+                        onClick={() => {
+                          setSetPasswordUser(u);
+                          setManualPassword('');
+                          setManualPasswordConfirm('');
+                          setManualConfirm(false);
+                        }}
+                        title={t(
+                          'companies.portal.setPasswordManual',
+                          'Passwort manuell setzen',
+                        )}
+                      >
+                        <KeyRound className="w-3 h-3" />
+                        {t('companies.portal.setPassword', 'Passwort')}
                       </Button>
                       {u.isDeactivated ? (
                         <Badge variant="destructive" className="text-[10px]">
@@ -405,6 +467,75 @@ export default function CompanyPortalTab({
               {t('companies.portal.inviteCta', 'Einladen')}
             </Button>
           </div>
+          {setPasswordUser ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+              <p className="text-xs font-bold text-slate-800">
+                {t('companies.portal.setPasswordFor', 'Passwort setzen für')}{' '}
+                {setPasswordUser.email}
+              </p>
+              <p className="text-[11px] text-slate-500">
+                {t(
+                  'companies.portal.setPasswordHint',
+                  'Wird nicht per E-Mail versendet und nach dem Speichern nicht erneut angezeigt. Bevorzugt: Einladungslink erneut senden.',
+                )}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-[10px] font-bold uppercase">Passwort</Label>
+                  <Input
+                    type="password"
+                    value={manualPassword}
+                    onChange={(e) => setManualPassword(e.target.value)}
+                    minLength={10}
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] font-bold uppercase">Bestätigen</Label>
+                  <Input
+                    type="password"
+                    value={manualPasswordConfirm}
+                    onChange={(e) => setManualPasswordConfirm(e.target.value)}
+                    minLength={10}
+                    autoComplete="new-password"
+                  />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={manualConfirm}
+                  onChange={(e) => setManualConfirm(e.target.checked)}
+                />
+                {t(
+                  'companies.portal.setPasswordConfirm',
+                  'Ich bestätige das manuelle Setzen dieses Passworts.',
+                )}
+              </label>
+              <div className="flex gap-2 justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSetPasswordUser(null)}
+                >
+                  Abbrechen
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={busyUserId === setPasswordUser.id}
+                  onClick={() => void submitManualPassword()}
+                >
+                  {busyUserId === setPasswordUser.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : null}
+                  Speichern
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
           {lastInviteResult ? (
             <div
               className={`text-xs rounded-lg px-3 py-2 border ${

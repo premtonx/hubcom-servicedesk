@@ -71,6 +71,7 @@ import {
   type NewCompanyFormState,
 } from '../../lib/company-form-defaults';
 import { parseAndValidateLogoDataUrl } from '../../lib/client-portal/org-branding';
+import { buildCompanyKpiMetrics } from '../../lib/company-kpi-metrics';
 
 const BRANCHES = ['Tech', 'Finance', 'Healthcare', 'Manufacturing', 'Retail', 'Services', 'Other'];
 
@@ -746,6 +747,14 @@ export default function CustomersPage() {
 
   // Format active hydrated company details
   const hydratedCompany = hydrateCompany(selectedCompany, ticketHistory);
+  const companyKpis = buildCompanyKpiMetrics({
+    contactsCount: employees.length,
+    ticketHistory,
+    assetsCount: 0,
+    vaultEntriesCount: 0,
+    slaPerformance: null,
+    monthlySpend: null,
+  });
 
   return (
     <div className="flex h-full bg-background overflow-hidden">
@@ -804,7 +813,7 @@ export default function CustomersPage() {
               />
 
               {/* KPI Cards Grid Component */}
-              <CompanyKPI company={hydratedCompany} />
+              <CompanyKPI metrics={companyKpis} />
 
               {/* Navigation Tabs */}
               <div className="border-b border-muted">
@@ -821,9 +830,9 @@ export default function CustomersPage() {
                       { value: 'overview', label: t('nav.overview', 'Overview') },
                       { value: 'contacts', label: t('companies.contacts', 'Kontakte'), count: employees.length },
                       { value: 'tickets', label: t('nav.tickets', 'Tickets'), count: ticketHistory.length },
-                      { value: 'assets', label: t('companies.assetOverview', 'Asset-Übersicht'), count: hydratedCompany.assetsCount },
+                      { value: 'assets', label: t('companies.assetOverview', 'Asset-Übersicht'), count: companyKpis.assetsCount ?? 0 },
                       { value: 'contracts', label: t('companies.supportContract', 'Support-Vertrag') },
-                      { value: 'vault', label: t('nav.vault', 'Vault'), count: hydratedCompany.vaultEntriesCount },
+                      { value: 'vault', label: t('nav.vault', 'Vault'), count: companyKpis.vaultEntriesCount ?? 0 },
                       { value: 'insights', label: t('companies.aiInsights', 'KI-Erkenntnisse'), icon: Sparkles },
                       { value: 'activity', label: t('companies.activityTimeline', 'Aktivitätschronik') },
                       { value: 'portal', label: t('companies.portalTab', 'Kunden-Portal & Branding'), icon: Globe },
