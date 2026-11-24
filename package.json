@@ -126,6 +126,7 @@
     "lint:eslint:full": "eslint . --max-warnings 0",
     "test:lifecycle": "tsx scripts/test-ai-lifecycle.ts",
     "test:portal-isolation": "tsx scripts/test-client-portal-isolation.ts",
+    "test:email-html": "tsx scripts/test-email-html.ts",
     "verify:inbound-smtp": "tsx scripts/verify-inbound-smtp.ts",
     "verify:rag": "tsx scripts/verify-rag-pipeline.ts",
     "verify:mcp": "node scripts/verify-mcp-server.mjs"

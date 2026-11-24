@@ -1,5 +1,10 @@
 import DOMPurify from 'dompurify';
 import { unwrapLegacyPreHtml } from './email-plain-html';
+import {
+  cleanEmailHtmlForStorage,
+  htmlToAuditPlainText,
+  looksLikeHtml as looksLikeHtmlShared,
+} from './email-html-prepare';
 
 const LINKIFY_ALLOWED_TAGS = ['a', 'br', 'p', 'strong', 'em', 'ul', 'ol', 'li', 'code', 'pre', 'h1', 'h2', 'h3', 'blockquote', 'div', 'span', 'br'];
 
@@ -58,7 +63,7 @@ export function decodeHtmlEntities(input: string): string {
 }
 
 function looksLikeHtml(value: string): boolean {
-  return /<\/?[a-z][\s\S]*>/i.test(value);
+  return looksLikeHtmlShared(value);
 }
 
 /**
@@ -111,6 +116,7 @@ export function sanitizeTimelineHtml(raw: string): string {
   // Normalize non-breaking spaces to regular spaces for readable thread copy.
   content = content.replace(/&nbsp;/gi, ' ').replace(/\u00a0/g, ' ');
   content = unwrapLegacyPreHtml(content);
+  content = cleanEmailHtmlForStorage(content);
 
   if (looksLikeHtml(content)) {
     return DOMPurify.sanitize(content, {
@@ -123,14 +129,10 @@ export function sanitizeTimelineHtml(raw: string): string {
   return sanitizeLinkifiedText(decodeHtmlEntities(content));
 }
 
-/** Plain-text preview that strips tags and converts entities (list/table snippets). */
+/**
+ * Plain-text preview / Verlauf audit summary:
+ * SafeLinks unwrap, block→newline, strip tags (incl. existing dirty merge notes).
+ */
 export function htmlToPlainText(raw: string): string {
-  if (!raw) return '';
-  const decoded = decodeHtmlEntities(raw);
-  return decoded
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
-    .replace(/[ \t]+\n/g, '\n')
-    .trim();
+  return htmlToAuditPlainText(raw);
 }

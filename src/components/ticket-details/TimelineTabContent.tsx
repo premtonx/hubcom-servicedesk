@@ -11,6 +11,7 @@ import { Card, CardContent } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { safeString } from '../../lib/utils';
+import { htmlToPlainText } from '../../lib/sanitize-html';
 
 interface TimelineTabContentProps {
   ticket: TicketType;
@@ -55,13 +56,13 @@ export function TimelineTabContent({
       } else if (m.senderType === 'ai') {
         title = t('tickets.timelineTab.aiResponseDrafted', 'AI response drafted');
       }
+      const plain = htmlToPlainText(String(m.html_content || m.content || ''));
+      const clipped = plain.length > 160 ? `${plain.slice(0, 160)}…` : plain;
       events.push({
         id: `event-msg-${m.id}`,
         type: m.senderType === 'customer' ? 'incoming' : 'reply',
         title,
-        desc: typeof m.content === 'string'
-          ? m.content.substring(0, 100) + (m.content.length > 100 ? '...' : '')
-          : String(m.content ?? '').substring(0, 100),
+        desc: clipped,
         time: msgTime,
         actor: safeString(m.senderName, t('tickets.timelineTab.anonymous', 'Anonymous'))
       });
@@ -73,7 +74,8 @@ export function TimelineTabContent({
         id: `event-com-${c.id}`,
         type: 'note',
         title: t('tickets.timelineTab.internalNoteRecorded', 'Internal agent note recorded'),
-        desc: c.content,
+        // Verlauf must stay human-readable plain text (never dump raw HTML tags).
+        desc: htmlToPlainText(String(c.content || '')),
         time: comTime,
         actor: safeString(c.agentName, t('tickets.timelineTab.anonymous', 'Anonymous'))
       });
@@ -116,7 +118,9 @@ export function TimelineTabContent({
                       {ev.type}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground/90 pl-1 leading-relaxed">{ev.desc}</p>
+                  <p className="text-xs text-muted-foreground/90 pl-1 leading-relaxed whitespace-pre-wrap break-words">
+                    {ev.desc}
+                  </p>
                   <p className="text-[9.5px] text-muted-foreground font-mono pl-1">{ev.time.toLocaleString()}</p>
                 </div>
               </div>

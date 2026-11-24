@@ -16,6 +16,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { stripHtml } from '../kb/kb-utils';
+import { htmlToPlainText } from '../../lib/sanitize-html';
 import type { Ticket as TicketType, Message } from '../../types';
 
 export interface TicketDialogsProps {
@@ -180,8 +181,8 @@ export function TicketDialogs(props: TicketDialogsProps) {
                           <Info className="w-3.5 h-3.5 text-amber-600" />
                           <span className="text-[10px] font-bold text-amber-600 uppercase tracking-tight">{t('tickets.internalNote', 'Internal Note')}</span>
                        </div>
-                       <p className="text-xs text-amber-800 font-medium leading-relaxed italic">
-                          "{hoveredTicket.internalNotes}"
+                       <p className="text-xs text-amber-800 font-medium leading-relaxed italic whitespace-pre-wrap">
+                          "{htmlToPlainText(String(hoveredTicket.internalNotes || '')) || stripHtml(String(hoveredTicket.internalNotes || ''))}"
                        </p>
                     </div>
                  ) : (
