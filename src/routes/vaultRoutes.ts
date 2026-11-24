@@ -342,6 +342,33 @@ router.post("/secrets", authenticate, async (req: any, res: Response): Promise<a
       ...(type === "request" ? { vaultKind: metadata?.vaultKind || DROPZONE_VAULT_KIND } : {}),
     };
 
+    // Stamp MSP organization for Kunden-Portal visibility when provided
+    // (or when relatedCompanyId maps to an organizations.crm_company_id).
+    let organizationId: string | null =
+      typeof (resolvedMetadata as any).organizationId === "string" &&
+      String((resolvedMetadata as any).organizationId).trim()
+        ? String((resolvedMetadata as any).organizationId).trim()
+        : null;
+    if (!organizationId) {
+      const relatedCompanyId =
+        typeof (resolvedMetadata as any).relatedCompanyId === "string"
+          ? String((resolvedMetadata as any).relatedCompanyId).trim()
+          : "";
+      if (relatedCompanyId) {
+        try {
+          const { listOrganizations } = await import("../lib/client-portal/organizations.js");
+          const orgs = await listOrganizations({ includeInactive: false });
+          const match = orgs.find((o) => o.crm_company_id === relatedCompanyId || o.id === relatedCompanyId);
+          if (match) organizationId = match.id;
+        } catch {
+          /* best-effort org resolve */
+        }
+      }
+    }
+    if (organizationId) {
+      (resolvedMetadata as any).organizationId = organizationId;
+    }
+
     const itemRecord = await addDocDirect(VAULT_ITEMS, {
       type,
       secretRef,
@@ -354,6 +381,10 @@ router.post("/secrets", authenticate, async (req: any, res: Response): Promise<a
       passphraseHash: passphrase ? await hashVaultPassphrase(passphrase) : null,
       isBurned: false,
       createdBy: req.user.id,
+      created_by_user_id: req.user.id,
+      ...(organizationId
+        ? { organizationId, organization_id: organizationId }
+        : {}),
       createdAt: new Date().toISOString(),
       metadata: resolvedMetadata
     });

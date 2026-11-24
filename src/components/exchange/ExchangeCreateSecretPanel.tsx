@@ -22,9 +22,16 @@ const FIELD_INPUT =
 const TOGGLE_ROW =
   'flex items-center justify-between gap-3 p-3 bg-white rounded-xl border border-slate-200';
 
+interface PortalOrganizationOption {
+  id: string;
+  name: string;
+}
+
 interface ExchangeCreateSecretPanelProps {
   tickets: Ticket[];
   companies: Company[];
+  /** MSP Kunden organizations for portal Secure Exchange linking. */
+  organizations?: PortalOrganizationOption[];
   isGenerating: boolean;
   generatedLink: string;
   shares: string[];
@@ -54,6 +61,7 @@ function createDefaultFormState() {
     targetRecipient: '',
     targetTicketId: '',
     targetCompanyId: '',
+    targetOrganizationId: '',
     targetAssetId: '',
     mfaRequired: false,
     securityOpen: true,
@@ -63,6 +71,7 @@ function createDefaultFormState() {
 export function ExchangeCreateSecretPanel({
   tickets,
   companies,
+  organizations = [],
   isGenerating,
   generatedLink,
   shares,
@@ -92,6 +101,9 @@ export function ExchangeCreateSecretPanel({
   const [targetRecipient, setTargetRecipient] = useState(defaults.targetRecipient);
   const [targetTicketId, setTargetTicketId] = useState(defaults.targetTicketId);
   const [targetCompanyId, setTargetCompanyId] = useState(defaults.targetCompanyId);
+  const [targetOrganizationId, setTargetOrganizationId] = useState(
+    defaults.targetOrganizationId,
+  );
   const [targetAssetId, setTargetAssetId] = useState(defaults.targetAssetId);
   const [mfaRequired, setMfaRequired] = useState(defaults.mfaRequired);
   const [securityOpen, setSecurityOpen] = useState(defaults.securityOpen);
@@ -118,6 +130,7 @@ export function ExchangeCreateSecretPanel({
     setTargetRecipient(next.targetRecipient);
     setTargetTicketId(next.targetTicketId);
     setTargetCompanyId(next.targetCompanyId);
+    setTargetOrganizationId(next.targetOrganizationId);
     setTargetAssetId(next.targetAssetId);
     setMfaRequired(next.mfaRequired);
     setSecurityOpen(next.securityOpen);
@@ -142,6 +155,7 @@ export function ExchangeCreateSecretPanel({
     targetRecipient,
     targetTicketId,
     targetCompanyId,
+    targetOrganizationId,
     targetAssetId,
     mfaRequired,
   });
@@ -472,6 +486,33 @@ export function ExchangeCreateSecretPanel({
                 </option>
               ))}
             </select>
+          ) : null}
+          {organizations.length > 0 ? (
+            <div className="sm:col-span-2 space-y-1.5 mt-2">
+              <label className={FIELD_LABEL}>
+                {t('vault.linkPortalOrganization', 'Kunden-Portal Unternehmen')}
+              </label>
+              <select
+                value={targetOrganizationId}
+                onChange={(e) => setTargetOrganizationId(e.target.value)}
+                className={cn(FIELD_INPUT, 'cursor-pointer')}
+              >
+                <option value="">
+                  {t('vault.noPortalOrganization', 'Nicht im Kunden-Portal anzeigen…')}
+                </option>
+                {organizations.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-slate-400 font-semibold">
+                {t(
+                  'vault.linkPortalOrganizationHint',
+                  'Verknüpfter Transfer erscheint sofort unter /portal/exchange beim Kunden.',
+                )}
+              </p>
+            </div>
           ) : null}
           {deliveryOption === 'attach_asset' ? (
             <select

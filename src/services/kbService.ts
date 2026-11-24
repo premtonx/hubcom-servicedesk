@@ -80,7 +80,7 @@ export const kbService = {
     try {
       const docRef = await addDoc(collection(db, KB_COLLECTION), {
         ...article,
-        visibility: article.visibility || 'Private',
+        visibility: article.visibility || 'internal',
         tags: article.tags || [],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()

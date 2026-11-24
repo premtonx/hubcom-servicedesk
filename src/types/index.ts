@@ -398,6 +398,14 @@ export interface KBTag {
   count: number;
 }
 
+/** Portal / staff KB visibility. Legacy Public≈shared_portal, Private≈internal. */
+export type KBArticleVisibility =
+  | "internal"
+  | "shared_portal"
+  | "organization"
+  | "Public"
+  | "Private";
+
 export interface KBArticle {
   id: string;
   title: string;
@@ -405,7 +413,10 @@ export interface KBArticle {
   category: string;
   tags: string[];
   authorId: string;
-  visibility: "Public" | "Private";
+  visibility: KBArticleVisibility;
+  /** Set when visibility === 'organization' (MSP organizations.id). */
+  organizationId?: string | null;
+  organization_id?: string | null;
   createdAt: any;
   updatedAt: any;
   owner?: string;

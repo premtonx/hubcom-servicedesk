@@ -40,6 +40,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../..
 import { Input } from '../../components/ui/input';
 import { Badge } from '../../components/ui/badge';
 import { toast } from 'sonner';
+import axios from 'axios';
 import { cn } from '../../lib/utils';
 import { Textarea } from '../../components/ui/textarea';
 import { 
@@ -128,6 +129,9 @@ export default function VaultPage() {
   const [history, setHistory] = useState<VaultItem[]>([]);
   const [tickets, setTickets] = useState<TicketType[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [portalOrganizations, setPortalOrganizations] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
 
   // Secret generation outputs (form state lives in ExchangeCreateSecretPanel)
 
@@ -280,7 +284,23 @@ export default function VaultPage() {
       setCompanies(companyList);
     });
 
+    let orgsActive = true;
+    void (async () => {
+      try {
+        const res = await axios.get('/api/admin/organizations', { withCredentials: true });
+        const orgs = Array.isArray(res.data?.organizations) ? res.data.organizations : [];
+        if (orgsActive) {
+          setPortalOrganizations(
+            orgs.map((o: any) => ({ id: String(o.id), name: String(o.name || o.id) })),
+          );
+        }
+      } catch {
+        if (orgsActive) setPortalOrganizations([]);
+      }
+    })();
+
     return () => {
+      orgsActive = false;
       unsubHistory();
       unsubTickets();
       unsubCompanies();
@@ -940,6 +960,7 @@ export default function VaultPage() {
                     <ExchangeCreateSecretPanel
                       tickets={tickets}
                       companies={companies}
+                      organizations={portalOrganizations}
                       isGenerating={isGenerating}
                       generatedLink={generatedLink}
                       shares={shares}

@@ -47,6 +47,8 @@ export type ExchangeCreateSecretFormState = {
   targetRecipient: string;
   targetTicketId: string;
   targetCompanyId: string;
+  /** MSP organizations.id — surfaces transfer in that client's /portal/exchange. */
+  targetOrganizationId: string;
   targetAssetId: string;
   mfaRequired: boolean;
 };
@@ -106,6 +108,7 @@ export function buildCreateSecretPayload(state: ExchangeCreateSecretFormState) {
       deliveryOption: state.deliveryOption,
       relatedTicketId: state.targetTicketId || undefined,
       relatedCompanyId: state.targetCompanyId || undefined,
+      organizationId: state.targetOrganizationId || undefined,
       relatedAssetId: state.targetAssetId || undefined,
       targetRecipient: state.targetRecipient || recipientEmails[0] || 'internal',
       maxViews: Math.max(1, state.maxViews),

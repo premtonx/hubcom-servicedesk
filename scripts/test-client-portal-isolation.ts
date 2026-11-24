@@ -38,6 +38,18 @@ import { isClientAdmin, isClientPortalRole } from '../src/lib/client-portal/role
 import { parseAndValidateDashboardBannerDataUrl } from '../src/lib/dashboard-banner-validate.js';
 import { ticketMatchesPortalStatusFilter } from '../src/lib/portal/status.js';
 import {
+  assertPortalKbWriteRole,
+  isKbArticleVisibleToPortal,
+  matchesPortalKbScope,
+  normalizeKbVisibility,
+  sanitizeKbArticleForPortal,
+} from '../src/lib/client-portal/kb-visibility.js';
+import {
+  canPortalUserAccessVaultItem,
+  isVaultItemInOrganization,
+  sanitizeVaultItemForPortal,
+} from '../src/lib/client-portal/exchange-visibility.js';
+import {
   assertPortalDashboardTenantIsolation,
   buildPortalDashboardPayload,
 } from '../src/lib/client-portal/portal-dashboard-service.js';
@@ -98,6 +110,7 @@ const orgAUser = {
   id: 'user-a-user',
   role: 'CLIENT_USER',
   organizationId: ORG_A,
+  email: 'user@orga.test',
 };
 
 const orgAColleague = {
@@ -709,6 +722,227 @@ function testPortalBrandingBoundaries(): void {
   );
 }
 
+function testPortalKbIsolation(): void {
+  console.log('\n[12] Portal KB visibility isolation (/api/portal/kb)');
+
+  const internal = {
+    id: 'kb-internal',
+    title: 'Hubcom SOP',
+    content: 'secret runbook',
+    visibility: 'internal',
+    organizationId: null,
+  };
+  const legacyPrivate = {
+    id: 'kb-private',
+    title: 'Legacy private',
+    content: 'x',
+    visibility: 'Private',
+  };
+  const shared = {
+    id: 'kb-shared',
+    title: 'VPN Guide',
+    content: 'vpn steps',
+    visibility: 'shared_portal',
+  };
+  const legacyPublic = {
+    id: 'kb-public',
+    title: 'Outlook Guide',
+    content: 'outlook',
+    visibility: 'Public',
+  };
+  const orgAOnly = {
+    id: 'kb-org-a',
+    title: 'Org A FAQ',
+    content: 'a-only',
+    visibility: 'organization',
+    organizationId: ORG_A,
+  };
+  const orgBOnly = {
+    id: 'kb-org-b',
+    title: 'Org B FAQ',
+    content: 'b-only',
+    visibility: 'organization',
+    organization_id: ORG_B,
+  };
+
+  assert(normalizeKbVisibility('Private') === 'internal', 'Private → internal');
+  assert(normalizeKbVisibility('Public') === 'shared_portal', 'Public → shared_portal');
+  assert(normalizeKbVisibility('organization') === 'organization', 'organization preserved');
+
+  assert(
+    isKbArticleVisibleToPortal(internal, ORG_A) === false,
+    'internal Hubcom KB never leaks to portal Org A',
+  );
+  assert(
+    isKbArticleVisibleToPortal(legacyPrivate, ORG_A) === false,
+    'legacy Private never leaks to portal',
+  );
+  assert(
+    isKbArticleVisibleToPortal(shared, ORG_A) === true,
+    'shared_portal visible to Org A',
+  );
+  assert(
+    isKbArticleVisibleToPortal(legacyPublic, ORG_B) === true,
+    'legacy Public maps to shared_portal for all portals',
+  );
+  assert(
+    isKbArticleVisibleToPortal(orgAOnly, ORG_A) === true,
+    'Org A private KB visible to Org A',
+  );
+  assert(
+    isKbArticleVisibleToPortal(orgAOnly, ORG_B) === false,
+    'Org A private KB returns 404 semantics for Org B',
+  );
+  assert(
+    isKbArticleVisibleToPortal(orgBOnly, ORG_A) === false,
+    'Org B private KB returns 404 semantics for Org A',
+  );
+
+  assert(
+    matchesPortalKbScope(orgAOnly, ORG_A, 'organization') === true,
+    'Firmen-Anleitungen scope keeps org articles',
+  );
+  assert(
+    matchesPortalKbScope(shared, ORG_A, 'organization') === false,
+    'Firmen-Anleitungen scope excludes Hubcom guides',
+  );
+  assert(
+    matchesPortalKbScope(shared, ORG_A, 'shared_portal') === true,
+    'Hubcom Guides scope keeps shared_portal',
+  );
+  assert(
+    matchesPortalKbScope(internal, ORG_A, 'all') === false,
+    'Alle Artikel still excludes internal',
+  );
+
+  const sanitized = sanitizeKbArticleForPortal(internal as any);
+  assert(
+    !JSON.stringify(sanitized).includes('secret runbook') || sanitized.visibility === 'internal',
+    'sanitize helper always sets normalized visibility',
+  );
+  // Portal list never includes internal because of isKbArticleVisibleToPortal gate.
+  assert(
+    assertPortalKbWriteRole('CLIENT_ADMIN') === true,
+    'CLIENT_ADMIN may write portal KB',
+  );
+  assert(
+    assertPortalKbWriteRole('CLIENT_SUPPORTER') === true,
+    'CLIENT_SUPPORTER may write portal KB',
+  );
+  assert(
+    assertPortalKbWriteRole('CLIENT_USER') === false,
+    'CLIENT_USER gets 403 on POST/PATCH/DELETE /api/portal/kb',
+  );
+}
+
+function testPortalExchangeIsolation(): void {
+  console.log('\n[13] Portal Secure Exchange org isolation (/api/portal/exchange)');
+
+  const orgATransfer = {
+    id: 'vault-a-1',
+    createdBy: orgAAdmin.id,
+    organizationId: ORG_A,
+    metadata: { secretType: 'pwd', recipientEmails: [] },
+  };
+  const orgBTransfer = {
+    id: 'vault-b-1',
+    createdBy: orgBAdmin.id,
+    organizationId: ORG_B,
+    metadata: { secretType: 'pwd' },
+  };
+  const colleagueTransfer = {
+    id: 'vault-a-colleague',
+    createdBy: orgASupporter.id,
+    organizationId: ORG_A,
+    metadata: { secretType: 'ssh', recipientEmails: ['other@orga.test'] },
+  };
+  const addressedToUser = {
+    id: 'vault-a-for-user',
+    createdBy: orgAAdmin.id,
+    organizationId: ORG_A,
+    metadata: {
+      secretType: 'wifi',
+      recipientEmails: [String(orgAUser.email || '').toLowerCase()],
+    },
+  };
+  const userOwn = {
+    id: 'vault-a-user-own',
+    createdBy: orgAUser.id,
+    created_by_user_id: orgAUser.id,
+    organizationId: ORG_A,
+    metadata: { secretType: 'note' },
+  };
+
+  assert(
+    isVaultItemInOrganization(orgATransfer, ORG_A) === true,
+    'Org A transfer belongs to Org A',
+  );
+  assert(
+    isVaultItemInOrganization(orgATransfer, ORG_B) === false,
+    'Org A transfer denied for Org B (403/404)',
+  );
+
+  assert(
+    canPortalUserAccessVaultItem({
+      item: orgATransfer,
+      organizationId: ORG_A,
+      role: 'CLIENT_ADMIN',
+      userId: orgAAdmin.id,
+    }) === true,
+    'CLIENT_ADMIN sees all org transfers',
+  );
+  assert(
+    canPortalUserAccessVaultItem({
+      item: orgBTransfer,
+      organizationId: ORG_A,
+      role: 'CLIENT_ADMIN',
+      userId: orgAAdmin.id,
+    }) === false,
+    'CLIENT_ADMIN cannot see Org B transfers',
+  );
+  assert(
+    canPortalUserAccessVaultItem({
+      item: colleagueTransfer,
+      organizationId: ORG_A,
+      role: 'CLIENT_USER',
+      userId: orgAUser.id,
+      userEmail: orgAUser.email,
+    }) === false,
+    'CLIENT_USER cannot access another employee private transfer',
+  );
+  assert(
+    canPortalUserAccessVaultItem({
+      item: addressedToUser,
+      organizationId: ORG_A,
+      role: 'CLIENT_USER',
+      userId: orgAUser.id,
+      userEmail: orgAUser.email,
+    }) === true,
+    'CLIENT_USER can access transfer addressed to their email',
+  );
+  assert(
+    canPortalUserAccessVaultItem({
+      item: userOwn,
+      organizationId: ORG_A,
+      role: 'CLIENT_USER',
+      userId: orgAUser.id,
+      userEmail: orgAUser.email,
+    }) === true,
+    'CLIENT_USER can access transfers they created',
+  );
+
+  const sanitized = sanitizeVaultItemForPortal({
+    ...orgATransfer,
+    passphraseHash: 'secret-hash-must-not-leak',
+    secretRef: 'secret-ref',
+  });
+  assert(
+    !JSON.stringify(sanitized).includes('secret-hash') &&
+      !JSON.stringify(sanitized).includes('secret-ref'),
+    'portal exchange sanitize strips secret material',
+  );
+}
+
 function testPortalSessionBootstrapWithoutRolesDb(): void {
   console.log('\n[9] Portal session bootstrap never needs /api/db "roles"');
 
@@ -1017,6 +1251,8 @@ async function main(): Promise<void> {
   testPortalSessionBootstrapWithoutRolesDb();
   await testStaffTicketOrgStampAndPortalVisibility();
   testPortalBrandingBoundaries();
+  testPortalKbIsolation();
+  testPortalExchangeIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

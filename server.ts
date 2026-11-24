@@ -862,6 +862,12 @@ async function startServer() {
   app.use("/api/admin", adminRoutes);
   app.use("/api/portal/team", clientPortalTeamRoutes);
   app.use("/api/portal/email-channel", clientPortalEmailRoutes);
+  const { default: clientPortalKbRoutes } = await import("./src/routes/clientPortalKbRoutes.js");
+  const { default: clientPortalExchangeRoutes } = await import(
+    "./src/routes/clientPortalExchangeRoutes.js"
+  );
+  app.use("/api/portal/kb", clientPortalKbRoutes);
+  app.use("/api/portal/exchange", clientPortalExchangeRoutes);
   app.use("/api/portal", clientPortalRoutes);
   app.use("/api/admin/import", importRoutes);
   app.use("/api/ai", aiRoutes);

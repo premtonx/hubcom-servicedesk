@@ -332,6 +332,16 @@ export async function initDb() {
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS logo_url TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS portal_title TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS portal_banner_url TEXT;
+    -- Portal KB / Secure Exchange visibility indexes (JSONB document store).
+    CREATE INDEX IF NOT EXISTS idx_kb_articles_visibility
+      ON geistdesk_documents ((data->>'visibility'))
+      WHERE collection = 'kb_articles';
+    CREATE INDEX IF NOT EXISTS idx_kb_articles_organization
+      ON geistdesk_documents ((COALESCE(data->>'organizationId', data->>'organization_id')))
+      WHERE collection = 'kb_articles';
+    CREATE INDEX IF NOT EXISTS idx_vault_items_organization
+      ON geistdesk_documents ((COALESCE(data->>'organizationId', data->>'organization_id', data->'metadata'->>'organizationId')))
+      WHERE collection = 'vault_items';
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS industry TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS website TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS tier TEXT;

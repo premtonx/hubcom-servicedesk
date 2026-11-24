@@ -91,11 +91,13 @@ import {
   TooltipTrigger 
 } from '../../components/ui/tooltip';
 import { toast } from 'sonner';
+import axios from 'axios';
 
 import { kbService } from '../../services/kbService';
 import { kbArticleApi } from '../../services/kbArticleApi';
 import { useAuth } from '../../lib/hooks';
 import { useTranslation } from '../../lib/context/I18nContext';
+import { normalizeKbVisibility } from '../../lib/client-portal/kb-visibility';
 import { ModuleToolbarSelect } from '../ui/module-page';
 import { KBPageHeader } from '../kb/KBPageHeader';
 import { KBKpiCards } from '../kb/KBKpiCards';
@@ -249,7 +251,8 @@ export default function KBPage() {
         content: '',
         category: selectedCategory === 'All' ? UNCATEGORIZED_CATEGORY_ID : selectedCategory,
         subCategory: '',
-        visibility: 'Public',
+        visibility: 'internal',
+        organizationId: '',
         tags: [],
         owner: user?.email || '',
         reviewer: '',
@@ -351,7 +354,8 @@ export default function KBPage() {
     content: '',
     category: UNCATEGORIZED_CATEGORY_ID,
     subCategory: '',
-    visibility: 'Public',
+    visibility: 'internal',
+    organizationId: '',
     tags: [],
     owner: '',
     reviewer: '',
@@ -361,6 +365,29 @@ export default function KBPage() {
     index_in_rag: true,
   });
   const [tagInput, setTagInput] = useState('');
+  const [portalOrganizations, setPortalOrganizations] = useState<Array<{ id: string; name: string }>>(
+    [],
+  );
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const res = await axios.get('/api/admin/organizations', { withCredentials: true });
+        const orgs = Array.isArray(res.data?.organizations) ? res.data.organizations : [];
+        if (active) {
+          setPortalOrganizations(
+            orgs.map((o: any) => ({ id: String(o.id), name: String(o.name || o.id) })),
+          );
+        }
+      } catch {
+        if (active) setPortalOrganizations([]);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     closeArticleDraft();
@@ -584,7 +611,8 @@ export default function KBPage() {
       content: '',
       category: catId,
       subCategory: '',
-      visibility: 'Public',
+      visibility: 'internal',
+      organizationId: '',
       tags: [],
       owner: user?.email || '',
       reviewer: '',
@@ -627,12 +655,24 @@ export default function KBPage() {
       const status =
         mode === 'publish' ? 'Published' : mode === 'draft' ? 'Draft' : newArticle.status || 'Draft';
 
+      const visibility = normalizeKbVisibility(newArticle.visibility);
+      if (visibility === 'organization' && !String(newArticle.organizationId || '').trim()) {
+        toast.error(
+          t('kb.editor.orgRequired', 'Bitte ein Unternehmen für organisationsbezogene Artikel wählen.'),
+        );
+        return;
+      }
+
       const payload: any = {
         title,
         content: newArticle.content || '',
         category: newArticle.category,
         subCategory: newArticle.subCategory || '',
-        visibility: newArticle.visibility,
+        visibility,
+        organizationId:
+          visibility === 'organization' ? String(newArticle.organizationId || '').trim() : null,
+        organization_id:
+          visibility === 'organization' ? String(newArticle.organizationId || '').trim() : null,
         tags,
         owner: newArticle.owner,
         reviewer: newArticle.reviewer,
@@ -703,7 +743,8 @@ export default function KBPage() {
         content: '',
         category: selectedCategory === 'All' ? UNCATEGORIZED_CATEGORY_ID : selectedCategory,
         subCategory: '',
-        visibility: 'Public',
+        visibility: 'internal',
+        organizationId: '',
         tags: [],
         owner: user?.email || '',
         reviewer: '',
@@ -725,7 +766,8 @@ export default function KBPage() {
       content: article.content,
       category: resolveArticleCategoryId(article, categories),
       subCategory: article.subCategory || '',
-      visibility: article.visibility || 'Public',
+      visibility: normalizeKbVisibility(article.visibility),
+      organizationId: String(article.organizationId || article.organization_id || ''),
       tags: article.tags || [],
       owner: article.owner || user?.email || '',
       reviewer: article.reviewer || '',
@@ -843,7 +885,12 @@ export default function KBPage() {
     if (activeSubTab === 'Archived' && !isOutdatedStatus(art.status)) return false;
 
     if (filterOwner !== 'All' && art.owner !== filterOwner) return false;
-    if (filterVisibility !== 'All' && art.visibility !== filterVisibility) return false;
+    if (
+      filterVisibility !== 'All' &&
+      normalizeKbVisibility(art.visibility) !== filterVisibility
+    ) {
+      return false;
+    }
     if (filterLanguage !== 'All' && art.language !== filterLanguage) return false;
     if (filterTag !== 'All' && !(art.tags && art.tags.includes(filterTag))) return false;
 
@@ -1432,7 +1479,8 @@ export default function KBPage() {
                                 content: `<h2>${topic.name} Standard Operating Procedure</h2><p>Provide specific step-by-step operating checklists for addressing ${topic.name} within secure regional workspace bounds.</p>`,
                                 category: activeCategoryData.categoryName,
                                 subCategory: '',
-                                visibility: 'Public',
+                                visibility: 'internal',
+                                organizationId: '',
                                 tags: ['automation-gap'],
                                 owner: user?.email || '',
                                 reviewer: '',
@@ -1528,7 +1576,8 @@ export default function KBPage() {
                           content: `<h2>${sug.title} Draft SOP</h2><p>Auto-generated placeholders regarding ${sug.title} specifically mapped to deflect ticketing cascades.</p>`,
                           category: sug.category || UNCATEGORIZED_CATEGORY_ID,
                           subCategory: '',
-                          visibility: "Public",
+                          visibility: "internal",
+                          organizationId: '',
                           tags: ["ai-suggested", "critical-gap"],
                           owner: user?.email || '',
                           reviewer: '',
@@ -1618,6 +1667,7 @@ export default function KBPage() {
                   onTagInputChange={setTagInput}
                   categories={categories}
                   enterpriseUsers={ENTERPRISE_USERS}
+                  portalOrganizations={portalOrganizations}
                   onClose={closeArticleDraft}
                   onSave={handleSaveArticle}
                   onToggleIndexInRag={(checked) => {
@@ -1742,9 +1792,10 @@ export default function KBPage() {
                       ))}
                     </ModuleToolbarSelect>
                     <ModuleToolbarSelect value={filterVisibility} onChange={setFilterVisibility} aria-label={t('kb.allAccess', 'Access')}>
-                      <option value="All">{t('kb.allAccess', 'All access')}</option>
-                      <option value="Public">{t('kb.publicPortal', 'Public')}</option>
-                      <option value="Private">{t('kb.internalSopsOnly', 'Internal')}</option>
+                      <option value="All">{t('kb.allAccess', 'Alle Sichtbarkeiten')}</option>
+                      <option value="internal">{t('kb.visibilityInternal', 'Nur intern (Hubcom)')}</option>
+                      <option value="shared_portal">{t('kb.visibilityShared', 'Für alle Kunden-Portale')}</option>
+                      <option value="organization">{t('kb.visibilityOrg', 'Nur für bestimmtes Unternehmen')}</option>
                     </ModuleToolbarSelect>
                     {isDeveloperWorkspace ? (
                       <span className="text-[11px] text-violet-600 font-medium px-2 py-1 rounded-lg bg-violet-50 border border-violet-100">

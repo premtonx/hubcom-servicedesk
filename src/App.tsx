@@ -78,6 +78,10 @@ const ClientEmailIntegrationPage = lazy(
 const ClientBrandingPage = lazy(
   () => import('./components/pages/client-portal/ClientBrandingPage'),
 );
+const ClientKbPage = lazy(() => import('./components/pages/client-portal/ClientKbPage'));
+const ClientExchangePage = lazy(
+  () => import('./components/pages/client-portal/ClientExchangePage'),
+);
 
 function RouteFallback() {
   return (
@@ -431,6 +435,26 @@ function AppRoutes() {
                               </LazyPage>
                             </ErrorBoundary>
                           </ClientAdminRoute>
+                        }
+                      />
+                      <Route
+                        path="kb"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Wissensdatenbank" />}>
+                            <LazyPage>
+                              <ClientKbPage />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
+                      <Route
+                        path="exchange"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Sicherer Austausch" />}>
+                            <LazyPage>
+                              <ClientExchangePage />
+                            </LazyPage>
+                          </ErrorBoundary>
                         }
                       />
                       <Route path="*" element={<Navigate to="dashboard" replace />} />

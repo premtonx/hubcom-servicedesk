@@ -9,6 +9,8 @@ import {
   Building2,
   LayoutDashboard,
   Palette,
+  BookOpen,
+  Shield,
 } from 'lucide-react';
 import axios from 'axios';
 import { cn } from '../../lib/utils';
@@ -24,6 +26,8 @@ const NAV_ALL = [
   { to: '/portal/dashboard', label: 'Übersicht', icon: LayoutDashboard, end: true },
   { to: '/portal/tickets', label: 'Tickets', icon: Ticket, end: true },
   { to: '/portal/tickets/new', label: 'Neues Ticket erstellen', icon: PlusCircle, end: true },
+  { to: '/portal/kb', label: 'Wissensdatenbank', icon: BookOpen, end: false },
+  { to: '/portal/exchange', label: 'Sicherer Austausch', icon: Shield, end: false },
 ] as const;
 
 const NAV_ADMIN_ONLY = [

@@ -10,12 +10,15 @@ import { Switch } from '../ui/switch';
 import { KBRichTextEditor } from './KBRichTextEditor';
 import type { KBCategoryRecord } from './kbCategoryUtils';
 
+export type KBArticleDraftVisibility = 'internal' | 'shared_portal' | 'organization';
+
 export interface KBArticleDraft {
   title: string;
   content: string;
   category: string;
   subCategory: string;
-  visibility: 'Public' | 'Private';
+  visibility: KBArticleDraftVisibility | 'Public' | 'Private';
+  organizationId?: string;
   tags: string[];
   owner: string;
   reviewer: string;
@@ -35,6 +38,11 @@ interface EnterpriseUser {
   avatar: string;
 }
 
+interface PortalOrganizationOption {
+  id: string;
+  name: string;
+}
+
 interface KBArticleEditorWorkspaceProps {
   editingArticleId: string | null;
   selectedCategory: string;
@@ -44,11 +52,22 @@ interface KBArticleEditorWorkspaceProps {
   onTagInputChange: (value: string) => void;
   categories: KBCategoryRecord[];
   enterpriseUsers: EnterpriseUser[];
+  /** MSP organizations for „Nur für bestimmtes Unternehmen“. */
+  portalOrganizations?: PortalOrganizationOption[];
   onClose: () => void;
   onSave: (mode: KBArticleSaveMode) => void;
   /** Instant-persist RAG opt-in for existing articles (fires on toggle change). */
   onToggleIndexInRag?: (checked: boolean) => void;
   className?: string;
+}
+
+function draftVisibility(
+  raw: KBArticleDraft['visibility'],
+): KBArticleDraftVisibility {
+  const v = String(raw || '').toLowerCase();
+  if (v === 'shared_portal' || v === 'public') return 'shared_portal';
+  if (v === 'organization') return 'organization';
+  return 'internal';
 }
 
 function stripHtmlText(html: string): string {
@@ -68,6 +87,7 @@ export function KBArticleEditorWorkspace({
   onTagInputChange,
   categories,
   enterpriseUsers,
+  portalOrganizations = [],
   onClose,
   onSave,
   onToggleIndexInRag,
@@ -257,21 +277,61 @@ export function KBArticleEditorWorkspace({
 
         <div className="space-y-2">
           <Label className="text-[9.5px] uppercase font-black text-slate-400 tracking-wider">
-            {t('kb.editor.accessScope', 'Access Scope Visibility')}
+            {t('kb.editor.accessScope', 'Sichtbarkeit (Kunden-Portal)')}
           </Label>
-          <div className="flex items-center justify-between p-3 bg-white border rounded-xl shadow-3xs">
-            <div className="flex flex-col">
-              <span className="text-xs font-black text-slate-800">
-                {t('kb.editor.publicPortal', 'Public Portal access')}
-              </span>
-              <span className="text-[10px] text-slate-400 font-semibold mt-0.5">
-                {t('kb.editor.publicPortalHint', 'Dispatched to help desk hubs')}
-              </span>
-            </div>
-            <Switch
-              checked={newArticle.visibility === 'Public'}
-              onCheckedChange={(checked) => patchArticle({ visibility: checked ? 'Public' : 'Private' })}
-            />
+          <div className="p-3 bg-white border rounded-xl shadow-3xs space-y-2">
+            <select
+              className="w-full h-9 rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs font-bold text-slate-800"
+              value={draftVisibility(newArticle.visibility)}
+              onChange={(e) => {
+                const next = e.target.value as KBArticleDraftVisibility;
+                patchArticle({
+                  visibility: next,
+                  organizationId:
+                    next === 'organization' ? newArticle.organizationId || '' : '',
+                });
+              }}
+              aria-label={t('kb.editor.visibilitySelect', 'Sichtbarkeit')}
+            >
+              <option value="internal">
+                {t('kb.editor.visibilityInternal', 'Nur intern (Hubcom)')}
+              </option>
+              <option value="shared_portal">
+                {t('kb.editor.visibilityShared', 'Für alle Kunden-Portale')}
+              </option>
+              <option value="organization">
+                {t('kb.editor.visibilityOrg', 'Nur für bestimmtes Unternehmen')}
+              </option>
+            </select>
+            {draftVisibility(newArticle.visibility) === 'organization' ? (
+              <select
+                className="w-full h-9 rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs font-bold text-slate-800"
+                value={newArticle.organizationId || ''}
+                onChange={(e) => patchArticle({ organizationId: e.target.value })}
+                aria-label={t('kb.editor.orgPicker', 'Unternehmen')}
+              >
+                <option value="">
+                  {t('kb.editor.orgPickerPlaceholder', 'Unternehmen wählen…')}
+                </option>
+                {portalOrganizations.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-[10px] text-slate-400 font-semibold">
+                {draftVisibility(newArticle.visibility) === 'shared_portal'
+                  ? t(
+                      'kb.editor.sharedHint',
+                      'Sichtbar in jedem Kunden-Portal (z. B. VPN-/Outlook-Anleitungen).',
+                    )
+                  : t(
+                      'kb.editor.internalHint',
+                      'Nur Hubcom-Mitarbeitende sehen diesen Artikel — nie im Kunden-Portal.',
+                    )}
+              </p>
+            )}
           </div>
         </div>
 
