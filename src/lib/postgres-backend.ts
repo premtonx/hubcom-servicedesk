@@ -384,6 +384,24 @@ export async function initDb() {
     );
   }
 
+  // Backfill tickets.organizationId from companyId / company name (staff-created tickets).
+  try {
+    const { backfillTicketOrganizationIds } = await import(
+      './client-portal/stamp-ticket-organization.js'
+    );
+    const result = await backfillTicketOrganizationIds();
+    if (result.updated > 0) {
+      console.log(
+        `[initDb] ticket organizationId backfill: updated ${result.updated}/${result.scanned}`,
+      );
+    }
+  } catch (backfillErr: any) {
+    console.warn(
+      '[initDb] ticket organizationId backfill skipped:',
+      backfillErr?.message || backfillErr,
+    );
+  }
+
   // pgvector RAG store (KnowledgeEmbedding) — mirrored from prisma/migrations.
   try {
     await pgPool.query(`CREATE EXTENSION IF NOT EXISTS vector`);

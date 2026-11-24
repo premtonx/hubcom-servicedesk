@@ -94,8 +94,11 @@ type FormState = {
   type: string;
   customerName: string;
   customerId: string;
+  customerEmail: string;
   contactId: string;
   companyId: string;
+  organizationId: string;
+  requesterId: string;
   product: string;
   tags: string[];
   assignee: string;
@@ -107,6 +110,14 @@ type FormState = {
   affectedVersion: string;
   environment: string;
   stepsToReproduce: string;
+};
+
+type ContactOption = {
+  id: string;
+  name: string;
+  email: string;
+  source: 'contact' | 'portal';
+  userId?: string;
 };
 
 const EMPTY_FORM: FormState = {
@@ -121,8 +132,11 @@ const EMPTY_FORM: FormState = {
   type: 'question',
   customerName: '',
   customerId: '',
+  customerEmail: '',
   contactId: '',
   companyId: '',
+  organizationId: '',
+  requesterId: '',
   product: 'GeistDeskTech',
   tags: [],
   assignee: 'unassigned',
@@ -193,6 +207,7 @@ export function CreateTicketDialog({
   const [companies, setCompanies] = useState<Company[]>(prefetchedCompanies ?? []);
   const [agents, setAgents] = useState<User[]>(prefetchedAgents ?? []);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [portalContacts, setPortalContacts] = useState<ContactOption[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [formData, setFormData] = useState<FormState>(EMPTY_FORM);
   const [baselineJson, setBaselineJson] = useState(() => JSON.stringify(EMPTY_FORM));
@@ -320,19 +335,112 @@ export function CreateTicketDialog({
     setContacts([]);
   }, [formData.companyId]);
 
+  // Resolve organizationId from selected Unternehmen + load portal users.
+  useEffect(() => {
+    if (!formData.companyId) {
+      setPortalContacts([]);
+      setFormData((prev) =>
+        prev.organizationId ? { ...prev, organizationId: '' } : prev,
+      );
+      return;
+    }
+    const company = companies.find((c) => c.id === formData.companyId);
+    const orgId =
+      String((company as any)?.organizationId || (company as any)?.organization_id || '').trim();
+    if (orgId) {
+      setFormData((prev) =>
+        prev.organizationId === orgId ? prev : { ...prev, organizationId: orgId },
+      );
+    } else {
+      // Ask admin orgs API / companies may still sync — clear stale org.
+      setFormData((prev) =>
+        prev.organizationId ? { ...prev, organizationId: '' } : prev,
+      );
+    }
+
+    if (!orgId) {
+      setPortalContacts([]);
+      return;
+    }
+
+    let cancelled = false;
+    void import('axios').then(({ default: axios }) =>
+      axios
+        .get(`/api/admin/organizations/${encodeURIComponent(orgId)}/users`, {
+          withCredentials: true,
+        })
+        .then((res) => {
+          if (cancelled) return;
+          const rows = (res.data?.users || []) as Array<Record<string, unknown>>;
+          setPortalContacts(
+            rows
+              .map((u) => ({
+                id: `portal:${String(u.id || '')}`,
+                name: String(u.name || u.email || ''),
+                email: String(u.email || '').trim(),
+                source: 'portal' as const,
+                userId: String(u.id || ''),
+              }))
+              .filter((u) => u.userId && u.email),
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setPortalContacts([]);
+        }),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.companyId, companies]);
+
+  const contactOptions = useMemo((): ContactOption[] => {
+    const byEmail = new Map<string, ContactOption>();
+    for (const c of contacts) {
+      const email = String(c.email || '').trim().toLowerCase();
+      if (!email) continue;
+      byEmail.set(email, {
+        id: c.id,
+        name: c.name || email,
+        email: c.email,
+        source: 'contact',
+      });
+    }
+    for (const p of portalContacts) {
+      const email = p.email.trim().toLowerCase();
+      if (!email) continue;
+      const existing = byEmail.get(email);
+      if (existing) {
+        byEmail.set(email, {
+          ...existing,
+          userId: p.userId || existing.userId,
+          source: existing.source,
+          // Prefer portal user id for requester linkage when available.
+          id: existing.id,
+        });
+      } else {
+        byEmail.set(email, p);
+      }
+    }
+    return Array.from(byEmail.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, 'de'),
+    );
+  }, [contacts, portalContacts]);
+
   // Clear contact when it no longer belongs to the selected organization
   useEffect(() => {
     if (!formData.contactId || !formData.companyId) return;
-    if (contacts.length === 0) return;
-    if (!contacts.some((c) => c.id === formData.contactId)) {
+    if (contactOptions.length === 0) return;
+    if (!contactOptions.some((c) => c.id === formData.contactId)) {
       setFormData((prev) => ({
         ...prev,
         contactId: '',
         customerName: '',
         customerId: '',
+        customerEmail: '',
+        requesterId: '',
       }));
     }
-  }, [contacts, formData.companyId, formData.contactId]);
+  }, [contactOptions, formData.companyId, formData.contactId]);
 
   useEffect(() => {
     if (!isDirty) return;
@@ -519,8 +627,13 @@ export function CreateTicketDialog({
     submitLockRef.current = true;
     setLoading(true);
     try {
-      const { assignee: formAssignee, groupId, groupName, group: _legacyGroup, ...restForm } =
-        formData;
+      const {
+        assignee: formAssignee,
+        groupId,
+        groupName,
+        group: _legacyGroup,
+        ...restForm
+      } = formData;
       const assigneeFields =
         !formAssignee || formAssignee === 'unassigned'
           ? clearAssigneePayload()
@@ -535,11 +648,40 @@ export function CreateTicketDialog({
                 agents.find((a) => a.id === formAssignee)?.name || formAssignee,
               );
 
+      const selectedCompany = companies.find((c) => c.id === formData.companyId);
+      const organizationId =
+        formData.organizationId ||
+        String(
+          (selectedCompany as any)?.organizationId ||
+            (selectedCompany as any)?.organization_id ||
+            '',
+        ).trim() ||
+        undefined;
+      const companyName = selectedCompany?.name || undefined;
+      const customerEmail = formData.customerEmail.trim() || undefined;
+      const requesterId = formData.requesterId.trim() || undefined;
+
       await ticketService.createTicket({
         ...restForm,
         ...assigneeFields,
         groupId: groupId || undefined,
         groupName: groupName || undefined,
+        companyId: formData.companyId || undefined,
+        company: companyName,
+        organizationId: organizationId || null,
+        organization_id: organizationId || null,
+        customerName: formData.customerName || undefined,
+        customerEmail: customerEmail || null,
+        customerId:
+          formData.customerId ||
+          customerEmail ||
+          requesterId ||
+          undefined,
+        contactId: formData.contactId?.startsWith('portal:')
+          ? undefined
+          : formData.contactId || undefined,
+        requesterId: requesterId || null,
+        requester_id: requesterId || null,
         team: formData.ticketKind === 'bug' ? 'engineering' : 'support',
         ticketKind: formData.ticketKind,
         type: formData.type as any,
@@ -603,12 +745,19 @@ export function CreateTicketDialog({
   }, [isOpen, formData, loading, user]);
 
   const onCompanyChange = (val: string) => {
+    const company = companies.find((c) => c.id === val);
+    const orgId = String(
+      (company as any)?.organizationId || (company as any)?.organization_id || '',
+    ).trim();
     setFormData((prev) => ({
       ...prev,
       companyId: val,
+      organizationId: orgId,
       contactId: '',
       customerName: '',
       customerId: '',
+      customerEmail: '',
+      requesterId: '',
     }));
   };
 
@@ -763,7 +912,7 @@ export function CreateTicketDialog({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div className="space-y-2">
                   <Label htmlFor="create-ticket-company" className="text-sm font-semibold text-slate-700">
-                    {t('dialog.company', 'Organisation')}
+                    {t('dialog.company', 'Unternehmen')}
                   </Label>
                   <Select value={formData.companyId || undefined} onValueChange={onCompanyChange}>
                     <SelectTrigger
@@ -786,18 +935,20 @@ export function CreateTicketDialog({
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="create-ticket-contact" className="text-sm font-semibold text-slate-700">
-                    {t('dialog.contactEmployee', 'Ansprechpartner')}
+                    {t('dialog.contactEmployee', 'Kontaktperson / Mitarbeiter')}
                   </Label>
                   <Select
                     value={formData.contactId || undefined}
                     onValueChange={(val) => {
-                      const contact = contacts.find((c) => c.id === val);
+                      const contact = contactOptions.find((c) => c.id === val);
                       if (contact) {
                         setFormData({
                           ...formData,
                           contactId: val,
                           customerName: contact.name,
-                          customerId: contact.email,
+                          customerEmail: contact.email,
+                          customerId: contact.userId || contact.id,
+                          requesterId: contact.userId || '',
                         });
                       }
                     }}
@@ -813,20 +964,21 @@ export function CreateTicketDialog({
                           placeholder={
                             formData.companyId
                               ? t('dialog.selectEmployee', 'Mitarbeiter wählen…')
-                              : t('dialog.selectCompanyFirst', 'Zuerst Organisation wählen')
+                              : t('dialog.selectCompanyFirst', 'Zuerst Unternehmen wählen')
                           }
                         />
                       </div>
                     </SelectTrigger>
                     <SelectContent className="rounded-xl">
-                      {contacts.length === 0 ? (
+                      {contactOptions.length === 0 ? (
                         <SelectItem value="__empty" disabled>
-                          {t('dialog.noContacts', 'Keine Kontakte für diese Organisation')}
+                          {t('dialog.noContacts', 'Keine Kontakte für dieses Unternehmen')}
                         </SelectItem>
                       ) : (
-                        contacts.map((c) => (
+                        contactOptions.map((c) => (
                           <SelectItem key={c.id} value={c.id}>
                             {c.name} ({c.email})
+                            {c.source === 'portal' ? ' · Portal' : ''}
                           </SelectItem>
                         ))
                       )}

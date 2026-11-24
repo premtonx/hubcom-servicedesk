@@ -45,7 +45,7 @@ function isDemoCompanyName(name: string): boolean {
   return DEMO_COMPANY_NAMES.some((d) => norm(d) === n);
 }
 
-type CompanyDoc = {
+export type CompanyDoc = {
   id: string;
   name?: string;
   domain?: string;

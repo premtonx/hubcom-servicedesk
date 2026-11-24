@@ -59,11 +59,19 @@ export function SmartContextPanel({
     return other.date.toLocaleDateString([], { month: 'short', day: 'numeric', year: '2-digit' });
   }, [companyTickets, ticket, t]);
 
-  const customerLTV = useMemo(() => {
-    if (company && (company as any).ltv) {
-      return (company as any).ltv;
-    }
-    return company?.wartungsvertragStatus === 'Active' ? '$18,500' : '$4,200';
+  const customerEmail = useMemo(() => {
+    const fromContact = String(contact?.email || '').trim();
+    if (fromContact) return fromContact;
+    const fromTicket = String((ticket as any).customerEmail || '').trim();
+    if (fromTicket && fromTicket !== '@domain.com') return fromTicket;
+    const customerId = String(ticket.customerId || '').trim();
+    if (customerId.includes('@') && !customerId.endsWith('@domain.com')) return customerId;
+    return '';
+  }, [contact, ticket]);
+
+  const customerTier = useMemo(() => {
+    const tier = String((company as any)?.tier || (company as any)?.contractPlan || '').trim();
+    return tier || null;
   }, [company]);
 
   const customerHealthScore = useMemo(() => {
@@ -90,16 +98,24 @@ export function SmartContextPanel({
             <User className="w-3.5 h-3.5 text-blue-500" />
           </div>
           <div className="space-y-1">
-            <h4 className="text-xs font-black truncate text-foreground">{safeString(contact?.name ?? ticket.customerName)}</h4>
-            <p className="text-[10px] text-muted-foreground truncate">{safeString(contact?.email) || `${ticket.customerId}@domain.com`}</p>
+            <h4 className="text-xs font-black truncate text-foreground">
+              {safeString(contact?.name ?? ticket.customerName) ||
+                t('tickets.customerTab.noContactAssigned', 'Keine Kontaktperson zugewiesen')}
+            </h4>
+            <p className="text-[10px] text-muted-foreground truncate">
+              {customerEmail || '—'}
+            </p>
           </div>
           <div className="flex items-center gap-1.5 pt-1 border-t border-border/60">
-            <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100/80 text-[8px] h-4 font-black">
-              {company?.wartungsvertragStatus === 'Active' 
-                ? t('tickets.context.premiumPlatinum', 'PREMIUM PLATINUM') 
-                : t('tickets.context.standardTier', 'STANDARD TIER')}
-            </Badge>
-            <span className="text-[9px] font-bold text-emerald-600">{customerLTV} {t('tickets.context.ltv', 'LTV')}</span>
+            {customerTier ? (
+              <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100/80 text-[8px] h-4 font-black">
+                {customerTier}
+              </Badge>
+            ) : (
+              <span className="text-[9px] font-bold text-muted-foreground">
+                {t('tickets.customerTab.noContract', 'Kein Vertrag hinterlegt')}
+              </span>
+            )}
           </div>
         </CardContent>
       </Card>

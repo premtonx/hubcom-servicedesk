@@ -304,7 +304,15 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                                 );
                               })()}
                               <span className="inline-flex h-5 items-center text-[11px] font-medium tracking-normal text-slate-500 min-w-0">
-                                {safeString(selectedTicket.company, 'Enterprise Corp')} &bull; {safeString(selectedTicket.customerName, 'PremtonXhafa')} &bull;{' '}
+                                {safeString(selectedTicket.company) ||
+                                  t('tickets.detail.noCompany', 'Kein Unternehmen')}{' '}
+                                &bull;{' '}
+                                {safeString(selectedTicket.customerName) ||
+                                  t(
+                                    'tickets.customerTab.noContactAssigned',
+                                    'Keine Kontaktperson zugewiesen',
+                                  )}{' '}
+                                &bull;{' '}
                                 <span className="font-mono tabular-nums text-slate-600 font-semibold">{ticketRef}</span>
                               </span>
                               <DynamicSentimentGlyph sentiment={selectedTicket.sentiment} />
@@ -768,6 +776,9 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                             company={ticketCompany}
                             contactSchema={contactSchema}
                             allTickets={allTickets}
+                            onUpdateTicket={(data) =>
+                              handleInlineUpdate(selectedTicket.id, data)
+                            }
                           />
                         )}
     

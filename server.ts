@@ -48,6 +48,7 @@ import {
 } from "./src/lib/client-portal/ticket-visibility.js";
 import { isClientPortalRole } from "./src/lib/client-portal/roles.js";
 import { forbidClientOnHubcomTicketTool } from "./src/lib/client-portal/assert-ticket-access.js";
+import { stampStaffTicketOrganizationFields } from "./src/lib/client-portal/stamp-ticket-organization.js";
 import aiRoutes from "./src/routes/aiRoutes.js";
 import moduleConfigRoutes from "./src/routes/moduleConfigRoutes.js";
 import vaultRoutes from "./src/routes/vaultRoutes.js";
@@ -707,7 +708,17 @@ async function startServer() {
         return res.json({ result: safe });
       }
       if (action === "add_doc") {
-        const payload = tenantScoped ? stampTenantId(data || {}, tenantId) : data;
+        let createData =
+          data && typeof data === "object" ? { ...(data as Record<string, unknown>) } : {};
+        // Hubcom staff ticket create: stamp canonical organizationId from Unternehmen.
+        if (
+          collection === "tickets" &&
+          req.user &&
+          !isClientPortalRole(String(req.user.role || ""))
+        ) {
+          createData = await stampStaffTicketOrganizationFields(createData);
+        }
+        const payload = tenantScoped ? stampTenantId(createData, tenantId) : createData;
         const resObj = await addDocDirect(collection, payload);
         handleKnowledgeDocumentMutation({
           collection,
@@ -755,7 +766,17 @@ async function startServer() {
             error: "Forbidden: Client portal accounts cannot rewrite message history.",
           });
         }
-        const payload = tenantScoped ? stampTenantId(data || {}, tenantId) : data;
+        let updateData =
+          data && typeof data === "object" ? { ...(data as Record<string, unknown>) } : {};
+        if (
+          collection === "tickets" &&
+          req.user &&
+          !isClientPortalRole(String(req.user.role || "")) &&
+          (updateData.companyId || updateData.organizationId || updateData.company)
+        ) {
+          updateData = await stampStaffTicketOrganizationFields(updateData);
+        }
+        const payload = tenantScoped ? stampTenantId(updateData, tenantId) : updateData;
         if (action === "update_doc") {
           await updateDocDirect(collection, id, payload, {
             tenantId: tenantScoped ? tenantId : undefined,

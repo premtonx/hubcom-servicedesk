@@ -42,6 +42,7 @@ import {
   shouldFetchRolesCollection,
 } from '../src/lib/client-portal/portal-role-from-session.js';
 import { assertDbCollectionAccess } from '../src/lib/db-access-policy.js';
+import { applyTicketOrganizationStamp } from '../src/lib/client-portal/stamp-ticket-organization.js';
 
 process.env.EMAIL_CHANNEL_SECRET_KEY =
   process.env.EMAIL_CHANNEL_SECRET_KEY ||
@@ -687,6 +688,138 @@ function testPortalSessionBootstrapWithoutRolesDb(): void {
   );
 }
 
+/**
+ * Staff-created tickets must carry organizationId so CLIENT_ADMIN
+ * "Alle Firmen-Tickets" sees them — with or without requesterId.
+ */
+async function testStaffTicketOrgStampAndPortalVisibility(): Promise<void> {
+  console.log('\n[10] Staff ticket → organizationId stamp → portal Alle Firmen-Tickets');
+
+  const CITADELLE = ORG_A;
+  const DPG = ORG_B;
+
+  // Simulate Hubcom SYSTEM_ADMIN create payload that only had companyId historically.
+  const stampedWithRequester = applyTicketOrganizationStamp(
+    {
+      id: 'ticket-staff-with-requester',
+      subject: 'Staff ticket with contact',
+      companyId: 'crm-citadelle',
+      company: 'Citadelle AG',
+      customerName: 'Premton Xhafa',
+      customerEmail: 'premton@citadelle.test',
+      customerId: 'user-a-user',
+      requesterId: orgAUser.id,
+      status: 'open',
+    },
+    { organizationId: CITADELLE, companyName: 'Citadelle AG', companyId: 'crm-citadelle' },
+  );
+
+  assert(
+    stampedWithRequester.organizationId === CITADELLE,
+    'staff create stamps organizationId (with requester)',
+  );
+  assert(
+    stampedWithRequester.organization_id === CITADELLE,
+    'staff create stamps organization_id alias',
+  );
+  assert(
+    stampedWithRequester.company === 'Citadelle AG',
+    'staff create persists company display name',
+  );
+  assert(
+    stampedWithRequester.customerEmail === 'premton@citadelle.test',
+    'staff create persists customerEmail',
+  );
+  assert(
+    ticketOrganizationId(stampedWithRequester) === CITADELLE,
+    'ticketOrganizationId reads stamped org',
+  );
+
+  const stampedOrgOnly = applyTicketOrganizationStamp(
+    {
+      id: 'ticket-staff-org-only',
+      subject: 'Org-level staff ticket (no contact)',
+      companyId: 'crm-citadelle',
+      status: 'open',
+    },
+    { organizationId: CITADELLE, companyName: 'Citadelle AG', companyId: 'crm-citadelle' },
+  );
+  assert(
+    ticketOrganizationId(stampedOrgOnly) === CITADELLE,
+    'org-level staff ticket (no requester) still gets organizationId',
+  );
+  assert(
+    !stampedOrgOnly.requesterId,
+    'org-level staff ticket may omit requesterId',
+  );
+
+  // Legacy ticket without organizationId must NOT appear in portal lists.
+  const legacyUnscoped = {
+    id: 'ticket-legacy-tkt-53',
+    subject: 'Legacy #TKT-53',
+    companyId: 'crm-citadelle',
+    company: 'Citadelle AG',
+    status: 'open',
+  };
+  assert(
+    evaluateClientTicketVisibility(orgAAdmin, legacyUnscoped as any) === false,
+    'CLIENT_ADMIN cannot see ticket without organizationId (pre-fix)',
+  );
+
+  // After stamp / backfill — Citadelle ADMIN/SUPPORTER see it; DPG does not.
+  for (const actor of [orgAAdmin, orgASupporter]) {
+    assert(
+      evaluateClientTicketVisibility(actor, stampedOrgOnly as any) === true,
+      `${actor.role} sees staff org ticket in Alle Firmen-Tickets (no requester)`,
+    );
+    assert(
+      evaluateClientTicketVisibility(actor, stampedWithRequester as any) === true,
+      `${actor.role} sees staff ticket with requester`,
+    );
+  }
+
+  assert(
+    evaluateClientTicketVisibility(orgBAdmin, stampedOrgOnly as any) === false,
+    'DPG CLIENT_ADMIN does NOT see Citadelle staff ticket',
+  );
+  assert(
+    evaluateClientTicketVisibility(orgBAdmin, stampedWithRequester as any) === false,
+    'DPG CLIENT_ADMIN does NOT see Citadelle ticket with requester',
+  );
+
+  const filtered = await filterTicketsForClient(orgAAdmin, [
+    stampedOrgOnly,
+    stampedWithRequester,
+    { ...stampedOrgOnly, id: 'other-dpg', organizationId: DPG, organization_id: DPG },
+    legacyUnscoped,
+  ] as any);
+  const ids = new Set(filtered.map((t: any) => String(t.id)));
+  assert(ids.has('ticket-staff-org-only'), 'filter includes org-only staff ticket');
+  assert(ids.has('ticket-staff-with-requester'), 'filter includes requester staff ticket');
+  assert(!ids.has('other-dpg'), 'filter excludes DPG tickets for Citadelle admin');
+  assert(!ids.has('ticket-legacy-tkt-53'), 'filter excludes unscoped legacy tickets');
+
+  // CLIENT_USER with requester sees Meine Tickets; without requester does not.
+  assert(
+    evaluateClientTicketVisibility(orgAUser, stampedWithRequester as any) === true,
+    'CLIENT_USER sees staff ticket when requesterId matches',
+  );
+  assert(
+    evaluateClientTicketVisibility(orgAUser, stampedOrgOnly as any) === false,
+    'CLIENT_USER does not see org-level ticket without requester/participation',
+  );
+
+  // Empty customerId must not become @domain.com via stamp helper.
+  const emptyCustomer = applyTicketOrganizationStamp(
+    { subject: 'x', companyId: 'c1', customerId: '', customerEmail: '' },
+    { organizationId: CITADELLE, companyName: 'Citadelle AG' },
+  );
+  assert(
+    emptyCustomer.customerId !== '@domain.com',
+    'stamp never invents @domain.com customerId',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -698,6 +831,7 @@ async function main(): Promise<void> {
   testHubcomStaffBypass();
   testPortalDashboardIsolation();
   testPortalSessionBootstrapWithoutRolesDb();
+  await testStaffTicketOrgStampAndPortalVisibility();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

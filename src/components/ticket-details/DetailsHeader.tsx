@@ -171,10 +171,12 @@ export function DetailsHeader({
               </span>
             </span>
 
-            {/* Company Badge */}
-            <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[10.5px] font-bold h-5.5 px-3 rounded-md flex items-center justify-center">
-              {safeString(ticket.company, t('tickets.detail.defaultCompany', 'Enterprise Corp'))}
-            </span>
+            {/* Company Badge — only when a real org/company name exists */}
+            {safeString(ticket.company) ? (
+              <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[10.5px] font-bold h-5.5 px-3 rounded-md flex items-center justify-center">
+                {safeString(ticket.company)}
+              </span>
+            ) : null}
 
             {/* Priority Badge — configured colour + label */}
             <span
