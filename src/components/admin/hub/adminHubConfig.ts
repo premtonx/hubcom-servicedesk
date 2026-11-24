@@ -67,7 +67,8 @@ export interface AdminHubSubRouteMeta {
 export const ADMIN_HUB_SUBROUTES: Array<{ path: string; meta: AdminHubSubRouteMeta }> = [
   { path: '/admin/time-tracking/overview', meta: { parentTab: 'system', label: 'Zeiterfassung Gesamt' } },
   { path: '/admin/time-tracking', meta: { parentTab: 'system', label: 'Zeiterfassung & Stundensätze' } },
-  { path: '/admin/ticket-categories', meta: { parentTab: 'system', label: 'Ticket-Kategorien' } },
+  { path: '/admin/ticket-configuration', meta: { parentTab: 'system', label: 'Ticket Configuration' } },
+  { path: '/admin/ticket-categories', meta: { parentTab: 'system', label: 'Ticket Configuration' } },
   { path: '/admin/vault-portfolio', meta: { parentTab: 'system', label: 'Vault-Portfoliomanagement' } },
   { path: '/admin/workforce-legacy', meta: { parentTab: 'system', label: 'Workforce (Legacy)' } },
   { path: '/admin/workforce', meta: { parentTab: 'system', label: 'Benutzerverwaltung' } },
@@ -470,10 +471,11 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         module: 'rbac',
       },
       {
-        title: 'Ticket-Kategorien',
-        description: 'Kategorien anlegen, farblich markieren, sortieren und deaktivieren.',
+        title: 'Ticket Configuration',
+        description:
+          'Kategorien, Status, Prioritäten und Ticket-Typen anlegen, sortieren und aktivieren.',
         icon: FolderTree,
-        path: '/admin/ticket-categories',
+        path: '/admin/ticket-configuration',
         color: 'text-violet-600',
         bgColor: 'bg-violet-50',
         borderColor: 'border-violet-105',

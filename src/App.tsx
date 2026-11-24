@@ -460,7 +460,8 @@ function AppRoutes() {
                       <Route path="import" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Import" />}><LazyPage><AdminImportPage /></LazyPage></ErrorBoundary>} />
                       <Route path="time-tracking" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Zeiterfassung" />}><LazyPage><TimeTrackingAdminPage /></LazyPage></ErrorBoundary>} />
                       <Route path="time-tracking/overview" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Zeiterfassung Gesamt" />}><LazyPage><TimeTrackingOverviewPage /></LazyPage></ErrorBoundary>} />
-                      <Route path="ticket-categories" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Ticket-Kategorien" />}><LazyPage><TicketCategoriesAdminPage /></LazyPage></ErrorBoundary>} />
+                      <Route path="ticket-configuration" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Ticket Configuration" />}><LazyPage><TicketCategoriesAdminPage /></LazyPage></ErrorBoundary>} />
+                      <Route path="ticket-categories" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Ticket Configuration" />}><LazyPage><TicketCategoriesAdminPage /></LazyPage></ErrorBoundary>} />
                       <Route path="email-channels" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Email Channels" />}><LazyPage><EmailChannelsPage /></LazyPage></ErrorBoundary>} />
                       <Route path="customers" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Customers" />}><LazyPage><CustomersPage /></LazyPage></ErrorBoundary>} />
                     </Route>
