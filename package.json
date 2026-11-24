@@ -133,6 +133,7 @@
     "test:dashboard-ticket-filters": "tsx scripts/test-dashboard-ticket-filters.ts",
     "test:tickets-sidebar-favorites": "tsx scripts/test-tickets-sidebar-favorites.ts",
     "test:ticket-assignee": "tsx scripts/test-ticket-assignee.ts",
+    "test:ticket-config-status": "tsx scripts/test-ticket-config-status.ts",
     "migrate:unassigned-assignee": "tsx scripts/migrate-unassigned-assignee-sentinels.ts",
     "verify:inbound-smtp": "tsx scripts/verify-inbound-smtp.ts",
     "verify:rag": "tsx scripts/verify-rag-pipeline.ts",
