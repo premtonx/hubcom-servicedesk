@@ -49,8 +49,9 @@ import type { Ticket as TicketType, KBArticle, TicketStatus, TicketPriority } fr
 import type { TicketQueueStats, TopStatusFilterId } from '../../lib/ticketViewFilters';
 import { ticketsShareCustomer } from '../../lib/ticketMerge';
 import { isTicketAssignedToUser } from '../../lib/ticketAssignee';
-import { SELECTABLE_TICKET_STATUSES } from '../../lib/ticket-status';
 import { useTicketCategories } from '../../hooks/useTicketCategories';
+import { useTicketStatuses } from '../../hooks/useTicketStatuses';
+import { useTicketPriorities } from '../../hooks/useTicketPriorities';
 
 export interface TicketListViewProps {
   ticketQueueStats: TicketQueueStats;
@@ -100,6 +101,8 @@ export interface TicketListViewProps {
 export function TicketListView(props: TicketListViewProps) {
   const { t } = useTranslation();
   const { categories: ticketCategories } = useTicketCategories(true);
+  const { statuses: ticketStatuses, activeStatuses } = useTicketStatuses();
+  const { priorities: ticketPriorities, activePriorities } = useTicketPriorities();
   const {
     ticketQueueStats,
     topStatusFilter,
@@ -323,8 +326,17 @@ export function TicketListView(props: TicketListViewProps) {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="any">{t('tickets.filters.any', 'Alle')}</SelectItem>
-                                {['New', 'Open', 'Pending', 'On-Hold', 'Solved', 'Closed'].map(s => (
-                                  <SelectItem key={s} value={s.toLowerCase()}>{t(`tickets.status.${s.toLowerCase()}`, s)}</SelectItem>
+                                {activeStatuses.map((s) => (
+                                  <SelectItem key={s.id} value={s.key}>
+                                    <span className="inline-flex items-center gap-2">
+                                      <span
+                                        className="h-2 w-2 rounded-full shrink-0"
+                                        style={{ backgroundColor: s.color }}
+                                        aria-hidden
+                                      />
+                                      {s.name}
+                                    </span>
+                                  </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -339,8 +351,17 @@ export function TicketListView(props: TicketListViewProps) {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="any">{t('tickets.filters.any', 'Alle')}</SelectItem>
-                                {['Urgent', 'High', 'Medium', 'Low'].map(p => (
-                                  <SelectItem key={p} value={p.toLowerCase()}>{t(`tickets.priority.${p.toLowerCase()}`, p)}</SelectItem>
+                                {activePriorities.map((p) => (
+                                  <SelectItem key={p.id} value={p.key}>
+                                    <span className="inline-flex items-center gap-2">
+                                      <span
+                                        className="h-2 w-2 rounded-full shrink-0"
+                                        style={{ backgroundColor: p.color }}
+                                        aria-hidden
+                                      />
+                                      {p.name}
+                                    </span>
+                                  </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -715,17 +736,22 @@ export function TicketListView(props: TicketListViewProps) {
                           <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
                           {t('tickets.bulk.updateStatus', 'Status aktualisieren')} <ChevronDown className="w-3 h-3 text-slate-400" />
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent className="w-40 rounded-xl">
-                          {SELECTABLE_TICKET_STATUSES.map(statusVal => (
+                        <DropdownMenuContent className="w-48 rounded-xl">
+                          {activeStatuses.map((statusVal) => (
                             <DropdownMenuItem 
-                              key={statusVal} 
-                              className="capitalize text-xs cursor-pointer py-2" 
+                              key={statusVal.id} 
+                              className="text-xs cursor-pointer py-2 gap-2" 
                               onClick={() => {
-                                handleBulkUpdate({ status: statusVal as TicketStatus });
-                                toast.success(t('tickets.bulk.statusUpdated', 'Status aktualisiert auf: {{status}}').replace('{{status}}', t(`tickets.statusLabels.${statusVal}`, t(`tickets.status.${statusVal}`, statusVal))));
+                                handleBulkUpdate({ status: statusVal.key as TicketStatus });
+                                toast.success(t('tickets.bulk.statusUpdated', 'Status aktualisiert auf: {{status}}').replace('{{status}}', statusVal.name));
                               }}
                             >
-                              {t(`tickets.statusLabels.${statusVal}`, t(`tickets.status.${statusVal}`, statusVal))}
+                              <span
+                                className="h-2 w-2 rounded-full shrink-0"
+                                style={{ backgroundColor: statusVal.color }}
+                                aria-hidden
+                              />
+                              {statusVal.name}
                             </DropdownMenuItem>
                           ))}
                         </DropdownMenuContent>
@@ -737,17 +763,22 @@ export function TicketListView(props: TicketListViewProps) {
                           <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
                           {t('tickets.bulk.modifyPriority', 'Priorität ändern')} <ChevronDown className="w-3 h-3 text-slate-400" />
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent className="w-40 rounded-xl">
-                          {['low', 'medium', 'high', 'urgent'].map(priorityVal => (
+                        <DropdownMenuContent className="w-48 rounded-xl">
+                          {activePriorities.map((priorityVal) => (
                             <DropdownMenuItem 
-                              key={priorityVal} 
-                              className="capitalize text-xs cursor-pointer py-2" 
+                              key={priorityVal.id} 
+                              className="text-xs cursor-pointer py-2 gap-2" 
                               onClick={() => {
-                                handleBulkUpdate({ priority: priorityVal as TicketPriority });
-                                toast.success(t('tickets.bulk.priorityUpdated', 'Priorität geändert auf: {{priority}}').replace('{{priority}}', t(`tickets.priority.${priorityVal}`, priorityVal)));
+                                handleBulkUpdate({ priority: priorityVal.key as TicketPriority });
+                                toast.success(t('tickets.bulk.priorityUpdated', 'Priorität geändert auf: {{priority}}').replace('{{priority}}', priorityVal.name));
                               }}
                             >
-                              {t(`tickets.priority.${priorityVal}`, priorityVal)}
+                              <span
+                                className="h-2 w-2 rounded-full shrink-0"
+                                style={{ backgroundColor: priorityVal.color }}
+                                aria-hidden
+                              />
+                              {priorityVal.name}
                             </DropdownMenuItem>
                           ))}
                         </DropdownMenuContent>
@@ -1055,6 +1086,7 @@ export function TicketListView(props: TicketListViewProps) {
                           <div className="min-w-0" onClick={(e) => e.stopPropagation()}>
                             <TicketStatusChip
                               status={ticket.status ?? 'open'}
+                              statuses={ticketStatuses}
                               onChange={(val) => handleInlineUpdate(ticket.id, { status: val })}
                             />
                           </div>
@@ -1063,6 +1095,7 @@ export function TicketListView(props: TicketListViewProps) {
                           <div className="min-w-0" onClick={(e) => e.stopPropagation()}>
                             <TicketPriorityChip
                               priority={ticket.priority ?? 'medium'}
+                              priorities={ticketPriorities}
                               onChange={(val) => handleInlineUpdate(ticket.id, { priority: val })}
                             />
                           </div>
@@ -1227,41 +1260,32 @@ export function TicketListView(props: TicketListViewProps) {
                           <div className="flex items-center gap-1.5">
                             <TicketStatusChip
                               status={ticket.status ?? 'open'}
+                              statuses={ticketStatuses}
                               onChange={(val) => handleInlineUpdate(ticket.id, { status: val })}
                             />
-                            <span className={cn(
-                              "text-[9px] font-semibold flex items-center gap-1.5 px-1.5 py-0.5 rounded-full border",
-                              ticket.priority === 'urgent' ? "bg-rose-50/50 text-rose-600 border-rose-200 font-extrabold" :
-                              ticket.priority === 'high' ? "bg-amber-50/50 text-amber-600 border-amber-200 font-bold" :
-                              "bg-slate-50/50 text-slate-600 border-slate-200"
-                            )}>
-                              <div className={cn(
-                                 "w-1.5 h-1.5 rounded-full shrink-0",
-                                 ticket.priority === 'urgent' ? "bg-rose-500" :
-                                 ticket.priority === 'high' ? "bg-amber-500" :
-                                 ticket.priority === 'medium' ? "bg-blue-500" : "bg-slate-400"
-                              )} />
-                              <span>{t(`tickets.priority.${safeString(ticket.priority) || 'medium'}`, safeString(ticket.priority, 'Mittel'))}</span>
-                            </span>
+                            <div onClick={(e) => e.stopPropagation()}>
+                              <TicketPriorityChip
+                                priority={ticket.priority ?? 'medium'}
+                                priorities={ticketPriorities}
+                                onChange={(val) => handleInlineUpdate(ticket.id, { priority: val })}
+                              />
+                            </div>
                           </div>
 
                           {/* Assignee & lastUpdate */}
                           <div className="flex items-center gap-2 text-muted-foreground text-[10px] ml-auto shrink-0 font-medium">
-                            <div className="flex items-center gap-1 bg-muted/60 px-2 py-0.5 rounded-full border border-border/50">
-                              <Avatar className="h-4.5 w-4.5 border shrink-0">
-                                <AvatarFallback className="text-[7.5px] bg-[#E8F0FE] text-primary font-bold">
-                                  {getInitials(ticket.agentName) || '?'}
-                                </AvatarFallback>
-                              </Avatar>
-                              <span className="max-w-[70px] truncate text-[9.5px] font-extrabold text-slate-700 dark:text-slate-300">
-                                {isTicketAssignedToUser(ticket, {
-                                  userId: user?.uid,
-                                  userEmail: user?.email,
-                                  userName: user?.displayName || user?.email?.split('@')[0] || '',
-                                })
-                                  ? t('tickets.assigneeMeShort', 'Ich')
-                                  : (safeString(ticket.agentName, t('tickets.unassigned', 'Nicht zugewiesen')))}
-                              </span>
+                            <div onClick={(e) => e.stopPropagation()}>
+                              <TicketAssigneeChip
+                                agentId={ticket.agentId}
+                                agentName={ticket.agentName}
+                                currentUserId={user?.uid}
+                                currentUserLabel={
+                                  user?.displayName || user?.email || t('tickets.assigneeYourself', 'Yourself')
+                                }
+                                onChange={(agentId, agentName) =>
+                                  handleInlineUpdate(ticket.id, { agentId, agentName })
+                                }
+                              />
                             </div>
                             <span className="text-[9.5px]">
                               {ticket.updatedAt?.toDate ? ticket.updatedAt.toDate().toLocaleDateString([], { month: 'short', day: 'numeric' }) : t('tickets.today', 'Heute')}
