@@ -48,6 +48,8 @@ export default function SettingsPage() {
   // Personal Profile state hooks
   const [displayNameInput, setDisplayNameInput] = useState('');
   const [kuerzelInput, setKuerzelInput] = useState('');
+  const [jobTitleInput, setJobTitleInput] = useState('');
+  const [phoneInput, setPhoneInput] = useState('');
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
 
@@ -58,6 +60,10 @@ export default function SettingsPage() {
       setKuerzelInput(String((user as any).kuerzel || ''));
       void userService.getUser(user.uid).then((profile) => {
         if (profile?.kuerzel) setKuerzelInput(String(profile.kuerzel));
+        if (profile?.job_title || (profile as any)?.jobTitle) {
+          setJobTitleInput(String(profile.job_title || (profile as any).jobTitle || ''));
+        }
+        if (profile?.phone) setPhoneInput(String(profile.phone));
       });
     }
   }, [user]);
@@ -71,6 +77,8 @@ export default function SettingsPage() {
       await userService.updateUser(user.uid, {
         name: displayNameInput,
         kuerzel: kuerzelInput.trim().toUpperCase(),
+        job_title: jobTitleInput.trim() || null,
+        phone: phoneInput.trim() || null,
       });
       toast.success(t('settings.toasts.profileUpdated', 'Anzeigename erfolgreich aktualisiert.'));
     } catch (err: any) {
@@ -207,6 +215,20 @@ export default function SettingsPage() {
                       onChange={(e) => setKuerzelInput(e.target.value.toUpperCase())}
                       placeholder="z. B. PX"
                       maxLength={12}
+                      className="rounded-xl border-slate-200 text-xs h-10 bg-white"
+                    />
+                    <Label className="text-[10px] uppercase font-black text-slate-500 tracking-wider">{t('settings.jobTitle', 'Position')}</Label>
+                    <Input
+                      value={jobTitleInput}
+                      onChange={(e) => setJobTitleInput(e.target.value)}
+                      placeholder="z. B. IT-Systemengineer"
+                      className="rounded-xl border-slate-200 text-xs h-10 bg-white"
+                    />
+                    <Label className="text-[10px] uppercase font-black text-slate-500 tracking-wider">{t('settings.phone', 'Durchwahl')}</Label>
+                    <Input
+                      value={phoneInput}
+                      onChange={(e) => setPhoneInput(e.target.value)}
+                      placeholder="z. B. +49 6201 39093-30"
                       className="rounded-xl border-slate-200 text-xs h-10 bg-white"
                     />
                   </div>

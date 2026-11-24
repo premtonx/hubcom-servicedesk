@@ -1330,6 +1330,7 @@ export default function TicketsPage() {
     fromAddress?: string;
     fromChannelId?: string;
     cc?: string[];
+    appendSignature?: boolean;
   }) => {
     if (!replyText.trim() || !selectedTicketId || !user) return;
     
@@ -1450,7 +1451,8 @@ export default function TicketsPage() {
         fromAddress: meta?.fromAddress,
         fromChannelId: meta?.fromChannelId,
         cc: meta?.cc,
-      });
+        appendSignature: meta?.appendSignature !== false,
+      } as any);
       
       const persisted = result?.message;
       const deliveryStatus =

@@ -25,6 +25,7 @@ import {
 } from '../lib/client-portal/organizations.js';
 import { isClientPortalRole } from '../lib/client-portal/roles.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
+import { parseAndValidateSignatureLogoDataUrl } from '../lib/email-signature.js';
 
 const router = Router();
 
@@ -47,6 +48,13 @@ const channelUpsertSchema = z.object({
   inboundEnabled: z.boolean().optional(),
   sendAsEnabled: z.boolean().optional(),
   name: optionalText(200),
+  signature_enabled: z.boolean().optional(),
+  signature_html: z.string().max(50_000).optional().nullable(),
+  signature_logo_data: z.string().max(400_000).optional().nullable(),
+  signature_logo_mime: z
+    .enum(['image/png', 'image/jpeg', 'image/webp'])
+    .optional()
+    .nullable(),
 });
 
 const testSchema = channelUpsertSchema.extend({
@@ -74,6 +82,8 @@ function resolveOrgId(req: Request): string | null {
 
 function publicChannelView(channel: EmailChannelConfig | null) {
   if (!channel) return null;
+  const logoData = channel.signature_logo_data || null;
+  const logoMime = channel.signature_logo_mime || null;
   return {
     id: channel.id,
     name: channel.name,
@@ -94,6 +104,16 @@ function publicChannelView(channel: EmailChannelConfig | null) {
     lastError: channel.lastError ?? null,
     organizationId: channel.organizationId || channel.organization_id || null,
     connectionType: channel.connectionType,
+    signature_enabled: channel.signature_enabled !== false,
+    signature_html: channel.signature_html || null,
+    signature_logo_mime: logoMime,
+    hasSignatureLogo: Boolean(logoData),
+    // Data URL for CLIENT_ADMIN preview/edit (same-org scoped endpoint).
+    signature_logo_data: logoData
+      ? logoData.startsWith('data:')
+        ? logoData
+        : `data:${logoMime || 'image/png'};base64,${logoData}`
+      : null,
   };
 }
 
@@ -204,6 +224,26 @@ router.put(
         includeSecrets: true,
       });
 
+      let signatureLogoData = parsed.data.signature_logo_data;
+      let signatureLogoMime = parsed.data.signature_logo_mime || undefined;
+      if (signatureLogoData != null && String(signatureLogoData).trim() !== '') {
+        const raw = String(signatureLogoData);
+        if (raw.startsWith('data:')) {
+          const validated = parseAndValidateSignatureLogoDataUrl(raw);
+          if (validated.ok === false) {
+            return res.status(400).json({ error: validated.error });
+          }
+          signatureLogoData = validated.base64;
+          signatureLogoMime = validated.mime as 'image/png' | 'image/jpeg' | 'image/webp';
+        }
+      } else if (signatureLogoData === null || signatureLogoData === '') {
+        signatureLogoData = null;
+        signatureLogoMime = null;
+      } else {
+        signatureLogoData = undefined;
+        signatureLogoMime = undefined;
+      }
+
       const payload: Partial<EmailChannelConfig> = {
         name:
           parsed.data.name ||
@@ -229,6 +269,16 @@ router.put(
             : Boolean(existing?.sendAsEnabled),
         status: existing?.status || 'pending',
       };
+      if (parsed.data.signature_enabled !== undefined) {
+        payload.signature_enabled = parsed.data.signature_enabled;
+      }
+      if (parsed.data.signature_html !== undefined) {
+        payload.signature_html = parsed.data.signature_html;
+      }
+      if (signatureLogoData !== undefined) {
+        payload.signature_logo_data = signatureLogoData;
+        payload.signature_logo_mime = signatureLogoMime ?? null;
+      }
 
       let channel: EmailChannelConfig | null;
       if (existing) {

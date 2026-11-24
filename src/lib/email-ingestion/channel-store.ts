@@ -390,6 +390,10 @@ export async function createEmailChannel(
     organization_id: input.organizationId || input.organization_id || null,
     inboundEnabled: input.inboundEnabled !== false,
     sendAsEnabled: Boolean(input.sendAsEnabled),
+    signature_enabled: input.signature_enabled !== false,
+    signature_html: input.signature_html ?? null,
+    signature_logo_data: input.signature_logo_data ?? null,
+    signature_logo_mime: input.signature_logo_mime ?? null,
     createdAt: now,
     updatedAt: now,
   });

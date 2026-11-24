@@ -45,6 +45,11 @@ export interface PortalEmailChannel {
   lastError?: string | null;
   organizationId?: string | null;
   connectionType?: string;
+  signature_enabled?: boolean;
+  signature_html?: string | null;
+  signature_logo_data?: string | null;
+  signature_logo_mime?: string | null;
+  hasSignatureLogo?: boolean;
 }
 
 export interface PortalEmailOrgSettings {

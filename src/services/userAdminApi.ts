@@ -8,6 +8,8 @@ export interface AdminUser {
   name: string;
   email: string;
   kuerzel: string;
+  job_title?: string;
+  phone?: string;
   role: AdminRole;
   company: string;
   companyId?: string | null;
@@ -55,6 +57,8 @@ export const userAdminApi = {
     name: string;
     email: string;
     kuerzel?: string;
+    job_title?: string;
+    phone?: string;
     role: AdminRole;
     company?: string;
     authMethod: AdminAuthMethod;

@@ -6,6 +6,7 @@ import axios from 'axios';
 import { extractEmailAddress } from '../../global-blacklist.js';
 import { plainTextToEmailHtml } from '../../email-plain-html.js';
 import { prepareOutboundEmailHtml } from '../../email-html-prepare.js';
+import type { GraphInlineAttachment } from '../../email-signature.js';
 import type {
   EmailChannelConfig,
   EmailIngestionDriver,
@@ -225,6 +226,13 @@ export class MicrosoftGraphDriver implements EmailIngestionDriver {
     subject: string;
     body: string;
     contentType?: 'HTML' | 'Text';
+    /**
+     * When true, `body` is already final HTML (signature appended, sanitized)
+     * and must not be re-escaped as plaintext.
+     */
+    bodyIsFinalHtml?: boolean;
+    /** Inline Graph file attachments (e.g. cid:signature-logo). */
+    attachments?: GraphInlineAttachment[];
   }): Promise<{ ok: true } | { ok: false; message: string }> {
     try {
       const to = String(params.to || '').trim();
@@ -242,21 +250,40 @@ export class MicrosoftGraphDriver implements EmailIngestionDriver {
 
       // Always send HTML so Quill / composer markup and plain-text newlines
       // both render correctly (plain text is converted; HTML is not escaped).
+      // bodyIsFinalHtml skips re-prepare when signature dispatch already sanitized.
       const contentType: 'HTML' | 'Text' =
         params.contentType === 'Text' ? 'Text' : 'HTML';
       const content =
         contentType === 'HTML'
-          ? prepareOutboundEmailHtml(String(params.body || ''))
+          ? params.bodyIsFinalHtml
+            ? String(params.body || '')
+            : prepareOutboundEmailHtml(String(params.body || ''))
           : String(params.body || '');
+
+      const attachments = Array.isArray(params.attachments)
+        ? params.attachments.filter(Boolean)
+        : [];
+
+      const message: Record<string, unknown> = {
+        subject: String(params.subject || '(no subject)').slice(0, 998),
+        body: { contentType, content },
+        toRecipients: [{ emailAddress: { address: to } }],
+      };
+      if (attachments.length > 0) {
+        message.attachments = attachments.map((att) => ({
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          name: att.name,
+          contentType: att.contentType,
+          contentBytes: att.contentBytes,
+          contentId: att.contentId,
+          isInline: true,
+        }));
+      }
 
       await axios.post(
         `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailbox)}/sendMail`,
         {
-          message: {
-            subject: String(params.subject || '(no subject)').slice(0, 998),
-            body: { contentType, content },
-            toRecipients: [{ emailAddress: { address: to } }],
-          },
+          message,
           saveToSentItems: true,
         },
         {

@@ -65,6 +65,11 @@ export interface User {
   role: "admin" | "agent" | "team_lead" | "customer" | "SYSTEM_ADMIN" | ClientPortalRole;
   /** Agentenkürzel für Zeiterfassung (z. B. „PX“). */
   kuerzel?: string;
+  /** Position / job title for email signatures (e.g. IT-Systemengineer). */
+  job_title?: string | null;
+  jobTitle?: string | null;
+  /** Phone / Durchwahl for email signatures. */
+  phone?: string | null;
   avatar?: string;
   signature?: string;
   visibilityScope?: 'all' | 'group' | 'assigned';

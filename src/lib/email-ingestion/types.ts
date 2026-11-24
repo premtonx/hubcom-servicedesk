@@ -132,6 +132,18 @@ export interface EmailChannelConfig {
   /** Send ticket replies via this mailbox (Send As). */
   sendAsEnabled?: boolean;
 
+  /**
+   * Outbound signature (appended only at Graph/SMTP send time).
+   * Defaults to enabled when a template or logo is configured.
+   */
+  signature_enabled?: boolean;
+  /** HTML template with {{agent.*}}, {{ticket.number}}, {{organization.name}}, {{channel.logo}}. */
+  signature_html?: string | null;
+  /** Raw base64 or data-URL for the inline signature logo (≤256 KB). */
+  signature_logo_data?: string | null;
+  /** image/png | image/jpeg | image/webp */
+  signature_logo_mime?: string | null;
+
   lastPolledAt?: string | null;
   lastError?: string | null;
   lastTestAt?: string | null;

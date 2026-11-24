@@ -98,6 +98,14 @@ check('strip unresolved cid: images', () => {
   assert.ok(!/cid:/i.test(out), out);
 });
 
+check('preserves signature-logo cid for Graph inline attach', () => {
+  const dirty =
+    '<p>Hi</p><img src="cid:signature-logo" alt="" /><img src="cid:other@01" /><p>Bye</p>';
+  const out = stripBrokenCidRefs(dirty);
+  assert.ok(/cid:signature-logo/i.test(out), out);
+  assert.ok(!/cid:other/i.test(out), out);
+});
+
 check('formatMergeSourceBodyHtml sanitizes HTML description', () => {
   const html = formatMergeSourceBodyHtml(
     '<div class="elementToProof"><p>Body <a href="https://nam.safelinks.protection.outlook.com/?url=https%3A%2F%2Fhubcom.de">x</a></p><img src="cid:abc" /></div>',

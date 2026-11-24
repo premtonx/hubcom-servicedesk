@@ -14,6 +14,7 @@ import { createEmailIngestionDriver } from '../lib/email-ingestion/factory.js';
 import type { EmailConnectionType } from '../lib/email-ingestion/types.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage } from '../lib/safe-log.js';
+import { parseAndValidateSignatureLogoDataUrl } from '../lib/email-signature.js';
 
 const router = Router();
 
@@ -87,6 +88,13 @@ const channelSchema = z
     organization_id: optionalText(64),
     inboundEnabled: optionalBool,
     sendAsEnabled: optionalBool,
+    signature_enabled: optionalBool,
+    signature_html: z.string().max(50_000).optional().nullable(),
+    signature_logo_data: z.string().max(400_000).optional().nullable(),
+    signature_logo_mime: z
+      .enum(['image/png', 'image/jpeg', 'image/webp'])
+      .optional()
+      .nullable(),
   })
   .superRefine((data, ctx) => {
     const type = data.connectionType || 'webhook';
@@ -175,13 +183,40 @@ router.get('/from-options', authenticate, async (_req, res: Response) => {
   }
 });
 
+function normalizeSignatureFields(data: Record<string, unknown>): {
+  ok: true;
+  data: Record<string, unknown>;
+} | { ok: false; error: string } {
+  const next = { ...data };
+  if (next.signature_logo_data != null && String(next.signature_logo_data).trim() !== '') {
+    const raw = String(next.signature_logo_data);
+    if (raw.startsWith('data:')) {
+      const validated = parseAndValidateSignatureLogoDataUrl(raw);
+      if (validated.ok === false) return { ok: false, error: validated.error };
+      next.signature_logo_data = validated.base64;
+      next.signature_logo_mime = validated.mime;
+    }
+  }
+  if (next.signature_logo_data === '' || next.signature_logo_data === null) {
+    next.signature_logo_data = null;
+    next.signature_logo_mime = null;
+  }
+  return { ok: true, data: next };
+}
+
 router.post('/', authenticate, requireRole(['SYSTEM_ADMIN']), async (req: Request, res: Response) => {
   const parsed = channelSchema.safeParse(req.body || {});
   if (!parsed.success) {
     return res.status(400).json({ error: 'Invalid channel payload', details: parsed.error.flatten() });
   }
   try {
-    const channel = await createEmailChannel(sanitizeByConnectionType(parsed.data));
+    const normalized = normalizeSignatureFields(
+      sanitizeByConnectionType(parsed.data) as Record<string, unknown>,
+    );
+    if (normalized.ok === false) {
+      return res.status(400).json({ error: normalized.error });
+    }
+    const channel = await createEmailChannel(normalized.data as any);
     res.status(201).json({ channel });
   } catch (err: any) {
     res.status(500).json({ error: safeErrorMessage(err, 'Failed to create channel') });
@@ -195,7 +230,13 @@ router.put('/:id', authenticate, requireRole(['SYSTEM_ADMIN']), async (req: Requ
     return res.status(400).json({ error: 'Invalid channel payload', details: parsed.error.flatten() });
   }
   try {
-    const channel = await updateEmailChannel(id, sanitizeByConnectionType(parsed.data));
+    const normalized = normalizeSignatureFields(
+      sanitizeByConnectionType(parsed.data) as Record<string, unknown>,
+    );
+    if (normalized.ok === false) {
+      return res.status(400).json({ error: normalized.error });
+    }
+    const channel = await updateEmailChannel(id, normalized.data as any);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
     res.json({ channel });
   } catch (err: any) {
