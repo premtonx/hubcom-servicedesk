@@ -75,6 +75,9 @@ const ClientMembersPage = lazy(() => import('./components/pages/client-portal/Cl
 const ClientEmailIntegrationPage = lazy(
   () => import('./components/pages/client-portal/ClientEmailIntegrationPage'),
 );
+const ClientBrandingPage = lazy(
+  () => import('./components/pages/client-portal/ClientBrandingPage'),
+);
 
 function RouteFallback() {
   return (
@@ -413,6 +416,18 @@ function AppRoutes() {
                             <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Email" />}>
                               <LazyPage>
                                 <ClientEmailIntegrationPage />
+                              </LazyPage>
+                            </ErrorBoundary>
+                          </ClientAdminRoute>
+                        }
+                      />
+                      <Route
+                        path="branding"
+                        element={
+                          <ClientAdminRoute>
+                            <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Branding" />}>
+                              <LazyPage>
+                                <ClientBrandingPage />
                               </LazyPage>
                             </ErrorBoundary>
                           </ClientAdminRoute>

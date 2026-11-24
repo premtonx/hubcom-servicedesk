@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Area,
@@ -11,14 +11,17 @@ import {
 } from 'recharts';
 import {
   AlertTriangle,
+  Calendar,
   CheckCircle2,
   Clock,
-  Inbox,
+  Image,
   Loader2,
   Mail,
+  Palette,
   Plus,
+  Ticket as TicketIcon,
   Users,
-  ArrowUpRight,
+  Zap,
 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
@@ -34,11 +37,25 @@ import {
 } from '../../../lib/dashboard-format-utils';
 import { portalStatusLabel } from '../../../lib/portal/status';
 
+const HERO_GRADIENT =
+  'linear-gradient(105deg, rgba(255,255,255,0.94) 0%, rgba(255,255,255,0.82) 38%, rgba(255,255,255,0.35) 62%, rgba(255,255,255,0.08) 100%)';
+const FALLBACK_HERO_BG =
+  'linear-gradient(135deg, #E8F1FA 0%, #D6E8F6 42%, #EEF4FB 100%)';
+
+const KPI_ICON_TONES = {
+  blue: 'bg-sky-100 text-sky-700',
+  sky: 'bg-blue-100 text-blue-700',
+  green: 'bg-emerald-100 text-emerald-700',
+  purple: 'bg-violet-100 text-violet-700',
+  amber: 'bg-amber-100 text-amber-700',
+} as const;
+
 export default function PortalDashboardPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<PortalDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ticketTab, setTicketTab] = useState<'all' | 'mine'>('all');
 
   useEffect(() => {
     let active = true;
@@ -76,401 +93,348 @@ export default function PortalDashboardPage() {
       <div className="flex-1 flex flex-col items-center justify-center gap-3 p-12 text-center">
         <AlertTriangle className="w-8 h-8 text-amber-500" />
         <p className="text-sm font-bold text-slate-800">{error || 'Keine Daten'}</p>
-        <Button
-          variant="outline"
-          className="rounded-xl"
-          onClick={() => window.location.reload()}
-        >
+        <Button variant="outline" className="rounded-xl" onClick={() => window.location.reload()}>
           Erneut laden
         </Button>
       </div>
     );
   }
 
-  if (data.role === 'CLIENT_USER') {
-    return <ClientUserDashboard data={data} navigate={navigate} />;
-  }
-  if (data.role === 'CLIENT_SUPPORTER') {
-    return <ClientSupporterDashboard data={data} navigate={navigate} />;
-  }
-  return <ClientAdminDashboard data={data} navigate={navigate} />;
+  return (
+    <PortalDashboardShell
+      data={data}
+      navigate={navigate}
+      ticketTab={ticketTab}
+      setTicketTab={setTicketTab}
+    />
+  );
 }
 
-function WelcomeHeader({
+function PortalDashboardShell({
   data,
-  ctaLabel,
-  onCreate,
+  navigate,
+  ticketTab,
+  setTicketTab,
 }: {
   data: PortalDashboardResponse;
-  ctaLabel: string;
-  onCreate: () => void;
+  navigate: ReturnType<typeof useNavigate>;
+  ticketTab: 'all' | 'mine';
+  setTicketTab: (t: 'all' | 'mine') => void;
 }) {
+  const isAdmin = data.role === 'CLIENT_ADMIN';
+  const isOrgWide = data.role === 'CLIENT_ADMIN' || data.role === 'CLIENT_SUPPORTER';
   const bannerUrl = data.organization.portalBannerUrl;
+  const dateLabel = new Date().toLocaleDateString('de-DE', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+  });
+
+  const openCount = Number(data.kpis.openTickets ?? data.kpis.openCompanyTickets ?? 0);
+  const inProgressCount = Number(data.kpis.inProgressTickets ?? 0);
+  const resolvedCount = Number(data.kpis.resolvedLast30Days ?? data.kpis.recentlyResolvedCount ?? 0);
+  const avgResponse = String(data.kpis.avgResponseTime ?? '—');
+
+  const listedTickets = useMemo(() => {
+    if (!isOrgWide || ticketTab === 'all') return data.tickets;
+    return (data.myOpenTickets || data.tickets).filter(Boolean);
+  }, [data, isOrgWide, ticketTab]);
+
   return (
-    <div
-      className="relative overflow-hidden rounded-[1.75rem] border border-white/40 shadow-sm"
-      style={{
-        backgroundImage: bannerUrl
-          ? `linear-gradient(135deg, rgba(255,255,255,0.72), rgba(240,248,255,0.55)), url(${bannerUrl})`
-          : 'linear-gradient(135deg, #eff6ff 0%, #e0f2fe 45%, #f8fafc 100%)',
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-      }}
+    <div className="flex-1 overflow-y-auto min-h-0 bg-[#F8F9FA]">
+      <div className="max-w-[1440px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 lg:py-8 space-y-6 pb-20">
+        <section
+          className="relative overflow-hidden rounded-[28px] border border-white/60 shadow-[0_8px_30px_rgba(15,23,42,0.06)]"
+          style={{
+            backgroundColor: '#EEF4FB',
+            backgroundImage: bannerUrl
+              ? `${HERO_GRADIENT}, url("${String(bannerUrl).replace(/"/g, '%22')}")`
+              : `${HERO_GRADIENT}, ${FALLBACK_HERO_BG}`,
+            backgroundSize: 'cover, cover',
+            backgroundPosition: 'center, right center',
+            backgroundRepeat: 'no-repeat, no-repeat',
+          }}
+        >
+          <div className="relative z-10 p-5 sm:p-6 lg:p-7 space-y-5">
+            <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4">
+              <div className="min-w-0 max-w-xl">
+                <h1 className="text-2xl sm:text-[1.75rem] font-bold tracking-tight text-[#202124]">
+                  Willkommen zurück, {data.user.name || 'Nutzer'}!{' '}
+                  <span className="inline-block" aria-hidden>
+                    👋
+                  </span>
+                </h1>
+                <p className="text-sm text-[#5F6368] font-medium mt-1">
+                  {data.organization.portalTitle ||
+                    `${data.organization.name} ServiceDesk`}{' '}
+                  — {data.organization.name}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                {isOrgWide ? (
+                  <Button
+                    variant="outline"
+                    className="bg-white/90 backdrop-blur-sm border-white/80 text-gray-700 h-9 px-3 rounded-xl text-xs font-semibold gap-1.5 shadow-sm"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-gray-500" />
+                    {dateLabel}
+                  </Button>
+                ) : null}
+                <Button
+                  onClick={() => navigate('/portal/tickets/new')}
+                  className="h-9 px-3.5 rounded-xl text-xs font-bold gap-1.5 bg-[#1B6CA8] hover:bg-[#155a8a] text-white shadow-sm"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Neues Ticket erstellen
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              <HeroKpiCard
+                label="Offene Tickets"
+                value={openCount}
+                icon={<TicketIcon className="w-4 h-4" />}
+                iconTone="blue"
+                onClick={() => navigate('/portal/tickets?status=open')}
+              />
+              <HeroKpiCard
+                label="In Bearbeitung"
+                value={inProgressCount}
+                icon={<Clock className="w-4 h-4" />}
+                iconTone="sky"
+                onClick={() => navigate('/portal/tickets?status=in_progress')}
+              />
+              <HeroKpiCard
+                label="Gelöst (letzte 30 Tage)"
+                value={resolvedCount}
+                icon={<CheckCircle2 className="w-4 h-4" />}
+                iconTone="green"
+                onClick={() => navigate('/portal/tickets?status=resolved')}
+              />
+              <HeroKpiCard
+                label="Ø Reaktionszeit"
+                value={avgResponse}
+                icon={<Zap className="w-4 h-4" />}
+                iconTone="purple"
+                onClick={() => navigate('/portal/tickets')}
+              />
+            </div>
+          </div>
+        </section>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
+          <CardShell className="lg:col-span-2 flex flex-col min-h-[28rem]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 shrink-0">
+              <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">
+                Aktuelle Tickets
+              </h2>
+              {isOrgWide ? (
+                <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+                  {(
+                    [
+                      { id: 'all' as const, label: 'Alle Firmen-Tickets' },
+                      { id: 'mine' as const, label: 'Meine Tickets' },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setTicketTab(tab.id)}
+                      className={cn(
+                        'px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors',
+                        ticketTab === tab.id
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-800',
+                      )}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-[11px] font-bold text-slate-500">Meine Tickets</span>
+              )}
+            </div>
+            <TicketList tickets={listedTickets} navigate={navigate} showRequester={isOrgWide} />
+
+            {data.activity && data.activity.length > 0 ? (
+              <div className="mt-6 pt-5 border-t border-slate-100">
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3">
+                  Ticket-Trends
+                </h3>
+                <div className="h-48">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={data.activity}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                      <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={4} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                      <Tooltip />
+                      <Area
+                        type="monotone"
+                        dataKey="created"
+                        name="Eingehend"
+                        stroke="#1B6CA8"
+                        fill="#1B6CA822"
+                        strokeWidth={2}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="resolved"
+                        name="Gelöst"
+                        stroke="#059669"
+                        fill="#05966922"
+                        strokeWidth={2}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            ) : null}
+          </CardShell>
+
+          <div className="space-y-4">
+            {isAdmin ? (
+              <>
+                <CardShell>
+                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
+                    <Users className="w-4 h-4 text-sky-600" /> Mitarbeiter & Rollen
+                  </h3>
+                  <dl className="space-y-2 text-sm">
+                    <SummaryRow label="Aktive Nutzer" value={data.team?.totalActive ?? 0} />
+                    <SummaryRow label="Admins" value={data.team?.clientAdmins ?? 0} />
+                    <SummaryRow label="Supporter" value={data.team?.clientSupporters ?? 0} />
+                    <SummaryRow label="Benutzer" value={data.team?.clientUsers ?? 0} />
+                  </dl>
+                  <Button
+                    variant="outline"
+                    className="w-full mt-4 rounded-xl font-bold"
+                    onClick={() => navigate('/portal/members')}
+                  >
+                    Zum Team
+                  </Button>
+                </CardShell>
+                <CardShell>
+                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-emerald-600" /> E-Mail & M365
+                  </h3>
+                  <p className="text-sm font-bold text-slate-900">
+                    {data.email?.configured
+                      ? data.email.healthy
+                        ? 'Send-As verbunden'
+                        : 'Kanal prüfen'
+                      : 'Noch nicht eingerichtet'}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1 truncate">
+                    {data.email?.mailbox || 'Kein Postfach verknüpft'}
+                  </p>
+                  <Button
+                    variant="outline"
+                    className="w-full mt-4 rounded-xl font-bold"
+                    onClick={() => navigate('/portal/email')}
+                  >
+                    Integration verwalten
+                  </Button>
+                </CardShell>
+                <CardShell>
+                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
+                    <Palette className="w-4 h-4 text-violet-600" /> Portal-Branding
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Logo, Portal-Titel und Dashboard-Banner für Ihr Kunden-Portal.
+                  </p>
+                  <Button
+                    className="w-full mt-4 rounded-xl font-bold bg-[#1B6CA8] hover:bg-[#155a8a] text-white gap-2"
+                    onClick={() => navigate('/portal/branding')}
+                  >
+                    <Image className="w-4 h-4" />
+                    Branding öffnen
+                  </Button>
+                </CardShell>
+              </>
+            ) : (
+              <CardShell>
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3">
+                  {data.role === 'CLIENT_SUPPORTER' ? 'Ihr Support-Team' : 'Schnelles Ticket'}
+                </h3>
+                <p className="text-sm text-slate-600 font-medium leading-relaxed">
+                  {data.role === 'CLIENT_SUPPORTER'
+                    ? 'Erstellen Sie Tickets für Kollegen und behalten Sie offene Firmen-Anfragen im Blick.'
+                    : 'Melden Sie ein Problem oder stellen Sie eine Anfrage an Hubcom Support.'}
+                </p>
+                <Button
+                  className="w-full mt-4 rounded-xl font-bold bg-[#1B6CA8] hover:bg-[#155a8a] text-white gap-2"
+                  onClick={() => navigate('/portal/tickets/new')}
+                >
+                  <Plus className="w-4 h-4" />
+                  Neues Ticket erstellen
+                </Button>
+              </CardShell>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HeroKpiCard({
+  label,
+  value,
+  icon,
+  iconTone,
+  onClick,
+}: {
+  label: string;
+  value: number | string;
+  icon: React.ReactNode;
+  iconTone: keyof typeof KPI_ICON_TONES;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-2xl bg-white/85 backdrop-blur-md border border-white/80 shadow-sm hover:bg-white transition px-5 py-4 flex items-center justify-between gap-4 text-left w-full"
     >
-      <div className="backdrop-blur-[2px] bg-white/35 px-5 py-5 sm:px-6 sm:py-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          {data.organization.logoUrl ? (
-            <img
-              src={data.organization.logoUrl}
-              alt=""
-              className="w-12 h-12 rounded-2xl object-contain border border-slate-200 bg-white shrink-0"
-            />
-          ) : (
-            <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center text-sm font-black shrink-0">
-              {data.organization.name.slice(0, 2).toUpperCase()}
-            </div>
-          )}
-          <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight truncate">
-              Willkommen zurück, {data.user.name || 'Nutzer'}
-            </h1>
-            <p className="text-sm text-slate-600 font-medium truncate">
-              {data.organization.portalTitle || `${data.organization.name} ServiceDesk`}
-            </p>
-          </div>
-        </div>
-        <Button
-          onClick={onCreate}
-          className="h-11 px-5 rounded-xl font-bold bg-slate-900 hover:bg-slate-800 text-white gap-2 shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          {ctaLabel}
-        </Button>
+      <span
+        className={cn(
+          'w-10 h-10 rounded-xl flex items-center justify-center shrink-0',
+          KPI_ICON_TONES[iconTone],
+        )}
+      >
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-xl font-black tracking-tight text-slate-900 leading-none">{value}</p>
+        <p className="text-[12px] font-semibold text-slate-500 mt-1 truncate">{label}</p>
       </div>
-    </div>
+      <span
+        className="w-8 h-8 rounded-full bg-sky-50 text-sky-600 flex items-center justify-center shrink-0 text-sm font-bold"
+        aria-hidden
+      >
+        →
+      </span>
+    </button>
   );
 }
 
-function ClientAdminDashboard({
-  data,
-  navigate,
+function CardShell({
+  children,
+  className,
 }: {
-  data: PortalDashboardResponse;
-  navigate: ReturnType<typeof useNavigate>;
+  children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 max-w-6xl mx-auto pb-20">
-      <WelcomeHeader
-        data={data}
-        ctaLabel="+ Neues Ticket"
-        onCreate={() => navigate('/portal/tickets/new')}
-      />
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        <Kpi
-          label="Offene Firmen-Tickets"
-          value={data.kpis.openCompanyTickets ?? 0}
-          icon={<Inbox className="w-4 h-4" />}
-          onClick={() => navigate('/portal/tickets?status=open')}
-        />
-        <Kpi
-          label="Wartet auf Ihre Antwort"
-          value={data.kpis.waitingOnCustomer ?? 0}
-          icon={<Clock className="w-4 h-4" />}
-          danger={Number(data.kpis.waitingOnCustomer || 0) > 0}
-          onClick={() => navigate('/portal/tickets?status=waiting_customer')}
-        />
-        <Kpi
-          label="Gelöst (30 Tage)"
-          value={data.kpis.resolvedLast30Days ?? 0}
-          icon={<CheckCircle2 className="w-4 h-4" />}
-          onClick={() => navigate('/portal/tickets?status=resolved')}
-        />
-        <Kpi
-          label="Ø Reaktionszeit"
-          value={data.kpis.avgResponseTime ?? '—'}
-          icon={<Clock className="w-4 h-4" />}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 space-y-4">
-          <Panel title="Aktuelle Firmen-Tickets">
-            <TicketList tickets={data.tickets} navigate={navigate} />
-          </Panel>
-          {data.activity && data.activity.length > 0 && (
-            <Panel title="Ticket-Aktivität (30 Tage)">
-              <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={data.activity}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                    <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={4} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                    <Tooltip />
-                    <Area
-                      type="monotone"
-                      dataKey="created"
-                      name="Erstellt"
-                      stroke="#0F172A"
-                      fill="#0F172A22"
-                      strokeWidth={2}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="resolved"
-                      name="Gelöst"
-                      stroke="#059669"
-                      fill="#05966922"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </Panel>
-          )}
-        </div>
-
-        <div className="space-y-4">
-          <Panel title="Mitarbeiter & Rollen">
-            <dl className="space-y-2 text-sm">
-              <Row label="Aktive Nutzer" value={data.team?.totalActive ?? 0} />
-              <Row label="Kunden-Admins" value={data.team?.clientAdmins ?? 0} />
-              <Row label="Kunden-Supporter" value={data.team?.clientSupporters ?? 0} />
-              <Row label="Kunden-Benutzer" value={data.team?.clientUsers ?? 0} />
-            </dl>
-            <div className="flex flex-col gap-2 mt-4">
-              <Button
-                variant="outline"
-                className="rounded-xl font-bold"
-                onClick={() => navigate('/portal/members')}
-              >
-                <Users className="w-4 h-4 mr-2" /> Zum Team
-              </Button>
-              <Button
-                className="rounded-xl font-bold bg-slate-900"
-                onClick={() => navigate('/portal/members?invite=1')}
-              >
-                <Plus className="w-4 h-4 mr-2" /> Mitarbeiter einladen
-              </Button>
-            </div>
-          </Panel>
-
-          <Panel title="E-Mail & M365 Integration">
-            <div className="flex items-start gap-3">
-              <div
-                className={cn(
-                  'w-10 h-10 rounded-xl flex items-center justify-center border',
-                  data.email?.healthy
-                    ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
-                    : 'bg-amber-50 text-amber-600 border-amber-100',
-                )}
-              >
-                <Mail className="w-5 h-5" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-slate-900">
-                  {data.email?.configured
-                    ? data.email.healthy
-                      ? 'Send-As verbunden'
-                      : 'Kanal konfiguriert — Prüfung nötig'
-                    : 'Noch nicht eingerichtet'}
-                </p>
-                <p className="text-xs text-slate-500 mt-0.5 truncate">
-                  {data.email?.mailbox || 'Kein Postfach verknüpft'}
-                </p>
-              </div>
-            </div>
-            <Button
-              variant="outline"
-              className="rounded-xl font-bold w-full mt-4"
-              onClick={() => navigate('/portal/email')}
-            >
-              Integration verwalten
-            </Button>
-          </Panel>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ClientSupporterDashboard({
-  data,
-  navigate,
-}: {
-  data: PortalDashboardResponse;
-  navigate: ReturnType<typeof useNavigate>;
-}) {
-  return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 max-w-6xl mx-auto pb-20">
-      <WelcomeHeader
-        data={data}
-        ctaLabel="+ Neues Ticket"
-        onCreate={() => navigate('/portal/tickets/new')}
-      />
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <Kpi
-          label="Offene Firmen-Tickets"
-          value={data.kpis.openCompanyTickets ?? 0}
-          icon={<Inbox className="w-4 h-4" />}
-          onClick={() => navigate('/portal/tickets?status=open')}
-        />
-        <Kpi
-          label="Wartet auf Kunden-IT"
-          value={data.kpis.waitingOnClientIt ?? 0}
-          icon={<Clock className="w-4 h-4" />}
-          onClick={() => navigate('/portal/tickets?status=in_progress')}
-        />
-        <Kpi
-          label="Meine Beteiligungen"
-          value={data.kpis.myParticipations ?? 0}
-          icon={<Users className="w-4 h-4" />}
-        />
-      </div>
-
-      <Panel title="Offene Firmen-Tickets">
-        <TicketList tickets={data.tickets} navigate={navigate} showRequester />
-      </Panel>
-    </div>
-  );
-}
-
-function ClientUserDashboard({
-  data,
-  navigate,
-}: {
-  data: PortalDashboardResponse;
-  navigate: ReturnType<typeof useNavigate>;
-}) {
-  return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 max-w-3xl mx-auto pb-20">
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm space-y-5">
-        <div className="flex items-center gap-3">
-          {data.organization.logoUrl ? (
-            <img
-              src={data.organization.logoUrl}
-              alt=""
-              className="w-12 h-12 rounded-2xl object-contain border border-slate-100"
-            />
-          ) : (
-            <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center text-sm font-black">
-              {data.organization.name.slice(0, 2).toUpperCase()}
-            </div>
-          )}
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-              Willkommen, {data.user.name || 'Nutzer'}
-            </h1>
-            <p className="text-sm text-slate-500">
-              {data.organization.portalTitle || `${data.organization.name} ServiceDesk`}
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => navigate('/portal/tickets/new')}
-          className="w-full rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 hover:border-slate-400 transition-colors p-6 text-left"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center">
-              <Plus className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-base font-black text-slate-900">
-                + Neues Support-Ticket erstellen
-              </p>
-              <p className="text-sm text-slate-500 mt-0.5">
-                Melden Sie ein Problem oder stellen Sie eine Anfrage an Ihr IT-Team.
-              </p>
-            </div>
-          </div>
-        </button>
-      </div>
-
-      <Panel title="Meine offenen Tickets">
-        <TicketList
-          tickets={data.myOpenTickets || data.tickets}
-          navigate={navigate}
-          empty="Sie haben derzeit keine offenen Tickets."
-        />
-      </Panel>
-
-      <Panel title="Kürzlich gelöste Tickets">
-        <TicketList
-          tickets={data.recentlyResolved || []}
-          navigate={navigate}
-          empty="Noch keine kürzlich gelösten Tickets."
-        />
-      </Panel>
-    </div>
-  );
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-4">
-        {title}
-      </h2>
+    <div className={cn('rounded-2xl border border-slate-200 bg-white p-5 shadow-sm', className)}>
       {children}
     </div>
   );
 }
 
-function Kpi({
-  label,
-  value,
-  icon,
-  onClick,
-  danger,
-}: {
-  label: string;
-  value: number | string;
-  icon: React.ReactNode;
-  onClick?: () => void;
-  danger?: boolean;
-}) {
-  const Comp = onClick ? 'button' : 'div';
-  return (
-    <Comp
-      type={onClick ? 'button' : undefined}
-      onClick={onClick}
-      className={cn(
-        'rounded-2xl border bg-white p-4 text-left shadow-sm',
-        onClick && 'hover:-translate-y-0.5 hover:shadow-md transition-all cursor-pointer',
-        danger ? 'border-rose-200' : 'border-slate-200',
-      )}
-    >
-      <div className="flex items-center justify-between">
-        <span
-          className={cn(
-            'w-9 h-9 rounded-xl flex items-center justify-center border',
-            danger
-              ? 'bg-rose-50 text-rose-600 border-rose-100'
-              : 'bg-slate-50 text-slate-600 border-slate-100',
-          )}
-        >
-          {icon}
-        </span>
-        {onClick && <ArrowUpRight className="w-3.5 h-3.5 text-slate-300" />}
-      </div>
-      <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mt-3">
-        {label}
-      </p>
-      <p
-        className={cn(
-          'text-2xl font-black mt-1',
-          danger ? 'text-rose-600' : 'text-slate-900',
-        )}
-      >
-        {value}
-      </p>
-    </Comp>
-  );
-}
-
-function Row({ label, value }: { label: string; value: number }) {
+function SummaryRow({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center justify-between">
       <dt className="text-slate-500 font-medium">{label}</dt>
@@ -491,10 +455,10 @@ function TicketList({
   empty?: string;
 }) {
   if (!tickets.length) {
-    return <p className="text-sm text-slate-500 py-6 text-center">{empty}</p>;
+    return <p className="text-sm text-slate-500 py-8 text-center">{empty}</p>;
   }
   return (
-    <ul className="divide-y divide-slate-100">
+    <ul className="divide-y divide-slate-100 flex-1">
       {tickets.map((ticket) => (
         <li key={ticket.id}>
           <button
@@ -516,12 +480,12 @@ function TicketList({
               </div>
               <p className="text-sm font-semibold text-slate-900 truncate">{ticket.subject}</p>
               <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium">
-                {showRequester && ticket.requesterName && (
+                {showRequester && ticket.requesterName ? (
                   <>
                     <span>{ticket.requesterName}</span>
                     <span className="text-slate-300">·</span>
                   </>
-                )}
+                ) : null}
                 <span>{formatRelativeTime(ticket.updatedAt, 'de')}</span>
               </div>
             </div>

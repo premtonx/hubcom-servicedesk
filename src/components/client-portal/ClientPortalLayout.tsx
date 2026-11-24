@@ -8,6 +8,7 @@ import {
   LogOut,
   Building2,
   LayoutDashboard,
+  Palette,
 } from 'lucide-react';
 import axios from 'axios';
 import { cn } from '../../lib/utils';
@@ -28,6 +29,7 @@ const NAV_ALL = [
 const NAV_ADMIN_ONLY = [
   { to: '/portal/members', label: 'Mitarbeiter & Rollen', icon: Users, end: false },
   { to: '/portal/email', label: 'E-Mail & M365 Integration', icon: Mail, end: false },
+  { to: '/portal/branding', label: 'Portal-Branding', icon: Palette, end: false },
 ] as const;
 
 interface OrgBranding {

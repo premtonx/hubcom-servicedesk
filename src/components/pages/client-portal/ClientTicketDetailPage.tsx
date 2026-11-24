@@ -14,6 +14,8 @@ import {
 } from '../../../services/clientPortalApi';
 import type { Ticket, TicketStatus } from '../../../types';
 import { sanitizeTimelineHtml } from '../../../lib/sanitize-html';
+import { portalPriorityLabel, portalStatusLabel } from '../../../lib/portal/status';
+import { safeString } from '../../../lib/utils';
 
 type TimelineItem = {
   id: string;
@@ -213,8 +215,12 @@ export default function ClientTicketDetailPage() {
     );
   }
 
+  const creatorName =
+    safeString(ticket.customerName) || safeString(ticket.customerEmail) || '—';
+  const assigneeName = safeString(ticket.agentName) || (ticket.agentId ? 'Zugewiesen' : 'In Prüfung');
+
   return (
-    <div className="h-full min-h-0 flex flex-col lg:flex-row">
+    <div className="h-full min-h-0 flex flex-col lg:flex-row bg-[#F8F9FA]">
       <div className="flex-1 min-w-0 p-6 lg:p-8 space-y-6 overflow-y-auto">
         <div>
           <Link
@@ -223,9 +229,9 @@ export default function ClientTicketDetailPage() {
           >
             <ArrowLeft className="w-3.5 h-3.5" /> Tickets
           </Link>
-          <h1 className="text-2xl font-black tracking-tight mt-2">{ticket.subject}</h1>
+          <h1 className="text-2xl font-black tracking-tight mt-2 text-slate-900">{ticket.subject}</h1>
           <p className="text-xs text-slate-400 font-mono mt-1">
-            {ticket.customId || ticket.id} · Status: {ticket.status} · Priorität: {ticket.priority}
+            {ticket.customId || `#TKT-${String(ticket.id).slice(-4).toUpperCase()}`}
           </p>
         </div>
 
@@ -262,7 +268,7 @@ export default function ClientTicketDetailPage() {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3">
-          <Label className="text-sm font-bold">Antworten</Label>
+          <Label className="text-sm font-bold">Öffentliche Antwort</Label>
           <div className="border border-slate-200 rounded-xl overflow-hidden">
             <RichTextEditor value={reply} onChange={setReply} />
           </div>
@@ -306,7 +312,12 @@ export default function ClientTicketDetailPage() {
             </div>
           ) : null}
           <div className="flex justify-end">
-            <Button type="button" disabled={sending} onClick={() => void sendReply()} className="gap-2">
+            <Button
+              type="button"
+              disabled={sending}
+              onClick={() => void sendReply()}
+              className="gap-2 bg-[#1B6CA8] hover:bg-[#155a8a] text-white"
+            >
               {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               Antwort senden
             </Button>
@@ -314,11 +325,24 @@ export default function ClientTicketDetailPage() {
         </div>
       </div>
 
-      {isOrgWide ? (
-        <aside className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-200 bg-white p-5 space-y-6 overflow-y-auto">
+      <aside className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-200 bg-white p-5 space-y-6 overflow-y-auto">
+        <div>
+          <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-3">
+            Eigenschaften
+          </h2>
+          <dl className="space-y-3 text-sm">
+            <PropRow label="Status" value={portalStatusLabel(ticket.status)} />
+            <PropRow label="Priorität" value={portalPriorityLabel(ticket.priority)} />
+            <PropRow label="Kategorie" value={safeString(ticket.categoryName) || '—'} />
+            <PropRow label="Zuständiger" value={assigneeName} />
+            <PropRow label="Ersteller" value={creatorName} />
+          </dl>
+        </div>
+
+        {isOrgWide ? (
           <div>
             <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-3">
-              Status
+              Schließen / Wieder öffnen
             </h2>
             <div className="space-y-2">
               {STATUS_OPTIONS.map((opt) => (
@@ -334,10 +358,12 @@ export default function ClientTicketDetailPage() {
               ))}
             </div>
           </div>
+        ) : null}
 
+        {isOrgWide ? (
           <div>
             <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-3">
-              Teilnehmer
+              Beteiligte
             </h2>
             <ul className="space-y-2 mb-3">
               {participants.length === 0 ? (
@@ -383,8 +409,17 @@ export default function ClientTicketDetailPage() {
               </Button>
             </div>
           </div>
-        </aside>
-      ) : null}
+        ) : null}
+      </aside>
+    </div>
+  );
+}
+
+function PropRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <dt className="text-slate-500 font-medium shrink-0">{label}</dt>
+      <dd className="font-semibold text-slate-900 text-right">{value}</dd>
     </div>
   );
 }

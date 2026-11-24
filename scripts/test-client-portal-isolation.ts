@@ -34,7 +34,9 @@ import {
 } from '../src/lib/email-ingestion/channel-store.js';
 import type { EmailChannelConfig } from '../src/lib/email-ingestion/types.js';
 import { redactSecrets } from '../src/lib/safe-log.js';
-import { isClientPortalRole } from '../src/lib/client-portal/roles.js';
+import { isClientAdmin, isClientPortalRole } from '../src/lib/client-portal/roles.js';
+import { parseAndValidateDashboardBannerDataUrl } from '../src/lib/dashboard-banner-validate.js';
+import { ticketMatchesPortalStatusFilter } from '../src/lib/portal/status.js';
 import {
   assertPortalDashboardTenantIsolation,
   buildPortalDashboardPayload,
@@ -550,8 +552,18 @@ function testPortalDashboardIsolation(): void {
 
   assert(adminDash.role === 'CLIENT_ADMIN', 'admin dashboard role');
   assert(
-    Number(adminDash.kpis.openCompanyTickets) >= 2,
+    Number(adminDash.kpis.openTickets ?? adminDash.kpis.openCompanyTickets) >= 2,
     'CLIENT_ADMIN sees org-wide open tickets',
+  );
+  assert(
+    Number(adminDash.kpis.inProgressTickets) >= 0 &&
+      Number(adminDash.kpis.resolvedLast30Days) >= 1,
+    'CLIENT_ADMIN dashboard exposes in-progress + resolved-30d KPIs',
+  );
+  assert(
+    adminDash.organization.id === ORG_A &&
+      !JSON.stringify(adminDash.tickets).includes(ORG_B),
+    'GET /api/portal/dashboard scoped to organization_id',
   );
   assert(
     adminDash.tickets.every((t) => !String(t.id).includes('ticket-b')),
@@ -643,6 +655,58 @@ function testPortalDashboardIsolation(): void {
     threw = err?.status === 403 || /portal role/i.test(String(err?.message || ''));
   }
   assert(threw, 'non-portal roles are rejected with 403 semantics');
+}
+
+/**
+ * Portal branding endpoints (POST/DELETE /api/portal/branding/banner) are
+ * wired with requireClientPortalRole(['CLIENT_ADMIN']) and stamp org from
+ * session — CLIENT_USER / CLIENT_SUPPORTER must receive 403.
+ */
+function testPortalBrandingBoundaries(): void {
+  console.log('\n[11] Portal branding banner role + validation boundaries');
+
+  assert(isClientAdmin('CLIENT_ADMIN') === true, 'CLIENT_ADMIN may manage branding');
+  assert(
+    isClientAdmin('CLIENT_USER') === false,
+    'CLIENT_USER gets 403 on POST/DELETE /api/portal/branding/banner',
+  );
+  assert(
+    isClientAdmin('CLIENT_SUPPORTER') === false,
+    'CLIENT_SUPPORTER gets 403 on branding endpoints',
+  );
+  assert(
+    isClientPortalRole('CLIENT_ADMIN') && !isClientAdmin('SYSTEM_ADMIN'),
+    'SYSTEM_ADMIN is not a portal branding actor (uses /api/admin|/api/organizations)',
+  );
+
+  const svg = parseAndValidateDashboardBannerDataUrl(
+    'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=',
+  );
+  assert(svg.ok === false, 'SVG banners are rejected');
+
+  const png = parseAndValidateDashboardBannerDataUrl(
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  );
+  assert(png.ok === true, 'PNG banners are accepted');
+
+  const jpeg = parseAndValidateDashboardBannerDataUrl(
+    'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGcP//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAQUCf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Bf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Bf//Z',
+  );
+  assert(jpeg.ok === true, 'JPEG banners are accepted');
+
+  // Dashboard → tickets deep-link status sync helpers.
+  assert(
+    ticketMatchesPortalStatusFilter('waiting_customer', 'waiting') === true,
+    'waiting_customer maps to Wartend tab',
+  );
+  assert(
+    ticketMatchesPortalStatusFilter('pending', 'in_progress') === true,
+    'pending maps to In Bearbeitung tab',
+  );
+  assert(
+    ticketMatchesPortalStatusFilter('open', 'resolved') === false,
+    'open does not match Gelöst tab',
+  );
 }
 
 function testPortalSessionBootstrapWithoutRolesDb(): void {
@@ -952,6 +1016,7 @@ async function main(): Promise<void> {
   testPortalDashboardIsolation();
   testPortalSessionBootstrapWithoutRolesDb();
   await testStaffTicketOrgStampAndPortalVisibility();
+  testPortalBrandingBoundaries();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

@@ -116,7 +116,7 @@ function toTicketRow(ticket: Record<string, unknown>): PortalDashboardTicketRow 
       (ticket.requesterName && String(ticket.requesterName)) ||
       (ticket.from_name && String(ticket.from_name)) ||
       null,
-    waitingOnCustomer: toPortalStatusGroup(status) === 'waiting_customer',
+    waitingOnCustomer: toPortalStatusGroup(status) === 'waiting',
   };
 }
 
@@ -201,7 +201,13 @@ export function buildPortalDashboardPayload(params: {
   const sanitized = visible.map((t) => sanitizeTicketForClient(t));
   const openTickets = sanitized.filter((t) => isOpenStatus(String(t.status || '')));
   const waitingCustomer = openTickets.filter(
-    (t) => toPortalStatusGroup(String(t.status || '')) === 'waiting_customer',
+    (t) => toPortalStatusGroup(String(t.status || '')) === 'waiting',
+  );
+  const inProgressTickets = openTickets.filter(
+    (t) => toPortalStatusGroup(String(t.status || '')) === 'in_progress',
+  );
+  const openOnlyTickets = openTickets.filter(
+    (t) => toPortalStatusGroup(String(t.status || '')) === 'open',
   );
   const waitingClientIt = openTickets.filter((t) => {
     const group = toPortalStatusGroup(String(t.status || ''));
@@ -261,10 +267,17 @@ export function buildPortalDashboardPayload(params: {
       kpis: {
         myOpenCount: myOpen.length,
         recentlyResolvedCount: recentlyResolved.length,
+        openTickets: openOnlyTickets.length,
+        openCompanyTickets: openOnlyTickets.length,
+        inProgressTickets: inProgressTickets.length,
+        waitingTickets: waitingCustomer.length,
+        resolvedLast30Days: resolved30.length,
+        avgResponseTime: avgFirstResponseHours(sanitized),
       },
       tickets: myOpen,
       myOpenTickets: myOpen,
       recentlyResolved,
+      activity: buildActivity(sanitized, 30),
       team: null,
       email: null,
     };
@@ -276,8 +289,13 @@ export function buildPortalDashboardPayload(params: {
       organization: baseOrg,
       user: { id: params.userId, name: params.userName },
       kpis: {
-        openCompanyTickets: openTickets.length,
+        openCompanyTickets: openOnlyTickets.length,
+        openTickets: openOnlyTickets.length,
+        inProgressTickets: inProgressTickets.length,
         waitingOnClientIt: waitingClientIt.length,
+        waitingTickets: waitingCustomer.length,
+        resolvedLast30Days: resolved30.length,
+        avgResponseTime: avgFirstResponseHours(sanitized),
         myParticipations: myParticipations.length,
       },
       tickets: ticketRows,
@@ -293,8 +311,11 @@ export function buildPortalDashboardPayload(params: {
     organization: baseOrg,
     user: { id: params.userId, name: params.userName },
     kpis: {
-      openCompanyTickets: openTickets.length,
+      openCompanyTickets: openOnlyTickets.length,
+      openTickets: openOnlyTickets.length,
+      inProgressTickets: inProgressTickets.length,
       waitingOnCustomer: waitingCustomer.length,
+      waitingTickets: waitingCustomer.length,
       resolvedLast30Days: resolved30.length,
       avgResponseTime: avgFirstResponseHours(sanitized),
     },

@@ -857,6 +857,8 @@ async function startServer() {
   const { default: microsoftAuthRoutes } = await import("./src/routes/microsoftAuthRoutes.js");
   app.use("/api/auth", microsoftAuthRoutes);
   app.use("/api/admin/organizations", organizationAdminRoutes);
+  // Alias for SYSTEM_ADMIN banner/branding: POST/DELETE /api/organizations/:id/banner
+  app.use("/api/organizations", organizationAdminRoutes);
   app.use("/api/admin", adminRoutes);
   app.use("/api/portal/team", clientPortalTeamRoutes);
   app.use("/api/portal/email-channel", clientPortalEmailRoutes);

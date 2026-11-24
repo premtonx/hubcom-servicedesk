@@ -7,7 +7,8 @@ export function portalStatusBadgeClass(status: string | null | undefined): strin
     'inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide border',
     group === 'open' && 'bg-sky-50 text-sky-800 border-sky-100',
     group === 'in_progress' && 'bg-amber-50 text-amber-800 border-amber-100',
-    group === 'waiting_customer' && 'bg-violet-50 text-violet-800 border-violet-100',
+    (group === 'waiting' || group === 'waiting_customer') &&
+      'bg-violet-50 text-violet-800 border-violet-100',
     group === 'resolved' && 'bg-emerald-50 text-emerald-800 border-emerald-100',
     group === 'closed' && 'bg-slate-100 text-slate-600 border-slate-200',
   );
