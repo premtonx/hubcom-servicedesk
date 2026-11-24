@@ -21,6 +21,16 @@ export interface OrganizationRecord {
   logo_url: string | null;
   /** Custom portal title; empty → "{name} ServiceDesk". */
   portal_title: string | null;
+  /** CRM / Unternehmen fields (unified with companies docs). */
+  industry: string | null;
+  website: string | null;
+  tier: string | null;
+  sla: string | null;
+  contract_renewal: string | null;
+  /** Fixture / seed flag — purged by Demo-Daten bereinigen. */
+  is_demo: boolean;
+  /** Linked CRM company document id (geistdesk_documents.companies). */
+  crm_company_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -35,6 +45,13 @@ export interface OrganizationInput {
   sso_enabled?: boolean;
   logo_url?: string | null;
   portal_title?: string | null;
+  industry?: string | null;
+  website?: string | null;
+  tier?: string | null;
+  sla?: string | null;
+  contract_renewal?: string | null;
+  is_demo?: boolean;
+  crm_company_id?: string | null;
 }
 
 function slugify(input: string): string {
@@ -88,6 +105,19 @@ function mapRow(row: any): OrganizationRecord {
       row.portal_title == null || row.portal_title === ''
         ? null
         : String(row.portal_title),
+    industry: row.industry == null || row.industry === '' ? null : String(row.industry),
+    website: row.website == null || row.website === '' ? null : String(row.website),
+    tier: row.tier == null || row.tier === '' ? null : String(row.tier),
+    sla: row.sla == null || row.sla === '' ? null : String(row.sla),
+    contract_renewal:
+      row.contract_renewal == null || row.contract_renewal === ''
+        ? null
+        : String(row.contract_renewal),
+    is_demo: row.is_demo === true || row.is_demo === 't',
+    crm_company_id:
+      row.crm_company_id == null || row.crm_company_id === ''
+        ? null
+        : String(row.crm_company_id),
     created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
     updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : '',
   };
@@ -165,12 +195,39 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
     input.portal_title == null || String(input.portal_title).trim() === ''
       ? null
       : String(input.portal_title).trim().slice(0, 120);
+  const industry =
+    input.industry == null || String(input.industry).trim() === ''
+      ? null
+      : String(input.industry).trim();
+  const website =
+    input.website == null || String(input.website).trim() === ''
+      ? null
+      : String(input.website).trim();
+  const tier =
+    input.tier == null || String(input.tier).trim() === ''
+      ? null
+      : String(input.tier).trim();
+  const sla =
+    input.sla == null || String(input.sla).trim() === ''
+      ? null
+      : String(input.sla).trim();
+  const contractRenewal =
+    input.contract_renewal == null || String(input.contract_renewal).trim() === ''
+      ? null
+      : String(input.contract_renewal).trim();
+  const isDemo = Boolean(input.is_demo);
+  const crmCompanyId =
+    input.crm_company_id == null || String(input.crm_company_id).trim() === ''
+      ? null
+      : String(input.crm_company_id).trim();
 
   const res = await queryDb(
     `INSERT INTO organizations (
-       id, name, slug, domain, is_active, settings, m365_tenant_id, sso_enabled, logo_url, portal_title
+       id, name, slug, domain, is_active, settings, m365_tenant_id, sso_enabled,
+       logo_url, portal_title, industry, website, tier, sla, contract_renewal,
+       is_demo, crm_company_id
      )
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
      RETURNING *`,
     [
       id,
@@ -183,6 +240,13 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
       ssoEnabled,
       logoUrl,
       portalTitle,
+      industry,
+      website,
+      tier,
+      sla,
+      contractRenewal,
+      isDemo,
+      crmCompanyId,
     ],
   );
   return mapRow(res.rows[0]);
@@ -231,6 +295,44 @@ export async function updateOrganization(
         ? null
         : String(input.portal_title).trim().slice(0, 120)
       : existing.portal_title;
+  const industry =
+    input.industry !== undefined
+      ? input.industry == null || String(input.industry).trim() === ''
+        ? null
+        : String(input.industry).trim()
+      : existing.industry;
+  const website =
+    input.website !== undefined
+      ? input.website == null || String(input.website).trim() === ''
+        ? null
+        : String(input.website).trim()
+      : existing.website;
+  const tier =
+    input.tier !== undefined
+      ? input.tier == null || String(input.tier).trim() === ''
+        ? null
+        : String(input.tier).trim()
+      : existing.tier;
+  const sla =
+    input.sla !== undefined
+      ? input.sla == null || String(input.sla).trim() === ''
+        ? null
+        : String(input.sla).trim()
+      : existing.sla;
+  const contractRenewal =
+    input.contract_renewal !== undefined
+      ? input.contract_renewal == null || String(input.contract_renewal).trim() === ''
+        ? null
+        : String(input.contract_renewal).trim()
+      : existing.contract_renewal;
+  const isDemo =
+    input.is_demo !== undefined ? Boolean(input.is_demo) : existing.is_demo;
+  const crmCompanyId =
+    input.crm_company_id !== undefined
+      ? input.crm_company_id == null || String(input.crm_company_id).trim() === ''
+        ? null
+        : String(input.crm_company_id).trim()
+      : existing.crm_company_id;
 
   const res = await queryDb(
     `UPDATE organizations
@@ -243,6 +345,13 @@ export async function updateOrganization(
             sso_enabled = $8,
             logo_url = $9,
             portal_title = $10,
+            industry = $11,
+            website = $12,
+            tier = $13,
+            sla = $14,
+            contract_renewal = $15,
+            is_demo = $16,
+            crm_company_id = $17,
             updated_at = NOW()
       WHERE id = $1
       RETURNING *`,
@@ -257,6 +366,13 @@ export async function updateOrganization(
       ssoEnabled,
       logoUrl,
       portalTitle,
+      industry,
+      website,
+      tier,
+      sla,
+      contractRenewal,
+      isDemo,
+      crmCompanyId,
     ],
   );
   if (!res.rowCount) return null;
