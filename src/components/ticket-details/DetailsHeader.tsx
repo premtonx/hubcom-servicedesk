@@ -32,6 +32,8 @@ import { resolvePriorityConfig, softTintStyles } from '../../lib/ticket-config/d
 
 interface DetailsHeaderProps {
   ticket: TicketType;
+  /** Canonical organization / company display name — never a placeholder. */
+  organizationName?: string | null;
   onBack: () => void;
   activeView: string;
   onConvertToKB: () => void;
@@ -52,6 +54,7 @@ interface DetailsHeaderProps {
 
 export function DetailsHeader({
   ticket,
+  organizationName,
   onBack,
   activeView,
   onConvertToKB,
@@ -171,12 +174,20 @@ export function DetailsHeader({
               </span>
             </span>
 
-            {/* Company Badge — only when a real org/company name exists */}
-            {safeString(ticket.company) ? (
-              <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[10.5px] font-bold h-5.5 px-3 rounded-md flex items-center justify-center">
-                {safeString(ticket.company)}
-              </span>
-            ) : null}
+            {/* Company Badge — real organization / company name only (never placeholders) */}
+            {(() => {
+              const label =
+                safeString(organizationName) ||
+                safeString(ticket.company) ||
+                '';
+              const bogus = ['enterprise corp', 'enterprise', 'acme', 'n/a', '—'];
+              if (!label || bogus.includes(label.toLowerCase())) return null;
+              return (
+                <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[10.5px] font-bold h-5.5 px-3 rounded-md flex items-center justify-center">
+                  {label}
+                </span>
+              );
+            })()}
 
             {/* Priority Badge — configured colour + label */}
             <span

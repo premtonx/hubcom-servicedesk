@@ -14,6 +14,7 @@ import {
   stripClientSpoofFields,
 } from '../lib/client-portal/ticket-visibility.js';
 import { normalizeAssigneePatchForWrite } from '../lib/ticketAssignee.js';
+import { stampStaffTicketOrganizationFields } from '../lib/client-portal/stamp-ticket-organization.js';
 
 const router = Router();
 
@@ -37,6 +38,11 @@ const ALLOWED_NEW_FIELDS = new Set([
   'accountHealth', 'slaTier', 'isHelpRequested',
   'aiSuggestedDraft', 'aiDraftRaw', 'aiConfidenceScore', 'aiCritiqueLog',
   'aiExecutionStatus', 'updatedAt',
+  // Portal visibility + Kunde tab — must be storable even on legacy tickets.
+  'organizationId', 'organization_id',
+  'companyId', 'company_id', 'company',
+  'requesterId', 'requester_id',
+  'customerEmail', 'customerName', 'customerId', 'contactId',
 ]);
 
 /**
@@ -140,6 +146,28 @@ router.patch('/:id', authenticate, attachClientOrganizationContext, async (req: 
       delete data.aiRootCause;
       delete data.aiChecklist;
       delete data.aiSentiment;
+    } else if (
+      data.companyId ||
+      data.organizationId ||
+      data.organization_id ||
+      data.company ||
+      data.customerEmail
+    ) {
+      // Hubcom staff: stamp canonical organizations.id when linking Unternehmen / Kontakt.
+      const stamped = await stampStaffTicketOrganizationFields({ ...existing, ...data });
+      if (stamped.organizationId) {
+        data.organizationId = stamped.organizationId;
+        data.organization_id = stamped.organization_id || stamped.organizationId;
+      }
+      if (typeof stamped.company === 'string' && stamped.company) data.company = stamped.company;
+      if (typeof stamped.companyId === 'string' && stamped.companyId) data.companyId = stamped.companyId;
+      if (typeof stamped.customerEmail === 'string' && stamped.customerEmail) {
+        data.customerEmail = stamped.customerEmail;
+      }
+      if (typeof stamped.requesterId === 'string' && stamped.requesterId) {
+        data.requesterId = stamped.requesterId;
+        data.requester_id = stamped.requester_id || stamped.requesterId;
+      }
     }
 
     const now = new Date().toISOString();

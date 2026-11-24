@@ -181,8 +181,24 @@ export async function ingestNormalizedEmail(
     const now = new Date().toISOString();
     const attachments = sanitizeAttachments(email);
 
-    const organizationId = email.organizationId || undefined;
+    let organizationId = email.organizationId || undefined;
     const channelId = email.channelId || undefined;
+
+    // When the channel is Hubcom-global (no org), map sender domain → organizations.domain.
+    if (!organizationId && sender) {
+      try {
+        const { resolveBestOrganizationId } = await import(
+          '../client-portal/stamp-ticket-organization.js'
+        );
+        const resolved = await resolveBestOrganizationId({
+          customerEmail: sender,
+          from_email: sender,
+        });
+        if (resolved.organizationId) organizationId = resolved.organizationId;
+      } catch {
+        /* non-fatal — ticket still created unscoped */
+      }
+    }
 
     if (!ticket) {
       const customId = nextCustomId(allTickets);

@@ -11,7 +11,7 @@ import {
   ensureOrganizationForCompany,
   type CompanyDoc,
 } from './org-company-sync.js';
-import { getOrganization, listOrganizations } from './organizations.js';
+import { getOrganization, listOrganizations, type OrganizationRecord } from './organizations.js';
 import { ticketOrganizationId } from './ticket-visibility.js';
 
 function norm(value: unknown): string {
@@ -23,6 +23,12 @@ function norm(value: unknown): string {
 function looksLikeEmail(value: unknown): boolean {
   const s = String(value || '').trim();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
+function emailDomain(value: unknown): string {
+  const s = String(value || '').trim().toLowerCase();
+  if (!s.includes('@')) return '';
+  return s.split('@').pop()?.trim() || '';
 }
 
 /**
@@ -78,6 +84,14 @@ export function applyTicketOrganizationStamp(
     next.requester_id = requester;
   }
 
+  const customerName =
+    (typeof next.customerName === 'string' && next.customerName.trim()) ||
+    (typeof next.customer_name === 'string' && String(next.customer_name).trim()) ||
+    '';
+  if (customerName) {
+    next.customerName = customerName;
+  }
+
   // Never leave a bare "@domain.com" style customerId when email is known.
   if (
     emailFromPayload &&
@@ -91,12 +105,48 @@ export function applyTicketOrganizationStamp(
   return next;
 }
 
+/** Match an organizations row by email domain (e.g. premton@citadelle.de → citadelle.de). */
+export function matchOrganizationByEmailDomain(
+  orgs: OrganizationRecord[],
+  email: string | null | undefined,
+): OrganizationRecord | null {
+  const domain = emailDomain(email);
+  if (!domain) return null;
+  return (
+    orgs.find((o) => o.domain && norm(o.domain) === domain) ||
+    orgs.find((o) => o.domain && domain.endsWith(`.${norm(o.domain)}`)) ||
+    null
+  );
+}
+
+/** Match an organizations row by display name (case-insensitive). */
+export function matchOrganizationByName(
+  orgs: OrganizationRecord[],
+  name: string | null | undefined,
+): OrganizationRecord | null {
+  const n = norm(name);
+  if (!n) return null;
+  return orgs.find((o) => norm(o.name) === n) || null;
+}
+
 /** Resolve organization UUID for a CRM company document id. */
 export async function resolveOrganizationIdForCompanyId(
   companyId: string | null | undefined,
 ): Promise<{ organizationId: string | null; companyName: string | null; company: CompanyDoc | null }> {
   const id = String(companyId || '').trim();
   if (!id) return { organizationId: null, companyName: null, company: null };
+
+  // companyId may already be an organizations.id (UI sometimes uses org as Unternehmen).
+  const asOrg = await getOrganization(id);
+  if (asOrg) {
+    return {
+      organizationId: asOrg.id,
+      companyName: asOrg.name,
+      company: asOrg.crm_company_id
+        ? ({ id: asOrg.crm_company_id, name: asOrg.name, organizationId: asOrg.id } as CompanyDoc)
+        : null,
+    };
+  }
 
   const company = (await getDocDirect('companies', id)) as CompanyDoc | null;
   if (!company) return { organizationId: null, companyName: null, company: null };
@@ -113,77 +163,126 @@ export async function resolveOrganizationIdForCompanyId(
     if (org) return { organizationId: org.id, companyName: name, company };
   }
 
-  try {
-    const orgId = await ensureOrganizationForCompany({ ...company, id });
-    return { organizationId: orgId, companyName: name, company: { ...company, id } };
-  } catch {
-    // Fall through to name/domain match without creating.
-  }
-
+  // Prefer matching an existing portal org BEFORE creating a new one (avoids dual-org split).
   const orgs = await listOrganizations({ includeInactive: true });
   const byCrm = orgs.find((o) => o.crm_company_id === id);
   const byDomain =
     company.domain &&
     orgs.find((o) => o.domain && norm(o.domain) === norm(company.domain));
-  const byName = name ? orgs.find((o) => norm(o.name) === norm(name)) : undefined;
-  const match = byCrm || byDomain || byName || null;
-  return {
-    organizationId: match?.id || null,
-    companyName: name,
-    company: { ...company, id },
-  };
+  const byName = name ? matchOrganizationByName(orgs, name) : null;
+  const existingMatch = byCrm || byDomain || byName || null;
+  if (existingMatch) {
+    try {
+      await ensureOrganizationForCompany({ ...company, id });
+    } catch {
+      /* link best-effort */
+    }
+    return {
+      organizationId: existingMatch.id,
+      companyName: name || existingMatch.name,
+      company: { ...company, id },
+    };
+  }
+
+  try {
+    const orgId = await ensureOrganizationForCompany({ ...company, id });
+    return { organizationId: orgId, companyName: name, company: { ...company, id } };
+  } catch {
+    return { organizationId: null, companyName: name, company: { ...company, id } };
+  }
+}
+
+/**
+ * Resolve the best organizations.id for a ticket payload from companyId,
+ * company name, email domain, or an already-valid organizationId.
+ */
+export async function resolveBestOrganizationId(
+  data: Record<string, unknown>,
+): Promise<{
+  organizationId: string | null;
+  companyName: string | null;
+  companyId: string | null;
+}> {
+  const companyId =
+    (typeof data.companyId === 'string' && data.companyId.trim()) ||
+    (typeof data.company_id === 'string' && data.company_id.trim()) ||
+    '';
+
+  if (companyId) {
+    const resolved = await resolveOrganizationIdForCompanyId(companyId);
+    if (resolved.organizationId) {
+      return {
+        organizationId: resolved.organizationId,
+        companyName: resolved.companyName,
+        companyId: resolved.company?.id || companyId,
+      };
+    }
+  }
+
+  const orgs = await listOrganizations({ includeInactive: true });
+
+  const existing = ticketOrganizationId(data);
+  if (existing) {
+    const org = await getOrganization(existing);
+    if (org) {
+      return {
+        organizationId: org.id,
+        companyName: org.name,
+        companyId: org.crm_company_id || companyId || null,
+      };
+    }
+  }
+
+  const companyName =
+    (typeof data.company === 'string' && data.company.trim()) ||
+    (typeof data.customerCompany === 'string' && data.customerCompany.trim()) ||
+    '';
+  const byName = matchOrganizationByName(orgs, companyName);
+  if (byName) {
+    return {
+      organizationId: byName.id,
+      companyName: byName.name,
+      companyId: byName.crm_company_id || companyId || null,
+    };
+  }
+
+  const email =
+    (typeof data.customerEmail === 'string' && data.customerEmail.trim()) ||
+    (looksLikeEmail(data.customerId) ? String(data.customerId).trim() : '') ||
+    (typeof data.from_email === 'string' && data.from_email.trim()) ||
+    '';
+  const byEmail = matchOrganizationByEmailDomain(orgs, email);
+  if (byEmail) {
+    return {
+      organizationId: byEmail.id,
+      companyName: byEmail.name,
+      companyId: byEmail.crm_company_id || companyId || null,
+    };
+  }
+
+  return { organizationId: null, companyName: companyName || null, companyId: companyId || null };
 }
 
 /**
  * Stamp organization + company display fields onto a staff ticket create payload.
- * Idempotent when organizationId is already present.
+ * Idempotent when organizationId is already present and valid.
  */
 export async function stampStaffTicketOrganizationFields(
   data: Record<string, unknown> | null | undefined,
 ): Promise<Record<string, unknown>> {
   const base = data && typeof data === 'object' ? { ...data } : {};
-  const existing = ticketOrganizationId(base);
-  const companyId =
-    (typeof base.companyId === 'string' && base.companyId.trim()) ||
-    (typeof base.company_id === 'string' && base.company_id.trim()) ||
-    '';
-
-  if (existing && !companyId) {
-    return applyTicketOrganizationStamp(base, { organizationId: existing });
-  }
-
-  if (companyId) {
-    const resolved = await resolveOrganizationIdForCompanyId(companyId);
-    return applyTicketOrganizationStamp(base, {
-      organizationId: resolved.organizationId || existing,
-      companyName: resolved.companyName,
-      companyId,
-    });
-  }
-
-  // No companyId — try matching free-text company name / domain against orgs.
-  const companyName =
-    (typeof base.company === 'string' && base.company.trim()) ||
-    (typeof base.customerCompany === 'string' && base.customerCompany.trim()) ||
-    '';
-  if (companyName) {
-    const orgs = await listOrganizations({ includeInactive: true });
-    const match = orgs.find((o) => norm(o.name) === norm(companyName));
-    if (match) {
-      return applyTicketOrganizationStamp(base, {
-        organizationId: match.id,
-        companyName: match.name,
-        companyId: match.crm_company_id || null,
-      });
-    }
-  }
-
-  return applyTicketOrganizationStamp(base, { organizationId: existing });
+  const best = await resolveBestOrganizationId(base);
+  return applyTicketOrganizationStamp(base, {
+    organizationId: best.organizationId,
+    companyName: best.companyName,
+    companyId: best.companyId,
+  });
 }
 
 /**
- * Idempotent backfill: set organizationId on tickets that only have companyId /
- * company name / domain matching an organizations row.
+ * Idempotent backfill: set / repair organizationId on tickets using companyId,
+ * company name, or customer_email domain. Also fixes mismatched org ids when
+ * company/email clearly belongs to a different organizations row.
  */
 export async function backfillTicketOrganizationIds(): Promise<{
   scanned: number;
@@ -194,11 +293,12 @@ export async function backfillTicketOrganizationIds(): Promise<{
   for (const ticket of tickets) {
     const id = String(ticket.id || '');
     if (!id) continue;
-    if (ticketOrganizationId(ticket)) continue;
 
+    const current = ticketOrganizationId(ticket);
     const stamped = await stampStaffTicketOrganizationFields(ticket);
     const orgId = ticketOrganizationId(stamped);
     if (!orgId) continue;
+    if (current === orgId) continue;
 
     await updateDocDirect('tickets', id, {
       organizationId: orgId,
@@ -208,6 +308,12 @@ export async function backfillTicketOrganizationIds(): Promise<{
         : {}),
       ...(typeof stamped.companyId === 'string' && stamped.companyId
         ? { companyId: stamped.companyId }
+        : {}),
+      ...(typeof stamped.customerEmail === 'string' && stamped.customerEmail
+        ? { customerEmail: stamped.customerEmail }
+        : {}),
+      ...(typeof stamped.requesterId === 'string' && stamped.requesterId
+        ? { requesterId: stamped.requesterId, requester_id: stamped.requesterId }
         : {}),
       updatedAt: new Date().toISOString(),
     });

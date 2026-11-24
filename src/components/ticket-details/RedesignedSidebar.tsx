@@ -590,7 +590,15 @@ export function RedesignedSidebar({
                     <h6 className="text-xs font-black text-foreground truncate">{safeString(contact?.name ?? ticket.customerName)}</h6>
                     <DynamicSentimentGlyph sentiment={ticket.sentiment} />
                   </div>
-                  <p className="text-[9px] text-muted-foreground truncate max-w-[180px]">{safeString(contact?.email) || `${ticket.customerId}@mail.com`}</p>
+                  <p className="text-[9px] text-muted-foreground truncate max-w-[180px]">
+                    {safeString(contact?.email) ||
+                      (String((ticket as any).customerEmail || '').trim() &&
+                      String((ticket as any).customerEmail).trim() !== '@domain.com'
+                        ? String((ticket as any).customerEmail).trim()
+                        : String(ticket.customerId || '').includes('@')
+                          ? String(ticket.customerId)
+                          : '—')}
+                  </p>
                 </div>
               </div>
             </div>

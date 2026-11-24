@@ -33,7 +33,6 @@ import {
   Plus,
   X,
   ChevronDown,
-  ChevronUp,
   ChevronLeft,
   Building2,
   Clock,
@@ -46,7 +45,6 @@ import {
   Settings,
   PenSquare,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { customerService } from '../services/customerService';
 import { groupService } from '../services/groupService';
@@ -137,7 +135,7 @@ const EMPTY_FORM: FormState = {
   companyId: '',
   organizationId: '',
   requesterId: '',
-  product: 'GeistDeskTech',
+  product: '',
   tags: [],
   assignee: 'unassigned',
   ticketKind: 'support',
@@ -202,7 +200,6 @@ export function CreateTicketDialog({
 
   const [loading, setLoading] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
-  const [isAdditionalDetailsOpen, setIsAdditionalDetailsOpen] = useState(true);
   const [tagInput, setTagInput] = useState('');
   const [companies, setCompanies] = useState<Company[]>(prefetchedCompanies ?? []);
   const [agents, setAgents] = useState<User[]>(prefetchedAgents ?? []);
@@ -315,6 +312,67 @@ export function CreateTicketDialog({
     }
     return customerService.subscribeToCompanies(setCompanies);
   }, [prefetchedCompanies]);
+
+  // Enrich CRM companies with canonical organizations.id (name / crm_company_id match).
+  useEffect(() => {
+    if (companies.length === 0) return;
+    let cancelled = false;
+    void import('axios').then(({ default: axios }) =>
+      axios
+        .get('/api/admin/organizations', { withCredentials: true })
+        .then((res) => {
+          if (cancelled) return;
+          const orgs = (res.data?.organizations || []) as Array<{
+            id: string;
+            name?: string;
+            crm_company_id?: string | null;
+            domain?: string | null;
+          }>;
+          if (!orgs.length) return;
+          setCompanies((prev) =>
+            prev.map((c) => {
+              const existing = String(
+                (c as any).organizationId || (c as any).organization_id || '',
+              ).trim();
+              if (existing) return c;
+              const byCrm = orgs.find((o) => o.crm_company_id && o.crm_company_id === c.id);
+              const byName = orgs.find(
+                (o) =>
+                  String(o.name || '')
+                    .trim()
+                    .toLowerCase() ===
+                  String(c.name || '')
+                    .trim()
+                    .toLowerCase(),
+              );
+              const byDomain =
+                c.domain &&
+                orgs.find(
+                  (o) =>
+                    o.domain &&
+                    String(o.domain).trim().toLowerCase() ===
+                      String(c.domain).trim().toLowerCase(),
+                );
+              const match = byCrm || byName || byDomain;
+              if (!match) return c;
+              return {
+                ...c,
+                organizationId: match.id,
+                organization_id: match.id,
+              } as Company;
+            }),
+          );
+        })
+        .catch(() => {
+          /* non-fatal — server stamp still runs on create */
+        }),
+    );
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally only when the company set size changes (initial load / prefetch).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companies.length]);
 
   useEffect(() => {
     if (prefetchedAgents) {
@@ -1042,150 +1100,6 @@ export function CreateTicketDialog({
                 )}
               </p>
             </div>
-          </div>
-
-          <div className="bg-white border border-slate-200/60 rounded-2xl p-5 sm:p-6 shadow-sm">
-            <button
-              type="button"
-              onClick={() => setIsAdditionalDetailsOpen(!isAdditionalDetailsOpen)}
-              className="w-full flex items-center justify-between focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg"
-              aria-expanded={isAdditionalDetailsOpen}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-[13px] font-bold text-blue-600 border border-blue-100/50">
-                  3
-                </div>
-                <h3 className="text-[15px] font-bold text-[#374151]">
-                  {t('dialog.additionalDetails', 'Weitere Angaben')}
-                </h3>
-              </div>
-              <motion.div
-                animate={{ rotate: isAdditionalDetailsOpen ? 0 : 180 }}
-                transition={{ duration: 0.2 }}
-              >
-                <ChevronUp className="w-5 h-5 text-slate-400" aria-hidden />
-              </motion.div>
-            </button>
-
-            <AnimatePresence initial={false}>
-              {isAdditionalDetailsOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0, marginTop: 0 }}
-                  animate={{ height: 'auto', opacity: 1, marginTop: 24 }}
-                  exit={{ height: 0, opacity: 0, marginTop: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                    <div className="space-y-2">
-                      <Label className="text-sm font-semibold text-slate-700">
-                        {t('dialog.productLine', 'Produktlinie')}
-                      </Label>
-                      <Select
-                        value={formData.product}
-                        onValueChange={(v) => setFormData({ ...formData, product: v })}
-                      >
-                        <SelectTrigger className="w-full h-11 border-slate-200 rounded-xl text-sm bg-white">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="rounded-xl">
-                          <SelectItem value="GeistDeskTech">Hubcom Tech</SelectItem>
-                          <SelectItem value="GeistDeskMobile">Hubcom Mobile</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="text-sm font-semibold text-slate-700">
-                        {t('dialog.ticketKind', 'Arbeitsbereich')}
-                      </Label>
-                      <Select
-                        value={formData.ticketKind}
-                        onValueChange={(v) => {
-                          const kind = v as 'support' | 'bug';
-                          const preferredKey = kind === 'bug' ? 'problem' : 'question';
-                          const nextType =
-                            activeTypes.find((ty) => ty.key === preferredKey)?.key ||
-                            formData.type;
-                          setFormData({
-                            ...formData,
-                            ticketKind: kind,
-                            type: nextType,
-                          });
-                        }}
-                      >
-                        <SelectTrigger className="w-full h-11 border-slate-200 rounded-xl text-sm bg-white">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="rounded-xl">
-                          <SelectItem value="support">
-                            {t('tickets.kind.support', 'Support')}
-                          </SelectItem>
-                          <SelectItem value="bug">{t('tickets.kind.bug', 'Bug')}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-slate-500">
-                        {t(
-                          'dialog.ticketKindHint',
-                          'Unterscheidet Support- von Bug-Workflows; Tickettyp bleibt ein separates Feld.',
-                        )}
-                      </p>
-                    </div>
-                    {formData.ticketKind === 'support' ? (
-                      <div className="space-y-2">
-                        <Label className="text-sm font-semibold text-slate-700">
-                          {t('tickets.fields.slaTier', 'SLA-Stufe')}
-                        </Label>
-                        <Input
-                          className="h-11 rounded-xl"
-                          value={formData.slaTier}
-                          onChange={(e) =>
-                            setFormData({ ...formData, slaTier: e.target.value })
-                          }
-                        />
-                      </div>
-                    ) : (
-                      <>
-                        <div className="space-y-2">
-                          <Label className="text-sm font-semibold text-slate-700">
-                            {t('tickets.fields.affectedVersion', 'Betroffene Version / Build')}
-                          </Label>
-                          <Input
-                            className="h-11 rounded-xl"
-                            value={formData.affectedVersion}
-                            onChange={(e) =>
-                              setFormData({ ...formData, affectedVersion: e.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-sm font-semibold text-slate-700">
-                            {t('tickets.fields.environment', 'Umgebung')}
-                          </Label>
-                          <Input
-                            className="h-11 rounded-xl"
-                            value={formData.environment}
-                            onChange={(e) =>
-                              setFormData({ ...formData, environment: e.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2 sm:col-span-2">
-                          <Label className="text-sm font-semibold text-slate-700">
-                            {t('tickets.fields.stepsToReproduce', 'Schritte zur Reproduktion')}
-                          </Label>
-                          <Textarea
-                            className="min-h-[96px] rounded-xl"
-                            value={formData.stepsToReproduce}
-                            onChange={(e) =>
-                              setFormData({ ...formData, stepsToReproduce: e.target.value })
-                            }
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
 
           <div className="bg-white border border-slate-200/60 rounded-2xl p-5 sm:p-6 shadow-sm">

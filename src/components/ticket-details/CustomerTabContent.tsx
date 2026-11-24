@@ -201,11 +201,36 @@ export function CustomerTabContent({
     setSaving(true);
     try {
       const nextCompany = companies.find((c) => c.id === companyId) || null;
-      const nextOrgId = String(
+      let nextOrgId = String(
         (nextCompany as any)?.organizationId ||
           (nextCompany as any)?.organization_id ||
           '',
       ).trim();
+      // Resolve organizations.id by name when CRM company is not yet linked.
+      if (!nextOrgId && nextCompany?.name) {
+        try {
+          const res = await axios.get('/api/admin/organizations', { withCredentials: true });
+          const orgs = (res.data?.organizations || []) as Array<{
+            id: string;
+            name?: string;
+            crm_company_id?: string | null;
+          }>;
+          const match =
+            orgs.find((o) => o.crm_company_id === companyId) ||
+            orgs.find(
+              (o) =>
+                String(o.name || '')
+                  .trim()
+                  .toLowerCase() ===
+                String(nextCompany.name || '')
+                  .trim()
+                  .toLowerCase(),
+            );
+          if (match) nextOrgId = match.id;
+        } catch {
+          /* server PATCH stamp still runs */
+        }
+      }
       onUpdateTicket({
         companyId,
         company: nextCompany?.name || '',

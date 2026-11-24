@@ -18,7 +18,10 @@ import {
   stripClientSpoofFields,
   ticketOrganizationId,
 } from '../src/lib/client-portal/ticket-visibility.js';
-import { enforceClientDbTicketAccess } from '../src/lib/client-portal/db-ticket-guard.js';
+import {
+  enforceClientDbTicketAccess,
+  postFilterClientDbResult,
+} from '../src/lib/client-portal/db-ticket-guard.js';
 import {
   encryptEmailChannelSecret,
   decryptEmailChannelSecret,
@@ -42,7 +45,12 @@ import {
   shouldFetchRolesCollection,
 } from '../src/lib/client-portal/portal-role-from-session.js';
 import { assertDbCollectionAccess } from '../src/lib/db-access-policy.js';
-import { applyTicketOrganizationStamp } from '../src/lib/client-portal/stamp-ticket-organization.js';
+import {
+  applyTicketOrganizationStamp,
+  matchOrganizationByEmailDomain,
+  matchOrganizationByName,
+} from '../src/lib/client-portal/stamp-ticket-organization.js';
+import type { OrganizationRecord } from '../src/lib/client-portal/organizations.js';
 
 process.env.EMAIL_CHANNEL_SECRET_KEY =
   process.env.EMAIL_CHANNEL_SECRET_KEY ||
@@ -817,6 +825,118 @@ async function testStaffTicketOrgStampAndPortalVisibility(): Promise<void> {
   assert(
     emptyCustomer.customerId !== '@domain.com',
     'stamp never invents @domain.com customerId',
+  );
+
+  // #TKT-9 style: company name + contact email, then stamp organizations.id.
+  const tkt9Payload = applyTicketOrganizationStamp(
+    {
+      id: 'TKT-9',
+      subject: 'Staff create → portal visibility',
+      company: 'Citadelle AG',
+      companyId: 'crm-citadelle',
+      customerName: 'Premton Xhafa',
+      customerEmail: 'premton@citadelle.test',
+      requesterId: orgAUser.id,
+      requester_id: orgAUser.id,
+      status: 'open',
+    },
+    { organizationId: CITADELLE, companyName: 'Citadelle AG', companyId: 'crm-citadelle' },
+  );
+  assert(
+    ticketOrganizationId(tkt9Payload) === CITADELLE,
+    '#TKT-9 style payload stamps Citadelle organizations.id',
+  );
+  assert(
+    tkt9Payload.customerName === 'Premton Xhafa' &&
+      tkt9Payload.customerEmail === 'premton@citadelle.test' &&
+      tkt9Payload.requesterId === orgAUser.id,
+    '#TKT-9 style payload keeps requester + customer email',
+  );
+  assert(
+    evaluateClientTicketVisibility(orgAAdmin, tkt9Payload as any) === true,
+    'Citadelle CLIENT_ADMIN sees #TKT-9 in Alle Firmen-Tickets',
+  );
+  assert(
+    evaluateClientTicketVisibility(orgBAdmin, tkt9Payload as any) === false,
+    'DPG CLIENT_ADMIN receives 0 visibility for #TKT-9',
+  );
+
+  // Direct ID lookup guard — DPG must not read Citadelle ticket (403/404 semantics).
+  const dpgDenied = await postFilterClientDbResult({
+    user: {
+      id: orgBAdmin.id,
+      role: orgBAdmin.role,
+      organizationId: orgBAdmin.organizationId,
+    } as any,
+    collection: 'tickets',
+    action: 'get_doc',
+    doc: tkt9Payload as any,
+  });
+  assert(
+    dpgDenied.denied === true,
+    'DPG CLIENT_ADMIN denied on direct #TKT-9 lookup (403/404)',
+  );
+
+  const citadelleList = await postFilterClientDbResult({
+    user: {
+      id: orgAAdmin.id,
+      role: orgAAdmin.role,
+      organizationId: orgAAdmin.organizationId,
+    } as any,
+    collection: 'tickets',
+    action: 'get_docs',
+    docs: [
+      tkt9Payload as any,
+      { ...tkt9Payload, id: 'other-dpg', organizationId: DPG, organization_id: DPG },
+    ],
+  });
+  const allowedIds = new Set(
+    ((citadelleList.docs || []) as any[]).map((t) => String(t.id)),
+  );
+  assert(allowedIds.has('TKT-9'), 'Citadelle CLIENT_ADMIN list includes #TKT-9');
+  assert(!allowedIds.has('other-dpg'), 'Citadelle CLIENT_ADMIN list excludes DPG tickets');
+
+  const dpgList = await postFilterClientDbResult({
+    user: {
+      id: orgBAdmin.id,
+      role: orgBAdmin.role,
+      organizationId: orgBAdmin.organizationId,
+    } as any,
+    collection: 'tickets',
+    action: 'get_docs',
+    docs: [tkt9Payload as any],
+  });
+  assert(
+    Array.isArray(dpgList.docs) && dpgList.docs.length === 0,
+    'DPG CLIENT_ADMIN Alle Firmen-Tickets returns 0 for Citadelle #TKT-9',
+  );
+
+  // Email-domain / name matching helpers (inbound + backfill).
+  const orgFixtures = [
+    {
+      id: CITADELLE,
+      name: 'Citadelle AG',
+      domain: 'citadelle.test',
+      slug: 'citadelle',
+    },
+    {
+      id: DPG,
+      name: 'DPG',
+      domain: 'dpg.test',
+      slug: 'dpg',
+    },
+  ] as OrganizationRecord[];
+  assert(
+    matchOrganizationByEmailDomain(orgFixtures, 'premton@citadelle.test')?.id === CITADELLE,
+    'email domain maps to Citadelle organization',
+  );
+  assert(
+    matchOrganizationByName(orgFixtures, 'Citadelle AG')?.id === CITADELLE,
+    'company name maps to Citadelle organization',
+  );
+  assert(
+    matchOrganizationByEmailDomain(orgFixtures, 'other@dpg.test')?.id === DPG,
+    'email domain maps to DPG organization',
   );
 }
 
