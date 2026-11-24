@@ -12,8 +12,18 @@ import { TicketPriority, TicketStatus } from '../../types';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { getInitials, safeString } from '../../lib/utils';
 import { TICKET_DISPATCH_AGENTS } from '../../lib/ticketDispatchAgents';
-import { SELECTABLE_TICKET_STATUSES, isReadonlyTerminalStatus } from '../../lib/ticket-status';
+import { isReadonlyTerminalStatus } from '../../lib/ticket-status';
 import type { TicketCategory } from '../../lib/ticket-categories/types';
+import type { TicketPriorityConfig, TicketStatusConfig } from '../../lib/ticket-config/types';
+import {
+  resolvePriorityConfig,
+  resolveStatusConfig,
+  selectablePrioritiesForValue,
+  selectableStatusesForValue,
+  softTintStyles,
+} from '../../lib/ticket-config/display';
+import { useTicketStatuses } from '../../hooks/useTicketStatuses';
+import { useTicketPriorities } from '../../hooks/useTicketPriorities';
 
 const DEFAULT_CATEGORY_COLOR = '#1B6CA8';
 
@@ -33,54 +43,34 @@ export function resolveTicketCategoryColor(
   return DEFAULT_CATEGORY_COLOR;
 }
 
-const STATUS_STYLES: Record<string, { pill: string; dot: string }> = {
-  open: { pill: 'bg-blue-50 text-blue-700 border-blue-100', dot: 'bg-blue-500' },
-  pending: { pill: 'bg-violet-50 text-violet-700 border-violet-100', dot: 'bg-violet-500' },
-  resolved: { pill: 'bg-emerald-50 text-emerald-700 border-emerald-100', dot: 'bg-emerald-500' },
-  closed: { pill: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400' },
-  merged: { pill: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400' },
-  trash: { pill: 'bg-rose-50 text-rose-700 border-rose-100', dot: 'bg-rose-500' },
-  deleted: { pill: 'bg-rose-50 text-rose-700 border-rose-100', dot: 'bg-rose-500' },
-  'on-hold': { pill: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400' },
-  on_hold: { pill: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400' },
-  paused: { pill: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400' },
-  qs: { pill: 'bg-purple-50 text-purple-700 border-purple-100', dot: 'bg-purple-500' },
-  in_progress: { pill: 'bg-indigo-50 text-indigo-700 border-indigo-100', dot: 'bg-indigo-500' },
-  waiting_customer: { pill: 'bg-amber-50 text-amber-800 border-amber-100', dot: 'bg-amber-500' },
-  waiting_dev: { pill: 'bg-orange-50 text-orange-700 border-orange-100', dot: 'bg-orange-500' },
-  waiting_vendor: { pill: 'bg-yellow-50 text-yellow-800 border-yellow-100', dot: 'bg-yellow-500' },
-};
-
-const STATUS_OPTIONS: TicketStatus[] = SELECTABLE_TICKET_STATUSES;
-
-const PRIORITY_DOT: Record<string, string> = {
-  urgent: 'bg-red-500',
-  high: 'bg-orange-500',
-  medium: 'bg-blue-500',
-  low: 'bg-slate-400',
-};
-
 interface TicketStatusChipProps {
   status: string;
   onChange: (status: TicketStatus) => void;
+  /** Optional override; defaults to admin-configured statuses from Ticket Configuration. */
+  statuses?: TicketStatusConfig[];
 }
 
-export function TicketStatusChip({ status, onChange }: TicketStatusChipProps) {
+export function TicketStatusChip({ status, onChange, statuses: statusesProp }: TicketStatusChipProps) {
   const { t } = useTranslation();
-  const key = status?.toLowerCase() ?? 'open';
-  const style = STATUS_STYLES[key] ?? STATUS_STYLES.open;
-  const label = t(`tickets.statusLabels.${key}`, t(`tickets.status.${key}`, key));
+  const { statuses: loadedStatuses } = useTicketStatuses();
+  const statuses = statusesProp ?? loadedStatuses;
+  const resolved = resolveStatusConfig(status, statuses);
+  const options = selectableStatusesForValue(status, statuses);
+  const tint = softTintStyles(resolved.color);
+  const label = resolved.name;
 
-  if (isReadonlyTerminalStatus(key)) {
+  if (isReadonlyTerminalStatus(resolved.key)) {
     return (
       <span
         title={t('tickets.merge.readonlyMerged', 'Zusammengeführt — nur lesbar')}
-        className={cn(
-          'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold max-w-full',
-          style.pill,
-        )}
+        className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold max-w-full"
+        style={tint}
       >
-        <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', style.dot)} aria-hidden />
+        <span
+          className="h-1.5 w-1.5 rounded-full shrink-0"
+          style={{ backgroundColor: resolved.color }}
+          aria-hidden
+        />
         <span className="truncate">{label}</span>
       </span>
     );
@@ -93,22 +83,43 @@ export function TicketStatusChip({ status, onChange }: TicketStatusChipProps) {
           <button
             type="button"
             aria-label={label}
-            title={label}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition-colors hover:opacity-90 max-w-full',
-              style.pill,
-            )}
+            title={
+              resolved.isActive
+                ? label
+                : t('tickets.statusInactiveHint', '{{label}} (inaktiv — noch auf Tickets vorhanden)').replace(
+                    '{{label}}',
+                    label,
+                  )
+            }
+            className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition-colors hover:opacity-90 max-w-full"
+            style={tint}
           >
-            <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', style.dot)} aria-hidden />
-            <span className="truncate">+ {label}</span>
+            <span
+              className="h-1.5 w-1.5 rounded-full shrink-0"
+              style={{ backgroundColor: resolved.color }}
+              aria-hidden
+            />
+            <span className="truncate">{label}</span>
             <ChevronDown className="w-3 h-3 opacity-40 shrink-0" aria-hidden />
           </button>
         }
       />
-      <DropdownMenuContent align="start" className="w-40 rounded-lg">
-        {STATUS_OPTIONS.map((s) => (
-          <DropdownMenuItem key={s} className="text-xs capitalize" onClick={() => onChange(s)}>
-            {t(`tickets.statusLabels.${s}`, t(`tickets.status.${s}`, s))}
+      <DropdownMenuContent align="start" className="w-48 rounded-lg">
+        {options.map((s) => (
+          <DropdownMenuItem
+            key={s.id || s.key}
+            className="text-xs gap-2"
+            onClick={() => onChange(s.key as TicketStatus)}
+          >
+            <span
+              className="h-2 w-2 rounded-full shrink-0"
+              style={{ backgroundColor: s.color }}
+              aria-hidden
+            />
+            <span className="truncate">{s.name}</span>
+            {!s.isActive ? (
+              <span className="text-[9px] uppercase text-slate-400 font-bold ml-auto">inaktiv</span>
+            ) : null}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -119,13 +130,20 @@ export function TicketStatusChip({ status, onChange }: TicketStatusChipProps) {
 interface TicketPriorityChipProps {
   priority: string;
   onChange: (priority: TicketPriority) => void;
+  priorities?: TicketPriorityConfig[];
 }
 
-export function TicketPriorityChip({ priority, onChange }: TicketPriorityChipProps) {
+export function TicketPriorityChip({
+  priority,
+  onChange,
+  priorities: prioritiesProp,
+}: TicketPriorityChipProps) {
   const { t } = useTranslation();
-  const key = priority?.toLowerCase() ?? 'medium';
-  const dot = PRIORITY_DOT[key] ?? PRIORITY_DOT.medium;
-  const label = t(`tickets.priority.${key}`, key);
+  const { priorities: loadedPriorities } = useTicketPriorities();
+  const priorities = prioritiesProp ?? loadedPriorities;
+  const resolved = resolvePriorityConfig(priority, priorities);
+  const options = selectablePrioritiesForValue(priority, priorities);
+  const label = resolved.name;
 
   return (
     <DropdownMenu>
@@ -134,18 +152,42 @@ export function TicketPriorityChip({ priority, onChange }: TicketPriorityChipPro
           <button
             type="button"
             aria-label={label}
-            className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-600 hover:text-slate-900 transition-colors rounded-md px-1 py-0.5 max-w-full"
+            title={
+              resolved.isActive
+                ? label
+                : t(
+                    'tickets.priorityInactiveHint',
+                    '{{label}} (inaktiv — noch auf Tickets vorhanden)',
+                  ).replace('{{label}}', label)
+            }
+            className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-700 hover:text-slate-900 transition-colors rounded-md px-1 py-0.5 max-w-full"
           >
-            <span className={cn('h-2 w-2 rounded-full shrink-0', dot)} aria-hidden />
+            <span
+              className="h-2 w-2 rounded-full shrink-0 border border-black/5"
+              style={{ backgroundColor: resolved.color }}
+              aria-hidden
+            />
             <span className="truncate">{label}</span>
             <ChevronDown className="w-3 h-3 opacity-40 shrink-0" aria-hidden />
           </button>
         }
       />
-      <DropdownMenuContent align="start" className="w-36 rounded-lg">
-        {(['low', 'medium', 'high', 'urgent'] as TicketPriority[]).map((p) => (
-          <DropdownMenuItem key={p} className="text-xs capitalize" onClick={() => onChange(p)}>
-            {t(`tickets.priority.${p}`, p)}
+      <DropdownMenuContent align="start" className="w-44 rounded-lg">
+        {options.map((p) => (
+          <DropdownMenuItem
+            key={p.id || p.key}
+            className="text-xs gap-2"
+            onClick={() => onChange(p.key as TicketPriority)}
+          >
+            <span
+              className="h-2 w-2 rounded-full shrink-0"
+              style={{ backgroundColor: p.color }}
+              aria-hidden
+            />
+            <span className="truncate">{p.name}</span>
+            {!p.isActive ? (
+              <span className="text-[9px] uppercase text-slate-400 font-bold ml-auto">inaktiv</span>
+            ) : null}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -171,8 +213,10 @@ export function TicketAssigneeChip({
   onChange,
 }: TicketAssigneeChipProps) {
   const { t } = useTranslation();
-  const display = safeString(agentName, t('tickets.unassigned', 'Unassigned'));
-  const initial = getInitials(display);
+  const unassignedLabel = t('tickets.unassigned', 'Unassigned');
+  const isUnassigned = !agentId && !safeString(agentName).trim();
+  const display = isUnassigned ? unassignedLabel : safeString(agentName, unassignedLabel);
+  const initial = isUnassigned ? '—' : getInitials(display);
 
   return (
     <DropdownMenu>
@@ -180,19 +224,34 @@ export function TicketAssigneeChip({
         render={
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 max-w-[130px] text-[11px] font-medium text-slate-700 hover:bg-slate-50 rounded-md px-1 py-0.5 transition-colors"
+            className={cn(
+              'inline-flex items-center gap-1.5 max-w-[130px] text-[11px] font-medium hover:bg-slate-50 rounded-md px-1 py-0.5 transition-colors',
+              isUnassigned ? 'text-slate-400' : 'text-slate-700',
+            )}
           >
-            <Avatar className="h-5 w-5 border border-slate-200 shrink-0">
-              <AvatarFallback className="text-[8px] font-bold bg-slate-100">{initial}</AvatarFallback>
+            <Avatar
+              className={cn(
+                'h-5 w-5 shrink-0',
+                isUnassigned ? 'border border-dashed border-slate-300' : 'border border-slate-200',
+              )}
+            >
+              <AvatarFallback
+                className={cn(
+                  'text-[8px] font-bold',
+                  isUnassigned ? 'bg-slate-50 text-slate-400' : 'bg-slate-100 text-slate-700',
+                )}
+              >
+                {initial}
+              </AvatarFallback>
             </Avatar>
-            <span className="truncate">{display}</span>
+            <span className={cn('truncate', isUnassigned && 'italic font-normal')}>{display}</span>
             <ChevronDown className="w-3 h-3 opacity-40 shrink-0" />
           </button>
         }
       />
       <DropdownMenuContent align="start" className="w-44 rounded-lg">
         <DropdownMenuItem className="text-xs" onClick={() => onChange(null, null)}>
-          {t('tickets.unassigned', 'Unassigned')}
+          {unassignedLabel}
         </DropdownMenuItem>
         {currentUserId ? (
           <DropdownMenuItem className="text-xs" onClick={() => onChange(currentUserId, currentUserLabel)}>

@@ -41,6 +41,7 @@ import { customerService } from '../../services/customerService';
 import { schemaService, CustomField } from '../../services/schemaService';
 import { useAuth } from '../../lib/hooks';
 import { useSidebar } from '../../lib/context/SidebarContext';
+import { useTicketPriorities } from '../../hooks/useTicketPriorities';
 import {
   filterTicketsByWorkspace,
 } from '../../lib/ticketWorkspace';
@@ -116,6 +117,7 @@ const buildAssigneePayload = (
 export default function TicketsPage() {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const { rankByKey: priorityRankByKey } = useTicketPriorities();
   const { role, loading: permsLoading } = usePermissions();
   const { isPipelineCollapsed, togglePipelineSidebar } = useSidebar();
   const { ticketId } = useParams();
@@ -679,7 +681,8 @@ export default function TicketsPage() {
     result.sort((a, b) => {
       if (listSort === 'priority') {
         const rank = (p?: string) =>
-          p === 'urgent' ? 4 : p === 'high' ? 3 : p === 'medium' ? 2 : 1;
+          priorityRankByKey.get(String(p || '').toLowerCase()) ?? -1;
+        // Highest configured sortOrder first (lowest → highest in admin config).
         return rank(b.priority) - rank(a.priority);
       }
       const aTime = a.updatedAt?.toDate ? a.updatedAt.toDate().getTime() : 0;
@@ -688,7 +691,7 @@ export default function TicketsPage() {
     });
 
     return result;
-  }, [baseSidebarTickets, topStatusFilter, searchQuery, filters, user, listSort, allTickets, selectedOrganizationId]);
+  }, [baseSidebarTickets, topStatusFilter, searchQuery, filters, user, listSort, allTickets, selectedOrganizationId, priorityRankByKey]);
 
   const getFilteredTickets = () => {
     return finalRenderedTickets;
