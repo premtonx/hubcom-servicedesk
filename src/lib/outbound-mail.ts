@@ -26,6 +26,12 @@ import {
   isHealthySendAsGraph,
   listGlobalEmailChannels,
 } from './email-ingestion/channel-store.js';
+import { appendSignatureToOutboundBody } from './email-signature-dispatch.js';
+import type {
+  SignatureAgentContext,
+  SignatureOrganizationContext,
+  SignatureTicketContext,
+} from './email-signature.js';
 
 export interface OutboundMailResult {
   delivered: boolean;
@@ -34,6 +40,14 @@ export interface OutboundMailResult {
   domainVerified?: boolean;
   /** Which channel identity was used (org Send-As vs Hubcom fallback). */
   via?: 'org_send_as' | 'hubcom_fallback' | 'smtp' | 'none';
+}
+
+export interface OutboundSignatureContext {
+  agent?: SignatureAgentContext;
+  ticket?: SignatureTicketContext;
+  organization?: SignatureOrganizationContext;
+  /** Composer toggle — default true for external replies. */
+  appendSignature?: boolean;
 }
 
 function globalSmtpConfigured(): boolean {
@@ -74,6 +88,7 @@ async function trySendViaMicrosoftGraph(params: {
   body: string;
   agentName?: string | null;
   channel: EmailChannelConfig;
+  signature?: OutboundSignatureContext | null;
 }): Promise<OutboundMailResult> {
   const channel = await resolveGraphChannelWithSecrets(params.channel);
   if (!channel) {
@@ -100,11 +115,27 @@ async function trySendViaMicrosoftGraph(params: {
     };
   }
 
+  const prepared = appendSignatureToOutboundBody({
+    body: params.body,
+    channel,
+    agent: {
+      name: params.signature?.agent?.name || params.agentName || null,
+      title: params.signature?.agent?.title || null,
+      phone: params.signature?.agent?.phone || null,
+      email: params.signature?.agent?.email || null,
+    },
+    ticket: params.signature?.ticket || { id: params.ticketId },
+    organization: params.signature?.organization || null,
+    appendSignature: params.signature?.appendSignature !== false,
+  });
+
   const result = await driver.sendMail({
     to,
     subject: params.subject || `Re: Ticket ${params.ticketId}`,
-    body: params.body,
+    body: prepared.html,
     contentType: 'HTML',
+    bodyIsFinalHtml: true,
+    attachments: prepared.inlineAttachment ? [prepared.inlineAttachment] : undefined,
   });
 
   const from = channel.mailbox || channel.email || undefined;
@@ -211,6 +242,7 @@ async function trySendViaSmtp(params: {
   channel?: EmailChannelConfig | null;
   /** Explicit From override from the composer (display label or address). */
   fromOverride?: string | null;
+  signature?: OutboundSignatureContext | null;
 }): Promise<OutboundMailResult> {
   if (!smtpConfigured(params.channel)) {
     return {
@@ -220,6 +252,30 @@ async function trySendViaSmtp(params: {
       via: 'none',
     };
   }
+
+  const prepared = appendSignatureToOutboundBody({
+    body: params.body,
+    channel: params.channel || null,
+    agent: {
+      name: params.signature?.agent?.name || params.agentName || null,
+      title: params.signature?.agent?.title || null,
+      phone: params.signature?.agent?.phone || null,
+      email: params.signature?.agent?.email || null,
+    },
+    ticket: params.signature?.ticket || { id: params.ticketId },
+    organization: params.signature?.organization || null,
+    appendSignature: params.signature?.appendSignature !== false,
+  });
+  // SMTP path embeds a data-URL logo when present (no Graph cid: attachments).
+  let smtpBody = prepared.html;
+  if (prepared.inlineAttachment) {
+    const dataUrl = `data:${prepared.inlineAttachment.contentType};base64,${prepared.inlineAttachment.contentBytes}`;
+    smtpBody = smtpBody.replace(
+      new RegExp(`cid:${prepared.inlineAttachment.contentId}`, 'gi'),
+      dataUrl,
+    );
+  }
+  params = { ...params, body: smtpBody };
 
   try {
     const endpoint = (process.env.MAIL_DISPATCH_URL || '').trim();
@@ -316,6 +372,8 @@ export async function trySendTicketReplyEmail(params: {
   fromOverride?: string | null;
   /** Ticket organization — enables per-client Send-As when configured. */
   organizationId?: string | null;
+  /** Signature context — applied only to outbound mail, never ticket history. */
+  signature?: OutboundSignatureContext | null;
 }): Promise<OutboundMailResult> {
   const orgId = (params.organizationId || '').trim() || null;
 
@@ -334,6 +392,7 @@ export async function trySendTicketReplyEmail(params: {
         body: params.body,
         agentName: params.agentName,
         channel: orgChannel,
+        signature: params.signature,
       });
       if (orgResult.delivered) {
         return { ...orgResult, via: 'org_send_as' };
@@ -385,6 +444,7 @@ export async function trySendTicketReplyEmail(params: {
       body: params.body,
       agentName: params.agentName,
       channel,
+      signature: params.signature,
     });
     if (hubcomResult.delivered) {
       return { ...hubcomResult, via: 'hubcom_fallback' };
@@ -408,6 +468,7 @@ export async function trySendTicketReplyEmail(params: {
       (await findGlobalDefaultEmailChannel({ includeSecrets: true })) ||
       params.channel ||
       null,
+    signature: params.signature,
   });
   if (smtpResult.delivered) return smtpResult;
 

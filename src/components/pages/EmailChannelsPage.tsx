@@ -38,6 +38,9 @@ import {
   azureAppRegistrationUrl,
   runMicrosoftDeviceFlow,
 } from '../../lib/oauth-device-flow';
+import { EmailSignatureEditor } from '../email/EmailSignatureEditor';
+import { DEFAULT_HUBCOM_SIGNATURE_HTML } from '../../lib/email-signature';
+import { useAuth } from '../../lib/hooks';
 
 const CONNECTION_OPTIONS: {
   id: EmailConnectionType;
@@ -111,6 +114,10 @@ function emptyDraft(forwardingDomain?: string): Partial<EmailChannelConfig> {
     smtpPassword: '',
     smtpSecure: false,
     forwardingDomain,
+    signature_enabled: true,
+    signature_html: '',
+    signature_logo_data: null,
+    signature_logo_mime: null,
   };
 }
 
@@ -177,6 +184,13 @@ function buildSavePayload(editing: Partial<EmailChannelConfig>): Partial<EmailCh
         ? editing.smtpPassword
         : undefined,
     smtpSecure: editing.smtpSecure ?? null,
+    signature_enabled: editing.signature_enabled !== false,
+    signature_html: editing.signature_html ?? null,
+    signature_logo_data:
+      editing.signature_logo_data === undefined
+        ? undefined
+        : editing.signature_logo_data,
+    signature_logo_mime: editing.signature_logo_mime ?? null,
   };
 
   if (connectionType === 'webhook') {
@@ -219,6 +233,7 @@ function buildSavePayload(editing: Partial<EmailChannelConfig>): Partial<EmailCh
 }
 
 export default function EmailChannelsPage() {
+  const { user } = useAuth();
   const [channels, setChannels] = useState<EmailChannelConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1326,6 +1341,43 @@ export default function EmailChannelsPage() {
                   <span>{testResult.message}</span>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+
+          {editing ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/40 p-4">
+              <EmailSignatureEditor
+                value={{
+                  signature_enabled: editing.signature_enabled !== false,
+                  signature_html:
+                    editing.signature_html || DEFAULT_HUBCOM_SIGNATURE_HTML,
+                  signature_logo_data: editing.signature_logo_data
+                    ? editing.signature_logo_data.startsWith('data:')
+                      ? editing.signature_logo_data
+                      : `data:${editing.signature_logo_mime || 'image/png'};base64,${editing.signature_logo_data}`
+                    : null,
+                  signature_logo_mime: editing.signature_logo_mime || null,
+                }}
+                onChange={(next) =>
+                  setEditing((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          signature_enabled: next.signature_enabled,
+                          signature_html: next.signature_html,
+                          signature_logo_data: next.signature_logo_data,
+                          signature_logo_mime: next.signature_logo_mime,
+                        }
+                      : prev,
+                  )
+                }
+                previewAgent={{
+                  name: user?.displayName || user?.email || 'Agent',
+                  email: user?.email || undefined,
+                }}
+                organizationName={editing.displayName || editing.name || 'Hubcom GmbH'}
+                saving={saving}
+              />
             </div>
           ) : null}
 

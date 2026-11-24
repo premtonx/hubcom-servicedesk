@@ -40,6 +40,8 @@ export interface EmailComposerSendMeta {
   fromAddress: string;
   fromChannelId?: string;
   cc: string[];
+  /** Append channel signature on outbound mail (default true). */
+  appendSignature?: boolean;
 }
 
 export interface AiComposerMeta {
@@ -119,6 +121,9 @@ export function EmailComposer({
     }),
   );
   const [ccAddresses, setCcAddresses] = useState<string[]>([]);
+  const [appendSignature, setAppendSignature] = useState(true);
+  const [signaturePreviewOpen, setSignaturePreviewOpen] = useState(false);
+  const [signaturePreviewHtml, setSignaturePreviewHtml] = useState('');
   const suggestionText = "Hi there, I have investigated this issue and found similar cases where we resolved... Let me walk you through the troubleshooting.";
 
   const replyToLabel = useMemo(() => formatReplyRecipientLabel(ticket), [ticket]);
@@ -162,12 +167,35 @@ export function EmailComposer({
     };
   }, [ticket.id, ticket.mailbox]);
 
+  useEffect(() => {
+    if (!signaturePreviewOpen) return;
+    let alive = true;
+    const qs = fromChannelId
+      ? `?channelId=${encodeURIComponent(fromChannelId)}`
+      : '';
+    fetch(`/api/tickets/${encodeURIComponent(ticket.id)}/signature-preview${qs}`, {
+      credentials: 'include',
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!alive) return;
+        setSignaturePreviewHtml(String(data?.html || ''));
+      })
+      .catch(() => {
+        if (alive) setSignaturePreviewHtml('');
+      });
+    return () => {
+      alive = false;
+    };
+  }, [signaturePreviewOpen, ticket.id, fromChannelId]);
+
   const emitSend = () => {
     const opt = fromOptions.find((o) => o.id === fromChannelId);
     onSend({
       fromAddress: opt?.label || fromAddress,
       fromChannelId: fromChannelId || undefined,
       cc: ccAddresses,
+      appendSignature,
     });
   };
 
@@ -387,6 +415,47 @@ export function EmailComposer({
           </div>
         </div>
       )}
+
+      {/* Signature toggle + collapsible preview */}
+      <div className="px-4 space-y-2">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2">
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="rounded border-slate-300"
+              checked={appendSignature}
+              onChange={(e) => setAppendSignature(e.target.checked)}
+            />
+            {t('tickets.emailComposer.appendSignature', 'Signatur anhängen')}
+          </label>
+          <button
+            type="button"
+            className="text-[11px] font-bold text-slate-500 hover:text-slate-800 inline-flex items-center gap-1"
+            onClick={() => setSignaturePreviewOpen((v) => !v)}
+          >
+            {signaturePreviewOpen ? (
+              <ChevronUp className="w-3.5 h-3.5" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5" />
+            )}
+            {t('tickets.emailComposer.signaturePreview', 'Vorschau')}
+          </button>
+        </div>
+        {signaturePreviewOpen && (
+          <div className="rounded-xl border border-slate-200 bg-white p-3">
+            {signaturePreviewHtml ? (
+              <div
+                className="prose prose-sm max-w-none text-slate-700"
+                dangerouslySetInnerHTML={{ __html: signaturePreviewHtml }}
+              />
+            ) : (
+              <p className="text-xs text-slate-400 italic">
+                {t('tickets.emailComposer.signaturePreviewEmpty', 'Keine Signatur konfiguriert.')}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Toolbar actions & Primary Submit buttons */}
       <div className="px-4 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">

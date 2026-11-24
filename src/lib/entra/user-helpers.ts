@@ -41,6 +41,8 @@ export function formatUserForAdmin(u: Record<string, any>) {
     name: u.name || '',
     email: u.email || '',
     kuerzel: u.kuerzel || '',
+    job_title: u.job_title || u.jobTitle || '',
+    phone: u.phone || '',
     role,
     company: u.company || u.customerCompany || '',
     companyId: u.companyId || null,

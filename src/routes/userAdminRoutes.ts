@@ -44,6 +44,8 @@ const createUserSchema = z
       .email('Ungültige E-Mail-Adresse')
       .transform((v) => v.toLowerCase().trim()),
     kuerzel: z.string().trim().max(10).optional().nullable(),
+    job_title: z.string().trim().max(200).optional().nullable(),
+    phone: z.string().trim().max(60).optional().nullable(),
     role: roleEnum.default('agent'),
     company: z.string().trim().max(200).optional().nullable(),
     companyId: z.string().trim().max(128).optional().nullable(),
@@ -70,6 +72,8 @@ const patchUserSchema = z.object({
     .transform((v) => v.toLowerCase().trim())
     .optional(),
   kuerzel: z.string().trim().max(10).optional().nullable(),
+  job_title: z.string().trim().max(200).optional().nullable(),
+  phone: z.string().trim().max(60).optional().nullable(),
   role: roleEnum.optional(),
   company: z.string().trim().max(200).optional().nullable(),
   companyId: z.string().trim().max(128).optional().nullable(),
@@ -209,6 +213,8 @@ router.post('/users', ...adminOnly, async (req: Request, res: Response) => {
       name: data.name,
       email: data.email,
       kuerzel,
+      job_title: (data.job_title || '').trim() || null,
+      phone: (data.phone || '').trim() || null,
       role,
       is_admin: role === 'SYSTEM_ADMIN',
       company: data.company || '',
@@ -361,6 +367,8 @@ router.patch('/users/:id', ...adminOnly, async (req: Request, res: Response) => 
     if (patch.name !== undefined) updates.name = patch.name;
     if (patch.email !== undefined) updates.email = patch.email;
     if (patch.kuerzel !== undefined) updates.kuerzel = patch.kuerzel || '';
+    if (patch.job_title !== undefined) updates.job_title = patch.job_title || null;
+    if (patch.phone !== undefined) updates.phone = patch.phone || null;
     if (patch.company !== undefined) {
       updates.company = patch.company || '';
       if (nextRole === 'customer') updates.customerCompany = patch.company || null;

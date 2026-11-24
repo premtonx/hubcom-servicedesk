@@ -20,14 +20,24 @@ import {
   type PortalEmailOrgSettings,
 } from '../../../services/clientPortalApi';
 import { OrgPortalBrandingCard } from '../../client-portal/OrgPortalBrandingCard';
+import { EmailSignatureEditor } from '../../email/EmailSignatureEditor';
+import { DEFAULT_HUBCOM_SIGNATURE_HTML } from '../../../lib/email-signature';
+import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
 
 const MASK = '••••••••';
 
 export default function ClientEmailIntegrationPage() {
+  const { session } = useClientPortalSession();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [savingSso, setSavingSso] = useState(false);
+  const [signature, setSignature] = useState({
+    signature_enabled: true,
+    signature_html: DEFAULT_HUBCOM_SIGNATURE_HTML,
+    signature_logo_data: null as string | null,
+    signature_logo_mime: null as string | null,
+  });
 
   const [supportEmail, setSupportEmail] = useState('');
   const [tenantId, setTenantId] = useState('');
@@ -70,6 +80,14 @@ export default function ClientEmailIntegrationPage() {
       setOrg(data.organization);
       setM365TenantId(data.organization?.m365TenantId || '');
       setSsoEnabled(Boolean(data.organization?.ssoEnabled));
+      if (ch) {
+        setSignature({
+          signature_enabled: ch.signature_enabled !== false,
+          signature_html: ch.signature_html || DEFAULT_HUBCOM_SIGNATURE_HTML,
+          signature_logo_data: ch.signature_logo_data || null,
+          signature_logo_mime: ch.signature_logo_mime || null,
+        });
+      }
       try {
         const brandRes = await axios.get('/api/portal/organization', { withCredentials: true });
         const o = brandRes.data?.organization;
@@ -123,6 +141,10 @@ export default function ClientEmailIntegrationPage() {
         clientId: clientId.trim(),
         inboundEnabled,
         sendAsEnabled,
+        signature_enabled: signature.signature_enabled,
+        signature_html: signature.signature_html,
+        signature_logo_data: signature.signature_logo_data,
+        signature_logo_mime: signature.signature_logo_mime,
       };
       if (secretDirty && clientSecret && clientSecret !== MASK) {
         payload.clientSecret = clientSecret;
@@ -226,6 +248,22 @@ export default function ClientEmailIntegrationPage() {
           }}
         />
       ) : null}
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <EmailSignatureEditor
+          value={signature}
+          onChange={setSignature}
+          previewAgent={{
+            name: session?.name || session?.email || 'CLIENT_ADMIN',
+            email: session?.email || undefined,
+          }}
+          organizationName={org?.name || branding?.name || 'Organisation'}
+          saving={saving}
+        />
+        <p className="text-[11px] text-slate-400 mt-3">
+          Signatur-Änderungen werden mit „E-Mail-Kanal speichern“ übernommen.
+        </p>
+      </div>
 
       {/* Setup helper */}
       <div className="rounded-2xl border border-sky-100 bg-sky-50/70 px-5 py-4 space-y-3">

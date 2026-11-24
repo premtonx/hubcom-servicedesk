@@ -17,8 +17,83 @@ import {
   clientCanMutateTicket,
   resolveOrganizationIdFromUser,
 } from '../lib/client-portal/ticket-visibility.js';
+import { getOrganization } from '../lib/client-portal/organizations.js';
+import {
+  DEFAULT_HUBCOM_SIGNATURE_HTML,
+  isSignatureEnabled,
+  renderSignatureHtml,
+} from '../lib/email-signature.js';
 
 const router = Router();
+
+/**
+ * GET /api/tickets/:id/signature-preview
+ * Live rendered signature for the reply composer (current user + channel).
+ */
+router.get(
+  '/:id/signature-preview',
+  authenticate,
+  attachClientOrganizationContext,
+  async (req: Request, res: Response): Promise<any> => {
+    const ticketId = routeParam(req.params.id);
+    const channelId = String(req.query.channelId || '').trim();
+    try {
+      const ticket = await getDocDirect('tickets', ticketId);
+      if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+
+      const ticketOrgId =
+        (typeof ticket.organizationId === 'string' && ticket.organizationId) ||
+        (typeof ticket.organization_id === 'string' && ticket.organization_id) ||
+        null;
+
+      const channel =
+        (channelId ? await getEmailChannel(channelId, { includeSecrets: false }) : null) ||
+        (await findChannelForOutbound({
+          channelId: channelId || null,
+          mailbox: ticket.mailbox || ticket.forwardingAddress || null,
+          supportEmail: ticket.supportEmail || ticket.channelEmail || null,
+          organizationId: ticketOrgId,
+        }));
+
+      const agentUser = await getDocDirect('users', String(req.user!.id));
+      const org = ticketOrgId
+        ? await getOrganization(ticketOrgId).catch(() => null)
+        : null;
+
+      const enabled = isSignatureEnabled(channel || { signature_html: DEFAULT_HUBCOM_SIGNATURE_HTML });
+      const html = renderSignatureHtml({
+        channel: channel || {
+          signature_enabled: true,
+          signature_html: DEFAULT_HUBCOM_SIGNATURE_HTML,
+        },
+        agent: {
+          name: req.user!.name || agentUser?.name || req.user!.email || 'Agent',
+          title:
+            (typeof agentUser?.job_title === 'string' && agentUser.job_title) ||
+            (typeof agentUser?.jobTitle === 'string' && agentUser.jobTitle) ||
+            null,
+          phone: (typeof agentUser?.phone === 'string' && agentUser.phone) || null,
+          email: req.user!.email || agentUser?.email || null,
+        },
+        ticket: { id: ticketId, number: ticket.ticketNumber || ticket.number || null },
+        organization: {
+          name: org?.name || ticket.company || ticket.customerCompany || 'Hubcom GmbH',
+        },
+        forPreview: true,
+      });
+
+      return res.json({
+        enabled,
+        html,
+        template: channel?.signature_html || DEFAULT_HUBCOM_SIGNATURE_HTML,
+        channelId: channel?.id || null,
+      });
+    } catch (e: any) {
+      safeLog('error', '[ticket-replies] signature preview failed', e?.message || e);
+      return res.status(500).json({ error: 'Failed to render signature preview.' });
+    }
+  },
+);
 
 const emailListSchema = z
   .array(z.string().trim().email().max(320))
@@ -75,6 +150,8 @@ const replySchema = z.object({
   fromAddress: z.string().trim().max(500).optional(),
   fromChannelId: z.string().trim().max(128).optional(),
   cc: emailListSchema,
+  /** Append channel signature on outbound mail only (default true). */
+  appendSignature: z.boolean().optional().default(true),
 });
 
 /**
@@ -146,6 +223,8 @@ router.post('/:id/replies', authenticate, attachClientOrganizationContext, async
         ? `${(channel.displayName || channel.name || 'Support').trim()} <${channel.email}>`
         : null);
 
+    // Persist composer body only — never duplicate the legal signature footer
+    // into ticket history. Signature is applied exclusively at outbound send.
     const messageRecord = await addDocDirect(`tickets/${ticketId}/messages`, {
       ticketId,
       senderId: isClient ? req.user!.id : data.senderId || req.user!.id,
@@ -169,6 +248,22 @@ router.post('/:id/replies', authenticate, attachClientOrganizationContext, async
       lastReplyBy: data.senderType,
     });
 
+    const agentUser = await getDocDirect('users', String(req.user!.id));
+    const agentTitle =
+      (typeof agentUser?.job_title === 'string' && agentUser.job_title) ||
+      (typeof agentUser?.jobTitle === 'string' && agentUser.jobTitle) ||
+      null;
+    const agentPhone =
+      (typeof agentUser?.phone === 'string' && agentUser.phone) || null;
+    const org =
+      ticketOrgId && channel
+        ? await getOrganization(ticketOrgId).catch(() => null)
+        : channel && !(channel.organizationId || channel.organization_id)
+          ? { name: 'Hubcom GmbH' }
+          : ticketOrgId
+            ? await getOrganization(ticketOrgId).catch(() => null)
+            : { name: 'Hubcom GmbH' };
+
     let delivered = false;
     let deliveryReason: string | undefined;
     let mailFrom: string | undefined;
@@ -180,10 +275,27 @@ router.post('/:id/replies', authenticate, attachClientOrganizationContext, async
         cc,
         subject: ticket.subject ? `Re: ${ticket.subject}` : `Re: Ticket ${ticketId}`,
         body: data.content,
-        agentName: data.senderName || req.user!.email || 'Agent',
+        agentName: data.senderName || req.user!.name || req.user!.email || 'Agent',
         channel,
         fromOverride: fromAddress,
         organizationId: ticketOrgId,
+        signature: {
+          appendSignature: data.appendSignature !== false,
+          agent: {
+            name: data.senderName || req.user!.name || agentUser?.name || req.user!.email || 'Agent',
+            title: agentTitle,
+            phone: agentPhone,
+            email: req.user!.email || agentUser?.email || null,
+          },
+          ticket: { id: ticketId, number: ticket.ticketNumber || ticket.number || null },
+          organization: {
+            name:
+              (org && 'name' in org ? org.name : null) ||
+              ticket.company ||
+              ticket.customerCompany ||
+              null,
+          },
+        },
       });
       delivered = mailResult.delivered;
       deliveryReason = mailResult.reason;

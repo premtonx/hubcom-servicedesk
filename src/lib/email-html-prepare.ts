@@ -203,3 +203,5 @@ export function htmlToAuditPlainText(raw: string): string {
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 }
+
+export { escapeHtmlText, plainTextToEmailHtml };

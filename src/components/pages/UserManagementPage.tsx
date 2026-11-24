@@ -65,6 +65,8 @@ type CreateForm = {
   name: string;
   email: string;
   kuerzel: string;
+  job_title: string;
+  phone: string;
   role: AdminRole;
   company: string;
   authMethod: AdminAuthMethod;
@@ -75,6 +77,8 @@ const emptyCreate = (): CreateForm => ({
   name: '',
   email: '',
   kuerzel: '',
+  job_title: '',
+  phone: '',
   role: 'agent',
   company: '',
   authMethod: 'password',
@@ -158,6 +162,8 @@ export default function UserManagementPage() {
         name: createForm.name.trim(),
         email: createForm.email.trim(),
         kuerzel: createForm.kuerzel.trim() || undefined,
+        job_title: createForm.job_title.trim() || undefined,
+        phone: createForm.phone.trim() || undefined,
         role: createForm.role,
         company: createForm.company.trim() || undefined,
         authMethod: createForm.authMethod,
@@ -183,6 +189,8 @@ export default function UserManagementPage() {
         name: editForm.name,
         email: editForm.email,
         kuerzel: editForm.kuerzel,
+        job_title: editForm.job_title,
+        phone: editForm.phone,
         role: editForm.role as AdminRole,
         company: editForm.company,
         authMethod: editForm.authMethod as AdminAuthMethod,
@@ -547,6 +555,24 @@ export default function UserManagementPage() {
                 </select>
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Position</Label>
+                <Input
+                  value={createForm.job_title}
+                  onChange={(e) => setCreateForm({ ...createForm, job_title: e.target.value })}
+                  placeholder="IT-Systemengineer"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Durchwahl</Label>
+                <Input
+                  value={createForm.phone}
+                  onChange={(e) => setCreateForm({ ...createForm, phone: e.target.value })}
+                  placeholder="+49 6201 39093-30"
+                />
+              </div>
+            </div>
             <div className="space-y-1.5">
               <Label>Firma / Organisation</Label>
               <Input
@@ -628,6 +654,24 @@ export default function UserManagementPage() {
                     <option value="SYSTEM_ADMIN">Administrator</option>
                     <option value="customer">Kunde</option>
                   </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Position</Label>
+                  <Input
+                    value={editForm.job_title || ''}
+                    onChange={(e) => setEditForm({ ...editForm, job_title: e.target.value })}
+                    placeholder="IT-Systemengineer"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Durchwahl</Label>
+                  <Input
+                    value={editForm.phone || ''}
+                    onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                    placeholder="+49 6201 39093-30"
+                  />
                 </div>
               </div>
               <div className="space-y-1.5">
