@@ -71,6 +71,7 @@ export interface PortalDashboardResponse {
     id: string;
     name: string;
     logoUrl: string | null;
+    portalBannerUrl?: string | null;
     portalTitle: string;
   };
   user: { id: string; name: string };

@@ -22,6 +22,7 @@ import {
 
 export const ADMIN_HUB_TABS = [
   { id: 'uebersicht', label: 'Übersicht', labelKey: 'admin.hubTabs.overview' },
+  { id: 'kunden', label: 'Kunden', labelKey: 'admin.hubTabs.kunden' },
   { id: 'ai-engine', label: 'Kern-KI & Modelle', labelKey: 'admin.hubTabs.aiEngine' },
   { id: 'rag', label: 'RAG & Wissensbasis', labelKey: 'admin.hubTabs.rag' },
   { id: 'governance', label: 'PII & Compliance', labelKey: 'admin.hubTabs.governance' },
@@ -34,6 +35,9 @@ export type AdminHubTabId = (typeof ADMIN_HUB_TABS)[number]['id'];
 const TAB_ALIASES: Record<string, AdminHubTabId> = {
   uebersicht: 'uebersicht',
   overview: 'uebersicht',
+  kunden: 'kunden',
+  customers: 'kunden',
+  unternehmen: 'kunden',
   'ai-engine': 'ai-engine',
   ai: 'ai-engine',
   ki: 'ai-engine',
@@ -76,7 +80,7 @@ export const ADMIN_HUB_SUBROUTES: Array<{ path: string; meta: AdminHubSubRouteMe
   { path: '/admin/groups', meta: { parentTab: 'system', label: 'Functional Teams' } },
   { path: '/admin/roles', meta: { parentTab: 'system', label: 'RBAC Command' } },
   { path: '/admin/import', meta: { parentTab: 'system', label: 'Data Import & Migration' } },
-  { path: '/admin/customers', meta: { parentTab: 'system', label: 'Kunden' } },
+  { path: '/admin/customers', meta: { parentTab: 'kunden', label: 'Kunden' } },
   { path: '/admin/settings', meta: { parentTab: 'system', label: 'Systemeinstellungen' } },
   { path: '/admin/branding', meta: { parentTab: 'system', label: 'Firmenbranding' } },
   { path: '/admin/contact-schema', meta: { parentTab: 'system', label: 'Kontaktprofil' } },

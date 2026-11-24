@@ -27,6 +27,7 @@ import {
   parseAndValidateLogoDataUrl,
   resolvePortalTitle,
 } from '../lib/client-portal/org-branding.js';
+import { parseAndValidateDashboardBannerDataUrl } from '../lib/dashboard-banner-validate.js';
 import { findOrganizationEmailChannel } from '../lib/email-ingestion/channel-store.js';
 import {
   CLIENT_TEAM_ROLES,
@@ -66,9 +67,14 @@ const orgSchema = z.object({
   tier: z.string().max(80).optional().nullable(),
   sla: z.string().max(120).optional().nullable(),
   contract_renewal: z.string().max(120).optional().nullable(),
+  monthly_rate: z.string().max(80).optional().nullable(),
+  contract_reference: z.string().max(120).optional().nullable(),
+  contract_notes: z.string().max(4000).optional().nullable(),
+  contract_term: z.string().max(120).optional().nullable(),
   is_demo: z.boolean().optional(),
   crm_company_id: z.string().max(120).optional().nullable(),
   logo_url: z.string().max(400_000).optional().nullable(),
+  portal_banner_url: z.string().max(3_000_000).optional().nullable(),
 });
 
 const invitePortalUserSchema = z.object({
@@ -315,6 +321,55 @@ router.delete(
       return res.json({ organization });
     } catch (err: any) {
       return res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete logo') });
+    }
+  },
+);
+
+/**
+ * POST /api/admin/organizations/:id/banner
+ * Upload portal dashboard banner (SYSTEM_ADMIN). Body: { bannerDataUrl } or multipart-style data URL.
+ */
+router.post(
+  '/:id/banner',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const id = routeParam(req.params.id);
+    try {
+      const existing = await getOrganization(id);
+      if (!existing) return res.status(404).json({ error: 'Organization not found.' });
+
+      const raw =
+        (req.body as any)?.bannerDataUrl ??
+        (req.body as any)?.imageDataUrl ??
+        (req.body as any)?.portal_banner_url;
+      const validated = parseAndValidateDashboardBannerDataUrl(raw);
+      if (validated.ok === false) {
+        return res.status(400).json({ error: validated.error });
+      }
+
+      const organization = await updateOrganizationBranding(id, {
+        portal_banner_url: validated.dataUrl,
+      });
+      return res.json({ organization });
+    } catch (err: any) {
+      safeLog('error', '[organizations] banner upload failed', err?.message || err);
+      return res.status(500).json({ error: safeErrorMessage(err, 'Banner konnte nicht gespeichert werden') });
+    }
+  },
+);
+
+/** DELETE /api/admin/organizations/:id/banner */
+router.delete(
+  '/:id/banner',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const id = routeParam(req.params.id);
+    try {
+      const organization = await updateOrganizationBranding(id, { portal_banner_url: null });
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({ organization });
+    } catch (err: any) {
+      return res.status(500).json({ error: safeErrorMessage(err, 'Banner konnte nicht entfernt werden') });
     }
   },
 );

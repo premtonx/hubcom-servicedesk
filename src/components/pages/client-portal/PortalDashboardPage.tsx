@@ -105,36 +105,48 @@ function WelcomeHeader({
   ctaLabel: string;
   onCreate: () => void;
 }) {
+  const bannerUrl = data.organization.portalBannerUrl;
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-      <div className="flex items-center gap-3 min-w-0">
-        {data.organization.logoUrl ? (
-          <img
-            src={data.organization.logoUrl}
-            alt=""
-            className="w-12 h-12 rounded-2xl object-contain border border-slate-200 bg-white shrink-0"
-          />
-        ) : (
-          <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center text-sm font-black shrink-0">
-            {data.organization.name.slice(0, 2).toUpperCase()}
+    <div
+      className="relative overflow-hidden rounded-[1.75rem] border border-white/40 shadow-sm"
+      style={{
+        backgroundImage: bannerUrl
+          ? `linear-gradient(135deg, rgba(255,255,255,0.72), rgba(240,248,255,0.55)), url(${bannerUrl})`
+          : 'linear-gradient(135deg, #eff6ff 0%, #e0f2fe 45%, #f8fafc 100%)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      }}
+    >
+      <div className="backdrop-blur-[2px] bg-white/35 px-5 py-5 sm:px-6 sm:py-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          {data.organization.logoUrl ? (
+            <img
+              src={data.organization.logoUrl}
+              alt=""
+              className="w-12 h-12 rounded-2xl object-contain border border-slate-200 bg-white shrink-0"
+            />
+          ) : (
+            <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center text-sm font-black shrink-0">
+              {data.organization.name.slice(0, 2).toUpperCase()}
+            </div>
+          )}
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight truncate">
+              Willkommen zurück, {data.user.name || 'Nutzer'}
+            </h1>
+            <p className="text-sm text-slate-600 font-medium truncate">
+              {data.organization.portalTitle || `${data.organization.name} ServiceDesk`}
+            </p>
           </div>
-        )}
-        <div className="min-w-0">
-          <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight truncate">
-            Willkommen zurück, {data.user.name || 'Nutzer'}
-          </h1>
-          <p className="text-sm text-slate-500 font-medium truncate">
-            {data.organization.portalTitle || `${data.organization.name} ServiceDesk`}
-          </p>
         </div>
+        <Button
+          onClick={onCreate}
+          className="h-11 px-5 rounded-xl font-bold bg-slate-900 hover:bg-slate-800 text-white gap-2 shrink-0"
+        >
+          <Plus className="w-4 h-4" />
+          {ctaLabel}
+        </Button>
       </div>
-      <Button
-        onClick={onCreate}
-        className="h-11 px-5 rounded-xl font-bold bg-slate-900 hover:bg-slate-800 text-white gap-2 shrink-0"
-      >
-        <Plus className="w-4 h-4" />
-        {ctaLabel}
-      </Button>
     </div>
   );
 }

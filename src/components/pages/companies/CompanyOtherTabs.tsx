@@ -1,44 +1,43 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { vaultService } from '../../../services/vaultService';
 import { VaultItem } from '../../../types';
-import { 
-  Users, 
-  Mail, 
-  Phone, 
-  PhoneCall, 
-  ExternalLink, 
-  History, 
-  Plus, 
-  Server, 
-  Laptop, 
-  Network, 
-  AppWindow, 
-  FileText, 
-  Calendar, 
-  Key, 
-  Eye, 
-  EyeOff, 
-  Brain, 
-  Clock, 
-  AlertTriangle, 
-  Bot, 
-  Sparkles, 
-  CheckCircle2,
+import {
+  Users,
+  Mail,
+  Phone,
+  Plus,
+  FileText,
+  Key,
+  Eye,
+  EyeOff,
+  Brain,
+  Clock,
+  Sparkles,
   Lock,
-  ArrowUpRight,
   Copy,
   Trash2,
-  ShieldCheck
+  ShieldCheck,
 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../ui/card';
 import { Input } from '../../ui/input';
+import { Textarea } from '../../ui/textarea';
 import { Badge } from '../../ui/badge';
+import { Label } from '../../ui/label';
 import { Contact, Ticket } from '../../../types';
 import { CustomField } from '../../../services/schemaService';
 import { cn } from '../../../lib/utils';
-import { HydratedCompany } from './utils';
+import {
+  HydratedCompany,
+  buildCompanyActivityEvents,
+  deriveTicketInsights,
+  formatDateDe,
+  formatDateTimeDe,
+  invitationStatusLabelDe,
+} from './utils';
 import { toast } from 'sonner';
+import axios from 'axios';
+import { useTranslation } from '../../../lib/context/I18nContext';
 
 interface CompanyOtherTabsProps {
   activeSubTab: string;
@@ -48,6 +47,8 @@ interface CompanyOtherTabsProps {
   ticketHistory: Ticket[];
   onAddContactClick: () => void;
   onSelectTicket?: (id: string) => void;
+  onCompanyUpdated?: (patch: Partial<HydratedCompany>) => void;
+  onVaultItemsChange?: (items: VaultItem[]) => void;
 }
 
 export default function CompanyOtherTabs({
@@ -57,34 +58,97 @@ export default function CompanyOtherTabs({
   contactSchema,
   ticketHistory,
   onAddContactClick,
-  onSelectTicket
+  onSelectTicket,
+  onCompanyUpdated,
+  onVaultItemsChange,
 }: CompanyOtherTabsProps) {
+  const { t } = useTranslation();
   const [revealedKeys, setRevealedKeys] = useState<Record<string, boolean>>({});
   const [companyVaultItems, setCompanyVaultItems] = useState<VaultItem[]>([]);
   const [isAddingSecret, setIsAddingSecret] = useState(false);
   const [newSecretLabel, setNewSecretLabel] = useState('');
   const [newSecretValue, setNewSecretValue] = useState('');
   const [newSecretType, setNewSecretType] = useState('password');
+  const [portalStatusByEmail, setPortalStatusByEmail] = useState<Record<string, string>>({});
+  const [editingContract, setEditingContract] = useState(false);
+  const [savingContract, setSavingContract] = useState(false);
+  const [contractDraft, setContractDraft] = useState({
+    contractPlan: company.contractPlan || '',
+    contractReference: company.contractReference || '',
+    contractSla: company.contractSla || '',
+    contractTerm: company.contractTerm || '',
+    contractRenewalDate: company.contractRenewalDate || '',
+    monthlySpend: company.monthlySpend || '',
+    contractNotes: company.contractNotes || '',
+  });
 
-  // Sync with Firestore for company vault items
+  useEffect(() => {
+    setContractDraft({
+      contractPlan: company.contractPlan || '',
+      contractReference: company.contractReference || '',
+      contractSla: company.contractSla || '',
+      contractTerm: company.contractTerm || '',
+      contractRenewalDate: company.contractRenewalDate || '',
+      monthlySpend: company.monthlySpend || '',
+      contractNotes: company.contractNotes || '',
+    });
+  }, [company.id, company.hasContract, company.contractPlan, company.contractSla]);
+
+  const orgId = company.organizationId || (company as any).organization_id || null;
+  const companyScopeIds = useMemo(() => {
+    const ids = new Set<string>([company.id]);
+    if (orgId) ids.add(String(orgId));
+    return ids;
+  }, [company.id, orgId]);
+
   useEffect(() => {
     const unsub = vaultService.subscribeToHistory((items) => {
-      // Filter items matching this company
-      const filtered = items.filter(item => item.metadata?.relatedCompanyId === company.id);
+      const filtered = items.filter((item) => {
+        const related = String(item.metadata?.relatedCompanyId || '');
+        return related && companyScopeIds.has(related);
+      });
       setCompanyVaultItems(filtered);
+      onVaultItemsChange?.(filtered);
     });
     return () => unsub();
-  }, [company.id]);
+  }, [companyScopeIds, onVaultItemsChange]);
+
+  useEffect(() => {
+    if (!orgId || activeSubTab !== 'contacts') return;
+    let cancelled = false;
+    void axios
+      .get(`/api/admin/organizations/${encodeURIComponent(String(orgId))}/users`, {
+        withCredentials: true,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        const map: Record<string, string> = {};
+        for (const u of (res.data?.users || []) as Array<Record<string, unknown>>) {
+          const email = String(u.email || '')
+            .trim()
+            .toLowerCase();
+          if (!email) continue;
+          map[email] = String(u.invitationStatus || u.invitation_status || '');
+        }
+        setPortalStatusByEmail(map);
+      })
+      .catch(() => {
+        if (!cancelled) setPortalStatusByEmail({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [orgId, activeSubTab, employees.length]);
 
   const handleCompanyAddSecret = async () => {
     if (!newSecretLabel.trim() || !newSecretValue.trim()) {
-      toast.error("Please fill in both label and secret content.");
+      toast.error(t('companies.vault.fillRequired', 'Bitte Bezeichnung und Geheimnis ausfüllen.'));
       return;
     }
     try {
       setIsAddingSecret(true);
       const expiresAt = new Date();
-      expiresAt.setHours(expiresAt.getHours() + 168); // Expires in a week
+      expiresAt.setHours(expiresAt.getHours() + 168);
 
       await vaultService.createItem({
         type: 'secret',
@@ -97,31 +161,82 @@ export default function CompanyOtherTabs({
           pqcLevel: 3,
           secretType: newSecretType,
           relatedCompanyId: company.id,
+          organizationId: orgId || undefined,
           requestName: newSecretLabel,
-          targetRecipient: company.name
-        }
+          targetRecipient: company.name,
+        },
       });
 
-      toast.success(`Secret registered for ${company.name} profile workspace!`);
+      toast.success(t('companies.vault.registered', 'Geheimnis registriert.'));
       setNewSecretLabel('');
       setNewSecretValue('');
       setIsAddingSecret(false);
     } catch (err: any) {
       console.error(err);
-      toast.error("Vulnerability failure: key cannot be synchronized.");
+      toast.error(t('companies.vault.registerFailed', 'Geheimnis konnte nicht gespeichert werden.'));
       setIsAddingSecret(false);
     }
   };
-  
+
   const toggleKeyReveal = (id: string) => {
-    setRevealedKeys(prev => ({ ...prev, [id]: !prev[id] }));
+    setRevealedKeys((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const handleCallContact = (contactName: string) => {
-    toast.success(`Dialing direct connection call for ${contactName}`, {
-      description: "Redirecting sound input pipeline stream to WebRTC gateway.",
-      duration: 3000
-    });
+  const saveContract = async () => {
+    if (!orgId) {
+      toast.error(
+        t(
+          'companies.contract.noOrg',
+          'Kein verknüpftes Unternehmen (Organization) — Vertrag kann nicht gespeichert werden.',
+        ),
+      );
+      return;
+    }
+    setSavingContract(true);
+    try {
+      await axios.put(
+        `/api/admin/organizations/${encodeURIComponent(String(orgId))}`,
+        {
+          name: company.name,
+          tier: contractDraft.contractPlan || null,
+          sla: contractDraft.contractSla || null,
+          contract_renewal: contractDraft.contractRenewalDate || null,
+          monthly_rate: contractDraft.monthlySpend || null,
+          contract_reference: contractDraft.contractReference || null,
+          contract_notes: contractDraft.contractNotes || null,
+          contract_term: contractDraft.contractTerm || null,
+        },
+        { withCredentials: true },
+      );
+      onCompanyUpdated?.({
+        contractPlan: contractDraft.contractPlan,
+        contractSla: contractDraft.contractSla,
+        contractRenewalDate: contractDraft.contractRenewalDate,
+        monthlySpend: contractDraft.monthlySpend,
+        contractReference: contractDraft.contractReference,
+        contractNotes: contractDraft.contractNotes,
+        contractTerm: contractDraft.contractTerm,
+        tier: contractDraft.contractPlan,
+        hasContract: Boolean(
+          contractDraft.contractPlan ||
+            contractDraft.contractSla ||
+            contractDraft.contractRenewalDate ||
+            contractDraft.monthlySpend ||
+            contractDraft.contractReference ||
+            contractDraft.contractTerm ||
+            contractDraft.contractNotes,
+        ),
+      });
+      setEditingContract(false);
+      toast.success(t('companies.contract.saved', 'Vertrag gespeichert.'));
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.error ||
+          t('companies.contract.saveFailed', 'Vertrag konnte nicht gespeichert werden.'),
+      );
+    } finally {
+      setSavingContract(false);
+    }
   };
 
   if (activeSubTab === 'contacts') {
@@ -129,17 +244,24 @@ export default function CompanyOtherTabs({
       <Card className="border border-muted-foreground/10 rounded-2xl bg-background overflow-hidden">
         <CardHeader className="flex flex-row items-center justify-between pb-2 bg-muted/10">
           <div>
-            <CardTitle className="text-sm font-black text-foreground">Key Contacts & Employees</CardTitle>
-            <p className="text-xs text-muted-foreground mt-0.5">Primary stakeholders and operational contacts who authorize support tickets.</p>
+            <CardTitle className="text-sm font-black text-foreground">
+              {t('companies.contactsTitle', 'Kontakte & Mitarbeiter')}
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {t(
+                'companies.contactsHint',
+                'Primäre Ansprechpartner und operative Kontakte dieses Unternehmens.',
+              )}
+            </p>
           </div>
-          <Button 
+          <Button
             onClick={onAddContactClick}
-            variant="outline" 
-            size="sm" 
+            variant="outline"
+            size="sm"
             className="rounded-xl font-bold text-xs h-9 px-4 border-muted-foreground/15 text-foreground hover:bg-muted"
           >
-             <Plus className="w-4 h-4 mr-2" />
-             Add Contact
+            <Plus className="w-4 h-4 mr-2" />
+            {t('companies.addContact', 'Kontakt hinzufügen')}
           </Button>
         </CardHeader>
         <CardContent className="p-0">
@@ -147,108 +269,113 @@ export default function CompanyOtherTabs({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-muted/30 border-b text-[10px] font-black text-muted-foreground uppercase tracking-widest">
-                  <th className="px-5 py-3.5">Employee</th>
-                  <th className="px-5 py-3.5">Direct Access</th>
-                  <th className="px-5 py-3.5">Custom Attributes</th>
-                  <th className="px-5 py-3.5 text-center">Actions</th>
+                  <th className="px-5 py-3.5">{t('companies.employee', 'Mitarbeiter')}</th>
+                  <th className="px-5 py-3.5">{t('companies.directAccess', 'Direkter Kontakt')}</th>
+                  <th className="px-5 py-3.5">{t('companies.customAttributes', 'Attribute')}</th>
+                  <th className="px-5 py-3.5 text-center">{t('companies.status', 'Status')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50 text-xs">
-                {employees.map(employee => {
+                {employees.map((employee) => {
                   const meta = (employee.metadata || {}) as Record<string, unknown>;
                   const portalRole = meta.portalRole ? String(meta.portalRole) : null;
-                  const inviteStatus = meta.invitationStatus
-                    ? String(meta.invitationStatus)
-                    : meta.syncedFromPortal
-                      ? 'pending'
-                      : null;
+                  const emailKey = String(employee.email || '')
+                    .trim()
+                    .toLowerCase();
+                  const liveStatus = portalStatusByEmail[emailKey];
+                  const inviteStatus = liveStatus
+                    ? liveStatus
+                    : meta.invitationStatus
+                      ? String(meta.invitationStatus)
+                      : meta.syncedFromPortal
+                        ? 'pending'
+                        : null;
+                  const statusLabel = invitationStatusLabelDe(inviteStatus);
+                  const phone = employee.phoneWork || employee.phoneMobile || '';
                   return (
-                  <tr key={employee.id} className="hover:bg-muted/10 transition-colors group">
-                    <td className="px-5 py-3.5 flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center text-xs">
-                        {employee.name.charAt(0)}
-                      </div>
-                      <div>
-                        <p className="font-bold text-foreground text-sm leading-none">{employee.name}</p>
-                        <p className="text-[10px] text-muted-foreground mt-1">{employee.title || 'Kontakt'}</p>
-                        {(portalRole || inviteStatus) && (
-                          <div className="flex flex-wrap gap-1 mt-1.5">
+                    <tr key={employee.id} className="hover:bg-muted/10 transition-colors group">
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center text-xs">
+                            {employee.name.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="font-bold text-foreground text-sm leading-none">
+                              {employee.name}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                              {employee.title || t('companies.contact', 'Kontakt')}
+                            </p>
                             {portalRole ? (
-                              <Badge className="text-[9px] font-extrabold uppercase bg-indigo-50 text-indigo-700 border-indigo-100">
+                              <Badge className="mt-1.5 text-[9px] font-extrabold uppercase bg-indigo-50 text-indigo-700 border-indigo-100">
                                 {portalRole}
                               </Badge>
                             ) : null}
-                            {inviteStatus ? (
-                              <Badge
-                                className={cn(
-                                  'text-[9px] font-extrabold uppercase border',
-                                  inviteStatus === 'accepted' &&
-                                    'bg-emerald-50 text-emerald-700 border-emerald-100',
-                                  inviteStatus === 'sent' &&
-                                    'bg-sky-50 text-sky-700 border-sky-100',
-                                  inviteStatus === 'failed' &&
-                                    'bg-rose-50 text-rose-700 border-rose-100',
-                                  (inviteStatus === 'pending' || inviteStatus === 'expired') &&
-                                    'bg-amber-50 text-amber-800 border-amber-100',
-                                )}
-                              >
-                                {inviteStatus}
-                              </Badge>
-                            ) : null}
                           </div>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-5 py-3.5">
-                       <div className="flex flex-col gap-1 text-muted-foreground font-semibold">
-                          <div className="flex items-center gap-1.5 hover:text-primary transition-colors cursor-pointer">
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex flex-col gap-1 text-muted-foreground font-semibold">
+                          <div className="flex items-center gap-1.5">
                             <Mail className="w-3.5 h-3.5 opacity-60" />
-                            {employee.email}
+                            {employee.email || '—'}
                           </div>
-                          {(employee.phoneWork || employee.phoneMobile) ? (
-                            <div className="flex items-center gap-1.5 opacity-60">
+                          {phone ? (
+                            <div className="flex items-center gap-1.5 opacity-80">
                               <Phone className="w-3.5 h-3.5" />
-                              {employee.phoneWork || employee.phoneMobile}
+                              {phone}
                             </div>
-                          ) : (
-                            <span className="text-[10px] text-muted-foreground/42 italic">No registered phone number</span>
-                          )}
-                       </div>
-                    </td>
-                    <td className="px-5 py-3.5">
-                       <div className="flex flex-wrap gap-1">
-                          {contactSchema.filter(f => !f.system && employee.metadata?.[f.internalName]).map(field => (
-                            <span key={field.id} className="text-[9px] font-extrabold bg-indigo-50 text-indigo-600 border border-indigo-150 px-2 py-0.5 rounded uppercase">
-                              {field.label}: {String(employee.metadata?.[field.internalName])}
-                            </span>
-                          ))}
-                          {(!employee.metadata || Object.keys(employee.metadata).length === 0) && (
-                            <span className="text-[10px] text-muted-foreground/45 italic">No custom attributes</span>
-                          )}
-                       </div>
-                    </td>
-                    <td className="px-5 py-3.5">
-                       <div className="flex items-center justify-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button 
-                            onClick={() => handleCallContact(employee.name)}
-                            variant="outline" 
-                            size="sm" 
-                            className="h-8 w-8 p-0 rounded-lg border-emerald-100 bg-emerald-500/[0.03] text-emerald-500 hover:bg-emerald-600 hover:text-white transition-all shadow-none cursor-pointer"
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex flex-wrap gap-1">
+                          {contactSchema
+                            .filter((f) => !f.system && employee.metadata?.[f.internalName])
+                            .map((field) => (
+                              <span
+                                key={field.id}
+                                className="text-[9px] font-extrabold bg-indigo-50 text-indigo-600 border border-indigo-150 px-2 py-0.5 rounded uppercase"
+                              >
+                                {field.label}: {String(employee.metadata?.[field.internalName])}
+                              </span>
+                            ))}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5 text-center">
+                        {statusLabel ? (
+                          <Badge
+                            className={cn(
+                              'text-[9px] font-extrabold uppercase border',
+                              inviteStatus === 'accepted' &&
+                                'bg-emerald-50 text-emerald-700 border-emerald-100',
+                              inviteStatus === 'sent' &&
+                                'bg-sky-50 text-sky-700 border-sky-100',
+                              inviteStatus === 'failed' &&
+                                'bg-rose-50 text-rose-700 border-rose-100',
+                              (inviteStatus === 'pending' || inviteStatus === 'expired') &&
+                                'bg-amber-50 text-amber-800 border-amber-100',
+                            )}
                           >
-                            <PhoneCall className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 rounded-lg text-muted-foreground hover:bg-muted">
-                            <ExternalLink className="w-3.5 h-3.5" />
-                          </Button>
-                       </div>
-                    </td>
-                  </tr>
+                            {statusLabel}
+                          </Badge>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </tr>
                   );
                 })}
                 {employees.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-5 py-12 text-center text-muted-foreground italic font-semibold">
-                      No contacts registered for this organization.
+                    <td
+                      colSpan={4}
+                      className="px-5 py-12 text-center text-muted-foreground italic font-semibold"
+                    >
+                      {t(
+                        'companies.noContacts',
+                        'Noch keine Kontakte für dieses Unternehmen.',
+                      )}
                     </td>
                   </tr>
                 )}
@@ -264,8 +391,15 @@ export default function CompanyOtherTabs({
     return (
       <Card className="border border-muted-foreground/10 rounded-2xl bg-background overflow-hidden">
         <CardHeader className="pb-2 bg-muted/10">
-          <CardTitle className="text-sm font-black text-foreground">Relational Support Log</CardTitle>
-          <p className="text-xs text-muted-foreground mt-0.5">Comprehensive audit trail of support interactions requested by employees of this organization.</p>
+          <CardTitle className="text-sm font-black text-foreground">
+            {t('companies.ticketsTitle', 'Tickets')}
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {t(
+              'companies.ticketsHint',
+              'Support-Tickets, die diesem Unternehmen zugeordnet sind.',
+            )}
+          </p>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -273,54 +407,72 @@ export default function CompanyOtherTabs({
               <thead>
                 <tr className="bg-muted/30 border-b text-[10px] font-black text-muted-foreground uppercase tracking-widest">
                   <th className="px-5 py-3.5 text-center">ID</th>
-                  <th className="px-5 py-3.5">Subject & Request</th>
-                  <th className="px-5 py-3.5">Priority</th>
-                  <th className="px-5 py-3.5">Status</th>
-                  <th className="px-5 py-3.5">Requester</th>
-                  <th className="px-5 py-3.5">Date</th>
+                  <th className="px-5 py-3.5">{t('companies.subject', 'Betreff')}</th>
+                  <th className="px-5 py-3.5">{t('companies.priority', 'Priorität')}</th>
+                  <th className="px-5 py-3.5">{t('companies.status', 'Status')}</th>
+                  <th className="px-5 py-3.5">{t('companies.requester', 'Anfragender')}</th>
+                  <th className="px-5 py-3.5">{t('companies.date', 'Datum')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50 text-xs text-foreground font-semibold">
-                {ticketHistory.map(ticket => (
-                  <tr 
-                    key={ticket.id} 
+                {ticketHistory.map((ticket) => (
+                  <tr
+                    key={ticket.id}
                     onClick={() => onSelectTicket?.(ticket.id)}
                     className="hover:bg-muted/10 transition-colors cursor-pointer select-none"
                   >
-                    <td className="px-5 py-3.5 font-mono text-muted-foreground text-center">#{ticket.id}</td>
-                    <td className="px-5 py-3.5 max-w-sm truncate font-black text-foreground">{ticket.subject}</td>
+                    <td className="px-5 py-3.5 font-mono text-muted-foreground text-center">
+                      #{ticket.id}
+                    </td>
+                    <td className="px-5 py-3.5 max-w-sm truncate font-black text-foreground">
+                      {ticket.subject}
+                    </td>
                     <td className="px-5 py-3.5">
-                      <span className={cn(
-                        "text-[9px] font-black px-2 py-0.5 rounded uppercase",
-                        ticket.priority === 'urgent' && "bg-rose-500/10 text-rose-500",
-                        ticket.priority === 'high' && "bg-amber-500/10 text-amber-500",
-                        ticket.priority === 'medium' && "bg-blue-500/10 text-blue-500",
-                        ticket.priority === 'low' && "bg-slate-100 text-slate-500"
-                      )}>
+                      <span
+                        className={cn(
+                          'text-[9px] font-black px-2 py-0.5 rounded uppercase',
+                          ticket.priority === 'urgent' && 'bg-rose-500/10 text-rose-500',
+                          ticket.priority === 'high' && 'bg-amber-500/10 text-amber-500',
+                          ticket.priority === 'medium' && 'bg-blue-500/10 text-blue-500',
+                          ticket.priority === 'low' && 'bg-slate-100 text-slate-500',
+                        )}
+                      >
                         {ticket.priority}
                       </span>
                     </td>
                     <td className="px-5 py-3.5">
-                      <span className={cn(
-                        "text-[9px] font-black px-2 py-0.5 rounded uppercase",
-                        ticket.status === 'open' && "bg-emerald-500/10 text-emerald-500",
-                        ticket.status === 'pending' && "bg-amber-500/10 text-amber-500",
-                        ticket.status === 'resolved' && "bg-slate-100 text-slate-500",
-                        ticket.status === 'closed' && "bg-slate-200 text-slate-600"
-                      )}>
+                      <span
+                        className={cn(
+                          'text-[9px] font-black px-2 py-0.5 rounded uppercase',
+                          ticket.status === 'open' && 'bg-emerald-500/10 text-emerald-500',
+                          ticket.status === 'pending' && 'bg-amber-500/10 text-amber-500',
+                          ticket.status === 'resolved' && 'bg-slate-100 text-slate-500',
+                          ticket.status === 'closed' && 'bg-slate-200 text-slate-600',
+                        )}
+                      >
                         {ticket.status}
                       </span>
                     </td>
-                    <td className="px-5 py-3.5 text-muted-foreground font-bold">{ticket.customerName}</td>
+                    <td className="px-5 py-3.5 text-muted-foreground font-bold">
+                      {ticket.customerName || '—'}
+                    </td>
                     <td className="px-5 py-3.5 text-muted-foreground">
-                       {ticket.createdAt?.toDate ? ticket.createdAt.toDate().toLocaleDateString() : 'N/A'}
+                      {ticket.createdAt?.toDate
+                        ? formatDateDe(ticket.createdAt.toDate())
+                        : formatDateDe(ticket.createdAt as any) || '—'}
                     </td>
                   </tr>
                 ))}
                 {ticketHistory.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-5 py-12 text-center text-muted-foreground italic font-semibold">
-                      No tickets recorded.
+                    <td
+                      colSpan={6}
+                      className="px-5 py-12 text-center text-muted-foreground italic font-semibold"
+                    >
+                      {t(
+                        'companies.noTicketsForCompany',
+                        'Noch keine Tickets für dieses Unternehmen.',
+                      )}
                     </td>
                   </tr>
                 )}
@@ -334,60 +486,42 @@ export default function CompanyOtherTabs({
 
   if (activeSubTab === 'assets') {
     return (
-      <div className="space-y-6">
-        <Card className="border border-muted-foreground/10 rounded-2xl bg-background">
-          <CardHeader>
-            <CardTitle className="text-sm font-black text-foreground">Managed Asset List</CardTitle>
-            <p className="text-xs text-muted-foreground mt-0.5">Asset instances and remote software licenses integrated via auto-discovery pipelines.</p>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-muted/30 border-b text-[10px] font-black text-muted-foreground uppercase tracking-widest">
-                    <th className="px-5 py-3.5">Asset Hostname / Name</th>
-                    <th className="px-5 py-3.5">Category</th>
-                    <th className="px-5 py-3.5">Identifier / IP Address</th>
-                    <th className="px-5 py-3.5">Status</th>
-                    <th className="px-5 py-3.5">Last Scan</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/50 text-foreground font-semibold">
-                  {[
-                    { name: 'Server-PROD-01', cat: 'Server', identifier: '10.250.12.18', status: 'Online', icon: Server, iconColor: 'text-indigo-500' },
-                    { name: 'Server-PROD-02', cat: 'Server', identifier: '10.250.12.19', status: 'Online', icon: Server, iconColor: 'text-indigo-500' },
-                    { name: 'Workstation-SARAH-PC', cat: 'Workstation', identifier: '10.250.15.54', status: 'Online', icon: Laptop, iconColor: 'text-emerald-500' },
-                    { name: 'Workstation-COYOTE-RND', cat: 'Workstation', identifier: '10.250.15.112', status: 'Offline', icon: Laptop, iconColor: 'text-emerald-500' },
-                    { name: 'CoreRouter-01', cat: 'Network Device', identifier: '192.168.10.1', status: 'Online', icon: Network, iconColor: 'text-amber-500' },
-                    { name: 'SAP Finance Gateway', cat: 'Application', identifier: 'license-sap-3392', status: 'Online', icon: AppWindow, iconColor: 'text-purple-500' }
-                  ].map((asset, idx) => {
-                    const Icon = asset.icon;
-                    return (
-                      <tr key={idx} className="hover:bg-muted/10 transition-colors">
-                        <td className="px-5 py-3.5 flex items-center gap-2.5 font-black text-foreground">
-                          <Icon className={cn("w-4 h-4", asset.iconColor)} />
-                          {asset.name}
-                        </td>
-                        <td className="px-5 py-3.5 text-muted-foreground">{asset.cat}</td>
-                        <td className="px-5 py-3.5 font-mono text-muted-foreground text-[11px]">{asset.identifier}</td>
-                        <td className="px-5 py-3.5">
-                          <span className={cn(
-                            "text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase",
-                            asset.status === 'Online' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-200 text-slate-500'
-                          )}>
-                            {asset.status}
-                          </span>
-                        </td>
-                        <td className="px-5 py-3.5 text-muted-foreground/80 font-medium">Synced 2 hours ago</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <Card className="border border-muted-foreground/10 rounded-2xl bg-background">
+        <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <div>
+            <CardTitle className="text-sm font-black text-foreground">
+              {t('companies.assetOverview', 'Asset-Übersicht')}
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {t(
+                'companies.assetsHint',
+                'Verwaltete Geräte und Anwendungen dieses Unternehmens.',
+              )}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-xl font-bold text-xs h-9"
+            onClick={() =>
+              toast.info(
+                t(
+                  'companies.assetsAddSoon',
+                  'Asset-Erfassung wird über die Inventar-Integration bereitgestellt.',
+                ),
+              )
+            }
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            {t('companies.addAsset', 'Asset hinzufügen')}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <p className="py-12 text-center text-sm text-muted-foreground font-semibold">
+            {t('companies.noAssetsLinked', 'Noch keine Assets verknüpft.')}
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -395,69 +529,121 @@ export default function CompanyOtherTabs({
     return (
       <div className="space-y-6">
         <Card className="border border-muted-foreground/10 rounded-2xl bg-background max-w-4xl">
-          <CardHeader>
-            <CardTitle className="text-sm font-black text-foreground">SLA & Plan Provisions</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
+            <CardTitle className="text-sm font-black text-foreground flex items-center gap-2">
+              <FileText className="w-4 h-4 text-primary" />
+              {t('companies.supportContract', 'Support-Vertrag')}
+            </CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-xl font-bold text-xs h-9"
+              onClick={() => setEditingContract((v) => !v)}
+            >
+              {editingContract
+                ? t('common.cancel', 'Abbrechen')
+                : t('companies.editContract', 'Vertrag bearbeiten')}
+            </Button>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="border border-muted rounded-xl p-6 bg-white shadow-inner relative space-y-4">
-              <div className="absolute top-4 right-4 flex items-center gap-1.5 bg-emerald-500/10 text-emerald-600 px-3 py-1 rounded-full text-[10px] font-extrabold border border-emerald-500/25">
-                 Active Service Level Contract
+            {!company.hasContract && !editingContract ? (
+              <div className="rounded-xl border border-dashed border-muted p-8 text-center space-y-3">
+                <p className="text-sm font-bold text-foreground">
+                  {t('companies.noContract', 'Kein Vertrag hinterlegt')}
+                </p>
+                <p className="text-xs text-muted-foreground font-semibold">
+                  {t(
+                    'companies.noContractHint',
+                    'Tarif, SLA und Verlängerungsdatum können hier hinterlegt werden.',
+                  )}
+                </p>
+                <Button
+                  size="sm"
+                  className="rounded-xl font-bold text-xs"
+                  onClick={() => setEditingContract(true)}
+                >
+                  {t('companies.configureContract', 'Vertrag konfigurieren')}
+                </Button>
               </div>
-              
-              <div className="border-b pb-4 space-y-1">
-                <h3 className="text-lg font-black text-foreground">Support Contract & Service Level Addendum (SLA)</h3>
-                <p className="text-xs text-muted-foreground">Authorized Entity: <span className="font-bold text-foreground">{company.name}</span></p>
-                <p className="text-xs text-muted-foreground">Contract Status: <span className="font-bold text-emerald-500">ACTIVE - COMPLIANT WITH PRIORITY RESPONSE MATRIX</span></p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 text-xs font-semibold py-2">
-                <div className="space-y-2">
-                  <div className="flex justify-between border-b pb-1">
-                    <span className="text-muted-foreground">Contract Reference</span>
-                    <span className="text-foreground font-bold">GD-SLA-2026-0922</span>
+            ) : editingContract ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {(
+                  [
+                    ['contractPlan', 'Tarif'],
+                    ['contractReference', 'Vertragsreferenz'],
+                    ['contractSla', 'SLA-Reaktionszeit'],
+                    ['contractTerm', 'Laufzeit'],
+                    ['contractRenewalDate', 'Verlängerungsdatum'],
+                    ['monthlySpend', 'Monatlicher Betrag'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <div key={key} className="space-y-1.5">
+                    <Label className="text-[10px] font-bold uppercase text-muted-foreground">
+                      {label}
+                    </Label>
+                    <Input
+                      value={contractDraft[key]}
+                      onChange={(e) =>
+                        setContractDraft((prev) => ({ ...prev, [key]: e.target.value }))
+                      }
+                      className="h-9 rounded-xl text-xs"
+                      autoComplete="off"
+                    />
                   </div>
-                  <div className="flex justify-between border-b pb-1">
-                    <span className="text-muted-foreground">Active Term</span>
-                    <span className="text-foreground font-bold">12 Months (Auto-renewal)</span>
-                  </div>
-                  <div className="flex justify-between border-b pb-1">
-                    <span className="text-muted-foreground">Support Plan Tier</span>
-                    <span className="text-foreground font-bold">{company.contractPlan}</span>
-                  </div>
+                ))}
+                <div className="md:col-span-2 space-y-1.5">
+                  <Label className="text-[10px] font-bold uppercase text-muted-foreground">
+                    Notizen
+                  </Label>
+                  <Textarea
+                    value={contractDraft.contractNotes}
+                    onChange={(e) =>
+                      setContractDraft((prev) => ({
+                        ...prev,
+                        contractNotes: e.target.value,
+                      }))
+                    }
+                    className="min-h-[90px] rounded-xl text-xs"
+                    autoComplete="off"
+                  />
                 </div>
-
-                <div className="space-y-2">
-                  <div className="flex justify-between border-b pb-1">
-                    <span className="text-muted-foreground">Target SLA Turnaround</span>
-                    <span className="text-foreground font-bold">{company.contractSla}</span>
-                  </div>
-                  <div className="flex justify-between border-b pb-1">
-                    <span className="text-muted-foreground">Renewal Cycle Date</span>
-                    <span className="text-foreground font-bold">{company.contractRenewalDate}</span>
-                  </div>
-                  <div className="flex justify-between border-b pb-1">
-                    <span className="text-muted-foreground">Committed Monthly Rate</span>
-                    <span className="text-foreground font-bold">
-                      {company.monthlySpend || '—'}
-                    </span>
-                  </div>
+                <div className="md:col-span-2">
+                  <Button
+                    onClick={() => void saveContract()}
+                    disabled={savingContract}
+                    className="rounded-xl font-bold text-xs"
+                  >
+                    {savingContract
+                      ? t('common.saving', 'Speichern…')
+                      : t('common.save', 'Speichern')}
+                  </Button>
                 </div>
               </div>
-
-              <div className="p-4 bg-slate-50 rounded-xl space-y-2 text-xs text-slate-700 font-semibold border">
-                <p className="font-bold text-slate-800 flex items-center gap-1.5"><Bot className="w-4 h-4 text-primary" /> Guarded SLA Priorities:</p>
-                <ul className="list-disc pl-5 space-y-1 text-slate-600">
-                  <li>Priority Urgent (P1): Target response &lt; 30 mins, target resolution &lt; 2 hours with automated pager notification.</li>
-                  <li>Priority High (P2): Target response &lt; 2 hours, target resolution &lt; 8 hours.</li>
-                  <li>Priority Medium/Low: Target response within 24 standard business hours.</li>
-                </ul>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 text-xs font-semibold">
+                {[
+                  ['Tarif', company.contractPlan],
+                  ['Vertragsreferenz', company.contractReference],
+                  ['SLA-Reaktionszeit', company.contractSla],
+                  ['Laufzeit', company.contractTerm],
+                  ['Verlängerungsdatum', company.contractRenewalDate],
+                  ['Monatlicher Betrag', company.monthlySpend],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex justify-between border-b pb-1 gap-4">
+                    <span className="text-muted-foreground">{label}</span>
+                    <span className="text-foreground font-bold text-right">{value || '—'}</span>
+                  </div>
+                ))}
+                {company.contractNotes ? (
+                  <div className="md:col-span-2 pt-2">
+                    <p className="text-muted-foreground mb-1">Notizen</p>
+                    <p className="text-foreground font-semibold whitespace-pre-wrap">
+                      {company.contractNotes}
+                    </p>
+                  </div>
+                ) : null}
               </div>
-
-              <div className="pt-4 flex justify-between items-center text-[10px] text-muted-foreground font-bold uppercase">
-                <span>Verification ID: b94a2-99ca-2bf3</span>
-                <span>Digitally Sealed on {company.customerSince || 'Jan 12, 2021'}</span>
-              </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -465,345 +651,320 @@ export default function CompanyOtherTabs({
   }
 
   if (activeSubTab === 'vault') {
-    const combinedVaultList = [
-      { id: 'static-company-1', key: 'database_production_credentials', type: 'Database Password', resource: 'postgres://production-db.acme.internal', psw: 'p@$$w0rd_SeCrEt_acme_99a', status: 'Active' },
-      { id: 'static-company-2', key: 'azure_openai_api_secret', type: 'OAuth API Key', resource: 'https://acme-openai-azure.openai.azure.com', psw: 'sk-proj-AzUrEuXOpEnAiSeCrEtApIkEy99214', status: 'Active' },
-      { id: 'static-company-5', key: 'ollama_local_api_secret', type: 'Local API Key', resource: 'http://localhost:11434', psw: 'local-ollama-token-if-configured', status: 'Active' },
-      { id: 'static-company-3', key: 'saml_idp_x509_certificate', type: 'SAML Certificate', resource: 'SAML Auth Endpoint SSO', psw: 'BEGIN CERTIFICATE-----MIIFODCCBCCgAwIBAgIQ-----END CERTIFICATE', status: 'Active' },
-      { id: 'static-company-4', key: 'smtp_relay_credentials', type: 'SMTP Password', resource: 'smtp.acme.domain:587', psw: 'smtp_mx_relay_secure_token', status: 'Active' },
-      ...companyVaultItems.map(item => {
-        const isReq = item.type === 'request';
-        return {
-          id: item.id,
-          key: isReq ? (item.metadata?.requestName || 'Diagnostic dropzone link') : `Auth Key: ${item.metadata?.secretType || 'Password'}`,
-          type: item.type === 'request' ? 'Secure Dropzone' : 'Shared Secret Link',
-          resource: isReq ? 'Client Upload Request' : `${item.metadata?.targetRecipient || 'Client Shared'} key`,
-          psw: item.type === 'request' ? `${window.location.origin}/v/${item.id}` : 'Encrypted key (Once read)',
-          status: item.isBurned ? 'Burned' : 'Active',
-          rawItem: item
-        };
-      })
-    ];
-
     const copyDirectText = (text: string) => {
       navigator.clipboard.writeText(text);
-      toast.success("Successfully copied key value to workspace clipboard.");
+      toast.success(t('companies.vault.copied', 'In Zwischenablage kopiert.'));
     };
 
     return (
       <div className="space-y-6">
-        
-        {/* KPI header banner */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-muted/20 border border-muted-foreground/10 p-5 rounded-2xl gap-4">
           <div>
             <h3 className="font-sans font-bold text-sm text-foreground flex items-center gap-1.5">
-              <Lock className="w-4.5 h-4.5 text-primary" /> GeistExchange Company Workspace for {company.name}
+              <Lock className="w-4.5 h-4.5 text-primary" />
+              {t('companies.vaultTitle', 'Tresor')} — {company.name}
             </h3>
-            <p className="text-xs text-muted-foreground mt-0.5">Securely manage credentials audit registries, client logs uploads drops, and secure communication channels in single profile view.</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {t(
+                'companies.vaultHint',
+                'Geheimnisse und Zugangsdaten ausschließlich für dieses Unternehmen.',
+              )}
+            </p>
           </div>
           <Badge className="bg-primary/10 text-primary border-none text-[10px] font-bold uppercase tracking-widest px-3 h-6">
-            Quantum ML-KEM Shielded
+            {companyVaultItems.length}{' '}
+            {t('companies.records', 'Einträge')}
           </Badge>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* Main workspace registry table */}
           <div className="lg:col-span-2 space-y-4">
             <Card className="border border-muted-foreground/10 rounded-2xl bg-background overflow-hidden">
               <CardHeader className="bg-muted/10 pb-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-black uppercase text-foreground">Sensitive Secrets & Transferred payloads</span>
-                  <Badge className="bg-emerald-500/15 text-emerald-700 font-bold border-none text-[9px] uppercase px-2 h-5">
-                    {combinedVaultList.length} total records
-                  </Badge>
-                </div>
+                <span className="text-xs font-black uppercase text-foreground">
+                  {t('companies.secretsRegistry', 'Geheimnis-Register')}
+                </span>
               </CardHeader>
               <CardContent className="p-0">
-                <div className="overflow-x-auto text-xs">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-muted/20 border-b text-[10px] font-black text-muted-foreground uppercase tracking-widest">
-                        <th className="px-5 py-3.5">Record Identifier</th>
-                        <th className="px-5 py-3.5">Payload Form</th>
-                        <th className="px-5 py-3.5">Endpoint / Mappings</th>
-                        <th className="px-5 py-3.5">Token / Secure Value</th>
-                        <th className="px-5 py-3.5 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/50 text-foreground font-semibold">
-                      {combinedVaultList.map((rec) => (
-                        <tr key={rec.id} className="hover:bg-muted/5 transition-colors text-xs">
-                          <td className="px-5 py-3.5 font-bold text-foreground max-w-[150px] truncate">{rec.key}</td>
-                          <td className="px-5 py-3.5">
-                            <Badge variant="outline" className="text-[9px] border-none font-bold bg-muted uppercase px-2">
-                              {rec.type}
-                            </Badge>
-                          </td>
-                          <td className="px-5 py-3.5 font-mono text-[10.5px] text-muted-foreground max-w-[150px] truncate">{rec.resource}</td>
-                          <td className="px-5 py-3.5 font-mono">
-                            <div className="flex items-center gap-1.5">
-                              {rec.id.startsWith('static-') ? (
-                                <Input 
-                                  type={revealedKeys[rec.id] ? 'text' : 'password'}
-                                  value={rec.psw} 
-                                  readOnly 
-                                  className="font-mono bg-muted/40 text-[9.5px] max-w-[140px] h-7 border-none"
-                                />
-                              ) : (
-                                <span className="text-[10px] text-primary underline truncate max-w-[140px] font-bold">{rec.psw}</span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-5 py-3.5 text-right whitespace-nowrap">
-                            <div className="flex justify-end gap-1">
-                              {rec.id.startsWith('static-') ? (
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="h-7 w-7 rounded-sm text-foreground"
-                                  onClick={() => toggleKeyReveal(rec.id)}
-                                >
-                                  {revealedKeys[rec.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                                </Button>
-                              ) : null}
-                              
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="h-7 w-7 rounded-sm text-[#1A73E8]"
-                                onClick={() => copyDirectText(rec.psw)}
-                                title="Copy credential payload value"
-                              >
-                                <Copy className="w-3.2 h-3.2" />
-                              </Button>
-
-                              {!rec.id.startsWith('static-') && (
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="h-7 w-7 rounded-sm text-red-500 hover:text-red-700"
-                                  onClick={async () => {
-                                    await vaultService.deleteItem(rec.id);
-                                    toast.success("Shredded key element.");
-                                  }}
-                                  title="Purge record"
-                                >
-                                  <Trash2 className="w-3.2 h-3.2" />
-                                </Button>
-                              )}
-                            </div>
-                          </td>
+                {companyVaultItems.length === 0 ? (
+                  <p className="px-5 py-12 text-center text-xs text-muted-foreground font-semibold">
+                    {t(
+                      'companies.noVaultEntries',
+                      'Noch keine Tresor-Einträge für dieses Unternehmen.',
+                    )}
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto text-xs">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-muted/20 border-b text-[10px] font-black text-muted-foreground uppercase tracking-widest">
+                          <th className="px-5 py-3.5">
+                            {t('companies.recordId', 'Bezeichnung')}
+                          </th>
+                          <th className="px-5 py-3.5">{t('companies.type', 'Typ')}</th>
+                          <th className="px-5 py-3.5 text-right">
+                            {t('companies.actions', 'Aktionen')}
+                          </th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="divide-y divide-border/50 text-foreground font-semibold">
+                        {companyVaultItems.map((item) => {
+                          const label =
+                            item.metadata?.requestName ||
+                            item.metadata?.secretType ||
+                            item.type ||
+                            item.id;
+                          const display =
+                            item.type === 'request'
+                              ? `${window.location.origin}/v/${item.id}`
+                              : '••••••••';
+                          return (
+                            <tr key={item.id} className="hover:bg-muted/5">
+                              <td className="px-5 py-3.5 font-bold max-w-[200px] truncate">
+                                {String(label)}
+                              </td>
+                              <td className="px-5 py-3.5">
+                                <Badge
+                                  variant="outline"
+                                  className="text-[9px] border-none font-bold bg-muted uppercase px-2"
+                                >
+                                  {item.metadata?.secretType || item.type}
+                                </Badge>
+                              </td>
+                              <td className="px-5 py-3.5 text-right whitespace-nowrap">
+                                <div className="flex justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => toggleKeyReveal(item.id)}
+                                  >
+                                    {revealedKeys[item.id] ? (
+                                      <EyeOff className="w-3.5 h-3.5" />
+                                    ) : (
+                                      <Eye className="w-3.5 h-3.5" />
+                                    )}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-[#1A73E8]"
+                                    onClick={() => copyDirectText(display)}
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-red-500"
+                                    onClick={async () => {
+                                      await vaultService.deleteItem(item.id);
+                                      toast.success(
+                                        t('companies.vault.deleted', 'Eintrag gelöscht.'),
+                                      );
+                                    }}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Side panel to register new secret credentials for this company */}
-          <div className="space-y-4">
-            <Card className="border border-muted-foreground/10 rounded-2xl bg-background shadow-xs">
-              <CardHeader className="pb-3 border-b">
-                <CardTitle className="text-xs font-black uppercase text-foreground flex items-center gap-1.5">
-                  <Plus className="w-4 h-4 text-primary" /> Register Company Secret
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 space-y-4 text-xs">
-                <div>
-                  <label className="text-[9.5px] font-black uppercase text-slate-400">Record Name Label</label>
-                  <Input 
-                    placeholder="E.g. SFTP production gateway password"
-                    value={newSecretLabel}
-                    onChange={(e) => setNewSecretLabel(e.target.value)}
-                    className="h-9 mt-1 bg-muted/20 text-xs font-semibold rounded-xl"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[9.5px] font-black uppercase text-slate-400">Secret Type</label>
-                  <select 
-                    value={newSecretType}
-                    onChange={(e: any) => setNewSecretType(e.target.value)}
-                    className="w-full h-9 px-2 mt-1 bg-muted/20 border border-muted-foreground/10 rounded-xl text-xs font-bold cursor-pointer"
-                  >
-                    <option value="password">Password/Key</option>
-                    <option value="api_key">API Access token</option>
-                    <option value="certificate">SSL/PEM Certificate</option>
-                    <option value="note">Secure Memo</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-[9.5px] font-black uppercase text-slate-400">Secret Token Value</label>
-                  <Input 
-                    type="password"
-                    placeholder="Raw private values..."
-                    value={newSecretValue}
-                    onChange={(e) => setNewSecretValue(e.target.value)}
-                    className="h-9 mt-1 bg-muted/20 text-xs font-semibold rounded-xl"
-                  />
-                </div>
-
-                <Button 
-                  onClick={handleCompanyAddSecret}
-                  disabled={isAddingSecret}
-                  className="w-full bg-primary hover:bg-primary/95 text-white h-9 rounded-xl font-bold"
+          <Card className="border border-muted-foreground/10 rounded-2xl bg-background shadow-xs">
+            <CardHeader className="pb-3 border-b">
+              <CardTitle className="text-xs font-black uppercase text-foreground flex items-center gap-1.5">
+                <Plus className="w-4 h-4 text-primary" />
+                {t('companies.registerSecret', 'Geheimnis registrieren')}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 space-y-4 text-xs">
+              <div>
+                <label className="text-[9.5px] font-black uppercase text-slate-400">
+                  {t('companies.recordName', 'Bezeichnung')}
+                </label>
+                <Input
+                  placeholder={t('companies.secretNamePlaceholder', 'z. B. VPN-Zugang')}
+                  value={newSecretLabel}
+                  onChange={(e) => setNewSecretLabel(e.target.value)}
+                  className="h-9 mt-1 bg-muted/20 text-xs font-semibold rounded-xl"
+                  autoComplete="off"
+                  name="company-secret-label"
+                />
+              </div>
+              <div>
+                <label className="text-[9.5px] font-black uppercase text-slate-400">
+                  {t('companies.secretType', 'Geheimnistyp')}
+                </label>
+                <select
+                  value={newSecretType}
+                  onChange={(e) => setNewSecretType(e.target.value)}
+                  className="w-full h-9 px-2 mt-1 bg-muted/20 border border-muted-foreground/10 rounded-xl text-xs font-bold cursor-pointer"
+                  autoComplete="off"
                 >
-                  {isAddingSecret ? 'Locking key...' : 'Register Secure Mapped Key'}
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Quick dropzone dispatch panel */}
-            <Card className="border border-muted-foreground/10 rounded-2xl bg-background p-4 text-xs space-y-3 shadow-xs">
-              <div className="flex justify-between items-center">
-                <span className="font-extrabold text-foreground uppercase text-[10px]">Secure Logistics Channel</span>
-                <Badge variant="outline" className="border-none bg-blue-500/10 text-primary uppercase text-[8px] h-4.5 font-extrabold tracking-widest px-1.5 leading-none">
-                  ACTIVE
-                </Badge>
+                  <option value="password">Passwort / Schlüssel</option>
+                  <option value="api_key">API-Token</option>
+                  <option value="certificate">SSL/PEM-Zertifikat</option>
+                  <option value="note">Sichere Notiz</option>
+                </select>
               </div>
-              <p className="text-muted-foreground text-[11px] leading-snug">Need raw system error files or large backups? Generate client data request dropzones inside the primary GeistExchange tab targeting {company.name}.</p>
-              
+              <div>
+                <label className="text-[9.5px] font-black uppercase text-slate-400">
+                  {t('companies.secretValue', 'Geheimniswert')}
+                </label>
+                <Input
+                  type="password"
+                  placeholder={t('companies.secretValuePlaceholder', 'Wert eingeben…')}
+                  value={newSecretValue}
+                  onChange={(e) => setNewSecretValue(e.target.value)}
+                  className="h-9 mt-1 bg-muted/20 text-xs font-semibold rounded-xl"
+                  autoComplete="new-password"
+                  name="company-secret-value"
+                />
+              </div>
+              <Button
+                onClick={handleCompanyAddSecret}
+                disabled={isAddingSecret}
+                className="w-full bg-primary hover:bg-primary/95 text-white h-9 rounded-xl font-bold"
+              >
+                {isAddingSecret
+                  ? t('companies.vault.locking', 'Speichern…')
+                  : t('companies.vault.register', 'Geheimnis registrieren')}
+              </Button>
               <div className="flex gap-2 items-center text-[10px] text-primary font-bold bg-[#E8F0FE] p-1.5 px-3 rounded-lg w-full">
-                <ShieldCheck className="w-3.5 h-3.5" /> Checked under MLS-1024 Quantum Scan
+                <ShieldCheck className="w-3.5 h-3.5" />
+                {t('companies.vault.scoped', 'Nur für dieses Unternehmen sichtbar')}
               </div>
-            </Card>
-          </div>
-
+            </CardContent>
+          </Card>
         </div>
-
       </div>
     );
   }
 
   if (activeSubTab === 'insights') {
+    const insights = deriveTicketInsights(ticketHistory);
+    const hasData = Boolean(insights.topCategory || insights.automationHint);
+
     return (
       <div className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Card className="border border-indigo-500/20 bg-gradient-to-br from-indigo-500/[0.03] to-transparent rounded-2xl">
-            <CardHeader>
-              <CardTitle className="text-sm font-black text-foreground flex items-center gap-1.5 uppercase tracking-wider">
-                <Brain className="w-4 h-4 text-indigo-500" />
-                Churn Health Predictor
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4 text-xs font-semibold">
-              <div className="space-y-2">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-muted-foreground">Account Standby Strength</span>
-                  <span className="text-emerald-500 font-extrabold">92% Reliable</span>
-                </div>
-                <div className="w-full bg-muted rounded-full h-2.5">
-                  <div className="bg-emerald-500 h-2.5 rounded-full" style={{ width: '92%' }} />
-                </div>
-              </div>
-
-              <div className="p-4 bg-white/50 border border-muted rounded-xl space-y-2 text-slate-700 leading-relaxed font-semibold">
-                <p className="font-bold text-foreground">Account Health Summary Analysis:</p>
-                <p className="text-[11px] text-muted-foreground italic">
-                  "Based on ticket response times, high client satisfaction ratings, and long-term recurring active support contracts, Acme Global Solutions is categorized as a low churn risk. Continue automated macros on standard API requests to keep turnaround times low."
-                </p>
-              </div>
+        {!hasData ? (
+          <Card className="border border-muted-foreground/10 rounded-2xl bg-background max-w-3xl">
+            <CardContent className="py-12 text-center space-y-2">
+              <Brain className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+              <p className="text-sm font-bold text-foreground">
+                {t('companies.aiInsights', 'KI-Erkenntnisse')}
+              </p>
+              <p className="text-xs text-muted-foreground font-semibold max-w-md mx-auto">
+                {t(
+                  'companies.aiEmpty',
+                  'Noch keine KI-Erkenntnisse — benötigt aktive Tickets und konfigurierte KI.',
+                )}
+              </p>
             </CardContent>
           </Card>
-
-          <Card className="border border-[#4285F4]/20 bg-gradient-to-br from-[#4285F4]/[0.03] to-transparent rounded-2xl">
-            <CardHeader>
-              <CardTitle className="text-sm font-black text-foreground flex items-center gap-1.5 uppercase tracking-wider">
-                <Sparkles className="w-4 h-4 text-[#4285F4]" />
-                Common Issue Detection
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4 text-xs font-semibold">
-              <div className="space-y-3">
-                {[
-                  { issue: 'Authentication / SSO config errors', freq: '40% of standard tickets', recommendation: 'Build SSO macro tutorial' },
-                  { issue: 'Invoice delay questions', freq: '30% of billing inquiries', recommendation: 'Redirect queries to stripe gateway' },
-                  { issue: 'API Configuration feedback', freq: '30% of tickets', recommendation: 'Provide webhook documentation' }
-                ].map((item, idx) => (
-                  <div key={idx} className="p-3 bg-muted/20 border border-muted rounded-xl flex justify-between items-start gap-3">
-                    <div className="space-y-1">
-                      <p className="font-black text-foreground text-xs">{item.issue}</p>
-                      <p className="text-[10px] text-muted-foreground">Recommendation: {item.recommendation}</p>
-                    </div>
-                    <Badge variant="outline" className="border-none bg-primary/10 text-primary text-[8px] font-black px-1.5 py-0.5 rounded">
-                      {item.freq}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Card className="border border-purple-500/20 bg-gradient-to-br from-purple-500/[0.03] to-transparent rounded-2xl max-w-4xl">
-          <CardHeader>
-            <CardTitle className="text-sm font-black text-foreground flex items-center gap-1.5 uppercase tracking-wider">
-              <Bot className="w-4 h-4 text-purple-500 animate-pulse" />
-              Suggested Workflows & Automation Opportunities
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-xs font-semibold">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 bg-white border rounded-xl space-y-2">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-black text-foreground">SSO Configuration Auto-Responder</h4>
-                  <Badge className="bg-emerald-500 text-white border-none text-[8px] font-bold">READY TO DEPLOY</Badge>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <Card className="border border-indigo-500/20 rounded-2xl">
+              <CardHeader>
+                <CardTitle className="text-sm font-black text-foreground flex items-center gap-1.5 uppercase tracking-wider">
+                  <Sparkles className="w-4 h-4 text-indigo-500" />
+                  {t('companies.issueDetection', 'Themen-Erkennung')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-xs font-semibold">
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">
+                    {t('companies.topIssueCategory', 'Häufigste Kategorie')}
+                  </span>
+                  <span className="font-extrabold">{insights.topCategory || '—'}</span>
                 </div>
-                <p className="text-muted-foreground text-[11px] leading-relaxed">
-                  Triggers an automated draft response explaining SAML authentication credentials whenever a client from this domain creates an auth-related ticket. Should save approx 2.5h/week.
-                </p>
-                <Button size="sm" className="h-7 rounded-lg text-[10px] font-extrabold uppercase bg-primary text-white">Deploy workflow</Button>
-              </div>
-
-              <div className="p-4 bg-white border rounded-xl space-y-2">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-black text-foreground">Knowledge Base Gap Recognition</h4>
-                  <Badge className="bg-amber-500 text-white border-none text-[8px] font-bold">OPPORTUNITY SCORE: 89%</Badge>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">
+                    {t('companies.openTickets', 'Offene Tickets')}
+                  </span>
+                  <span className="font-extrabold">{insights.openCount}</span>
                 </div>
-                <p className="text-muted-foreground text-[11px] leading-relaxed">
-                  Identified 4 tickets about "API Webhook payload retry intervals" where no current KB Article exists. Generating a draft article about webhook failovers is highly advised.
-                </p>
-                <Button size="sm" variant="outline" className="h-7 rounded-lg text-[10px] font-extrabold uppercase border-primary/20 text-primary hover:bg-muted">Create Draft Article</Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+                {insights.automationHint ? (
+                  <p className="text-indigo-700 font-bold leading-relaxed">
+                    {insights.automationHint}
+                  </p>
+                ) : null}
+              </CardContent>
+            </Card>
+            <Card className="border border-muted rounded-2xl">
+              <CardHeader>
+                <CardTitle className="text-sm font-black text-foreground flex items-center gap-1.5 uppercase tracking-wider">
+                  <Users className="w-4 h-4 text-primary" />
+                  {t('companies.ticketVolume', 'Ticketvolumen')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs font-semibold text-muted-foreground">
+                {t('companies.ticketVolumeDesc', 'Aus {{count}} Tickets dieses Unternehmens berechnet.').replace(
+                  '{{count}}',
+                  String(ticketHistory.length),
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
     );
   }
 
   if (activeSubTab === 'activity') {
+    const events = buildCompanyActivityEvents({
+      company,
+      tickets: ticketHistory,
+      vaultItems: companyVaultItems,
+    });
+
     return (
       <Card className="border border-muted-foreground/10 rounded-2xl bg-background max-w-4xl">
         <CardHeader className="pb-2 bg-muted/10">
           <CardTitle className="text-sm font-black text-foreground flex items-center gap-1.5 uppercase tracking-wider">
             <Clock className="w-4 h-4 text-purple-500" />
-            Full Historical Activity Event Stream
+            {t('companies.activityTimeline', 'Aktivitätschronik')}
           </CardTitle>
-          <p className="text-xs text-muted-foreground mt-0.5">Chronological stream of billing modifications, vault updates, email dispatch status, and authorization logs.</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {t(
+              'companies.activityHint',
+              'Chronologische Ereignisse zu Tickets, Tresor und Unternehmensanlage.',
+            )}
+          </p>
         </CardHeader>
         <CardContent className="p-6">
-          <div className="relative pl-6 border-l-2 border-slate-200/80 space-y-6">
-            {[
-              { time: 'Today, 10:24 AM', title: 'Ticket #443 opened', desc: 'Subject: Login not working. Created by Sarah James.', color: 'bg-primary' },
-              { time: 'Yesterday, 04:15 PM', title: 'Password secret field modified', desc: 'Database credential vault record database_production_credentials updated by Mike Chen.', color: 'bg-amber-500' },
-              { time: 'May 19, 11:30 AM', title: 'Contract renewal process completed', desc: `Support contractual rate updated to ${company.monthlySpend}. Plan validated as ${company.contractPlan}.`, color: 'bg-emerald-500' },
-              { time: 'May 16, 09:20 AM', title: 'Auto-discovery asset sync executed', desc: 'Sovereign Discovery Engine populated 4 new workstation devices.', color: 'bg-indigo-505' },
-              { time: 'May 10, 01:45 PM', title: 'Client satisfaction survey returned', desc: 'Wile E. Coyote responded to Ticket #399 with a positive rating: "Exceptional assistance with the detaching engine rocket launcher!" Rating: 5/5', color: 'bg-pink-500' },
-              { time: 'May 02, 10:00 AM', title: 'Billing invoices parsed', desc: 'Automatic payment processed via banking integration successfully.', color: 'bg-slate-400' }
-            ].map((ev, idx) => (
-              <div key={idx} className="relative group">
-                <div className={cn("absolute -left-[32px] top-1.5 h-4 w-4 rounded-full border-4 border-background", ev.color || "bg-primary")} />
-                <span className="text-[10px] text-muted-foreground font-bold">{ev.time}</span>
-                <h4 className="text-sm font-black text-foreground mt-0.5">{ev.title}</h4>
-                <p className="text-xs text-muted-foreground/90 mt-1 font-semibold leading-relaxed max-w-3xl">{ev.desc}</p>
-              </div>
-            ))}
-          </div>
+          {events.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground font-semibold">
+              {t('companies.noActivity', 'Noch keine Aktivitäten protokolliert.')}
+            </p>
+          ) : (
+            <div className="relative pl-6 border-l-2 border-slate-200/80 space-y-6">
+              {events.map((ev, idx) => (
+                <div key={`${ev.title}-${idx}`} className="relative">
+                  <div
+                    className={cn(
+                      'absolute -left-[32px] top-1.5 h-4 w-4 rounded-full border-4 border-background',
+                      ev.color || 'bg-primary',
+                    )}
+                  />
+                  <span className="text-[10px] text-muted-foreground font-bold">{ev.time}</span>
+                  <h4 className="text-sm font-black text-foreground mt-0.5">{ev.title}</h4>
+                  <p className="text-xs text-muted-foreground/90 mt-1 font-semibold leading-relaxed max-w-3xl">
+                    {ev.desc}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     );
@@ -811,7 +972,7 @@ export default function CompanyOtherTabs({
 
   return (
     <div className="py-12 text-center text-sm text-muted-foreground font-semibold italic">
-      View state under construction.
+      {t('companies.viewUnderConstruction', 'Ansicht in Vorbereitung.')}
     </div>
   );
 }

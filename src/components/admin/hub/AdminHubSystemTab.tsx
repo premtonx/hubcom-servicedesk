@@ -3,7 +3,6 @@ import { Database, HardDrive, ShieldCheck } from 'lucide-react';
 import { useTranslation } from '../../../lib/context/I18nContext';
 import { AdminHubSectionGrid } from './AdminHubSectionGrid';
 import { AdminHubDemoDataCard } from './AdminHubDemoDataCard';
-import { AdminUnternehmenNavCard } from './AdminUnternehmenNavCard';
 import { categoriesForTab } from './adminHubConfig';
 import { overallStateLabelDe, type AdminHubTelemetry } from './adminHubTelemetry';
 
@@ -48,8 +47,6 @@ export function AdminHubSystemTab({ telemetry, onTelemetryRefresh }: AdminHubSys
       </div>
 
       <AdminHubDemoDataCard onChanged={onTelemetryRefresh} />
-
-      <AdminUnternehmenNavCard />
 
       <AdminHubSectionGrid categories={categoriesForTab('system')} />
     </div>

@@ -51,6 +51,7 @@ export interface PortalDashboardPayload {
     id: string;
     name: string;
     logoUrl: string | null;
+    portalBannerUrl: string | null;
     portalTitle: string;
   };
   user: {
@@ -163,6 +164,7 @@ export function buildPortalDashboardPayload(params: {
     id: string;
     name: string;
     logoUrl?: string | null;
+    portalBannerUrl?: string | null;
     portalTitle?: string | null;
   };
   tickets: Array<Record<string, unknown>>;
@@ -229,6 +231,7 @@ export function buildPortalDashboardPayload(params: {
     id: params.organization.id,
     name: params.organization.name,
     logoUrl: params.organization.logoUrl || null,
+    portalBannerUrl: params.organization.portalBannerUrl || null,
     portalTitle:
       params.organization.portalTitle ||
       `${params.organization.name} ServiceDesk`,

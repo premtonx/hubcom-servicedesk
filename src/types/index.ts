@@ -497,6 +497,7 @@ export interface VaultItem {
     deliveryOption?: string;
     relatedTicketId?: string;
     relatedCompanyId?: string;
+    organizationId?: string;
     relatedAssetId?: string;
     targetRecipient?: string;
     requestName?: string;

@@ -2021,6 +2021,7 @@
     "configureSection": "Configure Section",
     "hubTabs": {
       "overview": "Overview",
+      "kunden": "Customers",
       "aiEngine": "Core AI & Models",
       "governance": "PII & Compliance",
       "integrations": "Mail & Interfaces",

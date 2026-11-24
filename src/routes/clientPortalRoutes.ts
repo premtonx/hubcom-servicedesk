@@ -20,6 +20,7 @@ import {
   parseAndValidateLogoDataUrl,
   resolvePortalTitle,
 } from '../lib/client-portal/org-branding.js';
+import { parseAndValidateDashboardBannerDataUrl } from '../lib/dashboard-banner-validate.js';
 
 const router = Router();
 
@@ -34,6 +35,7 @@ async function loadOrgBranding(organizationId: string | null | undefined) {
     name: org.name,
     logo_url: org.logo_url,
     portal_title: org.portal_title,
+    portal_banner_url: org.portal_banner_url,
     resolved_portal_title: resolvePortalTitle(org.name, org.portal_title),
   };
 }
@@ -148,11 +150,84 @@ router.delete(
           name: organization.name,
           logo_url: organization.logo_url,
           portal_title: organization.portal_title,
+          portal_banner_url: organization.portal_banner_url,
           resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
         },
       });
     } catch (err: any) {
       return res.status(500).json({ error: safeErrorMessage(err, 'Failed to delete logo') });
+    }
+  },
+);
+
+/**
+ * POST /api/portal/branding/banner — CLIENT_ADMIN, own organization only.
+ * Body: { bannerDataUrl } (PNG/JPEG/WebP, max 2 MB).
+ */
+router.post(
+  '/branding/banner',
+  requireClientPortalRole(['CLIENT_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organization missing.' });
+      }
+      const raw =
+        (req.body as any)?.bannerDataUrl ??
+        (req.body as any)?.imageDataUrl ??
+        (req.body as any)?.portal_banner_url;
+      const validated = parseAndValidateDashboardBannerDataUrl(raw);
+      if (validated.ok === false) {
+        return res.status(400).json({ error: validated.error });
+      }
+      const organization = await updateOrganizationBranding(organizationId, {
+        portal_banner_url: validated.dataUrl,
+      });
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({
+        organization: {
+          id: organization.id,
+          name: organization.name,
+          logo_url: organization.logo_url,
+          portal_title: organization.portal_title,
+          portal_banner_url: organization.portal_banner_url,
+          resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
+        },
+      });
+    } catch (err: any) {
+      safeLog('error', '[portal] banner upload failed', err?.message || err);
+      return res.status(500).json({ error: safeErrorMessage(err, 'Banner konnte nicht gespeichert werden') });
+    }
+  },
+);
+
+/** DELETE /api/portal/branding/banner — CLIENT_ADMIN, own organization only. */
+router.delete(
+  '/branding/banner',
+  requireClientPortalRole(['CLIENT_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organization missing.' });
+      }
+      const organization = await updateOrganizationBranding(organizationId, {
+        portal_banner_url: null,
+      });
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({
+        organization: {
+          id: organization.id,
+          name: organization.name,
+          logo_url: organization.logo_url,
+          portal_title: organization.portal_title,
+          portal_banner_url: organization.portal_banner_url,
+          resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: safeErrorMessage(err, 'Banner konnte nicht entfernt werden') });
     }
   },
 );
@@ -341,6 +416,7 @@ router.get(
           id: org.id,
           name: org.name,
           logoUrl: org.logo_url,
+          portalBannerUrl: org.portal_banner_url,
           portalTitle: resolvePortalTitle(org.name, org.portal_title),
         },
         tickets: orgTickets,

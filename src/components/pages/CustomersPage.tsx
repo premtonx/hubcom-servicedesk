@@ -49,9 +49,10 @@ import { toast } from 'sonner';
 // Services
 import { customerService } from '../../services/customerService';
 import { ticketService } from '../../services/ticketService';
+import { vaultService } from '../../services/vaultService';
 import { schemaService, CustomField } from '../../services/schemaService';
 import { aiAccountService } from '../../services/aiAccountService';
-import { Company, Contact, Ticket } from '../../types';
+import { Company, Contact, Ticket, VaultItem } from '../../types';
 
 // Subcomponents
 import CompanySidebar from './companies/CompanySidebar';
@@ -94,6 +95,27 @@ export default function CustomersPage() {
   const [portalFocusInvite, setPortalFocusInvite] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('hubcom_unternehmen_sidebar_collapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [companyVaultItems, setCompanyVaultItems] = useState<VaultItem[]>([]);
+  const [orgEnrichment, setOrgEnrichment] = useState<Record<string, any>>({});
+
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('hubcom_unternehmen_sidebar_collapsed', next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
   
   // Dialog controls
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -224,7 +246,10 @@ export default function CustomersPage() {
   useEffect(() => {
     if (selectedCompanyId) {
       const baseComp = companies.find(c => c.id === selectedCompanyId) || null;
-      setSelectedCompany(baseComp);
+      const enriched = baseComp
+        ? { ...baseComp, ...(orgEnrichment[selectedCompanyId] || {}) }
+        : null;
+      setSelectedCompany(enriched);
 
       // Subscribe to contacts for this company
       const unsubscribeContacts = customerService.subscribeToContacts(selectedCompanyId, (data) => {
@@ -237,11 +262,79 @@ export default function CustomersPage() {
         setTicketHistoryMap(prev => ({ ...prev, [selectedCompanyId]: data }));
       });
 
+      const orgId =
+        (enriched as any)?.organizationId ||
+        (enriched as any)?.organization_id ||
+        null;
+      const scopeIds = new Set<string>([selectedCompanyId]);
+      if (orgId) scopeIds.add(String(orgId));
+      const unsubscribeVault = vaultService.subscribeToHistory((items) => {
+        const filtered = items.filter((item) => {
+          const related = String(item.metadata?.relatedCompanyId || '');
+          return related && scopeIds.has(related);
+        });
+        setCompanyVaultItems(filtered);
+      });
+
       return () => {
         unsubscribeContacts();
         unsubscribeTickets();
+        unsubscribeVault();
       };
+    } else {
+      setCompanyVaultItems([]);
     }
+  }, [selectedCompanyId, companies, orgEnrichment]);
+
+  // Enrich selected company from linked organization (contract + created_at).
+  useEffect(() => {
+    if (!selectedCompanyId) return;
+    const base = companies.find((c) => c.id === selectedCompanyId);
+    const orgId =
+      (base as any)?.organizationId ||
+      (base as any)?.organization_id ||
+      null;
+    if (!orgId) return;
+    let cancelled = false;
+    void axios
+      .get(`/api/admin/organizations/${encodeURIComponent(String(orgId))}`, {
+        withCredentials: true,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        const org = res.data?.organization;
+        if (!org) return;
+        setOrgEnrichment((prev) => ({
+          ...prev,
+          [selectedCompanyId]: {
+            organizationId: org.id,
+            logoUrl: org.logo_url || (base as any)?.logoUrl || '',
+            tier: org.tier || (base as any)?.tier || '',
+            contractPlan: org.tier || (base as any)?.contractPlan || '',
+            contractSla: org.sla || (base as any)?.contractSla || '',
+            contractRenewalDate:
+              org.contract_renewal || (base as any)?.contractRenewalDate || '',
+            monthlySpend: org.monthly_rate || (base as any)?.monthlySpend || '',
+            contractReference: org.contract_reference || '',
+            contractNotes: org.contract_notes || '',
+            contractTerm: org.contract_term || '',
+            createdAtIso: org.created_at || '',
+            customerSince: org.created_at
+              ? new Date(org.created_at).toLocaleDateString('de-DE', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: 'numeric',
+                })
+              : (base as any)?.customerSince || '',
+          },
+        }));
+      })
+      .catch(() => {
+        /* keep CRM fields */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedCompanyId, companies]);
 
   const slugifyCompany = (input: string) =>
@@ -751,9 +844,9 @@ export default function CustomersPage() {
     contactsCount: employees.length,
     ticketHistory,
     assetsCount: 0,
-    vaultEntriesCount: 0,
+    vaultEntriesCount: companyVaultItems.length,
     slaPerformance: null,
-    monthlySpend: null,
+    monthlySpend: hydratedCompany?.monthlySpend || null,
   });
 
   return (
@@ -775,11 +868,13 @@ export default function CustomersPage() {
         onSeedClick={seedSampleData}
         isSeeding={isSeeding}
         ticketHistoryMap={ticketHistoryMap}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={toggleSidebarCollapsed}
       />
 
       {/* Main View: Customer 360 Workspace Container */}
       <div className={cn(
-        "flex-1 bg-muted/15 overflow-hidden flex-col min-h-0",
+        "flex-1 bg-muted/15 overflow-hidden flex-col min-h-0 transition-[width] duration-300 ease-out",
         // Mobile master-detail: hidden until a company is selected, then full width.
         selectedCompanyId ? "flex" : "hidden lg:flex"
       )}>
@@ -791,7 +886,7 @@ export default function CustomersPage() {
                 onClick={() => setSelectedCompanyId(null)}
                 className="lg:hidden flex items-center gap-1 text-sm font-bold text-muted-foreground hover:text-foreground -mb-2"
               >
-                <ChevronLeft className="w-4 h-4" /> {t('nav.companies', 'Companies')}
+                <ChevronLeft className="w-4 h-4" /> {t('nav.companies', 'Unternehmen')}
               </button>
               
               {/* Header and Support Contract block */}
@@ -810,6 +905,10 @@ export default function CustomersPage() {
                   setPortalFocusInvite(true);
                   setActiveSubTab('portal');
                 }}
+                sidebarCollapsed={sidebarCollapsed}
+                onExpandSidebar={toggleSidebarCollapsed}
+                companies={companies}
+                onSelectCompany={setSelectedCompanyId}
               />
 
               {/* KPI Cards Grid Component */}
@@ -827,12 +926,12 @@ export default function CustomersPage() {
                 >
                   <TabsList className="bg-transparent border-none p-0 h-auto flex gap-4 sm:gap-6 select-none w-full max-w-full overflow-x-auto flex-nowrap whitespace-nowrap no-scrollbar">
                     {[
-                      { value: 'overview', label: t('nav.overview', 'Overview') },
+                      { value: 'overview', label: t('nav.overview', 'Übersicht') },
                       { value: 'contacts', label: t('companies.contacts', 'Kontakte'), count: employees.length },
                       { value: 'tickets', label: t('nav.tickets', 'Tickets'), count: ticketHistory.length },
                       { value: 'assets', label: t('companies.assetOverview', 'Asset-Übersicht'), count: companyKpis.assetsCount ?? 0 },
                       { value: 'contracts', label: t('companies.supportContract', 'Support-Vertrag') },
-                      { value: 'vault', label: t('nav.vault', 'Vault'), count: companyKpis.vaultEntriesCount ?? 0 },
+                      { value: 'vault', label: t('nav.vault', 'Tresor'), count: companyKpis.vaultEntriesCount ?? 0 },
                       { value: 'insights', label: t('companies.aiInsights', 'KI-Erkenntnisse'), icon: Sparkles },
                       { value: 'activity', label: t('companies.activityTimeline', 'Aktivitätschronik') },
                       { value: 'portal', label: t('companies.portalTab', 'Kunden-Portal & Branding'), icon: Globe },
@@ -863,6 +962,7 @@ export default function CustomersPage() {
                 <CompanyOverviewTab 
                   company={hydratedCompany}
                   ticketHistory={ticketHistory}
+                  vaultItems={companyVaultItems}
                   onTabChange={setActiveSubTab}
                   onOpenVaultClick={() => setActiveSubTab('vault')}
                   onViewAllTicketsClick={() => setActiveSubTab('tickets')}
@@ -871,7 +971,7 @@ export default function CustomersPage() {
                 <CompanyPortalTab
                   organizationId={
                     hydratedCompany.organizationId ||
-                    hydratedCompany.organization_id ||
+                    (hydratedCompany as any).organization_id ||
                     null
                   }
                   companyName={hydratedCompany.name}
@@ -887,6 +987,17 @@ export default function CustomersPage() {
                   ticketHistory={ticketHistory}
                   onAddContactClick={() => setIsContactDialogOpen(true)}
                   onSelectTicket={(ticketId) => navigate(`/tickets/${ticketId}`)}
+                  onVaultItemsChange={setCompanyVaultItems}
+                  onCompanyUpdated={(patch) => {
+                    if (!selectedCompanyId) return;
+                    setOrgEnrichment((prev) => ({
+                      ...prev,
+                      [selectedCompanyId]: {
+                        ...(prev[selectedCompanyId] || {}),
+                        ...patch,
+                      },
+                    }));
+                  }}
                 />
               )}
 
@@ -899,21 +1010,28 @@ export default function CustomersPage() {
                 <Sparkles className="w-4 h-4 text-primary absolute top-5 right-5 animate-pulse" />
              </div>
              <h2 className="text-xl font-extrabold text-foreground tracking-tight">
-               {companies.length === 0 ? "Companies workspace is Empty" : "Select a Company"}
+               {companies.length === 0
+                 ? t('companies.emptyWorkspace', 'Noch keine Unternehmen')
+                 : t('companies.selectCompany', 'Unternehmen auswählen')}
              </h2>
              <p className="text-muted-foreground max-w-sm mt-2 text-xs font-semibold leading-relaxed">
                {companies.length === 0 
-                 ? "Populate your Customer 360 intelligence workspace by seeding a premium sample dataset, importing client CSVs, or adding a company manually."
-                 : "Use the navigator panel on the left to select a company and access its historical tickets, assets, cloud secrets, and automated AI health actions."}
+                 ? t(
+                     'companies.emptyWorkspaceHint',
+                     'Legen Sie ein Unternehmen manuell an oder importieren Sie eine CSV-Datei.',
+                   )
+                 : t(
+                     'companies.selectCompanyHint',
+                     'Wählen Sie links ein Unternehmen, um Tickets, Kontakte, Tresor und Branding zu öffnen.',
+                   )}
              </p>
              {companies.length === 0 && (
                <Button 
-                 onClick={seedSampleData} 
-                 disabled={isSeeding}
-                 className="mt-8 bg-amber-500 hover:bg-amber-600 text-white font-extrabold rounded-xl px-6 h-11 text-xs shadow-md shadow-amber-500/10 gap-2 cursor-pointer transition-all"
+                 onClick={() => setIsCreateDialogOpen(true)}
+                 className="mt-8 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl px-6 h-11 text-xs shadow-md gap-2 cursor-pointer transition-all"
                >
-                 {isSeeding ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                 Seed Sample Environment
+                 <Plus className="w-4 h-4" />
+                 {t('companies.createCompany', 'Unternehmen anlegen')}
                </Button>
              )}
           </div>

@@ -64,6 +64,7 @@ export default function CompanyPortalTab({
   const [users, setUsers] = useState<PortalUserRow[]>([]);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [portalTitle, setPortalTitle] = useState<string | null>(null);
+  const [bannerUrl, setBannerUrl] = useState<string | null>(null);
   const [emailSummary, setEmailSummary] = useState<{
     mailbox: string | null;
     enabled: boolean;
@@ -101,6 +102,7 @@ export default function CompanyPortalTab({
       const org = orgRes.data?.organization;
       setLogoUrl(org?.logo_url || null);
       setPortalTitle(org?.portal_title || null);
+      setBannerUrl(org?.portal_banner_url || null);
       setUsers(usersRes.data?.users || []);
       setEmailSummary({
         mailbox: usersRes.data?.emailChannel?.mailbox || null,
@@ -311,7 +313,23 @@ export default function CompanyPortalTab({
           organizationName={companyName}
           logoUrl={logoUrl}
           portalTitle={portalTitle}
+          bannerUrl={bannerUrl}
           onSave={saveBranding}
+          onBannerUpload={async (bannerDataUrl) => {
+            const res = await axios.post(
+              `/api/admin/organizations/${encodeURIComponent(organizationId)}/banner`,
+              { bannerDataUrl },
+              { withCredentials: true },
+            );
+            setBannerUrl(res.data?.organization?.portal_banner_url || bannerDataUrl);
+          }}
+          onBannerRemove={async () => {
+            await axios.delete(
+              `/api/admin/organizations/${encodeURIComponent(organizationId)}/banner`,
+              { withCredentials: true },
+            );
+            setBannerUrl(null);
+          }}
         />
       </section>
 

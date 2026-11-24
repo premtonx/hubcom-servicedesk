@@ -21,12 +21,18 @@ export interface OrganizationRecord {
   logo_url: string | null;
   /** Custom portal title; empty → "{name} ServiceDesk". */
   portal_title: string | null;
+  /** Optional Kunden-Portal dashboard banner (data URL). */
+  portal_banner_url: string | null;
   /** CRM / Unternehmen fields (unified with companies docs). */
   industry: string | null;
   website: string | null;
   tier: string | null;
   sla: string | null;
   contract_renewal: string | null;
+  monthly_rate: string | null;
+  contract_reference: string | null;
+  contract_notes: string | null;
+  contract_term: string | null;
   /** Fixture / seed flag — purged by Demo-Daten bereinigen. */
   is_demo: boolean;
   /** Linked CRM company document id (geistdesk_documents.companies). */
@@ -45,11 +51,16 @@ export interface OrganizationInput {
   sso_enabled?: boolean;
   logo_url?: string | null;
   portal_title?: string | null;
+  portal_banner_url?: string | null;
   industry?: string | null;
   website?: string | null;
   tier?: string | null;
   sla?: string | null;
   contract_renewal?: string | null;
+  monthly_rate?: string | null;
+  contract_reference?: string | null;
+  contract_notes?: string | null;
+  contract_term?: string | null;
   is_demo?: boolean;
   crm_company_id?: string | null;
 }
@@ -105,6 +116,10 @@ function mapRow(row: any): OrganizationRecord {
       row.portal_title == null || row.portal_title === ''
         ? null
         : String(row.portal_title),
+    portal_banner_url:
+      row.portal_banner_url == null || row.portal_banner_url === ''
+        ? null
+        : String(row.portal_banner_url),
     industry: row.industry == null || row.industry === '' ? null : String(row.industry),
     website: row.website == null || row.website === '' ? null : String(row.website),
     tier: row.tier == null || row.tier === '' ? null : String(row.tier),
@@ -113,6 +128,20 @@ function mapRow(row: any): OrganizationRecord {
       row.contract_renewal == null || row.contract_renewal === ''
         ? null
         : String(row.contract_renewal),
+    monthly_rate:
+      row.monthly_rate == null || row.monthly_rate === '' ? null : String(row.monthly_rate),
+    contract_reference:
+      row.contract_reference == null || row.contract_reference === ''
+        ? null
+        : String(row.contract_reference),
+    contract_notes:
+      row.contract_notes == null || row.contract_notes === ''
+        ? null
+        : String(row.contract_notes),
+    contract_term:
+      row.contract_term == null || row.contract_term === ''
+        ? null
+        : String(row.contract_term),
     is_demo: row.is_demo === true || row.is_demo === 't',
     crm_company_id:
       row.crm_company_id == null || row.crm_company_id === ''
@@ -215,6 +244,26 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
     input.contract_renewal == null || String(input.contract_renewal).trim() === ''
       ? null
       : String(input.contract_renewal).trim();
+  const portalBannerUrl =
+    input.portal_banner_url == null || String(input.portal_banner_url).trim() === ''
+      ? null
+      : String(input.portal_banner_url).trim();
+  const monthlyRate =
+    input.monthly_rate == null || String(input.monthly_rate).trim() === ''
+      ? null
+      : String(input.monthly_rate).trim();
+  const contractReference =
+    input.contract_reference == null || String(input.contract_reference).trim() === ''
+      ? null
+      : String(input.contract_reference).trim();
+  const contractNotes =
+    input.contract_notes == null || String(input.contract_notes).trim() === ''
+      ? null
+      : String(input.contract_notes).trim();
+  const contractTerm =
+    input.contract_term == null || String(input.contract_term).trim() === ''
+      ? null
+      : String(input.contract_term).trim();
   const isDemo = Boolean(input.is_demo);
   const crmCompanyId =
     input.crm_company_id == null || String(input.crm_company_id).trim() === ''
@@ -224,10 +273,11 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
   const res = await queryDb(
     `INSERT INTO organizations (
        id, name, slug, domain, is_active, settings, m365_tenant_id, sso_enabled,
-       logo_url, portal_title, industry, website, tier, sla, contract_renewal,
+       logo_url, portal_title, portal_banner_url, industry, website, tier, sla,
+       contract_renewal, monthly_rate, contract_reference, contract_notes, contract_term,
        is_demo, crm_company_id
      )
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
      RETURNING *`,
     [
       id,
@@ -240,11 +290,16 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
       ssoEnabled,
       logoUrl,
       portalTitle,
+      portalBannerUrl,
       industry,
       website,
       tier,
       sla,
       contractRenewal,
+      monthlyRate,
+      contractReference,
+      contractNotes,
+      contractTerm,
       isDemo,
       crmCompanyId,
     ],
@@ -325,6 +380,36 @@ export async function updateOrganization(
         ? null
         : String(input.contract_renewal).trim()
       : existing.contract_renewal;
+  const portalBannerUrl =
+    input.portal_banner_url !== undefined
+      ? input.portal_banner_url == null || String(input.portal_banner_url).trim() === ''
+        ? null
+        : String(input.portal_banner_url).trim()
+      : existing.portal_banner_url;
+  const monthlyRate =
+    input.monthly_rate !== undefined
+      ? input.monthly_rate == null || String(input.monthly_rate).trim() === ''
+        ? null
+        : String(input.monthly_rate).trim()
+      : existing.monthly_rate;
+  const contractReference =
+    input.contract_reference !== undefined
+      ? input.contract_reference == null || String(input.contract_reference).trim() === ''
+        ? null
+        : String(input.contract_reference).trim()
+      : existing.contract_reference;
+  const contractNotes =
+    input.contract_notes !== undefined
+      ? input.contract_notes == null || String(input.contract_notes).trim() === ''
+        ? null
+        : String(input.contract_notes).trim()
+      : existing.contract_notes;
+  const contractTerm =
+    input.contract_term !== undefined
+      ? input.contract_term == null || String(input.contract_term).trim() === ''
+        ? null
+        : String(input.contract_term).trim()
+      : existing.contract_term;
   const isDemo =
     input.is_demo !== undefined ? Boolean(input.is_demo) : existing.is_demo;
   const crmCompanyId =
@@ -345,13 +430,18 @@ export async function updateOrganization(
             sso_enabled = $8,
             logo_url = $9,
             portal_title = $10,
-            industry = $11,
-            website = $12,
-            tier = $13,
-            sla = $14,
-            contract_renewal = $15,
-            is_demo = $16,
-            crm_company_id = $17,
+            portal_banner_url = $11,
+            industry = $12,
+            website = $13,
+            tier = $14,
+            sla = $15,
+            contract_renewal = $16,
+            monthly_rate = $17,
+            contract_reference = $18,
+            contract_notes = $19,
+            contract_term = $20,
+            is_demo = $21,
+            crm_company_id = $22,
             updated_at = NOW()
       WHERE id = $1
       RETURNING *`,
@@ -366,11 +456,16 @@ export async function updateOrganization(
       ssoEnabled,
       logoUrl,
       portalTitle,
+      portalBannerUrl,
       industry,
       website,
       tier,
       sla,
       contractRenewal,
+      monthlyRate,
+      contractReference,
+      contractNotes,
+      contractTerm,
       isDemo,
       crmCompanyId,
     ],
@@ -391,10 +486,15 @@ export async function updateOrganizationSsoSettings(
 
 export async function updateOrganizationBranding(
   id: string,
-  input: { logo_url?: string | null; portal_title?: string | null },
+  input: {
+    logo_url?: string | null;
+    portal_title?: string | null;
+    portal_banner_url?: string | null;
+  },
 ): Promise<OrganizationRecord | null> {
   return updateOrganization(id, {
     logo_url: input.logo_url,
     portal_title: input.portal_title,
+    portal_banner_url: input.portal_banner_url,
   });
 }

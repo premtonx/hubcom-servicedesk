@@ -1,34 +1,39 @@
 import { useMemo } from 'react';
-import { 
-  Sparkles, 
-  Activity, 
-  Laptop, 
-  Key, 
-  Clock, 
-  ChevronRight, 
-  TrendingUp, 
-  CheckCircle2, 
-  AlertTriangle,
+import {
+  Sparkles,
+  Activity,
+  Laptop,
+  Key,
+  Clock,
   Server,
   Network,
   AppWindow,
   Cpu,
-  ShieldCheck,
-  Mail,
-  ExternalLink,
-  Unlock
+  Unlock,
 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../ui/card';
 import { Badge } from '../../ui/badge';
-import { Avatar, AvatarFallback } from '../../ui/avatar';
-import { HydratedCompany } from './utils';
-import { Ticket } from '../../../types';
+import {
+  HydratedCompany,
+  buildCompanyActivityEvents,
+  deriveTicketInsights,
+  formatDateTimeDe,
+} from './utils';
+import { Ticket, VaultItem } from '../../../types';
 import { useTranslation } from '../../../lib/context/I18nContext';
 
 interface CompanyOverviewProps {
   company: HydratedCompany;
   ticketHistory: Ticket[];
+  vaultItems?: VaultItem[];
+  assetCounts?: {
+    servers: number;
+    workstations: number;
+    network: number;
+    applications: number;
+    total: number;
+  };
   onTabChange: (tab: string) => void;
   onOpenVaultClick: () => void;
   onViewAllTicketsClick: () => void;
@@ -37,53 +42,61 @@ interface CompanyOverviewProps {
 export default function CompanyOverviewTab({
   company,
   ticketHistory,
+  vaultItems = [],
+  assetCounts,
   onTabChange,
   onOpenVaultClick,
-  onViewAllTicketsClick
+  onViewAllTicketsClick,
 }: CompanyOverviewProps) {
   const { t } = useTranslation();
-  
-  // Format dates elegantly
+
   const formatTicketTime = (ticket: Ticket) => {
-    if (!ticket.createdAt) return 'Recently';
-    if (ticket.createdAt.toDate) {
-      const d = ticket.createdAt.toDate();
-      const now = new Date();
-      const diffMs = now.getTime() - d.getTime();
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-      if (diffDays === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      if (diffDays === 1) return t('companies.yesterday', 'Yesterday');
-      return t('vault.expiresInDays', 'Expires in {{count}} Days').replace('{{count}}', String(diffDays)).replace('Expires in', '').replace('Days', 'days ago');
+    if (!ticket.createdAt) return '—';
+    if ((ticket.createdAt as any).toDate) {
+      return formatDateTimeDe((ticket.createdAt as any).toDate());
     }
-    return 'N/A';
+    return formatDateTimeDe(ticket.createdAt as any) || '—';
   };
 
-  // Safe mock or real tickets list
-  const displayTickets = useMemo(() => {
-    if (ticketHistory.length > 0) {
-      return ticketHistory.slice(0, 5);
+  const displayTickets = useMemo(() => ticketHistory.slice(0, 5), [ticketHistory]);
+  const insights = useMemo(() => deriveTicketInsights(ticketHistory), [ticketHistory]);
+  const activity = useMemo(
+    () =>
+      buildCompanyActivityEvents({
+        company,
+        tickets: ticketHistory,
+        vaultItems,
+      }).slice(0, 5),
+    [company, ticketHistory, vaultItems],
+  );
+
+  const assets = assetCounts || {
+    servers: 0,
+    workstations: 0,
+    network: 0,
+    applications: 0,
+    total: 0,
+  };
+  const vaultByType = useMemo(() => {
+    const counts = { credentials: 0, apiKeys: 0, certificates: 0, other: 0 };
+    for (const item of vaultItems) {
+      const st = String(item.metadata?.secretType || item.type || '').toLowerCase();
+      if (st.includes('api')) counts.apiKeys += 1;
+      else if (st.includes('cert') || st.includes('ssl') || st.includes('pem'))
+        counts.certificates += 1;
+      else if (st.includes('password') || st === 'secret') counts.credentials += 1;
+      else counts.other += 1;
     }
-    // Static high fidelity mockup values matching screenshot if none exist
-    return [
-      { id: '443', subject: 'Login not working', priority: 'high', status: 'open', customerName: 'Sarah James', createdAtText: '10:24 AM' },
-      { id: '441', subject: 'VPN connection failure', priority: 'medium', status: 'pending', customerName: 'Mike Chen', createdAtText: t('companies.yesterday', 'Yesterday') },
-      { id: '438', subject: 'Password reset delay', priority: 'low', status: 'resolved', customerName: 'Will Coyote', createdAtText: `2 ${t('companies.daysAgo', 'days ago')}` },
-      { id: '436', subject: 'Email sync issue', priority: 'medium', status: 'open', customerName: 'Anna Bell', createdAtText: `3 ${t('companies.daysAgo', 'days ago')}` },
-      { id: '432', subject: 'MFA not receiving code', priority: 'high', status: 'open', customerName: 'John Doe', createdAtText: `3 ${t('companies.daysAgo', 'days ago')}` }
-    ];
-  }, [ticketHistory, t]);
+    return counts;
+  }, [vaultItems]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      
-      {/* COLUMN 1: Customer Health + AI Insights */}
       <div className="space-y-6 lg:col-span-1">
-        
-        {/* Customer Health Card */}
         <Card className="border border-muted-foreground/10 shadow-xs rounded-2xl bg-background">
           <CardHeader className="pb-2">
             <h3 className="text-xs font-extrabold text-muted-foreground uppercase tracking-wider">
-              {t('companies.customerHealth', 'Customer Health')}
+              {t('companies.customerHealth', 'Kunden-Gesundheit')}
             </h3>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -104,328 +117,327 @@ export default function CompanyOverviewTab({
                     {company.healthScore}
                   </span>
                   <span className="text-muted-foreground/50 text-base font-bold">/ 100</span>
-                  <Badge
-                    className={`ml-2 h-5 rounded-md text-[9px] font-extrabold uppercase px-2 py-0 border-none ${
-                      company.healthScore >= 80
-                        ? 'bg-emerald-500/10 text-emerald-500'
-                        : company.healthScore >= 50
-                          ? 'bg-amber-500/10 text-amber-500'
-                          : 'bg-rose-500/10 text-rose-500'
-                    }`}
-                  >
-                    {company.healthScore >= 80
-                      ? t('companies.healthy', 'Healthy')
-                      : t('companies.unhealthy', 'Attention Needed')}
-                  </Badge>
-                </div>
-                <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      company.healthScore >= 80
-                        ? 'bg-emerald-500'
-                        : company.healthScore >= 50
-                          ? 'bg-amber-500'
-                          : 'bg-rose-500'
-                    }`}
-                    style={{ width: `${company.healthScore}%` }}
-                  />
                 </div>
               </>
             )}
 
-            {/* Live company-scoped ticket snapshot — no fabricated sentiment/SLA % */}
-            <div className="grid grid-cols-2 sm:grid-cols-2 gap-2 pt-3 border-t border-muted text-center">
+            <div className="grid grid-cols-2 gap-2 pt-3 border-t border-muted text-center">
               <div>
-                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">{t('companies.open', 'Open')}</p>
-                <p className="text-xs text-foreground font-extrabold mt-1">{company.openTicketsCount}</p>
+                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
+                  {t('companies.open', 'Offen')}
+                </p>
+                <p className="text-xs text-foreground font-extrabold mt-1">
+                  {company.openTicketsCount}
+                </p>
               </div>
               <div>
-                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">{t('companies.escalations', 'Escalations')}</p>
-                <p className="text-xs text-rose-500 font-extrabold mt-1">{company.slaRisksCount}</p>
+                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
+                  {t('companies.escalations', 'Eskalationen')}
+                </p>
+                <p className="text-xs text-rose-500 font-extrabold mt-1">
+                  {company.slaRisksCount}
+                </p>
               </div>
             </div>
 
-            <Button 
+            <Button
               onClick={() => onTabChange('insights')}
-              variant="outline" 
-              size="sm" 
+              variant="outline"
+              size="sm"
               className="w-full h-8 rounded-xl border-muted text-muted-foreground hover:text-foreground text-[10px] font-bold"
             >
-              {t('companies.viewHealthReport', 'View full health report')}
+              {t('companies.viewHealthReport', 'Vollständigen Bericht anzeigen')}
             </Button>
           </CardContent>
         </Card>
 
-        {/* AI Insights Card */}
         <Card className="border border-indigo-500/20 bg-gradient-to-br from-indigo-500/[0.03] via-transparent to-transparent shadow-xs rounded-2xl">
           <CardHeader className="pb-2 flex flex-row items-center justify-between">
             <h3 className="text-xs font-extrabold text-foreground flex items-center gap-1.5 uppercase tracking-wider">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
-              {t('companies.aiInsights', 'AI Insights')}
+              <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+              {t('companies.aiInsights', 'KI-Erkenntnisse')}
             </h3>
-            <Badge className="bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 h-4 border-none font-bold text-[7px] text-white tracking-widest uppercase rounded">
-              {t('companies.poweredByAi', 'POWERED BY AI')}
-            </Badge>
           </CardHeader>
           <CardContent className="space-y-4 text-xs font-semibold">
-            {/* Rows of AI insights matching layout */}
-            <div className="space-y-3 pt-1">
-              <div className="flex items-center justify-between py-1 border-b border-muted">
-                <span className="text-muted-foreground flex items-center gap-1.5"><Sparkles className="w-3 h-3 text-indigo-500/80" /> {t('companies.topIssueCategory', 'Top Issue Category')}</span>
-                <span className="text-foreground font-extrabold text-right">Authentication</span>
-              </div>
-              <div className="flex items-center justify-between py-1 border-b border-muted">
-                <span className="text-muted-foreground flex items-center gap-1.5"><Sparkles className="w-3 h-3 text-indigo-500/80" /> {t('companies.predictedChurnRisk', 'Predicted Churn Risk')}</span>
-                <div className="text-right">
-                  <Badge variant="secondary" className="bg-emerald-400/10 hover:bg-emerald-400/10 text-emerald-500 border-none px-2 h-4.5 rounded font-black text-[9px] uppercase">
-                    {t('vault.low', 'Low')}
-                  </Badge>
+            {insights.topCategory || insights.automationHint ? (
+              <div className="space-y-3 pt-1">
+                {insights.topCategory ? (
+                  <div className="flex items-center justify-between py-1 border-b border-muted">
+                    <span className="text-muted-foreground">
+                      {t('companies.topIssueCategory', 'Häufigste Kategorie')}
+                    </span>
+                    <span className="text-foreground font-extrabold text-right">
+                      {insights.topCategory}
+                    </span>
+                  </div>
+                ) : null}
+                <div className="flex items-center justify-between py-1 border-b border-muted">
+                  <span className="text-muted-foreground">
+                    {t('companies.openTickets', 'Offene Tickets')}
+                  </span>
+                  <span className="text-foreground font-extrabold">{insights.openCount}</span>
                 </div>
+                {insights.automationHint ? (
+                  <p className="text-indigo-600 font-extrabold text-[11px] leading-relaxed">
+                    {insights.automationHint}
+                  </p>
+                ) : null}
               </div>
-              <div className="flex items-center justify-between py-1 border-b border-muted">
-                <span className="text-muted-foreground flex items-center gap-1.5"><Sparkles className="w-3 h-3 text-indigo-500/80" /> {t('companies.similarCompanyIssues', 'Similar Company Issues')}</span>
-                <span className="text-foreground font-extrabold text-right truncate max-w-[140px]">{t('dashboard.passwordResetDelays', 'Password Reset Delays')}</span>
-              </div>
-              <div className="flex items-start justify-between py-1">
-                <span className="text-muted-foreground flex items-center gap-1.5 shrink-0"><Sparkles className="w-3 h-3 text-indigo-500/80" /> {t('companies.recommendedActions', 'Recommended Actions')}</span>
-                <span className="text-indigo-600 font-extrabold text-right max-w-[150px]">{t('companies.recActionsDesc', '3 automation opportunities - save ~4h/week')}</span>
-              </div>
-            </div>
+            ) : (
+              <p className="text-muted-foreground leading-relaxed">
+                {t(
+                  'companies.aiEmpty',
+                  'Noch keine KI-Erkenntnisse — benötigt aktive Tickets und konfigurierte KI.',
+                )}
+              </p>
+            )}
 
-            <Button 
+            <Button
               onClick={() => onTabChange('insights')}
-              variant="outline" 
-              size="sm" 
-              className="w-full h-8 rounded-xl border-indigo-200 hover:border-indigo-350 bg-indigo-500/[0.02] hover:bg-indigo-500/[0.05] text-indigo-600 text-[10px] font-bold"
+              variant="outline"
+              size="sm"
+              className="w-full h-8 rounded-xl border-indigo-200 bg-indigo-500/[0.02] hover:bg-indigo-500/[0.05] text-indigo-600 text-[10px] font-bold"
             >
-              {t('companies.viewAllInsights', 'View all insights')}
+              {t('companies.viewAllInsights', 'Alle Erkenntnisse anzeigen')}
             </Button>
           </CardContent>
         </Card>
-
       </div>
 
-      {/* COLUMN 2 & 3: Recent Tickets + Assets Summary + Vault & Activities */}
       <div className="lg:col-span-2 space-y-6">
-        
-        {/* Recent Tickets Card */}
         <Card className="border border-muted-foreground/10 shadow-xs rounded-2xl bg-background">
           <CardHeader className="pb-2 flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-black text-foreground flex items-center gap-2">
               <Activity className="w-4 h-4 text-primary" />
-              {t('companies.recentTickets', 'Recent Tickets')}
+              {t('companies.recentTickets', 'Kürzliche Tickets')}
             </CardTitle>
-            <button 
+            <button
               onClick={onViewAllTicketsClick}
               className="text-xs font-bold text-primary hover:underline"
             >
-              {t('companies.viewAllTickets', 'View all tickets')}
+              {t('companies.viewAllTickets', 'Alle Tickets anzeigen')}
             </button>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="divide-y divide-muted">
-              {displayTickets.map((tItem, idx) => (
-                <div key={idx} className="flex items-center justify-between px-5 py-3 hover:bg-muted/10 transition-colors select-none text-xs font-semibold">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="text-muted-foreground font-mono w-10">#{tItem.id}</span>
-                    <span className="text-foreground font-black truncate max-w-[200px] md:max-w-xs">{tItem.subject}</span>
-                    <Badge className={`text-[8px] font-black uppercase px-2 h-4.5 border-none rounded ${
-                      tItem.priority === 'urgent' || tItem.priority === 'high' ? 'bg-rose-500/10 text-rose-500' :
-                      tItem.priority === 'medium' ? 'bg-amber-500/10 text-amber-500' : 'bg-slate-100 text-slate-500'
-                    }`}>
-                      {tItem.priority}
-                    </Badge>
+            {displayTickets.length === 0 ? (
+              <p className="px-5 py-10 text-center text-xs text-muted-foreground font-semibold">
+                {t(
+                  'companies.noTicketsForCompany',
+                  'Noch keine Tickets für dieses Unternehmen.',
+                )}
+              </p>
+            ) : (
+              <div className="divide-y divide-muted">
+                {displayTickets.map((tItem) => (
+                  <div
+                    key={tItem.id}
+                    className="flex items-center justify-between px-5 py-3 hover:bg-muted/10 transition-colors select-none text-xs font-semibold"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-muted-foreground font-mono w-10">#{tItem.id}</span>
+                      <span className="text-foreground font-black truncate max-w-[200px] md:max-w-xs">
+                        {tItem.subject}
+                      </span>
+                      <Badge
+                        className={`text-[8px] font-black uppercase px-2 h-4.5 border-none rounded ${
+                          tItem.priority === 'urgent' || tItem.priority === 'high'
+                            ? 'bg-rose-500/10 text-rose-500'
+                            : tItem.priority === 'medium'
+                              ? 'bg-amber-500/10 text-amber-500'
+                              : 'bg-slate-100 text-slate-500'
+                        }`}
+                      >
+                        {tItem.priority}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-6 text-muted-foreground">
+                      <Badge
+                        variant="outline"
+                        className={`h-4.5 text-[8px] font-black uppercase border-none px-2 rounded ${
+                          tItem.status === 'open'
+                            ? 'bg-emerald-500/10 text-emerald-500'
+                            : tItem.status === 'pending'
+                              ? 'bg-amber-500/10 text-amber-500'
+                              : 'bg-slate-150 text-slate-500'
+                        }`}
+                      >
+                        {tItem.status}
+                      </Badge>
+                      <span className="hidden md:inline text-right min-w-[100px] font-bold truncate">
+                        {tItem.customerName || '—'}
+                      </span>
+                      <span className="text-right w-28 text-[10px]">
+                        {formatTicketTime(tItem)}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-6 text-muted-foreground">
-                    <Badge variant="outline" className={`h-4.5 text-[8px] font-black uppercase border-none px-2 rounded ${
-                      tItem.status === 'open' ? 'bg-emerald-500/10 text-emerald-500' :
-                      tItem.status === 'pending' ? 'bg-amber-500/10 text-amber-500' : 'bg-slate-150 text-slate-500'
-                    }`}>
-                      {tItem.status}
-                    </Badge>
-                    <span className="hidden md:inline text-right min-w-[100px] font-bold truncate">{tItem.customerName}</span>
-                    <span className="text-right w-16 text-[10px]">{tItem.createdAtText || formatTicketTime(tItem as any)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Assets & GeistVault Summaries row */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          
-          {/* Asset Overview Card */}
           <Card className="border border-muted-foreground/10 shadow-xs rounded-2xl bg-background">
             <CardHeader className="pb-2 flex flex-row items-center justify-between">
               <CardTitle className="text-sm font-black text-foreground flex items-center gap-2">
                 <Laptop className="w-4 h-4 text-emerald-500" />
-                {t('companies.assetOverview', 'Asset Overview')}
+                {t('companies.assetOverview', 'Asset-Übersicht')}
               </CardTitle>
-              <button 
+              <button
                 onClick={() => onTabChange('assets')}
                 className="text-xs font-bold text-primary hover:underline"
               >
-                {t('companies.viewAllAssets', 'View all assets')}
+                {t('companies.viewAllAssets', 'Alle Assets anzeigen')}
               </button>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Asset grid */}
-              <div className="grid grid-cols-2 gap-3 pb-2">
-                <div className="p-3 bg-muted/20 border border-muted rounded-xl text-center flex flex-col items-center">
-                  <Server className="w-5 h-5 text-indigo-500" />
-                  <span className="text-lg font-black mt-2 text-foreground">
-                    {company.name.includes('CyberDyne') ? 120 : 42}
-                  </span>
-                  <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-wider mt-0.5">{t('companies.servers', 'Servers')}</span>
-                  <span className="text-[8px] text-emerald-500 font-semibold mt-1">↑ 3 new</span>
+              {assets.total === 0 ? (
+                <p className="text-xs text-muted-foreground font-semibold py-4 text-center">
+                  {t('companies.noAssetsLinked', 'Noch keine Assets verknüpft.')}
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 pb-2">
+                  {[
+                    {
+                      icon: Server,
+                      color: 'text-indigo-500',
+                      count: assets.servers,
+                      label: t('companies.servers', 'Server'),
+                    },
+                    {
+                      icon: Cpu,
+                      color: 'text-emerald-500',
+                      count: assets.workstations,
+                      label: t('companies.workstations', 'Workstations'),
+                    },
+                    {
+                      icon: Network,
+                      color: 'text-amber-500',
+                      count: assets.network,
+                      label: t('companies.networkDevices', 'Netzwerkgeräte'),
+                    },
+                    {
+                      icon: AppWindow,
+                      color: 'text-purple-500',
+                      count: assets.applications,
+                      label: t('companies.applications', 'Anwendungen'),
+                    },
+                  ].map((row) => {
+                    const Icon = row.icon;
+                    return (
+                      <div
+                        key={row.label}
+                        className="p-3 bg-muted/20 border border-muted rounded-xl text-center flex flex-col items-center"
+                      >
+                        <Icon className={`w-5 h-5 ${row.color}`} />
+                        <span className="text-lg font-black mt-2 text-foreground">
+                          {row.count}
+                        </span>
+                        <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-wider mt-0.5">
+                          {row.label}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className="p-3 bg-muted/20 border border-muted rounded-xl text-center flex flex-col items-center">
-                  <Cpu className="w-5 h-5 text-emerald-500" />
-                  <span className="text-lg font-black mt-2 text-foreground">
-                    {company.name.includes('CyberDyne') ? 98 : 128}
-                  </span>
-                  <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-wider mt-0.5">{t('companies.workstations', 'Workstations')}</span>
-                  <span className="text-[8px] text-emerald-500 font-semibold mt-1">↑ 5 new</span>
-                </div>
-                <div className="p-3 bg-muted/20 border border-muted rounded-xl text-center flex flex-col items-center">
-                  <Network className="w-5 h-5 text-amber-500" />
-                  <span className="text-lg font-black mt-2 text-foreground">18</span>
-                  <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-wider mt-0.5">{t('companies.networkDevices', 'Network Devices')}</span>
-                  <span className="text-[8px] text-emerald-500 font-semibold mt-1">↑ 1 new</span>
-                </div>
-                <div className="p-3 bg-muted/20 border border-muted rounded-xl text-center flex flex-col items-center">
-                  <AppWindow className="w-5 h-5 text-purple-500" />
-                  <span className="text-lg font-black mt-2 text-foreground">32</span>
-                  <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-wider mt-0.5">{t('companies.applications', 'Applications')}</span>
-                  <span className="text-[8px] text-slate-400 font-semibold mt-1">{t('companies.noChange', 'No change')}</span>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between text-[10px] text-muted-foreground font-bold uppercase pt-1 border-t border-muted">
-                <span>{t('companies.discoveryEngine', 'Discovery Engine')}</span>
-                <span className="text-emerald-500 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  {t('companies.lastDiscovery', 'Last discovery: 2 hours ago')}
-                </span>
-              </div>
+              )}
             </CardContent>
           </Card>
 
-          {/* GeistVault Summary Card */}
           <Card className="border border-muted-foreground/10 shadow-xs rounded-2xl bg-background">
             <CardHeader className="pb-2 flex flex-row items-center justify-between">
               <CardTitle className="text-sm font-black text-foreground flex items-center gap-2">
                 <Key className="w-4 h-4 text-amber-500" />
-                {t('companies.geistVaultSummary', 'GeistVault Summary')}
+                {t('companies.geistVaultSummary', 'Tresor-Übersicht')}
               </CardTitle>
-              <button 
+              <button
                 onClick={onOpenVaultClick}
                 className="text-xs font-bold text-primary hover:underline flex items-center gap-1.5"
               >
                 <Unlock className="w-3 h-3 text-primary" />
-                {t('companies.openVault', 'Open vault')}
+                {t('companies.openVault', 'Tresor öffnen')}
               </button>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* List counts */}
-              <div className="space-y-2.5 text-xs font-semibold">
-                <div className="flex items-center justify-between py-1 border-b border-muted">
-                  <span className="text-muted-foreground">{t('companies.credentials', 'Credentials')}</span>
-                  <span className="text-foreground font-bold">{company.vaultEntriesCount}</span>
+              {vaultItems.length === 0 ? (
+                <p className="text-xs text-muted-foreground font-semibold py-4 text-center">
+                  {t(
+                    'companies.noVaultEntries',
+                    'Noch keine Tresor-Einträge für dieses Unternehmen.',
+                  )}
+                </p>
+              ) : (
+                <div className="space-y-2.5 text-xs font-semibold">
+                  <div className="flex items-center justify-between py-1 border-b border-muted">
+                    <span className="text-muted-foreground">
+                      {t('companies.credentials', 'Zugangsdaten')}
+                    </span>
+                    <span className="text-foreground font-bold">{vaultByType.credentials}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1 border-b border-muted">
+                    <span className="text-muted-foreground">
+                      {t('companies.apiKeys', 'API-Schlüssel')}
+                    </span>
+                    <span className="text-foreground font-bold">{vaultByType.apiKeys}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1 border-b border-muted">
+                    <span className="text-muted-foreground">
+                      {t('companies.certificates', 'Zertifikate')}
+                    </span>
+                    <span className="text-foreground font-bold">{vaultByType.certificates}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1">
+                    <span className="text-muted-foreground">
+                      {t('companies.otherEntries', 'Weitere Einträge')}
+                    </span>
+                    <span className="text-foreground font-bold">{vaultByType.other}</span>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between py-1 border-b border-muted">
-                  <span className="text-muted-foreground">{t('companies.apiKeys', 'API Keys')}</span>
-                  <span className="text-foreground font-bold">6</span>
-                </div>
-                <div className="flex items-center justify-between py-1 border-b border-muted">
-                  <span className="text-muted-foreground">{t('companies.certificates', 'Certificates')}</span>
-                  <span className="text-foreground font-bold">9</span>
-                </div>
-                <div className="flex items-center justify-between py-1">
-                  <span className="text-muted-foreground">{t('companies.sharedEntries', 'Shared Entries')}</span>
-                  <span className="text-foreground font-bold">12</span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 bg-amber-500/10 text-amber-700 px-3.5 py-2.5 rounded-xl text-xs font-bold leading-none border border-amber-500/25">
-                <AlertTriangle className="w-4 h-4 text-amber-500 animate-bounce shrink-0" />
-                <span>{t('companies.expiringSoonWithCount', '3 entries expiring soon (needs action)').replace('{{count}}', '3')}</span>
-              </div>
+              )}
             </CardContent>
           </Card>
-
         </div>
 
-        {/* Activity Timeline Card */}
         <Card className="border border-muted-foreground/10 shadow-xs rounded-2xl bg-background">
           <CardHeader className="pb-2 flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-black text-foreground flex items-center gap-2">
               <Clock className="w-4 h-4 text-purple-500" />
-              {t('companies.activityTimeline', 'Activity Timeline')}
+              {t('companies.activityTimeline', 'Aktivitätschronik')}
             </CardTitle>
-            <button 
+            <button
               onClick={() => onTabChange('activity')}
               className="text-xs font-bold text-primary hover:underline"
             >
-              {t('companies.viewAllActivity', 'View all activity')}
+              {t('companies.viewAllActivity', 'Alle Aktivitäten anzeigen')}
             </button>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="relative pl-5 border-l-2 border-muted space-y-4">
-              {/* Event 1 */}
-              <div className="relative">
-                <div className="absolute -left-[27px] top-1 h-3.5 w-3.5 rounded-full bg-primary border-4 border-background" />
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] bg-muted/65 px-2 py-0.5 rounded font-black uppercase text-muted-foreground tracking-wider">{t('companies.today', 'Today')}</span>
-                  <span className="text-[10px] text-muted-foreground font-bold">10:24 AM</span>
-                </div>
-                <p className="text-xs font-bold text-foreground mt-1">
-                  Ticket #443 created by Sarah James
-                </p>
+            {activity.length === 0 ? (
+              <p className="text-xs text-muted-foreground font-semibold py-6 text-center">
+                {t('companies.noActivity', 'Noch keine Aktivitäten protokolliert.')}
+              </p>
+            ) : (
+              <div className="relative pl-5 border-l-2 border-muted space-y-4">
+                {activity.map((ev, idx) => (
+                  <div key={`${ev.title}-${idx}`} className="relative">
+                    <div
+                      className={`absolute -left-[27px] top-1 h-3.5 w-3.5 rounded-full border-4 border-background ${ev.color}`}
+                    />
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-muted-foreground font-bold">
+                        {ev.time}
+                      </span>
+                    </div>
+                    <p className="text-xs font-bold text-foreground mt-1">{ev.title}</p>
+                    <p className="text-[11px] text-muted-foreground font-semibold">{ev.desc}</p>
+                  </div>
+                ))}
               </div>
-
-              {/* Event 2 */}
-              <div className="relative">
-                <div className="absolute -left-[27px] top-1 h-3.5 w-3.5 rounded-full bg-amber-500 border-4 border-background" />
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] bg-muted/65 px-2 py-0.5 rounded font-black uppercase text-muted-foreground tracking-wider">{t('companies.yesterday', 'Yesterday')}</span>
-                  <span className="text-[10px] text-muted-foreground font-bold">04:15 PM</span>
-                </div>
-                <p className="text-xs font-bold text-foreground mt-1">
-                  GeistVault entry updated: primary credentials for domain
-                </p>
-              </div>
-
-              {/* Event 3 */}
-              <div className="relative">
-                <div className="absolute -left-[27px] top-1 h-3.5 w-3.5 rounded-full bg-emerald-500 border-4 border-background" />
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] bg-muted/65 px-2 py-0.5 rounded font-black uppercase text-muted-foreground tracking-wider">May 19</span>
-                  <span className="text-[10px] text-muted-foreground font-bold">11:30 AM</span>
-                </div>
-                <p className="text-xs font-bold text-foreground mt-1">
-                  Contract renewed for 12 months (Plan: {company.contractPlan})
-                </p>
-              </div>
-
-              {/* Event 4 */}
-              <div className="relative">
-                <div className="absolute -left-[27px] top-1 h-3.5 w-3.5 rounded-full bg-indigo-500 border-4 border-background" />
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] bg-muted/65 px-2 py-0.5 rounded font-black uppercase text-muted-foreground tracking-wider">May 16</span>
-                  <span className="text-[10px] text-muted-foreground font-bold">09:20 AM</span>
-                </div>
-                <p className="text-xs font-bold text-foreground mt-1">
-                  New asset group "Production Servers" auto-added via discovery scan
-                </p>
-              </div>
-            </div>
+            )}
           </CardContent>
         </Card>
-
       </div>
-
     </div>
   );
 }

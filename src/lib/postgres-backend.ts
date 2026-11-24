@@ -331,11 +331,16 @@ export async function initDb() {
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS sso_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS logo_url TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS portal_title TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS portal_banner_url TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS industry TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS website TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS tier TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS sla TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contract_renewal TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS monthly_rate TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contract_reference TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contract_notes TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contract_term TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS crm_company_id TEXT;
     CREATE INDEX IF NOT EXISTS idx_organizations_active_name

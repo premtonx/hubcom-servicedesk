@@ -77,6 +77,11 @@ export default function AdminHubLayout() {
   }, []);
 
   const goToSection = (tabId: AdminHubTabId) => {
+    // Kunden is a first-class workspace — open the directory directly.
+    if (tabId === 'kunden') {
+      navigate('/admin/customers');
+      return;
+    }
     navigate(`/admin?tab=${tabId}`);
   };
 
@@ -167,7 +172,8 @@ export default function AdminHubLayout() {
 
         {/* Right content panel only — swaps via <Outlet /> */}
         <div className="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col">
-          {subRoute && !isHubIndex ? (
+          {/* Kunden is a top-level section — no „← Infrastruktur / Kunden“ breadcrumb. */}
+          {subRoute && !isHubIndex && subRoute.parentTab !== 'kunden' ? (
             <div className="shrink-0 px-6 lg:px-8 pt-4 pb-1">
               <nav className="text-xs text-muted-foreground flex items-center gap-1.5 min-w-0">
                 <button

@@ -1,8 +1,8 @@
 /**
- * Shared logo + portal title editor for SYSTEM_ADMIN (per org) and CLIENT_ADMIN (own org).
+ * Shared logo + portal title + banner editor for SYSTEM_ADMIN (per org) and CLIENT_ADMIN (own org).
  */
 
-import { useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { ImagePlus, Loader2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
@@ -15,36 +15,51 @@ import {
   organizationInitials,
   resolvePortalTitle,
 } from '../../lib/client-portal/org-branding';
+import {
+  DASHBOARD_BANNER_ALLOWED_MIME,
+  DASHBOARD_BANNER_MAX_BYTES,
+} from '../../lib/dashboard-banner-validate';
 
 export interface OrgPortalBrandingCardProps {
   organizationName: string;
   logoUrl: string | null;
   portalTitle: string | null;
+  bannerUrl?: string | null;
   saving?: boolean;
   onSave: (payload: {
     logoDataUrl?: string | null;
     portal_title?: string | null;
     clearLogo?: boolean;
   }) => Promise<void>;
+  onBannerUpload?: (bannerDataUrl: string) => Promise<void>;
+  onBannerRemove?: () => Promise<void>;
 }
 
 export function OrgPortalBrandingCard({
   organizationName,
   logoUrl,
   portalTitle,
+  bannerUrl,
   saving,
   onSave,
+  onBannerUpload,
+  onBannerRemove,
 }: OrgPortalBrandingCardProps) {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
   const [titleDraft, setTitleDraft] = useState(portalTitle || '');
   const [busy, setBusy] = useState(false);
   const isBusy = Boolean(saving || busy);
 
+  useEffect(() => {
+    setTitleDraft(portalTitle || '');
+  }, [portalTitle]);
+
   const previewTitle = resolvePortalTitle(organizationName, titleDraft || portalTitle);
   const initials = organizationInitials(organizationName);
 
-  const readLogoFile = (file: File): Promise<string> =>
+  const readFileAsDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result || ''));
@@ -60,22 +75,22 @@ export function OrgPortalBrandingCard({
       toast.error(
         t(
           'orgBranding.invalidType',
-          'Only PNG, JPEG, or WebP logos are allowed (no SVG).',
+          'Nur PNG, JPEG oder WebP sind erlaubt (kein SVG).',
         ),
       );
       return;
     }
     if (file.size > ORG_LOGO_MAX_BYTES) {
-      toast.error(t('orgBranding.tooLarge', 'Logo must be 512 KB or smaller.'));
+      toast.error(t('orgBranding.tooLarge', 'Logo darf maximal 512 KB groß sein.'));
       return;
     }
     setBusy(true);
     try {
-      const dataUrl = await readLogoFile(file);
+      const dataUrl = await readFileAsDataUrl(file);
       await onSave({ logoDataUrl: dataUrl });
-      toast.success(t('orgBranding.uploaded', 'Portal logo saved.'));
+      toast.success(t('orgBranding.uploaded', 'Portal-Logo gespeichert.'));
     } catch (err: any) {
-      toast.error(err?.message || t('orgBranding.uploadFailed', 'Logo upload failed.'));
+      toast.error(err?.message || t('orgBranding.uploadFailed', 'Logo-Upload fehlgeschlagen.'));
     } finally {
       setBusy(false);
     }
@@ -85,9 +100,9 @@ export function OrgPortalBrandingCard({
     setBusy(true);
     try {
       await onSave({ clearLogo: true });
-      toast.success(t('orgBranding.cleared', 'Portal logo removed.'));
+      toast.success(t('orgBranding.cleared', 'Portal-Logo entfernt.'));
     } catch (err: any) {
-      toast.error(err?.message || t('orgBranding.clearFailed', 'Could not remove logo.'));
+      toast.error(err?.message || t('orgBranding.clearFailed', 'Logo konnte nicht entfernt werden.'));
     } finally {
       setBusy(false);
     }
@@ -97,9 +112,59 @@ export function OrgPortalBrandingCard({
     setBusy(true);
     try {
       await onSave({ portal_title: titleDraft.trim() || null });
-      toast.success(t('orgBranding.titleSaved', 'Portal title saved.'));
+      toast.success(t('orgBranding.titleSaved', 'Portal-Titel gespeichert.'));
     } catch (err: any) {
-      toast.error(err?.message || t('orgBranding.titleFailed', 'Could not save title.'));
+      toast.error(err?.message || t('orgBranding.titleFailed', 'Titel konnte nicht gespeichert werden.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onBannerFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !onBannerUpload) return;
+    if (!DASHBOARD_BANNER_ALLOWED_MIME.has(file.type) || file.type.includes('svg')) {
+      toast.error(
+        t(
+          'orgBranding.bannerInvalidType',
+          'Nur PNG, JPEG oder WebP-Banner sind erlaubt (kein SVG).',
+        ),
+      );
+      return;
+    }
+    if (file.size > DASHBOARD_BANNER_MAX_BYTES) {
+      toast.error(t('orgBranding.bannerTooLarge', 'Banner darf maximal 2 MB groß sein.'));
+      return;
+    }
+    setBusy(true);
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      await onBannerUpload(dataUrl);
+      toast.success(t('orgBranding.bannerUploaded', 'Portal-Banner gespeichert.'));
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.error ||
+          err?.message ||
+          t('orgBranding.bannerFailed', 'Banner-Upload fehlgeschlagen.'),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearBanner = async () => {
+    if (!onBannerRemove) return;
+    setBusy(true);
+    try {
+      await onBannerRemove();
+      toast.success(t('orgBranding.bannerCleared', 'Portal-Banner entfernt.'));
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.error ||
+          err?.message ||
+          t('orgBranding.bannerClearFailed', 'Banner konnte nicht entfernt werden.'),
+      );
     } finally {
       setBusy(false);
     }
@@ -114,7 +179,7 @@ export function OrgPortalBrandingCard({
         <p className="text-xs text-slate-500 mt-0.5">
           {t(
             'orgBranding.hint',
-            'Logo (PNG/JPEG/WebP, max 512 KB) and optional portal title for CLIENT_* users.',
+            'Logo (PNG/JPEG/WebP, max. 512 KB) und optionaler Portal-Titel für CLIENT_*-Nutzer.',
           )}
         </p>
       </div>
@@ -150,7 +215,7 @@ export function OrgPortalBrandingCard({
               ) : (
                 <ImagePlus className="w-3.5 h-3.5" />
               )}
-              {t('orgBranding.upload', 'Upload logo')}
+              {t('orgBranding.upload', 'Logo hochladen')}
             </Button>
             {logoUrl ? (
               <Button
@@ -162,7 +227,7 @@ export function OrgPortalBrandingCard({
                 onClick={() => void clearLogo()}
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                {t('orgBranding.remove', 'Remove')}
+                {t('orgBranding.remove', 'Entfernen')}
               </Button>
             ) : null}
           </div>
@@ -171,7 +236,7 @@ export function OrgPortalBrandingCard({
 
       <div className="space-y-1.5">
         <Label className="text-[10px] font-bold uppercase text-slate-400">
-          {t('orgBranding.portalTitle', 'Portal title')}
+          {t('orgBranding.portalTitle', 'Portal-Titel')}
         </Label>
         <div className="flex gap-2">
           <Input
@@ -181,10 +246,75 @@ export function OrgPortalBrandingCard({
             maxLength={120}
           />
           <Button type="button" size="sm" disabled={isBusy} onClick={() => void saveTitle()}>
-            {t('common.save', 'Save')}
+            {t('common.save', 'Speichern')}
           </Button>
         </div>
       </div>
+
+      {onBannerUpload ? (
+        <div className="space-y-3 pt-2 border-t border-slate-200/80">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+              {t('orgBranding.bannerTitle', 'Portal-Banner (Dashboard-Header)')}
+            </p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {t(
+                'orgBranding.bannerHint',
+                'PNG/JPEG/WebP, max. 2 MB — erscheint im glassmorphen Dashboard-Header des Kunden-Portals.',
+              )}
+            </p>
+          </div>
+          <div
+            className="w-full h-28 rounded-xl border border-dashed border-slate-300 overflow-hidden bg-gradient-to-br from-sky-50 via-blue-50 to-slate-100"
+            style={
+              bannerUrl
+                ? {
+                    backgroundImage: `url(${bannerUrl})`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                  }
+                : undefined
+            }
+          />
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={bannerInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => void onBannerFile(e)}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={isBusy}
+              className="gap-1.5"
+              onClick={() => bannerInputRef.current?.click()}
+            >
+              {isBusy ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <ImagePlus className="w-3.5 h-3.5" />
+              )}
+              {t('orgBranding.bannerUpload', 'Banner hochladen')}
+            </Button>
+            {bannerUrl && onBannerRemove ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={isBusy}
+                className="gap-1.5 text-rose-700"
+                onClick={() => void clearBanner()}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {t('orgBranding.remove', 'Entfernen')}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

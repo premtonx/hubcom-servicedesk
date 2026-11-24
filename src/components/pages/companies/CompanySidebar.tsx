@@ -6,9 +6,8 @@ import {
   Upload, 
   RefreshCw, 
   Star, 
-  ChevronRight, 
   SlidersHorizontal,
-  FolderHeart
+  PanelLeftClose,
 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
@@ -34,6 +33,8 @@ interface CompanySidebarProps {
   onSeedClick: () => void;
   isSeeding: boolean;
   ticketHistoryMap: Record<string, Ticket[]>;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 export default function CompanySidebar({
@@ -50,7 +51,9 @@ export default function CompanySidebar({
   onImportClick,
   onSeedClick,
   isSeeding,
-  ticketHistoryMap
+  ticketHistoryMap,
+  collapsed,
+  onToggleCollapse,
 }: CompanySidebarProps) {
   const { t } = useTranslation();
 
@@ -68,7 +71,7 @@ export default function CompanySidebar({
       // Search matching
       const matchesSearch = 
          c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-         c.domain.toLowerCase().includes(searchQuery.toLowerCase());
+         (c.domain || '').toLowerCase().includes(searchQuery.toLowerCase());
       
       if (!matchesSearch) return false;
 
@@ -99,9 +102,7 @@ export default function CompanySidebar({
     return hydratedCompanies.filter(c => favorites.includes(c.id));
   }, [hydratedCompanies, favorites]);
 
-  const standardCompanies = useMemo(() => {
-    return hydratedCompanies.filter(c => !favorites.includes(c.id));
-  }, [hydratedCompanies, favorites]);
+  if (collapsed) return null;
 
   return (
     <div className={cn(
@@ -115,9 +116,21 @@ export default function CompanySidebar({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Building2 className="w-5 h-5 text-primary" />
-            <h1 className="text-lg font-extrabold tracking-tight text-foreground">{t('nav.companies', 'Companies')}</h1>
+            <h1 className="text-lg font-extrabold tracking-tight text-foreground">{t('nav.companies', 'Unternehmen')}</h1>
           </div>
           <div className="flex gap-1 items-center">
+            {onToggleCollapse ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={onToggleCollapse}
+                className="h-8 w-8 rounded-full hover:bg-muted text-muted-foreground"
+                title={t('companies.collapseList', 'Liste einklappen')}
+              >
+                <PanelLeftClose className="w-4 h-4" />
+              </Button>
+            ) : null}
             {companies.length === 0 && (
               <Button 
                 variant="ghost" 
@@ -125,7 +138,7 @@ export default function CompanySidebar({
                 onClick={onSeedClick} 
                 disabled={isSeeding}
                 className="h-8 w-8 rounded-full hover:bg-amber-50 text-amber-600 transition-all"
-                title={t('companies.seedPlaceholder', 'Seed Sample Database')}
+                title={t('companies.seedPlaceholder', 'Beispieldaten laden')}
               >
                 <RefreshCw className={`w-4 h-4 ${isSeeding ? 'animate-spin' : ''}`} />
               </Button>
@@ -135,7 +148,7 @@ export default function CompanySidebar({
               size="icon" 
               onClick={onImportClick} 
               className="h-8 w-8 rounded-full hover:bg-muted text-muted-foreground"
-              title={t('companies.importCsv', 'Import CSV')}
+              title={t('companies.importCsv', 'CSV importieren')}
             >
               <Upload className="w-4 h-4" />
             </Button>
@@ -143,10 +156,10 @@ export default function CompanySidebar({
               type="button"
               onClick={onAddCompanyClick}
               className="h-8 gap-1 bg-blue-600 hover:bg-blue-700 text-white px-3.5 rounded-lg text-xs font-bold shadow-sm shadow-blue-600/10 transition-all hover:scale-[1.02] active:scale-95 shrink-0 cursor-pointer"
-              title={t('companies.createCompany', 'Create Company')}
+              title={t('companies.createCompany', 'Unternehmen anlegen')}
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>{t('actions.create', 'Create')}</span>
+              <span>{t('actions.create', 'Anlegen')}</span>
             </Button>
           </div>
         </div>
@@ -155,7 +168,7 @@ export default function CompanySidebar({
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input 
-              placeholder={t('companies.searchPlaceholder', 'Search companies...')} 
+              placeholder={t('companies.searchPlaceholder', 'Unternehmen suchen…')} 
               className="pl-9 pr-3 h-9 bg-muted/40 border border-muted-foreground/10 rounded-xl text-xs focus-visible:ring-1 focus-visible:ring-primary"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -197,7 +210,7 @@ export default function CompanySidebar({
           <div className="flex items-center justify-between px-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
             <span className="flex items-center gap-1.5">
               <Building2 className="w-3 h-3" />
-              {t('companies.allCompanies', 'All Companies')}
+              {t('companies.allCompanies', 'Alle Unternehmen')}
             </span>
             <Badge variant="ghost" className="h-4 px-1.5 text-[9px] font-extrabold bg-muted text-muted-foreground rounded-full border-none">
               {filterCounts.all}

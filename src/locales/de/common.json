@@ -2289,6 +2289,7 @@
     "configureSection": "Bereich konfigurieren",
     "hubTabs": {
       "overview": "Übersicht",
+      "kunden": "Kunden",
       "aiEngine": "Kern-KI & Modelle",
       "governance": "PII & Compliance",
       "integrations": "Mail & Schnittstellen",
