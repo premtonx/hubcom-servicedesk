@@ -62,7 +62,7 @@ import {
 } from '../../lib/ticketViewFilters';
 import {
   parseResolvedWithinDays,
-  resolveTicketsViewParam,
+  resolveTicketsListDeepLink,
   TICKETS_DEEP_LINK_VIEWS,
 } from '../../lib/dashboard-ticket-nav';
 import {
@@ -122,6 +122,7 @@ export default function TicketsPage() {
   const [kundenOrgs, setKundenOrgs] = useState<KundenSidebarOrg[]>([]);
   const selectedOrganizationId = searchParams.get('organizationId') || null;
   const urlViewParam = searchParams.get('view');
+  const urlStatusParam = searchParams.get('status');
   const resolvedWithinDays = parseResolvedWithinDays(searchParams.get('resolvedWithin'));
 
   const setSelectedOrganizationId = useCallback(
@@ -166,12 +167,14 @@ export default function TicketsPage() {
   const [replyText, setReplyText] = useState('');
   const [isMobilePropertiesOpen, setIsMobilePropertiesOpen] = useState(false);
   const [activeView, setActiveView] = useState<string>(() => {
-    const fromUrl = resolveTicketsViewParam(
-      typeof window !== 'undefined'
-        ? new URLSearchParams(window.location.search).get('view')
-        : null,
-    );
-    if (fromUrl) return fromUrl;
+    if (typeof window !== 'undefined') {
+      const qs = new URLSearchParams(window.location.search);
+      const fromUrl = resolveTicketsListDeepLink({
+        status: qs.get('status'),
+        view: qs.get('view'),
+      });
+      if (fromUrl) return fromUrl;
+    }
     return localStorage.getItem('geistdesk_default_view') || 'team_all_open';
   });
   const [topStatusFilter, setTopStatusFilter] = useState<TopStatusFilterId>('all');
@@ -243,19 +246,22 @@ export default function TicketsPage() {
     }
   }, [sidebarPrefs.customViews, activeView, defaultViewSetting]);
 
-  // Apply dashboard / deep-link query params (`view`, org without view).
+  // Apply dashboard / deep-link query params (`status`, `view`, org without view).
   useEffect(() => {
-    const mapped = resolveTicketsViewParam(urlViewParam);
+    const mapped = resolveTicketsListDeepLink({
+      status: urlStatusParam,
+      view: urlViewParam,
+    });
     if (mapped) {
       if (mapped !== activeView) setActiveView(mapped);
       return;
     }
-    if (selectedOrganizationId && !urlViewParam) {
+    if (selectedOrganizationId && !urlViewParam && !urlStatusParam) {
       if (activeView !== 'team_all_open') setActiveView('team_all_open');
     }
     // Intentionally omit activeView from deps — URL is source of truth for deep links.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlViewParam, selectedOrganizationId]);
+  }, [urlViewParam, urlStatusParam, selectedOrganizationId]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [legalViolation, setLegalViolation] = useState<LegalValidationResult | null>(null);
@@ -368,6 +374,7 @@ export default function TicketsPage() {
     setSelectedTicketId(null);
     setSelectedTicketIds([]);
     const next = new URLSearchParams(searchParams);
+    next.delete('status');
     next.set('view', view);
     if (view !== 'status_resolved' && view !== 'status_closed') {
       next.delete('resolvedWithin');

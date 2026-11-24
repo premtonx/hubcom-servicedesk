@@ -23,7 +23,7 @@ export default function BrandingAdminPage() {
             <p className="text-sm text-slate-500 mt-1 leading-relaxed">
               {t(
                 'admin.branding.subtitle',
-                'Logo und Markenzeichen für Hubcom – Citadelle AG. Platzhalter durch das offizielle Logo ersetzen.',
+                'Logo, Firmenangaben und Dashboard-Banner für Hubcom – Citadelle AG.',
               )}
             </p>
           </div>

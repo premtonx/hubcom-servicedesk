@@ -4,55 +4,26 @@
  */
 
 import { getDocDirect, setDocDirect, updateDocDirect } from './postgres-backend.js';
+import {
+  DASHBOARD_BANNER_ALLOWED_MIME,
+  DASHBOARD_BANNER_MAX_BYTES,
+  parseAndValidateDashboardBannerDataUrl,
+} from './dashboard-banner-validate.js';
+
+export {
+  DASHBOARD_BANNER_ALLOWED_MIME,
+  DASHBOARD_BANNER_MAX_BYTES,
+  parseAndValidateDashboardBannerDataUrl,
+};
 
 export const DASHBOARD_BANNER_COLLECTION = 'platform_branding';
 export const DASHBOARD_BANNER_DOC_ID = 'dashboard_banner';
-export const DASHBOARD_BANNER_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
-export const DASHBOARD_BANNER_ALLOWED_MIME = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-]);
 
 export type DashboardBannerRecord = {
   imageDataUrl: string | null;
   updatedAt: string | null;
   updatedBy: string | null;
 };
-
-export function parseAndValidateDashboardBannerDataUrl(raw: unknown):
-  | { ok: true; dataUrl: string; mime: string; bytes: number }
-  | { ok: false; error: string } {
-  const value = String(raw || '').trim();
-  if (!value) return { ok: false, error: 'Banner payload is empty.' };
-
-  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(value);
-  if (!match) {
-    return {
-      ok: false,
-      error: 'Banner must be a data URL (image/png, image/jpeg, or image/webp).',
-    };
-  }
-
-  const mime = match[1].toLowerCase();
-  if (mime === 'image/svg+xml' || mime.includes('svg')) {
-    return { ok: false, error: 'SVG banners are not allowed.' };
-  }
-  if (!DASHBOARD_BANNER_ALLOWED_MIME.has(mime)) {
-    return {
-      ok: false,
-      error: 'Only PNG, JPEG, and WebP banners are allowed.',
-    };
-  }
-
-  const b64 = match[2].replace(/\s+/g, '');
-  const bytes = Math.floor((b64.length * 3) / 4);
-  if (bytes > DASHBOARD_BANNER_MAX_BYTES) {
-    return { ok: false, error: 'Banner must be 2 MB or smaller.' };
-  }
-
-  return { ok: true, dataUrl: `data:${mime};base64,${b64}`, mime, bytes };
-}
 
 export async function getDashboardBanner(): Promise<DashboardBannerRecord> {
   const doc = await getDocDirect(DASHBOARD_BANNER_COLLECTION, DASHBOARD_BANNER_DOC_ID);

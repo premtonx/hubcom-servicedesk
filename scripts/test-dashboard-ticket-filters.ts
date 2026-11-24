@@ -174,34 +174,35 @@ check('resolved in period respects date window', () => {
   assert.equal(isResolvedInPeriodTicket(fixtures.find((t) => t.id === 'a1')!, from, now), false);
 });
 
-check('KPI card destinations use distinct ticket-list views', () => {
+check('KPI card destinations use distinct ticket-list status/view URLs', () => {
   assert.equal(
     buildTicketsListUrl({ kind: 'view', view: 'unassigned' }),
     '/tickets?view=unassigned',
   );
   assert.equal(
-    buildTicketsListUrl({ kind: 'view', view: 'overdue' }),
-    '/tickets?view=overdue',
+    buildTicketsListUrl({ kind: 'status', status: 'open' }),
+    '/tickets?status=open',
   );
   assert.equal(
-    buildTicketsListUrl({ kind: 'view', view: 'open_in_progress' }),
-    '/tickets?view=open_in_progress',
+    buildTicketsListUrl({ kind: 'status', status: 'in_progress' }),
+    '/tickets?status=in_progress',
   );
   assert.equal(
     buildTicketsListUrl({
-      kind: 'view',
-      view: 'status_resolved',
-      resolvedWithinDays: 7,
+      kind: 'status',
+      status: 'resolved',
+      resolvedWithinDays: 30,
     }),
-    '/tickets?view=status_resolved&resolvedWithin=7d',
+    '/tickets?status=resolved&resolvedWithin=30d',
   );
 });
 
 check('legacy dashboard aliases resolve to real views', () => {
-  assert.equal(resolveTicketsViewParam('open'), 'open_in_progress');
+  assert.equal(resolveTicketsViewParam('open'), 'status_open');
   assert.equal(resolveTicketsViewParam('resolved'), 'status_resolved');
   assert.equal(resolveTicketsViewParam('unassigned'), 'unassigned');
   assert.equal(resolveTicketsViewParam('overdue'), 'overdue');
+  assert.equal(resolveTicketsViewParam('sla'), 'sla_risk');
   assert.equal(parseResolvedWithinDays('7d'), 7);
   assert.equal(parseResolvedWithinDays('7'), 7);
   assert.equal(parseResolvedWithinDays(''), null);
@@ -231,6 +232,9 @@ check('deep-link views are allow-listed', () => {
     'overdue',
     'open_in_progress',
     'status_resolved',
+    'status_open',
+    'status_in_progress',
+    'sla_risk',
     'team_all_open',
   ]) {
     assert.ok(TICKETS_DEEP_LINK_VIEWS.has(id), `missing ${id}`);

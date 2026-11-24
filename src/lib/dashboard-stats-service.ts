@@ -1,5 +1,11 @@
 import { getDocDirect, getDocsDirect, queryDb, setDocDirect } from './postgres-backend.js';
 import { computeDashboardMetrics, computeHealthScore, type KBGlobalSettings } from './kb-dashboard-metrics.js';
+import {
+  SQL_STATUS_IN_PROGRESS,
+  SQL_STATUS_NOT_EXCLUDED,
+  SQL_STATUS_OPEN,
+  SQL_STATUS_RESOLVED,
+} from './ticket-status-groups.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_HOUR = 60 * 60 * 1000;
@@ -84,6 +90,8 @@ export interface DashboardStatsPayload {
   kpis: {
     resolutionRate: string;
     avgResolutionTime: string;
+    /** Ø Reaktionszeit (first response) — same formatter as avgResolutionTime. */
+    avgResponseTime: string;
     resolvedCount: number;
     satisfaction: string;
     aiSuggestionsCount: number;
@@ -284,15 +292,19 @@ async function queryExtendedTicketStats() {
   const res = await queryDb(`
     SELECT
       COUNT(*)::int AS total,
-      COUNT(*) FILTER (WHERE LOWER(data->>'status') = 'open')::int AS open,
-      COUNT(*) FILTER (WHERE LOWER(data->>'status') = 'pending')::int AS pending,
       COUNT(*) FILTER (
-        WHERE LOWER(REPLACE(COALESCE(data->>'status', ''), '-', '_')) = 'in_progress'
+        WHERE ${SQL_STATUS_OPEN} AND ${SQL_STATUS_NOT_EXCLUDED}
+      )::int AS open,
+      COUNT(*) FILTER (
+        WHERE ${SQL_STATUS_IN_PROGRESS} AND ${SQL_STATUS_NOT_EXCLUDED}
       )::int AS in_progress,
-      COUNT(*) FILTER (WHERE LOWER(data->>'status') IN ('resolved', 'closed'))::int AS resolved,
+      COUNT(*) FILTER (
+        WHERE ${SQL_STATUS_RESOLVED}
+      )::int AS resolved,
       COUNT(*) FILTER (WHERE ${SQL_IS_UNASSIGNED})::int AS unassigned,
       COUNT(*) FILTER (
-        WHERE LOWER(COALESCE(data->>'status', '')) NOT IN ('closed', 'resolved', 'trash', 'spam', 'merged', 'deleted')
+        WHERE ${SQL_STATUS_NOT_EXCLUDED}
+          AND LOWER(REPLACE(COALESCE(data->>'status', ''), '-', '_')) NOT IN ('resolved', 'closed')
           AND (
             (NULLIF(data->>'slaDueAt', '') IS NOT NULL AND (data->>'slaDueAt')::timestamptz < NOW())
             OR (NULLIF(data->>'firstResponseDue', '') IS NOT NULL AND (data->>'firstResponseDue')::timestamptz < NOW())
@@ -310,7 +322,7 @@ async function queryExtendedTicketStats() {
         )
       ), 0)::int AS ai_suggestions,
       AVG(NULLIF(data->>'satisfactionRating', '')::numeric) FILTER (
-        WHERE LOWER(data->>'status') IN ('resolved', 'closed')
+        WHERE ${SQL_STATUS_RESOLVED}
           AND NULLIF(data->>'satisfactionRating', '') IS NOT NULL
       ) AS avg_satisfaction_rating,
       AVG(
@@ -319,15 +331,24 @@ async function queryExtendedTicketStats() {
           - COALESCE(NULLIF(data->>'createdAt', '')::timestamptz, created_at)
         )) / 3600.0
       ) FILTER (
-        WHERE LOWER(data->>'status') IN ('resolved', 'closed')
+        WHERE ${SQL_STATUS_RESOLVED}
           AND COALESCE(NULLIF(data->>'resolvedAt', '')::timestamptz, NULLIF(data->>'closedAt', '')::timestamptz) IS NOT NULL
       ) AS avg_resolution_hours,
+      AVG(
+        EXTRACT(EPOCH FROM (
+          NULLIF(data->>'firstRespondedAt', '')::timestamptz
+          - COALESCE(NULLIF(data->>'createdAt', '')::timestamptz, created_at)
+        )) / 3600.0
+      ) FILTER (
+        WHERE NULLIF(data->>'firstRespondedAt', '') IS NOT NULL
+          AND ${SQL_STATUS_NOT_EXCLUDED}
+      ) AS avg_first_response_hours,
       COUNT(*) FILTER (
-        WHERE LOWER(data->>'status') IN ('resolved', 'closed')
+        WHERE ${SQL_STATUS_RESOLVED}
           AND LOWER(COALESCE(data->>'aiSentiment', data->>'sentiment', '')) IN ('positive', 'happy')
       )::int AS positive_resolved,
       COUNT(*) FILTER (
-        WHERE LOWER(data->>'status') IN ('resolved', 'closed')
+        WHERE ${SQL_STATUS_RESOLVED}
       )::int AS resolved_total
     FROM geistdesk_documents
     WHERE collection = 'tickets'
@@ -339,19 +360,19 @@ async function queryExtendedTicketStats() {
   const satisfactionPct = resolvedTotal > 0 ? (positiveResolved / resolvedTotal) * 100 : 0;
 
   const open = Number(row.open) || 0;
-  const pending = Number(row.pending) || 0;
   const inProgress = Number(row.in_progress) || 0;
   return {
     total: Number(row.total) || 0,
     open,
-    pending,
+    pending: 0,
     inProgress,
-    openInProgress: open + pending + inProgress,
+    openInProgress: open + inProgress,
     resolved: Number(row.resolved) || 0,
     unassigned: Number(row.unassigned) || 0,
     overdue: Number(row.overdue) || 0,
     aiSuggestions: Number(row.ai_suggestions) || 0,
     avgResolutionHours: Number(row.avg_resolution_hours) || 0,
+    avgFirstResponseHours: Number(row.avg_first_response_hours) || 0,
     satisfactionPct,
     avgSatisfactionRating: Number(row.avg_satisfaction_rating) || 0,
   };
@@ -495,12 +516,12 @@ async function queryPeriodComparison(days = 7) {
           AND COALESCE(NULLIF(data->>'createdAt', '')::timestamptz, created_at) < (CURRENT_DATE - $1::int)
       )::int AS previous_incoming,
       COUNT(*) FILTER (
-        WHERE LOWER(data->>'status') IN ('resolved', 'closed')
+        WHERE ${SQL_STATUS_RESOLVED}
           AND COALESCE(NULLIF(data->>'resolvedAt', '')::timestamptz, NULLIF(data->>'closedAt', '')::timestamptz, updated_at)
             >= (CURRENT_DATE - $1::int)
       )::int AS current_resolved,
       COUNT(*) FILTER (
-        WHERE LOWER(data->>'status') IN ('resolved', 'closed')
+        WHERE ${SQL_STATUS_RESOLVED}
           AND COALESCE(NULLIF(data->>'resolvedAt', '')::timestamptz, NULLIF(data->>'closedAt', '')::timestamptz, updated_at)
             >= (CURRENT_DATE - ($1::int * 2))
           AND COALESCE(NULLIF(data->>'resolvedAt', '')::timestamptz, NULLIF(data->>'closedAt', '')::timestamptz, updated_at)
@@ -718,7 +739,8 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
     stats,
     trendChart,
     recentTickets,
-    comparison,
+    comparison7,
+    comparison30,
     articles,
     kbSettings,
     aiInsights,
@@ -728,6 +750,7 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
     queryTicketTrendBuckets(7),
     queryRecentTickets(40),
     queryPeriodComparison(7),
+    queryPeriodComparison(30),
     getDocsDirect('kb_articles', []),
     getDocDirect('kb_settings', 'global'),
     getCachedAiInsights(),
@@ -741,17 +764,19 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
   const kbScore = kbMetrics.healthScore;
   const kbTrend = kbMetrics.trends.health;
 
-  const resolvedInPeriod = Number(comparison.current_resolved) || 0;
-  const incomingInPeriod = Number(comparison.current_incoming) || 0;
+  // Gelöst KPI uses last 30 days; trend chart / MoM still uses 7 days.
+  const resolvedInPeriod = Number(comparison30.current_resolved) || 0;
+  const incomingInPeriod = Number(comparison7.current_incoming) || 0;
+  const resolved7 = Number(comparison7.current_resolved) || 0;
   const resolutionRateValue =
     incomingInPeriod > 0
-      ? (resolvedInPeriod / incomingInPeriod) * 100
+      ? (resolved7 / incomingInPeriod) * 100
       : stats.total > 0
         ? (stats.resolved / stats.total) * 100
         : 0;
   const previousResolution =
-    Number(comparison.previous_incoming) > 0
-      ? ((Number(comparison.previous_resolved) || 0) / Number(comparison.previous_incoming)) * 100
+    Number(comparison7.previous_incoming) > 0
+      ? ((Number(comparison7.previous_resolved) || 0) / Number(comparison7.previous_incoming)) * 100
       : 0;
 
   const from = new Date();
@@ -763,6 +788,7 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
     kpis: {
       resolutionRate: formatPercent(resolutionRateValue),
       avgResolutionTime: formatHours(stats.avgResolutionHours),
+      avgResponseTime: formatHours(stats.avgFirstResponseHours),
       resolvedCount: resolvedInPeriod,
       satisfaction:
         stats.avgSatisfactionRating > 0
@@ -776,7 +802,7 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
         avgResolutionTime: null,
         resolvedCount: momDelta(
           resolvedInPeriod,
-          Number(comparison.previous_resolved) || 0,
+          Number(comparison30.previous_resolved) || 0,
         ),
         satisfaction: null,
         aiSuggestions: momDelta(stats.aiSuggestions, Math.max(0, stats.aiSuggestions - 2)),
@@ -784,7 +810,7 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
     },
     buckets: {
       open: stats.open,
-      inProgress: stats.inProgress || stats.pending,
+      inProgress: stats.inProgress,
       openInProgress: stats.openInProgress,
       unassigned: stats.unassigned,
       overdue: stats.overdue,
@@ -794,7 +820,7 @@ export async function buildDashboardStats(): Promise<DashboardStatsPayload> {
     trendFooter: {
       totalTickets: stats.total,
       incoming: incomingInPeriod,
-      resolved: resolvedInPeriod,
+      resolved: resolved7,
     },
     recentTickets,
     clientOrganizations,

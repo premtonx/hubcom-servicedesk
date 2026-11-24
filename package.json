@@ -131,6 +131,7 @@
     "test:admin-hub-layout": "tsx scripts/test-admin-hub-layout.ts",
     "test:admin-hub-infra": "tsx scripts/test-admin-hub-infra-fixes.ts",
     "test:dashboard-ticket-filters": "tsx scripts/test-dashboard-ticket-filters.ts",
+    "test:dashboard-kpi-parity": "tsx scripts/test-dashboard-kpi-parity.ts",
     "test:tickets-sidebar-favorites": "tsx scripts/test-tickets-sidebar-favorites.ts",
     "test:ticket-assignee": "tsx scripts/test-ticket-assignee.ts",
     "test:ticket-config-status": "tsx scripts/test-ticket-config-status.ts",

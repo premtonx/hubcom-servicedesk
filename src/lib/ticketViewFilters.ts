@@ -7,6 +7,11 @@ import {
   matchesCustomViewFilters,
 } from './ticketsSidebarPreferences';
 import { hasAssignee, isTicketAssignedToUser } from './ticketAssignee';
+import {
+  isInProgressQueueTicket,
+  isOpenQueueTicket,
+  isResolvedQueueTicket,
+} from './ticket-status-groups';
 
 export type TopStatusFilterId =
   | 'all'
@@ -252,9 +257,10 @@ export function isKbSuggestionTicket(ticket: Ticket): boolean {
 function filterByStatusValue(tickets: Ticket[], status: string): Ticket[] {
   switch (status) {
     case 'open':
-      return tickets.filter((t) => matchStatus(t.status, 'open'));
+      return tickets.filter(isOpenQueueTicket);
     case 'pending':
-      return tickets.filter((t) => matchStatus(t.status, 'pending'));
+    case 'in_progress':
+      return tickets.filter(isInProgressQueueTicket);
     case 'paused':
       return tickets.filter(isPausedTicket);
     case 'qs':
@@ -266,7 +272,8 @@ function filterByStatusValue(tickets: Ticket[], status: string): Ticket[] {
     case 'waiting_vendor':
       return tickets.filter(isWaitingVendorTicket);
     case 'resolved':
-      return tickets.filter((t) => matchStatus(t.status, 'resolved'));
+      // Gelöst queue = resolved + closed (matches Dashboard KPI / ?status=resolved)
+      return tickets.filter(isResolvedQueueTicket);
     case 'closed':
       return tickets.filter((t) => matchStatus(t.status, 'closed'));
     default:
@@ -346,7 +353,8 @@ export function filterTicketsByView(
     case 'status_open':
       return filterByStatusValue(tickets, 'open');
     case 'status_pending':
-      return filterByStatusValue(tickets, 'pending');
+    case 'status_in_progress':
+      return filterByStatusValue(tickets, 'in_progress');
     case 'status_paused':
       return filterByStatusValue(tickets, 'paused');
     case 'status_qs':
