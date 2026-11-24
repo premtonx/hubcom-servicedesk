@@ -523,6 +523,18 @@ export async function setProviderSecret(
   );
 }
 
+/** Remove a stored provider secret (does not return the previous value). */
+export async function deleteProviderSecret(
+  provider: string,
+  workspaceId = 'default',
+): Promise<boolean> {
+  const res = await queryDb(
+    `DELETE FROM ai_orchestrator_secrets WHERE workspace_id = $1 AND provider = $2`,
+    [workspaceId, provider],
+  );
+  return Number(res.rowCount || 0) > 0;
+}
+
 export async function getProviderSecret(
   provider: string,
   workspaceId = 'default',

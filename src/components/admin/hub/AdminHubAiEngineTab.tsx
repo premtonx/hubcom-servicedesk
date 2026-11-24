@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import {
   Activity,
@@ -15,7 +15,6 @@ import {
   Timer,
   XCircle,
   AlertTriangle,
-  Radio,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../ui/button';
@@ -46,7 +45,6 @@ import {
   type AiFeatureRouting,
   type AiOrchestratorConfig,
   type AiOrchestratorHealth,
-  type AiProviderHealth,
   type AiPlaygroundRunResult,
   type DetectedLocalModel,
 } from '../../../types/ai-orchestrator';
@@ -54,6 +52,14 @@ import { cn } from '../../../lib/utils';
 import { AdminHubSectionGrid } from './AdminHubSectionGrid';
 import { categoriesForTab } from './adminHubConfig';
 import type { AdminHubTelemetry } from './adminHubTelemetry';
+import {
+  classifyProviderStatus,
+  formatCheckedAt,
+  modelToProviderId,
+  overallHealthLabel,
+  providerNextStep,
+  providerStatusLabel,
+} from './aiEngineStatus';
 
 interface AdminHubAiEngineTabProps {
   telemetry: AdminHubTelemetry;
@@ -116,20 +122,15 @@ const TASK_ROWS: Array<{
   },
 ];
 
-function statusIcon(status: AiProviderHealth['status']) {
-  if (status === 'online') return <CheckCircle2 className="w-4 h-4 text-emerald-500" />;
-  if (status === 'missing_key') return <XCircle className="w-4 h-4 text-amber-500" />;
-  if (status === 'degraded') return <AlertTriangle className="w-4 h-4 text-amber-500" />;
-  return <XCircle className="w-4 h-4 text-red-500" />;
-}
-
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const hours = Math.floor(diff / 3_600_000);
-  if (hours < 1) return 'Just now';
-  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-  const days = Math.floor(hours / 24);
-  return days === 1 ? 'Yesterday' : `${days} days ago`;
+function statusIconForDisplay(status: ReturnType<typeof classifyProviderStatus>) {
+  if (status === 'available') return <CheckCircle2 className="w-4 h-4 text-emerald-500" aria-hidden />;
+  if (status === 'not_configured' || status === 'not_checked') {
+    return <XCircle className="w-4 h-4 text-amber-500" aria-hidden />;
+  }
+  if (status === 'degraded' || status === 'timed_out') {
+    return <AlertTriangle className="w-4 h-4 text-amber-500" aria-hidden />;
+  }
+  return <XCircle className="w-4 h-4 text-red-500" aria-hidden />;
 }
 
 function FeatureInfoTooltip({ text }: { text: string }) {
@@ -152,18 +153,22 @@ function FeatureInfoTooltip({ text }: { text: string }) {
   );
 }
 
-export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
+export function AdminHubAiEngineTab({ telemetry: _telemetry }: AdminHubAiEngineTabProps) {
   const { t } = useTranslation();
   const [config, setConfig] = useState<AiOrchestratorConfig>(DEFAULT_ORCHESTRATOR_CONFIG);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [secretStatus, setSecretStatus] = useState<Record<string, boolean>>({});
   const [health, setHealth] = useState<AiOrchestratorHealth | null>(null);
+  const [healthCheckedAt, setHealthCheckedAt] = useState<string | null>(null);
   const [endpointDraft, setEndpointDraft] = useState('');
   const [detectedModels, setDetectedModels] = useState<DetectedLocalModel[]>([]);
   const [isDetectingModels, setIsDetectingModels] = useState(false);
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Record<string, { success: boolean; latencyMs?: number; message: string }>>({});
+  const [testResults, setTestResults] = useState<
+    Record<string, { success: boolean; latencyMs?: number; message: string }>
+  >({});
   const [testingTask, setTestingTask] = useState<keyof AiFeatureRouting | null>(null);
   const [testOutputs, setTestOutputs] = useState<Record<string, AiPlaygroundRunResult>>({});
   const [bulkRoutingModel, setBulkRoutingModel] = useState<string>(
@@ -175,8 +180,9 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
     try {
       const res = await axios.get('/api/admin/orchestrator/health');
       setHealth(res.data);
+      setHealthCheckedAt(new Date().toISOString());
     } catch {
-      /* ignore */
+      /* keep previous health; do not invent a fake healthy state */
     }
   }, []);
 
@@ -189,6 +195,11 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
         if (!alive) return;
         const next = { ...DEFAULT_ORCHESTRATOR_CONFIG, ...res.data };
         setConfig(next);
+        setSecretStatus(
+          res.data?.secretStatus && typeof res.data.secretStatus === 'object'
+            ? res.data.secretStatus
+            : {},
+        );
         setEndpointDraft(next.endpointUrl || '');
         setSimpleModel(next.featureRouting?.smart_reply ?? next.triageModel ?? 'gemini-flash');
         void fetchOrchestratorConfig(true);
@@ -242,6 +253,11 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
           const res = await axios.get('/api/admin/orchestrator/config');
           const next = { ...DEFAULT_ORCHESTRATOR_CONFIG, ...res.data };
           setConfig(next);
+          setSecretStatus(
+            res.data?.secretStatus && typeof res.data.secretStatus === 'object'
+              ? res.data.secretStatus
+              : {},
+          );
           setEndpointDraft(next.endpointUrl || '');
         } catch {
           /* keep optimistic state if reload fails */
@@ -267,37 +283,116 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
     void persistPatch({ featureRouting: next });
   };
 
-  const applySimpleModel = (value: string) => {
-    setSimpleModel(value);
+  const modelAvailability = useMemo(() => {
+    const map = new Map<string, { selectable: boolean; reason?: string }>();
+    for (const opt of ORCHESTRATOR_MODEL_OPTIONS) {
+      const providerId = modelToProviderId(opt.value);
+      const provider = health?.providers?.find((p) => p.provider === providerId);
+      if (!provider) {
+        map.set(opt.value, {
+          selectable: false,
+          reason: 'Not checked — run a provider Test before routing tasks to this model.',
+        });
+        continue;
+      }
+      const status = classifyProviderStatus(provider);
+      if (status === 'available') {
+        map.set(opt.value, { selectable: true });
+      } else {
+        map.set(opt.value, {
+          selectable: false,
+          reason: `${providerStatusLabel(status)}. ${providerNextStep(status, provider) || ''}`.trim(),
+        });
+      }
+    }
+    return map;
+  }, [health]);
+
+  const applyRoutingToAll = (value: string) => {
+    const availability = modelAvailability.get(value);
+    if (availability && !availability.selectable) {
+      toast.error(availability.reason || 'Model is not available for routing.');
+      return;
+    }
+    const differing = TASK_ROWS.filter((row) => config.featureRouting[row.id] !== value);
+    if (differing.length > 0) {
+      const ok = window.confirm(
+        t(
+          'admin.hubAi.applyAllConfirm',
+          '„Auf alle anwenden“ setzt das gewählte Modell für alle Aufgaben und überschreibt vorhandene Aufgaben-Overrides. Fortfahren?',
+        ),
+      );
+      if (!ok) return;
+    }
     const next = { ...config.featureRouting };
     for (const row of TASK_ROWS) next[row.id] = value;
     persistRouting(next);
+    toast.success(
+      t(
+        'admin.hubAi.applyAllDone',
+        'Global/bulk model applied to all tasks (per-task overrides replaced).',
+      ),
+    );
+  };
+
+  const applySimpleModel = (value: string) => {
+    setSimpleModel(value);
+    applyRoutingToAll(value);
   };
 
   const applyBulkRouting = () => {
     if (!bulkRoutingModel) return;
-    const next = { ...config.featureRouting };
-    for (const row of TASK_ROWS) next[row.id] = bulkRoutingModel;
-    persistRouting(next);
-    toast.success(t('aiOrchestrator.featureRouting.applyToAll', 'Routed model applied to all tasks.'));
+    applyRoutingToAll(bulkRoutingModel);
   };
 
   const handleSaveSecrets = async () => {
     const nonEmpty = Object.fromEntries(Object.entries(secrets).filter(([, v]) => v.trim()));
     if (Object.keys(nonEmpty).length === 0) {
-      toast.info('No new API keys to save.');
+      toast.info(t('admin.hubAi.noKeysToSave', 'No new API keys to save.'));
       return;
     }
     setSaving(true);
     try {
-      await axios.post('/api/admin/orchestrator/config', { secrets: nonEmpty });
+      const res = await axios.post('/api/admin/orchestrator/config', { secrets: nonEmpty });
       setSecrets({});
-      toast.success(t('admin.hubAi.secretsSaved', 'API keys saved and encrypted.'));
+      if (res.data?.secretStatus) setSecretStatus(res.data.secretStatus);
+      toast.success(
+        t(
+          'admin.hubAi.secretsSavedServer',
+          'API keys saved on the server (encrypted at rest). Keys are never returned to the browser.',
+        ),
+      );
       void loadHealth();
     } catch (err: unknown) {
       const message = axios.isAxiosError(err)
         ? err.response?.data?.error || err.message
         : 'Failed to save API keys.';
+      toast.error(String(message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClearSecret = async (providerId: string) => {
+    const ok = window.confirm(
+      t(
+        'admin.hubAi.clearKeyConfirm',
+        'Remove the stored API key for this provider? This cannot be undone without saving a new key.',
+      ),
+    );
+    if (!ok) return;
+    setSaving(true);
+    try {
+      const res = await axios.post('/api/admin/orchestrator/config', { clearSecrets: [providerId] });
+      if (res.data?.secretStatus) setSecretStatus(res.data.secretStatus);
+      else setSecretStatus((prev) => ({ ...prev, [providerId]: false }));
+      setSecrets((s) => ({ ...s, [providerId]: '' }));
+      toast.success(t('admin.hubAi.keyRemoved', 'Stored API key removed.'));
+      void loadHealth();
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err)
+        ? err.response?.data?.error || err.message
+        : 'Failed to remove API key.';
       toast.error(String(message));
     } finally {
       setSaving(false);
@@ -311,7 +406,9 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
         params: { endpoint: config.endpointUrl || undefined },
       });
       setDetectedModels(res.data.models || []);
-      toast.success(t('admin.hubAi.modelsDetected', 'Local models detected:') + ` ${res.data.models?.length ?? 0}`);
+      toast.success(
+        t('admin.hubAi.modelsDetected', 'Local models detected:') + ` ${res.data.models?.length ?? 0}`,
+      );
     } catch {
       toast.error(t('admin.hubAi.modelsDetectError', 'Model detection failed. Check endpoint URL.'));
     } finally {
@@ -323,16 +420,28 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
     setTestingProvider(provider);
     try {
       const res = await axios.post('/api/admin/orchestrator/test');
-      const results = (res.data?.results ?? []) as Array<{ provider: string; label: string; success: boolean; latencyMs?: number; message: string }>;
+      const results = (res.data?.results ?? []) as Array<{
+        provider: string;
+        label: string;
+        success: boolean;
+        latencyMs?: number;
+        message: string;
+      }>;
       const match = results.find((r) => r.provider === provider);
       if (match) {
         setTestResults((prev) => ({ ...prev, [provider]: match }));
       } else {
-        setTestResults((prev) => ({ ...prev, [provider]: { success: false, message: 'No result for this provider.' } }));
+        setTestResults((prev) => ({
+          ...prev,
+          [provider]: { success: false, message: 'No result for this provider.' },
+        }));
       }
       void loadHealth();
     } catch {
-      setTestResults((prev) => ({ ...prev, [provider]: { success: false, message: 'Provider test failed.' } }));
+      setTestResults((prev) => ({
+        ...prev,
+        [provider]: { success: false, message: 'Provider test failed.' },
+      }));
     } finally {
       setTestingProvider(null);
     }
@@ -355,7 +464,14 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
     } catch {
       setTestOutputs((prev) => ({
         ...prev,
-        [taskId]: { model, label: model, output: 'Test failed.', latencyMs: 0, confidence: 0, success: false },
+        [taskId]: {
+          model,
+          label: model,
+          output: 'Test failed.',
+          latencyMs: 0,
+          confidence: 0,
+          success: false,
+        },
       }));
     } finally {
       setTestingTask(null);
@@ -364,31 +480,49 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
 
   const readOnly = config.configLocked;
   const isSimple = config.modelMode !== 'advanced';
+  const healthLabel = overallHealthLabel(health);
 
   return (
     <div className="space-y-8">
-      {/* Page header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h2 className="text-lg font-black text-slate-900">
             {t('admin.hubAi.title', 'Kern-KI & Modelle')}
           </h2>
           <p className="text-sm text-slate-500 mt-1">
-            {t('admin.hubAi.subtitle', 'Active engine routing, local Ollama/OpenAI endpoints, and live latency.')}
+            {t(
+              'admin.hubAi.subtitle',
+              'Active engine routing, local Ollama/OpenAI endpoints, and live latency.',
+            )}
           </p>
           <p className="text-[11px] font-semibold uppercase tracking-widest text-emerald-600 mt-2 inline-flex items-center gap-2">
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-            {t('aiOrchestrator.featureRouting.workspaceScope', 'Workspace-wide · saved to the database')}
+            {t(
+              'aiOrchestrator.featureRouting.workspaceScope',
+              'Workspace-wide · saved to the database',
+            )}
           </p>
         </div>
-        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
-          <Activity className="w-3 h-3 mr-1" />
-          {health?.status === 'healthy'
-            ? 'AI Healthy'
-            : health?.status === 'degraded'
-              ? 'AI Degraded'
-              : 'AI Offline'}
-        </Badge>
+        <div className="flex flex-col items-start md:items-end gap-1">
+          <Badge
+            variant="outline"
+            className={cn(
+              healthLabel === 'Available'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                : healthLabel === 'Partially available' || healthLabel === 'Degraded'
+                  ? 'border-amber-200 bg-amber-50 text-amber-800'
+                  : 'border-slate-200 bg-slate-50 text-slate-700',
+            )}
+          >
+            <Activity className="w-3 h-3 mr-1" aria-hidden />
+            {healthLabel}
+          </Badge>
+          {healthCheckedAt ? (
+            <span className="text-[10px] text-slate-400 font-mono">{formatCheckedAt(healthCheckedAt)}</span>
+          ) : (
+            <span className="text-[10px] text-slate-400">Not checked yet</span>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -396,183 +530,251 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
           <Loader2 className="w-6 h-6 animate-spin" />
         </div>
       ) : (
-        <>
-          {/* ============ CARD A: AI Providers & Endpoints ============ */}
-          <div className="bg-white border border-slate-200/80 rounded-[2rem] p-6 xl:p-8 shadow-sm">
-            <div className="flex items-start gap-3 mb-6">
+        <div id="admin-hub-ai-orchestrator" className="space-y-8 scroll-mt-4">
+          {/* 1. Model endpoint and provider credentials */}
+          <section className="bg-white border border-slate-200/80 rounded-[2rem] p-5 sm:p-6 xl:p-8 shadow-sm space-y-6 min-w-0">
+            <div className="flex items-start gap-3">
               <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
-                <Server className="w-4 h-4" />
+                <Server className="w-4 h-4" aria-hidden />
               </div>
               <div>
                 <h3 className="text-sm font-black uppercase tracking-widest text-slate-800">
-                  {t('admin.hubAi.providersTitle', 'AI Providers & Endpoints')}
+                  {t('admin.hubAi.sectionCredentials', 'Model endpoint and provider credentials')}
                 </h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {t('admin.hubAi.providersDesc', 'Configure and test Ollama / OpenAI / Custom endpoints with real-time ping and latency indicators.')}
+                  {t(
+                    'admin.hubAi.sectionCredentialsDesc',
+                    'Configure the local/OpenAI-compatible endpoint and replace provider API keys. Secrets are stored encrypted on the server and are never returned to the browser.',
+                  )}
                 </p>
               </div>
             </div>
 
-            <div className="space-y-6">
-              <div className="space-y-2">
-                <Label>{t('admin.hubAi.endpointLabel', 'Local / OpenAI-Compatible Endpoint')}</Label>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <Input
-                    value={endpointDraft}
-                    disabled={readOnly}
-                    onChange={(event) => setEndpointDraft(event.target.value)}
-                    placeholder={t('admin.hubAi.endpointUnset', 'Not configured')}
-                    className="sm:flex-1 bg-white"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={isDetectingModels || readOnly}
-                    onClick={handleDetectModels}
-                  >
-                    {isDetectingModels ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                    )}
-                    {t('admin.hubAi.detectModels', 'Detect Local Models')}
-                  </Button>
-                </div>
-                {detectedModels.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {detectedModels.map((m) => (
-                      <Badge key={m.id} variant="outline" className="text-xs">
-                        {m.name} ({m.provider})
-                      </Badge>
-                    ))}
-                  </div>
-                )}
+            <div className="space-y-2">
+              <Label>{t('admin.hubAi.endpointLabel', 'Local / OpenAI-Compatible Endpoint')}</Label>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Input
+                  value={endpointDraft}
+                  disabled={readOnly}
+                  onChange={(event) => setEndpointDraft(event.target.value)}
+                  placeholder={t('admin.hubAi.endpointUnset', 'Not configured')}
+                  className="sm:flex-1 bg-white focus-visible:ring-2 focus-visible:ring-primary/40"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isDetectingModels || readOnly}
+                  onClick={handleDetectModels}
+                  className="focus-visible:ring-2 focus-visible:ring-primary/40"
+                >
+                  {isDetectingModels ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                  )}
+                  {t('admin.hubAi.detectModels', 'Detect Local Models')}
+                </Button>
               </div>
+              {detectedModels.length > 0 ? (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {detectedModels.map((m) => (
+                    <Badge key={m.id} variant="outline" className="text-xs">
+                      {m.name} ({m.provider})
+                    </Badge>
+                  ))}
+                </div>
+              ) : null}
+            </div>
 
-              <Separator />
+            <Separator />
 
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
-                  {t('admin.hubAi.providerKeys', 'Provider API Keys')}
-                </p>
-                <p className="text-[10px] text-muted-foreground mb-4">
-                  {t('admin.hubAi.keysHint', 'Stored encrypted server-side. Keys are never persisted in the browser.')}
-                </p>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  {PROVIDER_SECRET_FIELDS.map(({ id, label }) => (
-                    <div key={id} className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Cloud className="w-3.5 h-3.5 text-slate-400" />
-                        <Label className="text-xs">{label}</Label>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
+                {t('admin.hubAi.providerKeys', 'Provider API Keys')}
+              </p>
+              <p className="text-[10px] text-muted-foreground mb-4">
+                {t(
+                  'admin.hubAi.keysHintAccurate',
+                  'Keys are sent to the server over your authenticated session and stored encrypted at rest (AES-GCM). The browser never receives saved secret values — only a configured / not configured status.',
+                )}
+              </p>
+              <div className="grid sm:grid-cols-2 gap-4">
+                {PROVIDER_SECRET_FIELDS.map(({ id, label }) => {
+                  const configured = Boolean(secretStatus[id]);
+                  return (
+                    <div key={id} className="space-y-2 rounded-xl border border-slate-100 p-3 bg-slate-50/40">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Cloud className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden />
+                          <Label className="text-xs truncate">{label}</Label>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            'text-[9px] font-bold uppercase shrink-0',
+                            configured
+                              ? 'border-emerald-200 text-emerald-700 bg-emerald-50'
+                              : 'border-slate-200 text-slate-500',
+                          )}
+                        >
+                          {configured ? 'Configured' : 'Not configured'}
+                        </Badge>
                       </div>
                       <Input
                         type="password"
                         disabled={readOnly}
                         value={secrets[id] || ''}
                         onChange={(e) => setSecrets((s) => ({ ...s, [id]: e.target.value }))}
-                        placeholder="Enter API key"
+                        placeholder={configured ? 'Enter new key to replace' : 'Enter API key'}
+                        autoComplete="off"
+                        className="bg-white focus-visible:ring-2 focus-visible:ring-primary/40"
                       />
+                      {configured ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-[11px] text-rose-600 hover:text-rose-700 px-0"
+                          disabled={readOnly || saving}
+                          onClick={() => void handleClearSecret(id)}
+                        >
+                          Remove stored key
+                        </Button>
+                      ) : null}
                     </div>
-                  ))}
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-4"
-                  disabled={readOnly || saving}
-                  onClick={handleSaveSecrets}
-                >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                  {t('admin.hubAi.saveKeys', 'Save API Keys')}
-                </Button>
+                  );
+                })}
               </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                    {t('admin.hubAi.providerHealth', 'Provider Health & Ping')}
-                  </p>
-                  <span className="text-[10px] font-mono text-slate-400">auto-refresh 20s</span>
-                </div>
-                <div className="space-y-2">
-                  {(health?.providers ?? []).map((p) => {
-                    const result = testResults[p.provider];
-                    const testing = testingProvider === p.provider;
-                    return (
-                      <div key={p.provider} className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-white">
-                        <div className="flex items-center gap-3">
-                          {statusIcon(p.status)}
-                          <div>
-                            <p className="text-sm font-semibold">{p.label}</p>
-                            <p className="text-[10px] text-muted-foreground">
-                              {p.status === 'online' && p.latencyMs != null && `${p.latencyMs}ms`}
-                              {p.status === 'missing_key' && 'API Key Missing'}
-                              {p.message && p.status !== 'online' && ` — ${p.message}`}
-                            </p>
-                            {result && (
-                              <p className={cn('text-[10px] font-semibold', result.success ? 'text-emerald-600' : 'text-red-600')}>
-                                Test: {result.success ? `OK ${result.latencyMs ?? ''}ms` : result.message}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          {p.status === 'online' && (
-                            <span className="inline-flex items-center gap-1 text-emerald-600 text-[10px] font-mono">
-                              <Gauge className="w-3 h-3" />
-                              {p.latencyMs}ms
-                            </span>
-                          )}
-                          {p.lastSuccessAt && (
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              {formatRelativeTime(p.lastSuccessAt)}
-                            </span>
-                          )}
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-[11px] px-2.5"
-                            disabled={testing}
-                            onClick={() => handleTestProvider(p.provider)}
-                          >
-                            {testing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}
-                            Test
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {(health?.providers ?? []).length === 0 && (
-                    <p className="text-sm text-muted-foreground">No provider health data available.</p>
-                  )}
-                </div>
-              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-4 focus-visible:ring-2 focus-visible:ring-primary/40"
+                disabled={readOnly || saving}
+                onClick={handleSaveSecrets}
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                {t('admin.hubAi.saveKeys', 'Save API Keys')}
+              </Button>
             </div>
-          </div>
+          </section>
 
-          {/* ============ CARD B: Model Preset Mode ============ */}
-          <div className="bg-white border border-indigo-200/60 rounded-[2rem] p-6 xl:p-8 shadow-sm">
-            <div className="flex items-start gap-3 mb-6">
+          {/* 2. Provider/model connection status */}
+          <section className="bg-white border border-slate-200/80 rounded-[2rem] p-5 sm:p-6 xl:p-8 shadow-sm space-y-4 min-w-0">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
+                  <Gauge className="w-4 h-4" aria-hidden />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-slate-800">
+                    {t('admin.hubAi.sectionStatus', 'Provider / model connection status')}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {t(
+                      'admin.hubAi.sectionStatusDesc',
+                      'Statuses come from live health checks. “Available” is shown only after a successful probe.',
+                    )}
+                  </p>
+                </div>
+              </div>
+              <span className="text-[10px] font-mono text-slate-400 shrink-0">auto-refresh 20s</span>
+            </div>
+
+            <div className="space-y-2">
+              {(health?.providers ?? []).map((p) => {
+                const display = classifyProviderStatus(p);
+                const result = testResults[p.provider];
+                const testing = testingProvider === p.provider;
+                const next = providerNextStep(display, p);
+                const checked = formatCheckedAt(p.lastSuccessAt) || (result ? 'Checked just now' : null);
+                return (
+                  <div
+                    key={p.provider}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-white min-w-0"
+                  >
+                    <div className="flex items-start gap-3 min-w-0">
+                      {statusIconForDisplay(display)}
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold">{p.label}</p>
+                        <p className="text-[11px] text-slate-600 font-semibold">
+                          {providerStatusLabel(display)}
+                          {display === 'available' && p.latencyMs != null ? ` · ${p.latencyMs}ms` : ''}
+                        </p>
+                        {checked ? (
+                          <p className="text-[10px] text-slate-400 font-mono">{checked}</p>
+                        ) : null}
+                        {next ? <p className="text-[10px] text-slate-500 mt-0.5">{next}</p> : null}
+                        {p.message && display !== 'available' && display !== 'not_checked' ? (
+                          <p className="text-[10px] text-slate-400 mt-0.5 break-words font-mono">
+                            {p.message}
+                          </p>
+                        ) : null}
+                        {result ? (
+                          <p
+                            className={cn(
+                              'text-[10px] font-semibold mt-0.5',
+                              result.success ? 'text-emerald-600' : 'text-red-600',
+                            )}
+                          >
+                            Manual test:{' '}
+                            {result.success
+                              ? `OK${result.latencyMs != null ? ` ${result.latencyMs}ms` : ''}`
+                              : result.message}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-[11px] px-2.5 shrink-0 focus-visible:ring-2 focus-visible:ring-primary/40"
+                      disabled={testing}
+                      onClick={() => handleTestProvider(p.provider)}
+                    >
+                      {testing ? (
+                        <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                      ) : (
+                        <Play className="w-3 h-3 mr-1" />
+                      )}
+                      Test
+                    </Button>
+                  </div>
+                );
+              })}
+              {(health?.providers ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No provider health data yet. Wait for the next check or refresh.
+                </p>
+              ) : null}
+            </div>
+          </section>
+
+          {/* 3. Routing mode and per-task model routing */}
+          <section className="bg-white border border-indigo-200/60 rounded-[2rem] p-5 sm:p-6 xl:p-8 shadow-sm space-y-5 min-w-0">
+            <div className="flex items-start gap-3">
               <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
-                <Cpu className="w-4 h-4" />
+                <Cpu className="w-4 h-4" aria-hidden />
               </div>
               <div>
                 <h3 className="text-sm font-black uppercase tracking-widest text-slate-800">
-                  {t('admin.hubAi.presetModeTitle', 'Model Preset Mode')}
+                  {t('admin.hubAi.sectionRouting', 'Routing mode and per-task model routing')}
                 </h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {t('admin.hubAi.presetModeDesc', 'Simple Mode uses one global model for every task. Advanced Mode unlocks the per-task routing matrix below.')}
+                  {t(
+                    'admin.hubAi.sectionRoutingDesc',
+                    'Simple Mode uses one global model for every task. Advanced Mode keeps per-task overrides. “Auf alle anwenden” replaces those overrides after confirmation.',
+                  )}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-indigo-500" />
-                <div>
+            <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <Sparkles className="w-4 h-4 text-indigo-500 shrink-0" aria-hidden />
+                <div className="min-w-0">
                   <p className="text-sm font-bold">
                     {isSimple
                       ? t('admin.hubAi.simpleMode', 'Simple Mode')
@@ -588,31 +790,42 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
               <Switch
                 checked={!isSimple}
                 disabled={readOnly}
-                onCheckedChange={(checked) => void persistPatch({ modelMode: checked ? 'advanced' : 'simple' })}
+                onCheckedChange={(checked) =>
+                  void persistPatch({ modelMode: checked ? 'advanced' : 'simple' })
+                }
+                aria-label={t('admin.hubAi.advancedMode', 'Advanced Task Routing')}
               />
             </div>
 
-            {isSimple && (
-              <div className="mt-4 space-y-2">
+            {isSimple ? (
+              <div className="space-y-2">
                 <Label>{t('admin.hubAi.globalModel', 'Global Model (all tasks)')}</Label>
+                <p className="text-[10px] text-muted-foreground">
+                  Changing the global model asks for confirmation if task-specific selections would be
+                  overwritten.
+                </p>
                 <div className="flex flex-col sm:flex-row gap-3">
                   <Select value={simpleModel} disabled={readOnly} onValueChange={applySimpleModel}>
                     <SelectTrigger className="sm:max-w-[240px] bg-white">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {ORCHESTRATOR_MODEL_OPTIONS.map((m) => (
-                        <SelectItem key={m.value} value={m.value}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
+                      {ORCHESTRATOR_MODEL_OPTIONS.map((m) => {
+                        const avail = modelAvailability.get(m.value);
+                        return (
+                          <SelectItem key={m.value} value={m.value} disabled={avail && !avail.selectable}>
+                            {m.label}
+                            {avail && !avail.selectable ? ' — unavailable' : ''}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="w-fit"
+                    className="w-fit focus-visible:ring-2 focus-visible:ring-primary/40"
                     disabled={testingTask === 'smart_reply' || readOnly}
                     onClick={() => handleTestPrompt('smart_reply')}
                   >
@@ -624,7 +837,7 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
                     {t('admin.hubAi.testPrompt', 'Test Prompt')}
                   </Button>
                 </div>
-                {testOutputs['smart_reply'] && (
+                {testOutputs['smart_reply'] ? (
                   <div
                     className={cn(
                       'rounded-xl border p-3 text-xs font-mono whitespace-pre-wrap max-h-40 overflow-y-auto',
@@ -641,38 +854,185 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
                       ? testOutputs['smart_reply'].output
                       : testOutputs['smart_reply'].error || 'Test failed.'}
                   </div>
-                )}
+                ) : null}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2.5 p-3 rounded-xl border border-slate-100 bg-slate-50/80">
+                  <span className="text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0">
+                    {t('aiOrchestrator.featureRouting.bulkRouter', 'Bulk Model Router')}
+                  </span>
+                  <Select
+                    value={bulkRoutingModel}
+                    disabled={readOnly}
+                    onValueChange={(v) => setBulkRoutingModel(String(v))}
+                  >
+                    <SelectTrigger className="h-8 w-[min(100%,200px)] bg-white">
+                      <SelectValue
+                        placeholder={t('aiOrchestrator.featureRouting.selectModel', 'Select model…')}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ORCHESTRATOR_MODEL_OPTIONS.map((m) => {
+                        const avail = modelAvailability.get(m.value);
+                        return (
+                          <SelectItem key={m.value} value={m.value} disabled={avail && !avail.selectable}>
+                            {m.label}
+                            {avail && !avail.selectable ? ' — unavailable' : ''}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-8 shrink-0 focus-visible:ring-2 focus-visible:ring-primary/40"
+                    disabled={readOnly || !bulkRoutingModel}
+                    onClick={applyBulkRouting}
+                  >
+                    {t('aiOrchestrator.featureRouting.applyToAll', 'Apply to All')}
+                  </Button>
+                  <p className="text-[10px] text-slate-500 w-full">
+                    „Auf alle anwenden“ replaces every task’s current model with the selected one after
+                    confirmation. Unconfigured or unchecked models cannot be selected.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  {TASK_ROWS.map((task) => {
+                    const output = testOutputs[task.id];
+                    const testing = testingTask === task.id;
+                    const current = config.featureRouting[task.id];
+                    const currentAvail = modelAvailability.get(current);
+                    return (
+                      <div key={task.id} className="p-4 rounded-xl border border-slate-100 bg-white min-w-0">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                          <div className="flex items-center gap-2 min-w-0 sm:w-56 shrink-0">
+                            <span className="text-lg leading-none" aria-hidden>
+                              {task.emoji}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-sm font-bold text-slate-800 truncate">{task.title}</p>
+                              <p className="text-[10px] text-muted-foreground">{task.description}</p>
+                              <p className="text-[10px] text-slate-500 mt-0.5">
+                                Current: <span className="font-semibold">{current}</span>
+                                {currentAvail && !currentAvail.selectable
+                                  ? ' (currently unavailable)'
+                                  : ''}
+                              </p>
+                            </div>
+                            <FeatureInfoTooltip text={task.tooltip} />
+                          </div>
+                          <Select
+                            value={current}
+                            disabled={readOnly}
+                            onValueChange={(value) => {
+                              const avail = modelAvailability.get(String(value));
+                              if (avail && !avail.selectable) {
+                                toast.error(avail.reason || 'Model unavailable');
+                                return;
+                              }
+                              persistRouting({ ...config.featureRouting, [task.id]: String(value) });
+                            }}
+                          >
+                            <SelectTrigger className="h-8 sm:w-[200px] bg-white">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ORCHESTRATOR_MODEL_OPTIONS.map((m) => {
+                                const avail = modelAvailability.get(m.value);
+                                const disabled = Boolean(avail && !avail.selectable && m.value !== current);
+                                return (
+                                  <SelectItem key={m.value} value={m.value} disabled={disabled}>
+                                    {m.label}
+                                    {disabled ? ' — unavailable' : ''}
+                                  </SelectItem>
+                                );
+                              })}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="sm:ml-auto w-fit focus-visible:ring-2 focus-visible:ring-primary/40"
+                            disabled={testing || readOnly}
+                            onClick={() => handleTestPrompt(task.id)}
+                          >
+                            {testing ? (
+                              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            ) : (
+                              <>
+                                <Play className="w-4 h-4 mr-2" />
+                                {t('admin.hubAi.testPrompt', 'Test Prompt')}
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                        {currentAvail && !currentAvail.selectable ? (
+                          <p className="mt-2 text-[10px] text-amber-700">{currentAvail.reason}</p>
+                        ) : null}
+                        {output ? (
+                          <div
+                            className={cn(
+                              'mt-3 rounded-lg border p-3 text-xs font-mono whitespace-pre-wrap max-h-40 overflow-y-auto',
+                              output.success
+                                ? 'border-emerald-200 bg-emerald-50/40'
+                                : 'border-red-200 bg-red-50/40',
+                            )}
+                          >
+                            <span className="inline-flex items-center gap-1 font-sans font-bold mb-1">
+                              <Timer className="w-3 h-3" /> {output.latencyMs}ms
+                            </span>
+                            <br />
+                            {output.success ? output.output : output.error || 'Test failed.'}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
-          </div>
+          </section>
 
-          {/* ============ CARD C: Agentic Loops & Self-Correction ============ */}
-          <div className="bg-white border border-teal-200/60 rounded-[2rem] p-6 xl:p-8 shadow-sm">
-            <div className="flex items-start gap-3 mb-6">
+          {/* 4. Advanced automation and evaluation controls */}
+          <section className="bg-white border border-teal-200/60 rounded-[2rem] p-5 sm:p-6 xl:p-8 shadow-sm space-y-5 min-w-0">
+            <div className="flex items-start gap-3">
               <div className="p-2 rounded-xl bg-teal-50 text-teal-600">
-                <RefreshCw className="w-4 h-4" />
+                <RefreshCw className="w-4 h-4" aria-hidden />
               </div>
               <div>
                 <h3 className="text-sm font-black uppercase tracking-widest text-slate-800">
-                  {t('admin.hubAi.agenticLoopsTitle', 'Agentic Loops & Self-Correction')}
+                  {t(
+                    'admin.hubAi.sectionAdvanced',
+                    'Advanced automation and evaluation controls',
+                  )}
                 </h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {t('admin.hubAi.agenticLoopsDesc', 'Evaluator-optimizer self-critique engine, human-diff feedback learning, and swarm outage detection.')}
+                  {t(
+                    'admin.hubAi.sectionAdvancedDesc',
+                    'Self-critique loop, confidence gate, critic model, swarm detection, and human-diff learning. Values keep existing backend semantics.',
+                  )}
                 </p>
               </div>
             </div>
 
             <div className="space-y-5">
-              {/* Self-Critique Engine toggle */}
-              <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-teal-500" />
-                  <div>
+              <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Sparkles className="w-4 h-4 text-teal-500 shrink-0" aria-hidden />
+                  <div className="min-w-0">
                     <p className="text-sm font-bold">
                       {t('admin.hubAi.selfCritiqueEngine', 'Self-Critique Engine')}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {t('admin.hubAi.selfCritiqueEngineDesc', 'Run AI drafts through the evaluator-optimizer loop before they reach your inbox.')}
+                      {t(
+                        'admin.hubAi.selfCritiqueEngineHelp',
+                        'When enabled, AI drafts are reviewed by a critic model before delivery. Disabling skips the evaluator-optimizer loop.',
+                      )}
                     </p>
                   </div>
                 </div>
@@ -680,30 +1040,40 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
                   checked={config.enableSelfCritiqueLoop}
                   disabled={readOnly}
                   onCheckedChange={(checked) => void persistPatch({ enableSelfCritiqueLoop: checked })}
+                  aria-label={t('admin.hubAi.selfCritiqueEngine', 'Self-Critique Engine')}
                 />
               </div>
 
-              {/* Max Iterations Slider */}
               <div className="p-3 rounded-xl border border-slate-100 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
+                    <RefreshCw className="w-3.5 h-3.5 text-slate-400" aria-hidden />
                     <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">
                       {t('admin.hubAi.maxIterations', 'Max Self-Critique Iterations')}
                     </Label>
                   </div>
-                  <Badge variant="outline" className="text-[11px] font-black text-teal-700 border-teal-200 bg-teal-50">
+                  <Badge
+                    variant="outline"
+                    className="text-[11px] font-black text-teal-700 border-teal-200 bg-teal-50"
+                  >
                     {config.maxCritiqueIterations}
                   </Badge>
                 </div>
+                <p className="text-[10px] text-muted-foreground">
+                  How many critic→revise cycles may run (1–3). Higher values increase latency and cost.
+                </p>
                 <input
                   type="range"
                   min={1}
                   max={3}
                   step={1}
-                  value={config.maxCritiqueIterations}
+                  value={Math.min(3, Math.max(1, Number(config.maxCritiqueIterations) || 1))}
                   disabled={readOnly || !config.enableSelfCritiqueLoop}
-                  onChange={(e) => void persistPatch({ maxCritiqueIterations: Number(e.target.value) })}
+                  onChange={(e) =>
+                    void persistPatch({
+                      maxCritiqueIterations: Math.min(3, Math.max(1, Number(e.target.value) || 1)),
+                    })
+                  }
                   className="w-full accent-teal-600 disabled:opacity-40"
                   aria-label={t('admin.hubAi.maxIterations', 'Max Self-Critique Iterations')}
                 />
@@ -714,27 +1084,37 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
                 </div>
               </div>
 
-              {/* Confidence Threshold Slider */}
               <div className="p-3 rounded-xl border border-slate-100 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Gauge className="w-3.5 h-3.5 text-slate-400" />
+                    <Gauge className="w-3.5 h-3.5 text-slate-400" aria-hidden />
                     <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">
                       {t('admin.hubAi.confidenceThreshold', 'Confidence Threshold (High vs Nuanced)')}
                     </Label>
                   </div>
-                  <Badge variant="outline" className="text-[11px] font-black text-emerald-700 border-emerald-200 bg-emerald-50">
+                  <Badge
+                    variant="outline"
+                    className="text-[11px] font-black text-emerald-700 border-emerald-200 bg-emerald-50"
+                  >
                     {config.autoDispatchThreshold}%
                   </Badge>
                 </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Minimum critic confidence (70–99%) required to auto-dispatch without extra review.
+                  Existing backend threshold semantics are unchanged.
+                </p>
                 <input
                   type="range"
                   min={70}
                   max={99}
                   step={1}
-                  value={config.autoDispatchThreshold}
+                  value={Math.min(99, Math.max(70, Number(config.autoDispatchThreshold) || 70))}
                   disabled={readOnly || !config.enableSelfCritiqueLoop}
-                  onChange={(e) => void persistPatch({ autoDispatchThreshold: Number(e.target.value) })}
+                  onChange={(e) =>
+                    void persistPatch({
+                      autoDispatchThreshold: Math.min(99, Math.max(70, Number(e.target.value) || 70)),
+                    })
+                  }
                   className="w-full accent-emerald-600 disabled:opacity-40"
                   aria-label={t('admin.hubAi.confidenceThreshold', 'Confidence Threshold (High vs Nuanced)')}
                 />
@@ -745,16 +1125,18 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
                 </div>
               </div>
 
-              {/* Critic Model Dropdown */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl border border-slate-100">
                 <div className="flex items-center gap-2">
-                  <Cpu className="w-4 h-4 text-slate-400" />
+                  <Cpu className="w-4 h-4 text-slate-400" aria-hidden />
                   <div>
                     <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">
                       {t('admin.hubAi.criticModel', 'Critic Model')}
                     </Label>
                     <p className="text-[10px] text-muted-foreground">
-                      {t('admin.hubAi.criticModelDesc', 'Evaluates drafts for factual accuracy, policy adherence and confidence.')}
+                      {t(
+                        'admin.hubAi.criticModelHelp',
+                        'Model that scores drafts for factual accuracy, policy adherence, and confidence.',
+                      )}
                     </p>
                   </div>
                 </div>
@@ -776,16 +1158,18 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
                 </Select>
               </div>
 
-              {/* Swarm Detector Toggle */}
-              <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-rose-500" />
-                  <div>
+              <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" aria-hidden />
+                  <div className="min-w-0">
                     <p className="text-sm font-bold">
                       {t('admin.hubAi.swarmDetector', 'Swarm Detector')}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {t('admin.hubAi.swarmDetectorDesc', 'Watch for 5+ similar unassigned tickets in 15 minutes and alert on potential outages.')}
+                      {t(
+                        'admin.hubAi.swarmDetectorHelp',
+                        'Alerts when many similar unassigned tickets arrive in a short window (potential outage). Thresholds follow existing backend rules.',
+                      )}
                     </p>
                   </div>
                 </div>
@@ -793,19 +1177,22 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
                   checked={config.enableSwarmDetection}
                   disabled={readOnly}
                   onCheckedChange={(checked) => void persistPatch({ enableSwarmDetection: checked })}
+                  aria-label={t('admin.hubAi.swarmDetector', 'Swarm Detector')}
                 />
               </div>
 
-              {/* Human Diff Learning Toggle */}
-              <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100">
-                <div className="flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-indigo-500" />
-                  <div>
+              <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Activity className="w-4 h-4 text-indigo-500 shrink-0" aria-hidden />
+                  <div className="min-w-0">
                     <p className="text-sm font-bold">
                       {t('admin.hubAi.humanDiffLearning', 'Human-Diff Feedback Learning')}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {t('admin.hubAi.humanDiffLearningDesc', 'Log human edits to AI drafts (>10% change) for continuous prompt refinement.')}
+                      {t(
+                        'admin.hubAi.humanDiffLearningHelp',
+                        'Logs substantial human edits to AI drafts so prompts can be refined over time. Does not train models in the browser.',
+                      )}
                     </p>
                   </div>
                 </div>
@@ -813,130 +1200,12 @@ export function AdminHubAiEngineTab({ telemetry }: AdminHubAiEngineTabProps) {
                   checked={config.enableHumanDiffLearning}
                   disabled={readOnly}
                   onCheckedChange={(checked) => void persistPatch({ enableHumanDiffLearning: checked })}
+                  aria-label={t('admin.hubAi.humanDiffLearning', 'Human-Diff Feedback Learning')}
                 />
               </div>
             </div>
-          </div>
-
-          {/* ============ CARD D: Task Routing Matrix (Advanced only) ============ */}
-          {!isSimple && (
-            <div className="bg-white border border-purple-200/60 rounded-[2rem] p-6 xl:p-8 shadow-sm">
-              <div className="flex items-start gap-3 mb-5">
-                <div className="p-2 rounded-xl bg-violet-50 text-violet-600">
-                  <Radio className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black uppercase tracking-widest text-slate-800">
-                    {t('admin.hubAi.routingMatrixTitle', 'Task Routing Matrix')}
-                  </h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {t('admin.hubAi.routingMatrixDesc', 'Route each AI task to its own tuned model with explanatory tooltips and test prompts.')}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2.5 p-3 rounded-xl border border-slate-100 bg-slate-50/80 mb-4">
-                <span className="text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0">
-                  {t('aiOrchestrator.featureRouting.bulkRouter', 'Bulk Model Router')}
-                </span>
-                <Select value={bulkRoutingModel} disabled={readOnly} onValueChange={(v) => setBulkRoutingModel(String(v))}>
-                  <SelectTrigger className="h-8 w-[min(100%,200px)] bg-white">
-                    <SelectValue placeholder={t('aiOrchestrator.featureRouting.selectModel', 'Select model…')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ORCHESTRATOR_MODEL_OPTIONS.map((m) => (
-                      <SelectItem key={m.value} value={m.value}>
-                        {m.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="h-8 shrink-0"
-                  disabled={readOnly || !bulkRoutingModel}
-                  onClick={applyBulkRouting}
-                >
-                  {t('aiOrchestrator.featureRouting.applyToAll', 'Apply to All')}
-                </Button>
-              </div>
-
-              <div className="space-y-3">
-                {TASK_ROWS.map((task) => {
-                  const output = testOutputs[task.id];
-                  const testing = testingTask === task.id;
-                  return (
-                    <div key={task.id} className="p-4 rounded-xl border border-slate-100 bg-white">
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                        <div className="flex items-center gap-2 min-w-0 sm:w-56 shrink-0">
-                          <span className="text-lg leading-none" aria-hidden>
-                            {task.emoji}
-                          </span>
-                          <div className="min-w-0">
-                            <p className="text-sm font-bold text-slate-800 truncate">{task.title}</p>
-                            <p className="text-[10px] text-muted-foreground">{task.description}</p>
-                          </div>
-                          <FeatureInfoTooltip text={task.tooltip} />
-                        </div>
-                        <Select
-                          value={config.featureRouting[task.id]}
-                          disabled={readOnly}
-                          onValueChange={(value) => persistRouting({ ...config.featureRouting, [task.id]: String(value) })}
-                        >
-                          <SelectTrigger className="h-8 sm:w-[200px] bg-white">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {ORCHESTRATOR_MODEL_OPTIONS.map((m) => (
-                              <SelectItem key={m.value} value={m.value}>
-                                {m.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="sm:ml-auto w-fit"
-                          disabled={testing || readOnly}
-                          onClick={() => handleTestPrompt(task.id)}
-                        >
-                          {testing ? (
-                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                          ) : (
-                            <>
-                              <Play className="w-4 h-4 mr-2" />
-                              {t('admin.hubAi.testPrompt', 'Test Prompt')}
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                      {output && (
-                        <div
-                          className={cn(
-                            'mt-3 rounded-lg border p-3 text-xs font-mono whitespace-pre-wrap max-h-40 overflow-y-auto',
-                            output.success
-                              ? 'border-emerald-200 bg-emerald-50/40'
-                              : 'border-red-200 bg-red-50/40',
-                          )}
-                        >
-                          <span className="inline-flex items-center gap-1 font-sans font-bold mb-1">
-                            <Timer className="w-3 h-3" /> {output.latencyMs}ms
-                          </span>
-                          <br />
-                          {output.success ? output.output : output.error || 'Test failed.'}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </>
+          </section>
+        </div>
       )}
 
       <AdminHubSectionGrid categories={categoriesForTab('ai-engine')} />
