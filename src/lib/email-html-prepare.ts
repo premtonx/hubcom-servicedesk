@@ -89,17 +89,37 @@ export function stripOutlookNoise(html: string): string {
   return out.trim();
 }
 
+/** Inline logo CID used by the email signature system (must survive outbound sanitize). */
+export const PRESERVED_SIGNATURE_LOGO_CID = 'signature-logo';
+
+function isPreservedCid(value: string): boolean {
+  const cid = String(value || '')
+    .replace(/^cid:/i, '')
+    .replace(/^<|>$/g, '')
+    .trim()
+    .toLowerCase();
+  return cid === PRESERVED_SIGNATURE_LOGO_CID;
+}
+
 /** Remove unresolved `cid:` image/link refs that would render as broken in the UI. */
 export function stripBrokenCidRefs(html: string): string {
   let out = String(html || '');
   if (!out || !/cid:/i.test(out)) return out;
 
-  // Drop <img src="cid:…"> entirely (quoted or unquoted).
-  out = out.replace(/<img\b[^>]*\bsrc\s*=\s*(["'])cid:[^"']*\1[^>]*>/gi, '');
-  out = out.replace(/<img\b[^>]*\bsrc\s*=\s*cid:[^\s>]+[^>]*>/gi, '');
-  // Neutralize cid: href/src remaining attributes.
-  out = out.replace(/\s(?:src|href)\s*=\s*(["'])cid:[^"']*\1/gi, '');
-  out = out.replace(/\s(?:src|href)\s*=\s*cid:[^\s>]+/gi, '');
+  // Drop <img src="cid:…"> entirely (quoted or unquoted), except signature logo.
+  out = out.replace(/<img\b[^>]*\bsrc\s*=\s*(["'])cid:([^"']*)\1[^>]*>/gi, (full, _q, cid) =>
+    isPreservedCid(String(cid)) ? full : '',
+  );
+  out = out.replace(/<img\b[^>]*\bsrc\s*=\s*cid:([^\s>]+)[^>]*>/gi, (full, cid) =>
+    isPreservedCid(String(cid)) ? full : '',
+  );
+  // Neutralize remaining cid: href/src attributes (keep signature logo).
+  out = out.replace(/\s(?:src|href)\s*=\s*(["'])cid:([^"']*)\1/gi, (full, q, cid) =>
+    isPreservedCid(String(cid)) ? full : '',
+  );
+  out = out.replace(/\s(?:src|href)\s*=\s*cid:([^\s>]+)/gi, (full, cid) =>
+    isPreservedCid(String(cid)) ? full : '',
+  );
   return out;
 }
 
