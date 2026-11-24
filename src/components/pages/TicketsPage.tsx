@@ -58,8 +58,14 @@ import {
   countTicketsByView,
   filterTicketsByTopStatus,
   filterTicketsByView,
+  isResolvedInPeriodTicket,
   type TopStatusFilterId,
 } from '../../lib/ticketViewFilters';
+import {
+  parseResolvedWithinDays,
+  resolveTicketsViewParam,
+  TICKETS_DEEP_LINK_VIEWS,
+} from '../../lib/dashboard-ticket-nav';
 import {
   customViewId,
   useTicketsSidebarPreferences,
@@ -137,15 +143,23 @@ export default function TicketsPage() {
 
   const [kundenOrgs, setKundenOrgs] = useState<KundenSidebarOrg[]>([]);
   const selectedOrganizationId = searchParams.get('organizationId') || null;
+  const urlViewParam = searchParams.get('view');
+  const resolvedWithinDays = parseResolvedWithinDays(searchParams.get('resolvedWithin'));
 
   const setSelectedOrganizationId = useCallback(
     (organizationId: string | null) => {
-      const next = new URLSearchParams();
+      const next = new URLSearchParams(searchParams);
       if (organizationId) next.set('organizationId', organizationId);
+      else next.delete('organizationId');
+      // Org picks from the Kunden sidebar should show open tickets for that org,
+      // not silently keep an unrelated assignment filter.
+      if (organizationId && !next.get('view')) {
+        next.set('view', 'team_all_open');
+      }
       const qs = next.toString();
       navigate(qs ? `/tickets?${qs}` : '/tickets', { replace: true });
     },
-    [navigate],
+    [navigate, searchParams],
   );
 
   const [isCreateTicketOpen, setIsCreateTicketOpen] = useState(false);
@@ -174,6 +188,12 @@ export default function TicketsPage() {
   const [replyText, setReplyText] = useState('');
   const [isMobilePropertiesOpen, setIsMobilePropertiesOpen] = useState(false);
   const [activeView, setActiveView] = useState<string>(() => {
+    const fromUrl = resolveTicketsViewParam(
+      typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('view')
+        : null,
+    );
+    if (fromUrl) return fromUrl;
     return localStorage.getItem('geistdesk_default_view') || 'team_all_open';
   });
   const [topStatusFilter, setTopStatusFilter] = useState<TopStatusFilterId>('all');
@@ -234,13 +254,30 @@ export default function TicketsPage() {
     const builtIn = TICKETS_SIDEBAR_GROUPS.flatMap((c) => c.items.map((i) => i.id));
     const custom = sidebarPrefs.customViews.map((v) => customViewId(v));
     const visibleViewIds = [...builtIn, ...custom];
-    if (!visibleViewIds.includes(activeView)) {
+    if (
+      !visibleViewIds.includes(activeView) &&
+      !TICKETS_DEEP_LINK_VIEWS.has(activeView)
+    ) {
       const fallback = visibleViewIds.includes(defaultViewSetting)
         ? defaultViewSetting
         : 'team_all_open';
       setActiveView(fallback);
     }
   }, [sidebarPrefs.customViews, activeView, defaultViewSetting]);
+
+  // Apply dashboard / deep-link query params (`view`, org without view).
+  useEffect(() => {
+    const mapped = resolveTicketsViewParam(urlViewParam);
+    if (mapped) {
+      if (mapped !== activeView) setActiveView(mapped);
+      return;
+    }
+    if (selectedOrganizationId && !urlViewParam) {
+      if (activeView !== 'team_all_open') setActiveView('team_all_open');
+    }
+    // Intentionally omit activeView from deps — URL is source of truth for deep links.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlViewParam, selectedOrganizationId]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [legalViolation, setLegalViolation] = useState<LegalValidationResult | null>(null);
@@ -352,7 +389,13 @@ export default function TicketsPage() {
     setActiveView(view);
     setSelectedTicketId(null);
     setSelectedTicketIds([]);
-    navigate('/tickets');
+    const next = new URLSearchParams(searchParams);
+    next.set('view', view);
+    if (view !== 'status_resolved' && view !== 'status_closed') {
+      next.delete('resolvedWithin');
+    }
+    const qs = next.toString();
+    navigate(qs ? `/tickets?${qs}` : '/tickets');
     setIsMobileSidebarOpen(false);
     if (window.innerWidth < 768 && !isPipelineCollapsed && togglePipelineSidebar) {
       togglePipelineSidebar();
@@ -620,6 +663,17 @@ export default function TicketsPage() {
       });
     }
 
+    if (
+      resolvedWithinDays &&
+      (activeView === 'status_resolved' || activeView === 'status_closed')
+    ) {
+      const from = new Date();
+      from.setHours(0, 0, 0, 0);
+      // Match dashboard SQL: CURRENT_DATE - N days
+      from.setDate(from.getDate() - resolvedWithinDays);
+      result = result.filter((t) => isResolvedInPeriodTicket(t, from.getTime()));
+    }
+
     // Live search filtering
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -770,7 +824,20 @@ export default function TicketsPage() {
     });
 
     return result;
-  }, [baseSidebarTickets, topStatusFilter, searchQuery, filters, user, listSort, allTickets, selectedOrganizationId, priorityRankByKey, teamAccess]);
+  }, [
+    baseSidebarTickets,
+    topStatusFilter,
+    searchQuery,
+    filters,
+    user,
+    listSort,
+    allTickets,
+    selectedOrganizationId,
+    priorityRankByKey,
+    teamAccess,
+    resolvedWithinDays,
+    activeView,
+  ]);
 
   const getFilteredTickets = () => {
     return finalRenderedTickets;
