@@ -415,11 +415,38 @@ async function queryRecentTickets(limit = 40): Promise<DashboardRecentTicket[]> 
   }));
 }
 
+function resolveOrgLogoUrl(
+  org: { id: string; logo_url?: string | null; crm_company_id?: string | null },
+  companies: Array<Record<string, unknown> & { id: string }>,
+): string | null {
+  const fromOrg = String(org.logo_url || '').trim();
+  if (fromOrg) return fromOrg;
+
+  const byCrm =
+    org.crm_company_id &&
+    companies.find((c) => c.id === org.crm_company_id);
+  const byLink = companies.find(
+    (c) =>
+      String(c.organizationId || c.organization_id || '').trim() === org.id,
+  );
+  const match = byCrm || byLink;
+  if (!match) return null;
+  const fromCompany = String(match.logoUrl || match.logo_url || '').trim();
+  return fromCompany || null;
+}
+
 async function queryClientOrgOverview(): Promise<DashboardClientOrgSummary[]> {
   try {
     const { listOrganizations } = await import('./client-portal/organizations.js');
     const orgs = await listOrganizations({ includeInactive: false });
-    const tickets = await getDocsDirect('tickets', []);
+    const [tickets, companyRows] = await Promise.all([
+      getDocsDirect('tickets', []),
+      getDocsDirect('companies', []),
+    ]);
+    const companies = companyRows.map((r) => ({
+      id: r.id,
+      ...(r as Record<string, unknown>),
+    })) as Array<Record<string, unknown> & { id: string }>;
     const now = Date.now();
 
     const summaries: DashboardClientOrgSummary[] = orgs.map((org) => {
@@ -440,7 +467,7 @@ async function queryClientOrgOverview(): Promise<DashboardClientOrgSummary[]> {
       return {
         id: org.id,
         name: org.name,
-        logoUrl: org.logo_url || null,
+        logoUrl: resolveOrgLogoUrl(org, companies),
         openCount: openTickets.length,
         slaStatus: hasSlaRisk ? 'risk' : 'healthy',
       };

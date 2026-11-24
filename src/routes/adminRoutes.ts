@@ -67,6 +67,13 @@ import type {
   AiTrustLevel,
 } from "../types/ai-orchestrator";
 import { buildAdminHubOverview } from "../lib/admin-hub-overview.js";
+import {
+  clearDashboardBanner,
+  getDashboardBanner,
+  parseAndValidateDashboardBannerDataUrl,
+  setDashboardBanner,
+} from "../lib/dashboard-banner.js";
+import { isHubcomStaffRole } from "../lib/client-portal/roles.js";
 
 const router = Router();
 
@@ -88,6 +95,100 @@ router.get("/hub-stats", requireRole(["SYSTEM_ADMIN"]), async (req: Request, res
     return res.status(500).json({ error: "Failed to load admin hub statistics." });
   }
 });
+
+/**
+ * GET /api/admin/dashboard-banner
+ * Hubcom staff may read the optional dashboard hero image.
+ */
+router.get("/dashboard-banner", async (req: Request, res: Response): Promise<any> => {
+  const role = String(req.user?.role || "");
+  if (!isHubcomStaffRole(role) && role !== "SYSTEM_ADMIN" && !(req.user as any)?.is_admin) {
+    return res.status(403).json({ error: "Forbidden: Hubcom staff only." });
+  }
+  try {
+    const banner = await getDashboardBanner();
+    return res.json({
+      imageDataUrl: banner.imageDataUrl,
+      updatedAt: banner.updatedAt,
+      updatedBy: banner.updatedBy,
+    });
+  } catch (error: unknown) {
+    safeLog("error", "[Dashboard Banner] get failed:", error instanceof Error ? error.message : error);
+    return res.status(500).json({ error: "Failed to load dashboard banner." });
+  }
+});
+
+/**
+ * POST /api/admin/dashboard-banner
+ * SYSTEM_ADMIN uploads / replaces the hero banner (PNG/JPEG/WebP ≤ 2 MB).
+ */
+router.post(
+  "/dashboard-banner",
+  requireRole(["SYSTEM_ADMIN"]),
+  async (req: Request, res: Response): Promise<any> => {
+    const parsed = z
+      .object({
+        imageDataUrl: z.string().min(1).max(3_000_000),
+      })
+      .safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid banner payload",
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    const check = parseAndValidateDashboardBannerDataUrl(parsed.data.imageDataUrl);
+    if (check.ok === false) {
+      return res.status(400).json({ error: check.error });
+    }
+    try {
+      const banner = await setDashboardBanner({
+        imageDataUrl: check.dataUrl,
+        updatedBy: String(req.user?.id || "system"),
+      });
+      return res.json({
+        ok: true,
+        imageDataUrl: banner.imageDataUrl,
+        updatedAt: banner.updatedAt,
+        updatedBy: banner.updatedBy,
+      });
+    } catch (error: unknown) {
+      safeLog(
+        "error",
+        "[Dashboard Banner] upload failed:",
+        error instanceof Error ? error.message : error,
+      );
+      return res.status(500).json({ error: "Failed to save dashboard banner." });
+    }
+  },
+);
+
+/**
+ * DELETE /api/admin/dashboard-banner
+ * SYSTEM_ADMIN clears the custom hero (fallback gradient applies).
+ */
+router.delete(
+  "/dashboard-banner",
+  requireRole(["SYSTEM_ADMIN"]),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const banner = await clearDashboardBanner(String(req.user?.id || "system"));
+      return res.json({
+        ok: true,
+        imageDataUrl: null,
+        updatedAt: banner.updatedAt,
+        updatedBy: banner.updatedBy,
+      });
+    } catch (error: unknown) {
+      safeLog(
+        "error",
+        "[Dashboard Banner] delete failed:",
+        error instanceof Error ? error.message : error,
+      );
+      return res.status(500).json({ error: "Failed to clear dashboard banner." });
+    }
+  },
+);
 
 // Zod schema for an admin setting/resetting a user's password
 const setPasswordSchema = z.object({
