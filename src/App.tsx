@@ -82,6 +82,7 @@ const ClientKbPage = lazy(() => import('./components/pages/client-portal/ClientK
 const ClientExchangePage = lazy(
   () => import('./components/pages/client-portal/ClientExchangePage'),
 );
+const ClientVaultPage = lazy(() => import('./components/pages/client-portal/ClientVaultPage'));
 
 function RouteFallback() {
   return (
@@ -150,6 +151,21 @@ function ClientAdminRoute({ children }: { children: ReactNode }) {
   }
   if (!isClient) return <Navigate to="/dashboard" replace />;
   if (!isClientAdmin) return <Navigate to="/portal/dashboard" replace />;
+  return <>{children}</>;
+}
+
+/** CLIENT_ADMIN + CLIENT_SUPPORTER only (hides Tresor from CLIENT_USER). */
+function ClientOrgWideRoute({ children }: { children: ReactNode }) {
+  const { isOrgWide, isClient, loading } = useClientPortalSession();
+  if (loading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center p-20 bg-background">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+  if (!isClient) return <Navigate to="/dashboard" replace />;
+  if (!isOrgWide) return <Navigate to="/portal/dashboard" replace />;
   return <>{children}</>;
 }
 
@@ -455,6 +471,18 @@ function AppRoutes() {
                               <ClientExchangePage />
                             </LazyPage>
                           </ErrorBoundary>
+                        }
+                      />
+                      <Route
+                        path="vault"
+                        element={
+                          <ClientOrgWideRoute>
+                            <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Tresor" />}>
+                              <LazyPage>
+                                <ClientVaultPage />
+                              </LazyPage>
+                            </ErrorBoundary>
+                          </ClientOrgWideRoute>
                         }
                       />
                       <Route path="*" element={<Navigate to="dashboard" replace />} />

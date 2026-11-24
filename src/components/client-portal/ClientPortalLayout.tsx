@@ -11,6 +11,7 @@ import {
   Palette,
   BookOpen,
   Shield,
+  Lock,
 } from 'lucide-react';
 import axios from 'axios';
 import { cn } from '../../lib/utils';
@@ -30,6 +31,10 @@ const NAV_ALL = [
   { to: '/portal/exchange', label: 'Sicherer Austausch', icon: Shield, end: false },
 ] as const;
 
+const NAV_ORG_WIDE = [
+  { to: '/portal/vault', label: 'Tresor', icon: Lock, end: false },
+] as const;
+
 const NAV_ADMIN_ONLY = [
   { to: '/portal/members', label: 'Mitarbeiter & Rollen', icon: Users, end: false },
   { to: '/portal/email', label: 'E-Mail & M365 Integration', icon: Mail, end: false },
@@ -45,7 +50,7 @@ interface OrgBranding {
 }
 
 export default function ClientPortalLayout() {
-  const { session, isClientAdmin, loading } = useClientPortalSession();
+  const { session, isClientAdmin, isOrgWide, loading } = useClientPortalSession();
   const navigate = useNavigate();
   const [org, setOrg] = useState<OrgBranding | null>(null);
 
@@ -78,6 +83,7 @@ export default function ClientPortalLayout() {
 
   const navItems = [
     ...NAV_ALL,
+    ...(isOrgWide ? NAV_ORG_WIDE : []),
     ...(isClientAdmin ? NAV_ADMIN_ONLY : []),
   ];
 

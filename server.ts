@@ -868,6 +868,10 @@ async function startServer() {
   );
   app.use("/api/portal/kb", clientPortalKbRoutes);
   app.use("/api/portal/exchange", clientPortalExchangeRoutes);
+  const { default: clientPortalVaultRoutes } = await import(
+    "./src/routes/clientPortalVaultRoutes.js"
+  );
+  app.use("/api/portal/vault", clientPortalVaultRoutes);
   app.use("/api/portal", clientPortalRoutes);
   app.use("/api/admin/import", importRoutes);
   app.use("/api/ai", aiRoutes);

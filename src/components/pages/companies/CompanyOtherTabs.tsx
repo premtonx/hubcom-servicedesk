@@ -65,10 +65,22 @@ export default function CompanyOtherTabs({
   const { t } = useTranslation();
   const [revealedKeys, setRevealedKeys] = useState<Record<string, boolean>>({});
   const [companyVaultItems, setCompanyVaultItems] = useState<VaultItem[]>([]);
+  type OrgVaultSecretRow = {
+    id: string;
+    name: string;
+    category: string;
+    notes?: string | null;
+    masked_value: string;
+    client_visible: boolean;
+    organization_id?: string | null;
+  };
+  const [orgVaultSecrets, setOrgVaultSecrets] = useState<OrgVaultSecretRow[]>([]);
+  const [revealedOrgVault, setRevealedOrgVault] = useState<Record<string, string>>({});
   const [isAddingSecret, setIsAddingSecret] = useState(false);
   const [newSecretLabel, setNewSecretLabel] = useState('');
   const [newSecretValue, setNewSecretValue] = useState('');
   const [newSecretType, setNewSecretType] = useState('password');
+  const [newSecretClientVisible, setNewSecretClientVisible] = useState(false);
   const [portalStatusByEmail, setPortalStatusByEmail] = useState<Record<string, string>>({});
   const [editingContract, setEditingContract] = useState(false);
   const [savingContract, setSavingContract] = useState(false);
@@ -113,6 +125,28 @@ export default function CompanyOtherTabs({
     return () => unsub();
   }, [companyScopeIds, onVaultItemsChange]);
 
+  const reloadOrgVault = async () => {
+    if (!orgId) {
+      setOrgVaultSecrets([]);
+      return;
+    }
+    try {
+      const res = await axios.get(
+        `/api/admin/organizations/${encodeURIComponent(String(orgId))}/vault`,
+        { withCredentials: true },
+      );
+      setOrgVaultSecrets(Array.isArray(res.data?.secrets) ? res.data.secrets : []);
+    } catch {
+      setOrgVaultSecrets([]);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSubTab !== 'vault') return;
+    void reloadOrgVault();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, activeSubTab]);
+
   useEffect(() => {
     if (!orgId || activeSubTab !== 'contacts') return;
     let cancelled = false;
@@ -145,35 +179,40 @@ export default function CompanyOtherTabs({
       toast.error(t('companies.vault.fillRequired', 'Bitte Bezeichnung und Geheimnis ausfüllen.'));
       return;
     }
+    if (!orgId) {
+      toast.error(
+        t(
+          'companies.vault.noOrg',
+          'Kein verknüpftes Kunden-Portal Unternehmen — Tresor benötigt organizations.id.',
+        ),
+      );
+      return;
+    }
     try {
       setIsAddingSecret(true);
-      const expiresAt = new Date();
-      expiresAt.setHours(expiresAt.getHours() + 168);
-
-      await vaultService.createItem({
-        type: 'secret',
-        content: newSecretValue,
-        shares: [],
-        expirationType: 'time',
-        expiresAt: expiresAt,
-        metadata: {
-          isQuantumSafe: true,
-          pqcLevel: 3,
-          secretType: newSecretType,
-          relatedCompanyId: company.id,
-          organizationId: orgId || undefined,
-          requestName: newSecretLabel,
-          targetRecipient: company.name,
+      await axios.post(
+        `/api/admin/organizations/${encodeURIComponent(String(orgId))}/vault`,
+        {
+          name: newSecretLabel.trim(),
+          category: newSecretType,
+          value: newSecretValue,
+          client_visible: newSecretClientVisible,
         },
-      });
+        { withCredentials: true },
+      );
 
       toast.success(t('companies.vault.registered', 'Geheimnis registriert.'));
       setNewSecretLabel('');
       setNewSecretValue('');
+      setNewSecretClientVisible(false);
+      await reloadOrgVault();
       setIsAddingSecret(false);
     } catch (err: any) {
       console.error(err);
-      toast.error(t('companies.vault.registerFailed', 'Geheimnis konnte nicht gespeichert werden.'));
+      toast.error(
+        err?.response?.data?.error ||
+          t('companies.vault.registerFailed', 'Geheimnis konnte nicht gespeichert werden.'),
+      );
       setIsAddingSecret(false);
     }
   };
@@ -651,9 +690,43 @@ export default function CompanyOtherTabs({
   }
 
   if (activeSubTab === 'vault') {
-    const copyDirectText = (text: string) => {
-      navigator.clipboard.writeText(text);
-      toast.success(t('companies.vault.copied', 'In Zwischenablage kopiert.'));
+    const revealOrgSecret = async (id: string, purpose: 'reveal' | 'copy' = 'reveal') => {
+      if (!orgId) return;
+      try {
+        const res = await axios.post(
+          `/api/admin/organizations/${encodeURIComponent(String(orgId))}/vault/${encodeURIComponent(id)}/reveal`,
+          { purpose },
+          { withCredentials: true },
+        );
+        const value = String(res.data?.value || '');
+        if (purpose === 'copy') {
+          await navigator.clipboard.writeText(value);
+          toast.success(t('companies.vault.copied', 'In Zwischenablage kopiert.'));
+        } else {
+          setRevealedOrgVault((prev) => ({ ...prev, [id]: value }));
+        }
+      } catch (err: any) {
+        toast.error(err?.response?.data?.error || 'Anzeigen fehlgeschlagen.');
+      }
+    };
+
+    const toggleClientVisible = async (secret: OrgVaultSecretRow) => {
+      if (!orgId) return;
+      try {
+        await axios.patch(
+          `/api/admin/organizations/${encodeURIComponent(String(orgId))}/vault/${encodeURIComponent(secret.id)}`,
+          { client_visible: !secret.client_visible },
+          { withCredentials: true },
+        );
+        toast.success(
+          !secret.client_visible
+            ? t('companies.vault.sharedPortal', 'Für Kunden-Portal freigegeben.')
+            : t('companies.vault.hubcomOnly', 'Nur noch für Hubcom sichtbar.'),
+        );
+        await reloadOrgVault();
+      } catch (err: any) {
+        toast.error(err?.response?.data?.error || 'Sichtbarkeit konnte nicht geändert werden.');
+      }
     };
 
     return (
@@ -667,12 +740,12 @@ export default function CompanyOtherTabs({
             <p className="text-xs text-muted-foreground mt-0.5">
               {t(
                 'companies.vaultHint',
-                'Geheimnisse und Zugangsdaten ausschließlich für dieses Unternehmen.',
+                'AES-256-GCM · Standard „Nur Hubcom“. Freigabe fürs Kunden-Portal explizit setzen.',
               )}
             </p>
           </div>
           <Badge className="bg-primary/10 text-primary border-none text-[10px] font-bold uppercase tracking-widest px-3 h-6">
-            {companyVaultItems.length}{' '}
+            {orgVaultSecrets.length}{' '}
             {t('companies.records', 'Einträge')}
           </Badge>
         </div>
@@ -686,7 +759,14 @@ export default function CompanyOtherTabs({
                 </span>
               </CardHeader>
               <CardContent className="p-0">
-                {companyVaultItems.length === 0 ? (
+                {!orgId ? (
+                  <p className="px-5 py-12 text-center text-xs text-muted-foreground font-semibold">
+                    {t(
+                      'companies.vault.needOrg',
+                      'Bitte zuerst ein Kunden-Portal Unternehmen verknüpfen.',
+                    )}
+                  </p>
+                ) : orgVaultSecrets.length === 0 ? (
                   <p className="px-5 py-12 text-center text-xs text-muted-foreground font-semibold">
                     {t(
                       'companies.noVaultEntries',
@@ -702,44 +782,72 @@ export default function CompanyOtherTabs({
                             {t('companies.recordId', 'Bezeichnung')}
                           </th>
                           <th className="px-5 py-3.5">{t('companies.type', 'Typ')}</th>
+                          <th className="px-5 py-3.5">{t('companies.visibility', 'Sichtbarkeit')}</th>
                           <th className="px-5 py-3.5 text-right">
                             {t('companies.actions', 'Aktionen')}
                           </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border/50 text-foreground font-semibold">
-                        {companyVaultItems.map((item) => {
-                          const label =
-                            item.metadata?.requestName ||
-                            item.metadata?.secretType ||
-                            item.type ||
-                            item.id;
-                          const display =
-                            item.type === 'request'
-                              ? `${window.location.origin}/v/${item.id}`
-                              : '••••••••';
+                        {orgVaultSecrets.map((item) => {
+                          const display = revealedOrgVault[item.id] || item.masked_value;
                           return (
                             <tr key={item.id} className="hover:bg-muted/5">
                               <td className="px-5 py-3.5 font-bold max-w-[200px] truncate">
-                                {String(label)}
+                                {item.name}
                               </td>
                               <td className="px-5 py-3.5">
                                 <Badge
                                   variant="outline"
                                   className="text-[9px] border-none font-bold bg-muted uppercase px-2"
                                 >
-                                  {item.metadata?.secretType || item.type}
+                                  {item.category}
                                 </Badge>
                               </td>
+                              <td className="px-5 py-3.5">
+                                <button
+                                  type="button"
+                                  onClick={() => void toggleClientVisible(item)}
+                                  className="inline-flex"
+                                  title={t(
+                                    'companies.vault.toggleVisible',
+                                    'Für Kunden-Portal freigeben / Nur Hubcom',
+                                  )}
+                                >
+                                  <Badge
+                                    className={cn(
+                                      'text-[9px] border-none font-bold uppercase px-2 cursor-pointer',
+                                      item.client_visible
+                                        ? 'bg-emerald-50 text-emerald-700'
+                                        : 'bg-slate-100 text-slate-600',
+                                    )}
+                                  >
+                                    {item.client_visible
+                                      ? t('companies.vault.badgePortal', 'Im Kunden-Portal sichtbar')
+                                      : t('companies.vault.badgeHubcom', 'Nur Hubcom')}
+                                  </Badge>
+                                </button>
+                              </td>
                               <td className="px-5 py-3.5 text-right whitespace-nowrap">
-                                <div className="flex justify-end gap-1">
+                                <div className="flex justify-end gap-1 items-center">
+                                  <span className="font-mono text-[10px] text-muted-foreground mr-1 max-w-[100px] truncate">
+                                    {display}
+                                  </span>
                                   <Button
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7"
-                                    onClick={() => toggleKeyReveal(item.id)}
+                                    onClick={() =>
+                                      revealedOrgVault[item.id]
+                                        ? setRevealedOrgVault((prev) => {
+                                            const next = { ...prev };
+                                            delete next[item.id];
+                                            return next;
+                                          })
+                                        : void revealOrgSecret(item.id, 'reveal')
+                                    }
                                   >
-                                    {revealedKeys[item.id] ? (
+                                    {revealedOrgVault[item.id] ? (
                                       <EyeOff className="w-3.5 h-3.5" />
                                     ) : (
                                       <Eye className="w-3.5 h-3.5" />
@@ -749,7 +857,7 @@ export default function CompanyOtherTabs({
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7 text-[#1A73E8]"
-                                    onClick={() => copyDirectText(display)}
+                                    onClick={() => void revealOrgSecret(item.id, 'copy')}
                                   >
                                     <Copy className="w-3.5 h-3.5" />
                                   </Button>
@@ -758,10 +866,15 @@ export default function CompanyOtherTabs({
                                     size="icon"
                                     className="h-7 w-7 text-red-500"
                                     onClick={async () => {
-                                      await vaultService.deleteItem(item.id);
+                                      if (!orgId) return;
+                                      await axios.delete(
+                                        `/api/admin/organizations/${encodeURIComponent(String(orgId))}/vault/${encodeURIComponent(item.id)}`,
+                                        { withCredentials: true },
+                                      );
                                       toast.success(
                                         t('companies.vault.deleted', 'Eintrag gelöscht.'),
                                       );
+                                      await reloadOrgVault();
                                     }}
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
@@ -810,10 +923,11 @@ export default function CompanyOtherTabs({
                   className="w-full h-9 px-2 mt-1 bg-muted/20 border border-muted-foreground/10 rounded-xl text-xs font-bold cursor-pointer"
                   autoComplete="off"
                 >
-                  <option value="password">Passwort / Schlüssel</option>
-                  <option value="api_key">API-Token</option>
-                  <option value="certificate">SSL/PEM-Zertifikat</option>
-                  <option value="note">Sichere Notiz</option>
+                  <option value="password">Passwort</option>
+                  <option value="api_key">API-Schlüssel</option>
+                  <option value="certificate">Zertifikat</option>
+                  <option value="license">Lizenz</option>
+                  <option value="note">Notiz</option>
                 </select>
               </div>
               <div>
@@ -830,9 +944,28 @@ export default function CompanyOtherTabs({
                   name="company-secret-value"
                 />
               </div>
+              <label className="flex items-start gap-2 cursor-pointer rounded-xl border border-muted-foreground/10 bg-muted/10 p-3">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={newSecretClientVisible}
+                  onChange={(e) => setNewSecretClientVisible(e.target.checked)}
+                />
+                <span>
+                  <span className="block text-[11px] font-black text-foreground">
+                    {t('companies.vault.sharePortal', 'Für Kunden-Portal freigeben')}
+                  </span>
+                  <span className="block text-[10px] text-muted-foreground font-semibold mt-0.5">
+                    {t(
+                      'companies.vault.sharePortalHint',
+                      'Standard: Nur Hubcom. Aktivieren, damit CLIENT_ADMIN/SUPPORTER den Eintrag sehen.',
+                    )}
+                  </span>
+                </span>
+              </label>
               <Button
                 onClick={handleCompanyAddSecret}
-                disabled={isAddingSecret}
+                disabled={isAddingSecret || !orgId}
                 className="w-full bg-primary hover:bg-primary/95 text-white h-9 rounded-xl font-bold"
               >
                 {isAddingSecret
@@ -841,7 +974,7 @@ export default function CompanyOtherTabs({
               </Button>
               <div className="flex gap-2 items-center text-[10px] text-primary font-bold bg-[#E8F0FE] p-1.5 px-3 rounded-lg w-full">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                {t('companies.vault.scoped', 'Nur für dieses Unternehmen sichtbar')}
+                {t('companies.vault.scoped', 'AES-256-GCM · organization_id gebunden')}
               </div>
             </CardContent>
           </Card>

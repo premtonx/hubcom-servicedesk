@@ -41,6 +41,17 @@ import {
   userOrganizationId,
   type ClientTeamRole,
 } from '../lib/client-portal/team-service.js';
+import {
+  appendOrgVaultAudit,
+  createOrgVaultSecret,
+  deleteOrgVaultSecret,
+  getOrgVaultSecretById,
+  listOrgVaultSecrets,
+  normalizeOrgVaultCategory,
+  revealOrgVaultSecretPlaintext,
+  toOrgVaultListItem,
+  updateOrgVaultSecret,
+} from '../lib/client-portal/organization-vault.js';
 
 const router = Router();
 
@@ -610,6 +621,182 @@ router.post(
       return res
         .status(status >= 400 && status < 600 ? status : 500)
         .json({ error: safeErrorMessage(err, 'Failed to set password') });
+    }
+  },
+);
+
+const staffVaultWriteSchema = z.object({
+  name: z.string().min(1).max(200),
+  category: z.string().max(40).optional(),
+  notes: z.string().max(4000).optional().nullable(),
+  value: z.string().min(1).max(100_000),
+  /** CRITICAL: defaults false — Hubcom-internal unless explicitly shared. */
+  client_visible: z.boolean().optional().default(false),
+});
+
+/** GET /api/admin/organizations/:id/vault — list durable Tresor entries for a Kunden org. */
+router.get('/:id/vault', requireHubcomStaff, async (req: Request, res: Response): Promise<any> => {
+  const organizationId = routeParam(req.params.id);
+  try {
+    const organization = await getOrganization(organizationId);
+    if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+    const secrets = await listOrgVaultSecrets({
+      organizationId,
+      clientVisibleOnly: false,
+      category: typeof req.query.category === 'string' ? req.query.category : null,
+      q: typeof req.query.q === 'string' ? req.query.q : null,
+    });
+    return res.json({ secrets });
+  } catch (err: any) {
+    return res.status(500).json({ error: safeErrorMessage(err, 'Tresor konnte nicht geladen werden') });
+  }
+});
+
+/** POST /api/admin/organizations/:id/vault — create secret (client_visible default false). */
+router.post('/:id/vault', requireHubcomStaff, async (req: Request, res: Response): Promise<any> => {
+  const organizationId = routeParam(req.params.id);
+  const parsed = staffVaultWriteSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: 'Invalid vault payload',
+      details: parsed.error.flatten().fieldErrors,
+    });
+  }
+  try {
+    const organization = await getOrganization(organizationId);
+    if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+    const secret = await createOrgVaultSecret({
+      organizationId,
+      clientVisible: Boolean(parsed.data.client_visible),
+      createdByUserId: String(req.user?.id || 'system'),
+      name: parsed.data.name,
+      category: normalizeOrgVaultCategory(parsed.data.category),
+      notes: parsed.data.notes,
+      plaintext: parsed.data.value,
+    });
+    await appendOrgVaultAudit({
+      secretId: secret.id,
+      organizationId,
+      actorUserId: String(req.user?.id || 'system'),
+      actorEmail: req.user?.email,
+      action: 'create',
+      detail: `Staff create (client_visible=${secret.client_visible}): ${secret.name}`,
+    });
+    return res.status(201).json({ secret });
+  } catch (err: any) {
+    safeLog('error', '[organizations/vault] create failed', err?.message || err);
+    const message = String(err?.message || '');
+    if (message.includes('VAULT_ENCRYPTION_KEY')) {
+      return res.status(503).json({ error: 'Vault encryption is not configured.' });
+    }
+    return res.status(500).json({ error: safeErrorMessage(err, 'Geheimnis konnte nicht gespeichert werden') });
+  }
+});
+
+/** PATCH /api/admin/organizations/:id/vault/:secretId */
+router.patch(
+  '/:id/vault/:secretId',
+  requireHubcomStaff,
+  async (req: Request, res: Response): Promise<any> => {
+    const organizationId = routeParam(req.params.id);
+    const secretId = routeParam(req.params.secretId);
+    try {
+      const existing = await getOrgVaultSecretById(secretId);
+      if (!existing || existing.organization_id !== organizationId) {
+        return res.status(404).json({ error: 'Eintrag nicht gefunden.' });
+      }
+      const body = req.body || {};
+      const secret = await updateOrgVaultSecret({
+        id: secretId,
+        updatedByUserId: String(req.user?.id || 'system'),
+        name: typeof body.name === 'string' ? body.name : undefined,
+        category: typeof body.category === 'string' ? body.category : undefined,
+        notes: body.notes !== undefined ? body.notes : undefined,
+        plaintext: typeof body.value === 'string' ? body.value : undefined,
+        clientVisible:
+          typeof body.client_visible === 'boolean' ? body.client_visible : undefined,
+      });
+      if (
+        typeof body.client_visible === 'boolean' &&
+        body.client_visible !== existing.client_visible
+      ) {
+        await appendOrgVaultAudit({
+          secretId,
+          organizationId,
+          actorUserId: String(req.user?.id || 'system'),
+          actorEmail: req.user?.email,
+          action: 'toggle_client_visible',
+          detail: `client_visible ${existing.client_visible} → ${body.client_visible}`,
+        });
+      } else {
+        await appendOrgVaultAudit({
+          secretId,
+          organizationId,
+          actorUserId: String(req.user?.id || 'system'),
+          actorEmail: req.user?.email,
+          action: 'update',
+          detail: `Staff update: ${secret?.name || secretId}`,
+        });
+      }
+      return res.json({ secret });
+    } catch (err: any) {
+      return res.status(500).json({ error: safeErrorMessage(err, 'Eintrag konnte nicht gespeichert werden') });
+    }
+  },
+);
+
+/** POST /api/admin/organizations/:id/vault/:secretId/reveal */
+router.post(
+  '/:id/vault/:secretId/reveal',
+  requireHubcomStaff,
+  async (req: Request, res: Response): Promise<any> => {
+    const organizationId = routeParam(req.params.id);
+    const secretId = routeParam(req.params.secretId);
+    try {
+      const existing = await getOrgVaultSecretById(secretId);
+      if (!existing || existing.organization_id !== organizationId) {
+        return res.status(404).json({ error: 'Eintrag nicht gefunden.' });
+      }
+      const value = await revealOrgVaultSecretPlaintext(secretId);
+      if (value == null) return res.status(404).json({ error: 'Eintrag nicht gefunden.' });
+      await appendOrgVaultAudit({
+        secretId,
+        organizationId,
+        actorUserId: String(req.user?.id || 'system'),
+        actorEmail: req.user?.email,
+        action: String((req.body as any)?.purpose || '') === 'copy' ? 'copy' : 'reveal',
+      });
+      return res.json({ id: secretId, value, secret: toOrgVaultListItem(existing) });
+    } catch (err: any) {
+      return res.status(500).json({ error: safeErrorMessage(err, 'Entschlüsselung fehlgeschlagen') });
+    }
+  },
+);
+
+/** DELETE /api/admin/organizations/:id/vault/:secretId */
+router.delete(
+  '/:id/vault/:secretId',
+  requireHubcomStaff,
+  async (req: Request, res: Response): Promise<any> => {
+    const organizationId = routeParam(req.params.id);
+    const secretId = routeParam(req.params.secretId);
+    try {
+      const existing = await getOrgVaultSecretById(secretId);
+      if (!existing || existing.organization_id !== organizationId) {
+        return res.status(404).json({ error: 'Eintrag nicht gefunden.' });
+      }
+      await deleteOrgVaultSecret(secretId);
+      await appendOrgVaultAudit({
+        secretId,
+        organizationId,
+        actorUserId: String(req.user?.id || 'system'),
+        actorEmail: req.user?.email,
+        action: 'delete',
+        detail: `Staff delete: ${existing.name}`,
+      });
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: safeErrorMessage(err, 'Löschen fehlgeschlagen') });
     }
   },
 );

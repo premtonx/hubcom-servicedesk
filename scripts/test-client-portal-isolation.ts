@@ -50,6 +50,12 @@ import {
   sanitizeVaultItemForPortal,
 } from '../src/lib/client-portal/exchange-visibility.js';
 import {
+  assertPortalVaultRole,
+  isOrgVaultVisibleToPortal,
+  normalizeOrgVaultCategory,
+  toOrgVaultListItem,
+} from '../src/lib/client-portal/organization-vault.js';
+import {
   assertPortalDashboardTenantIsolation,
   buildPortalDashboardPayload,
 } from '../src/lib/client-portal/portal-dashboard-service.js';
@@ -943,6 +949,91 @@ function testPortalExchangeIsolation(): void {
   );
 }
 
+function testPortalTresorVaultIsolation(): void {
+  console.log('\n[14] Portal Tresor (organization_vault_secrets) isolation');
+
+  assert(assertPortalVaultRole('CLIENT_USER') === null, 'CLIENT_USER blocked from all /api/portal/vault*');
+  assert(assertPortalVaultRole('CLIENT_ADMIN') === 'CLIENT_ADMIN', 'CLIENT_ADMIN allowed on Tresor');
+  assert(
+    assertPortalVaultRole('CLIENT_SUPPORTER') === 'CLIENT_SUPPORTER',
+    'CLIENT_SUPPORTER allowed on Tresor',
+  );
+  assert(assertPortalVaultRole('SYSTEM_ADMIN') === null, 'SYSTEM_ADMIN is not a portal vault actor');
+
+  const hubcomOnly = {
+    organization_id: ORG_A,
+    client_visible: false,
+  };
+  const portalShared = {
+    organization_id: ORG_A,
+    client_visible: true,
+  };
+  const orgBShared = {
+    organization_id: ORG_B,
+    client_visible: true,
+  };
+  const globalSecret = {
+    organization_id: null as string | null,
+    client_visible: true,
+  };
+
+  assert(
+    isOrgVaultVisibleToPortal(hubcomOnly, ORG_A) === false,
+    'client_visible=false never leaks to CLIENT_ADMIN/SUPPORTER',
+  );
+  assert(
+    isOrgVaultVisibleToPortal(portalShared, ORG_A) === true,
+    'Org A client_visible=true visible to Org A portal',
+  );
+  assert(
+    isOrgVaultVisibleToPortal(portalShared, ORG_B) === false,
+    'Org A client_visible=true returns 404/403 for Org B',
+  );
+  assert(
+    isOrgVaultVisibleToPortal(orgBShared, ORG_A) === false,
+    'Org B vault secrets never list/reveal for Org A',
+  );
+  assert(
+    isOrgVaultVisibleToPortal(globalSecret, ORG_A) === false,
+    'Hubcom global vault secrets (organization_id=NULL) never leak to portal',
+  );
+
+  const listItem = toOrgVaultListItem({
+    id: 'sec-1',
+    organization_id: ORG_A,
+    client_visible: true,
+    created_by_user_id: orgAAdmin.id,
+    updated_by_user_id: null,
+    name: 'VPN',
+    category: 'password',
+    notes: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+  assert(
+    listItem.masked_value === '••••••••••••' && !('encrypted_payload' in listItem),
+    'GET /api/portal/vault returns masked values only',
+  );
+  assert(
+    normalizeOrgVaultCategory('API-Schlüssel') === 'api_key' ||
+      normalizeOrgVaultCategory('api_key') === 'api_key',
+    'category normalizer accepts API-Schlüssel / api_key',
+  );
+  assert(
+    normalizeOrgVaultCategory('Passwort') === 'password',
+    'category normalizer accepts Passwort',
+  );
+
+  // Portal create stamps org + client_visible=true → appears in Admin-Hub Org A Vault.
+  assert(
+    isOrgVaultVisibleToPortal(
+      { organization_id: ORG_A, client_visible: true },
+      ORG_A,
+    ) === true,
+    'secrets created by Org A CLIENT_ADMIN appear under Admin-Hub Org A Vault with client_visible=true',
+  );
+}
+
 function testPortalSessionBootstrapWithoutRolesDb(): void {
   console.log('\n[9] Portal session bootstrap never needs /api/db "roles"');
 
@@ -1253,6 +1344,7 @@ async function main(): Promise<void> {
   testPortalBrandingBoundaries();
   testPortalKbIsolation();
   testPortalExchangeIsolation();
+  testPortalTresorVaultIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
