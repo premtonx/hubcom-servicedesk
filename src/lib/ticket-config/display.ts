@@ -1,7 +1,74 @@
+import type { TicketCategory } from '../ticket-categories/types';
 import type { TicketPriorityConfig, TicketStatusConfig } from './types';
 
 const FALLBACK_STATUS_COLOR = '#3B82F6';
 const FALLBACK_PRIORITY_COLOR = '#94A3B8';
+export const FALLBACK_CATEGORY_COLOR = '#1B6CA8';
+
+/** Prefer live Ticket Configuration name/colour by id (then name), not stale ticket fields. */
+export function resolveCategoryConfig(
+  categoryId: string | null | undefined,
+  categoryName: string | null | undefined,
+  categories: TicketCategory[],
+): { id: string | null; name: string; color: string; isActive: boolean; known: boolean } {
+  const id = categoryId ? String(categoryId) : '';
+  if (id) {
+    const byId = categories.find((c) => c.id === id);
+    if (byId) {
+      return {
+        id: byId.id,
+        name: byId.name,
+        color: byId.color || FALLBACK_CATEGORY_COLOR,
+        isActive: byId.isActive !== false,
+        known: true,
+      };
+    }
+  }
+  const nameHint = categoryName ? String(categoryName).trim() : '';
+  if (nameHint) {
+    const byName = categories.find(
+      (c) => c.name.toLowerCase() === nameHint.toLowerCase(),
+    );
+    if (byName) {
+      return {
+        id: byName.id,
+        name: byName.name,
+        color: byName.color || FALLBACK_CATEGORY_COLOR,
+        isActive: byName.isActive !== false,
+        known: true,
+      };
+    }
+    return {
+      id: id || null,
+      name: nameHint,
+      color: FALLBACK_CATEGORY_COLOR,
+      isActive: false,
+      known: false,
+    };
+  }
+  return {
+    id: null,
+    name: '',
+    color: FALLBACK_CATEGORY_COLOR,
+    isActive: true,
+    known: false,
+  };
+}
+
+/** Active categories for pickers, plus the current value if it is inactive/unknown. */
+export function selectableCategoriesForValue(
+  categoryId: string | null | undefined,
+  categories: TicketCategory[],
+): TicketCategory[] {
+  const active = categories
+    .filter((c) => c.isActive !== false)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'de'));
+  const id = categoryId ? String(categoryId) : '';
+  if (!id) return active;
+  if (active.some((c) => c.id === id)) return active;
+  const orphan = categories.find((c) => c.id === id);
+  return orphan ? [...active, orphan] : active;
+}
 
 export function softTintStyles(hex: string): {
   backgroundColor: string;

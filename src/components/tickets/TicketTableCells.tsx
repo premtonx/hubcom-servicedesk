@@ -16,8 +16,11 @@ import { isReadonlyTerminalStatus } from '../../lib/ticket-status';
 import type { TicketCategory } from '../../lib/ticket-categories/types';
 import type { TicketPriorityConfig, TicketStatusConfig } from '../../lib/ticket-config/types';
 import {
+  FALLBACK_CATEGORY_COLOR,
+  resolveCategoryConfig,
   resolvePriorityConfig,
   resolveStatusConfig,
+  selectableCategoriesForValue,
   selectablePrioritiesForValue,
   selectableStatusesForValue,
   softTintStyles,
@@ -25,22 +28,13 @@ import {
 import { useTicketStatuses } from '../../hooks/useTicketStatuses';
 import { useTicketPriorities } from '../../hooks/useTicketPriorities';
 
-const DEFAULT_CATEGORY_COLOR = '#1B6CA8';
-
+/** @deprecated Prefer resolveCategoryConfig — kept for callers that only need a colour. */
 export function resolveTicketCategoryColor(
   categoryId: string | null | undefined,
   categoryName: string | null | undefined,
   categories: TicketCategory[],
 ): string {
-  if (categoryId) {
-    const byId = categories.find((c) => c.id === categoryId);
-    if (byId?.color) return byId.color;
-  }
-  if (categoryName) {
-    const byName = categories.find((c) => c.name === categoryName);
-    if (byName?.color) return byName.color;
-  }
-  return DEFAULT_CATEGORY_COLOR;
+  return resolveCategoryConfig(categoryId, categoryName, categories).color;
 }
 
 interface TicketStatusChipProps {
@@ -294,11 +288,20 @@ export function TicketCategoryChip({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const label =
-    (categoryName && String(categoryName).trim()) ||
-    t('tickets.sidebar.noCategory', 'Keine Kategorie');
-  const hasCategory = Boolean(categoryId || (categoryName && String(categoryName).trim()));
-  const color = resolveTicketCategoryColor(categoryId, categoryName, categories);
+  const resolved = resolveCategoryConfig(categoryId, categoryName, categories);
+  const options = selectableCategoriesForValue(categoryId, categories);
+  const hasCategory = Boolean(resolved.id || resolved.name);
+  const label = hasCategory
+    ? resolved.name
+    : t('tickets.sidebar.noCategory', 'Keine Kategorie');
+  const color = resolved.color || FALLBACK_CATEGORY_COLOR;
+  const displayTitle =
+    hasCategory && !resolved.isActive
+      ? t('tickets.categoryInactiveHint', '{{label}} (inaktiv — noch auf Tickets vorhanden)').replace(
+          '{{label}}',
+          label,
+        )
+      : label;
   const ariaLabel = t('tickets.table.categoryAria', 'Kategorie: {{name}}').replace(
     '{{name}}',
     label,
@@ -331,7 +334,7 @@ export function TicketCategoryChip({
               aria-label={ariaLabel}
               aria-busy={saving || undefined}
               aria-invalid={error ? true : undefined}
-              title={error || label}
+              title={error || displayTitle}
               disabled={saving || disabled}
               className={cn(
                 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold max-w-full transition-opacity',
@@ -362,10 +365,10 @@ export function TicketCategoryChip({
           >
             {t('tickets.sidebar.noCategory', 'Keine Kategorie')}
           </DropdownMenuItem>
-          {categories.map((cat) => (
+          {options.map((cat) => (
             <DropdownMenuItem
               key={cat.id}
-              className="text-xs"
+              className="text-xs gap-2"
               disabled={saving}
               onClick={() =>
                 void apply({
@@ -376,11 +379,16 @@ export function TicketCategoryChip({
               }
             >
               <span
-                className="inline-block w-2 h-2 rounded-full shrink-0 mr-2"
-                style={{ backgroundColor: cat.color || DEFAULT_CATEGORY_COLOR }}
+                className="inline-block w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: cat.color || FALLBACK_CATEGORY_COLOR }}
                 aria-hidden
               />
-              {cat.name}
+              <span className="truncate">{cat.name}</span>
+              {cat.isActive === false ? (
+                <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+                  {t('tickets.configInactive', 'inaktiv')}
+                </span>
+              ) : null}
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>

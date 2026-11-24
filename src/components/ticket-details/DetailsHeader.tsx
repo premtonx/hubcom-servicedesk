@@ -178,7 +178,7 @@ export function DetailsHeader({
 
             {/* Priority Badge — configured colour + label */}
             <span
-              className="text-[10.5px] font-bold h-5.5 px-3 rounded-md border flex items-center justify-center gap-1.5"
+              className="text-[10.5px] font-bold h-5.5 px-3 rounded-md border inline-flex items-center justify-center gap-1.5 max-w-full min-w-0"
               style={priorityTint}
               title={priorityDisplay.name}
             >
@@ -187,7 +187,7 @@ export function DetailsHeader({
                 style={{ backgroundColor: priorityDisplay.color }}
                 aria-hidden
               />
-              <span>{priorityDisplay.name}</span>
+              <span className="truncate">{priorityDisplay.name}</span>
             </span>
           </div>
         </div>

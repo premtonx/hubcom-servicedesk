@@ -147,18 +147,7 @@ export function RedesignedSidebar({
   const { categories: allTicketCategories } = useTicketCategories(false);
   const { statuses: ticketStatuses } = useTicketStatuses();
   const { priorities: ticketPriorities } = useTicketPriorities();
-  const ticketCategories = useMemo(() => {
-    const active = allTicketCategories.filter((c) => c.isActive);
-    const currentId = ticket.categoryId || '';
-    if (!currentId) return active;
-    if (active.some((c) => c.id === currentId)) return active;
-    const orphan = allTicketCategories.find((c) => c.id === currentId);
-    return orphan ? [...active, orphan] : active;
-  }, [allTicketCategories, ticket.categoryId]);
-  const resolvedCategoryName = useMemo(() => {
-    const byId = allTicketCategories.find((c) => c.id === ticket.categoryId);
-    return byId?.name || ticket.categoryName || null;
-  }, [allTicketCategories, ticket.categoryId, ticket.categoryName]);
+  // Pass full config list into chips; selectableCategoriesForValue keeps inactive current values.
   const ticketKind = getTicketKind(ticket);
   const [slaTierDraft, setSlaTierDraft] = useState(ticket.slaTier ?? '');
   const syncedHealthTicketId = useRef<string | null>(null);
@@ -384,7 +373,7 @@ export function RedesignedSidebar({
             >
               {t('tickets.sidebar.priority', 'Priorität')}
             </label>
-            <div id="dispatch-priority-select" className="min-h-[2rem] flex items-center">
+            <div id="dispatch-priority-select" className="min-h-[2rem] min-w-0 max-w-full flex items-center">
               <TicketPriorityChip
                 priority={ticket.priority ?? 'medium'}
                 priorities={ticketPriorities}
@@ -400,7 +389,7 @@ export function RedesignedSidebar({
             >
               {t('tickets.sidebar.dispatchCaseStatus', 'Status')}
             </label>
-            <div id="dispatch-status-select" className="min-h-[2rem] flex items-center gap-2">
+            <div id="dispatch-status-select" className="min-h-[2rem] min-w-0 max-w-full flex items-center gap-2">
               <TicketStatusChip
                 status={ticket.status ?? 'open'}
                 statuses={ticketStatuses}
@@ -421,11 +410,11 @@ export function RedesignedSidebar({
             >
               {t('tickets.sidebar.category', 'Kategorie')}
             </label>
-            <div id="dispatch-category-select" className="min-h-[2rem] flex items-center">
+            <div id="dispatch-category-select" className="min-h-[2rem] min-w-0 max-w-full flex items-center">
               <TicketCategoryChip
                 categoryId={ticket.categoryId}
-                categoryName={resolvedCategoryName}
-                categories={ticketCategories}
+                categoryName={ticket.categoryName}
+                categories={allTicketCategories}
                 onChange={(patch) => onUpdateTicketField(patch)}
               />
             </div>
