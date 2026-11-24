@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronDown, ChevronLeft, Ticket, X } from 'lucide-react';
+import { ChevronDown, Ticket, X } from 'lucide-react';
 import axios from 'axios';
 import {
   executeTicketDeepDiveAnalysis,
@@ -14,7 +14,6 @@ import {
 } from '../../lib/ticket-ai-analysis';
 import { suggestNeuralLinks, SuggestedLink } from '../../services/neuralLinkService';
 import { cn, safeString } from '../../lib/utils';
-import { ScrollArea } from '../../components/ui/scroll-area';
 import { toast } from 'sonner';
 import { Ticket as TicketType, Message, KBArticle, Company, Contact, TicketChecklistItem } from '../../types';
 import type { AiCritiqueLog, AiTicketExecutionStatus } from '../../types/ai-orchestrator';
@@ -1879,25 +1878,13 @@ export default function TicketsPage() {
         ) : null}
         {isCreateTicketOpen ? (
           <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#F8F9FB] overflow-hidden">
-            <div className="px-4 md:px-6 pt-4 md:pt-5 pb-3 border-b border-slate-100 bg-white shrink-0">
-              <button
-                type="button"
-                onClick={closeCreateTicket}
-                className="flex items-center gap-1 text-slate-500 hover:text-slate-800 font-extrabold text-xs cursor-pointer transition-colors select-none group"
-              >
-                <ChevronLeft className="w-3.5 h-3.5 text-slate-450 group-hover:text-slate-650 transition-colors" />
-                {t('tickets.detail.backToList', 'Back to tickets')}
-              </button>
-            </div>
-            <ScrollArea className="flex-1 min-h-0">
-              <CreateTicketDialog
-                isOpen={isCreateTicketOpen}
-                onClose={closeCreateTicket}
-                presentation="inline"
-                prefetchedCompanies={createTicketCompanies}
-                prefetchedAgents={createTicketAgents}
-              />
-            </ScrollArea>
+            <CreateTicketDialog
+              isOpen={isCreateTicketOpen}
+              onClose={closeCreateTicket}
+              presentation="inline"
+              prefetchedCompanies={createTicketCompanies}
+              prefetchedAgents={createTicketAgents}
+            />
           </div>
         ) : selectedTicketId ? (
           /* Detail View */

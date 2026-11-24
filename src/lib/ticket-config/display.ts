@@ -1,8 +1,9 @@
 import type { TicketCategory } from '../ticket-categories/types';
-import type { TicketPriorityConfig, TicketStatusConfig } from './types';
+import type { TicketPriorityConfig, TicketStatusConfig, TicketTypeConfig } from './types';
 
 const FALLBACK_STATUS_COLOR = '#3B82F6';
 const FALLBACK_PRIORITY_COLOR = '#94A3B8';
+const FALLBACK_TYPE_COLOR = '#3B82F6';
 export const FALLBACK_CATEGORY_COLOR = '#1B6CA8';
 
 /** Prefer live Ticket Configuration name/colour by id (then name), not stale ticket fields. */
@@ -177,6 +178,57 @@ export function selectablePrioritiesForValue(
       name: k.replace(/_/g, ' '),
       description: '',
       color: FALLBACK_PRIORITY_COLOR,
+      sortOrder: 9999,
+      isActive: false,
+      createdAt: '',
+      updatedAt: '',
+    },
+  ];
+}
+
+export function resolveTypeConfig(
+  key: string | null | undefined,
+  types: TicketTypeConfig[],
+): { key: string; name: string; color: string; isActive: boolean; known: boolean } {
+  const k = String(key || 'question').toLowerCase().trim() || 'question';
+  const hit = types.find((t) => t.key.toLowerCase() === k);
+  if (hit) {
+    return {
+      key: hit.key,
+      name: hit.name,
+      color: hit.color || FALLBACK_TYPE_COLOR,
+      isActive: hit.isActive,
+      known: true,
+    };
+  }
+  return {
+    key: k,
+    name: k.replace(/_/g, ' '),
+    color: FALLBACK_TYPE_COLOR,
+    isActive: false,
+    known: false,
+  };
+}
+
+/** Dropdown options for create/edit: active types + current orphan when editing. */
+export function selectableTypesForValue(
+  currentKey: string | null | undefined,
+  types: TicketTypeConfig[],
+): TicketTypeConfig[] {
+  const active = types.filter((t) => t.isActive).sort((a, b) => a.sortOrder - b.sortOrder);
+  const k = String(currentKey || '').toLowerCase().trim();
+  if (!k) return active;
+  if (active.some((t) => t.key.toLowerCase() === k)) return active;
+  const orphan = types.find((t) => t.key.toLowerCase() === k);
+  if (orphan) return [...active, orphan];
+  return [
+    ...active,
+    {
+      id: `orphan-${k}`,
+      key: k,
+      name: k.replace(/_/g, ' '),
+      description: '',
+      color: FALLBACK_TYPE_COLOR,
       sortOrder: 9999,
       isActive: false,
       createdAt: '',
