@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
-import { Database, RefreshCw, Search, Settings2, Loader2, CheckCircle2, AlertTriangle, FolderTree, Plus, Trash2, Cloud, HardDrive, Share2, Play, KeyRound, Server } from 'lucide-react';
+import { RefreshCw, Search, Settings2, Loader2, AlertTriangle, FolderTree, Plus, Trash2, Cloud, HardDrive, Share2, Play, KeyRound, Server } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { Badge } from '../../ui/badge';
@@ -10,63 +10,16 @@ import { AdminHubSectionGrid } from './AdminHubSectionGrid';
 import { categoriesForTab } from './adminHubConfig';
 import { cn } from '../../../lib/utils';
 import { kbDocumentsApi, type KbExternalSource } from '../../../services/kbDocumentsApi';
-
-type ResolutionMode = 'extract' | 'ai_generated' | 'hybrid';
-
-interface RagStatus {
-  success: boolean;
-  tenantId: string;
-  queueDepth: number;
-  kb: {
-    totalArticles: number;
-    publishedArticles: number;
-    indexedChunks: number;
-    indexedArticles: number;
-    missingIndexArticles: number;
-  };
-  tickets: {
-    totalResolvedClosed: number;
-    indexedChunks: number;
-    indexedTickets: number;
-    missingIndexTickets: number;
-  };
-  activeEmbeddingProvider: unknown;
-  config: {
-    resolutionMode: ResolutionMode;
-    redactPii: boolean;
-    chunkOverlapTokens: number;
-    indexResolvedTickets?: boolean;
-    indexNewKbArticles?: boolean;
-    detectDuplicates?: boolean;
-  };
-  sampledMissingKb?: string[];
-  sampledMissingTickets?: string[];
-  embeddingError?: string | null;
-  recentFailures?: Array<{ id: string; jobType: string; lastError: string | null; updatedAt: string }>;
-}
-
-interface SearchHit {
-  id?: string;
-  sourceType?: string;
-  sourceId?: string;
-  title?: string;
-  content?: string;
-  chunkContent?: string;
-  similarityScore?: number;
-  hybridScore?: number;
-  vectorDistance?: number;
-  metadata?: Record<string, unknown>;
-}
-
-interface IndexProgress {
-  type: 'kb' | 'ticket';
-  enqueued: number;
-  completed: number;
-  queueDepth: number;
-  missing: number;
-  message: string;
-  error?: string | null;
-}
+import { RagEmbeddingAlert } from './rag/RagEmbeddingAlert';
+import { RagSourceStatusCard } from './rag/RagStatusCards';
+import {
+  EMBEDDING_UNREACHABLE_SUMMARY,
+  isEmbeddingUnreachableMessage,
+  type IndexProgress,
+  type RagSearchHit,
+  type RagStatus,
+  type ResolutionMode,
+} from './rag/ragTypes';
 
 const MODE_LABELS: Record<ResolutionMode, string> = {
   extract: 'Extrahieren (0 LLM-Kosten)',
@@ -87,8 +40,9 @@ export function AdminHubRagTab() {
   const [detectDuplicates, setDetectDuplicates] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
   const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<SearchHit[] | null>(null);
+  const [hits, setHits] = useState<RagSearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [backfilling, setBackfilling] = useState<'kb' | 'ticket' | null>(null);
   const [indexProgress, setIndexProgress] = useState<IndexProgress | null>(null);
   const [indexError, setIndexError] = useState<string | null>(null);
@@ -184,18 +138,29 @@ export function AdminHubRagTab() {
   };
 
   const runSearchTest = async () => {
+    const q = query.trim();
+    if (!q) {
+      setSearchError('Bitte eine Suchanfrage eingeben.');
+      setHits(null);
+      return;
+    }
     setSearching(true);
+    setSearchError(null);
     setHits(null);
     try {
       const res = await axios.post('/api/rag/search', {
-        query: query.trim() || 'password reset',
+        query: q,
         limit: 5,
         minSimilarity: 0.65,
       });
-      setHits(res.data.hits ?? []);
-    } catch (err) {
+      setHits(Array.isArray(res.data?.hits) ? res.data.hits : []);
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err)
+        ? err.response?.data?.error || err.message
+        : String(err);
       console.warn('RAG search test failed', err);
-      setHits([]);
+      setSearchError(message || 'Ähnlichkeitssuche fehlgeschlagen.');
+      setHits(null);
     } finally {
       setSearching(false);
     }
@@ -249,11 +214,7 @@ export function AdminHubRagTab() {
           next.embeddingError ||
           next.recentFailures?.find((f) => f.lastError)?.lastError ||
           null;
-        const unreachable =
-          failure &&
-          /unreachable|timeout|ECONNREFUSED|nicht erreichbar|port 8080|no embedding provider/i.test(
-            failure,
-          );
+        const unreachable = isEmbeddingUnreachableMessage(failure);
 
         setIndexProgress({
           type,
@@ -269,28 +230,20 @@ export function AdminHubRagTab() {
         });
 
         if (unreachable) {
-          setIndexError(
-            'Embedding-Endpunkt nicht erreichbar. Bitte Modell-Server (Port 8080) oder API-Key prüfen.',
-          );
-          // Mock fallback may still complete jobs — keep polling briefly, but surface the warning.
+          setIndexError(EMBEDDING_UNREACHABLE_SUMMARY);
         }
 
         if (missing === 0) break;
         // Queue drained but items still missing → jobs failed without indexing.
         if (depth === 0 && missing > 0 && Date.now() - started > 8_000) {
-          setIndexError(
-            failure ||
-              'Embedding-Endpunkt nicht erreichbar. Bitte Modell-Server (Port 8080) oder API-Key prüfen.',
-          );
+          setIndexError(failure || EMBEDDING_UNREACHABLE_SUMMARY);
           break;
         }
       }
       await loadStatus();
     } catch (err) {
       console.warn(`RAG index-pending (${type}) failed`, err);
-      setIndexError(
-        'Embedding-Endpunkt nicht erreichbar. Bitte Modell-Server (Port 8080) oder API-Key prüfen.',
-      );
+      setIndexError(EMBEDDING_UNREACHABLE_SUMMARY);
       setIndexProgress({
         type,
         enqueued: 0,
@@ -486,21 +439,10 @@ export function AdminHubRagTab() {
       ) : null}
 
       {indexError || status?.embeddingError ? (
-        <div
-          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex items-start gap-2"
-          role="alert"
-        >
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
-          <div>
-            <p className="font-bold">
-              {indexError ||
-                'Embedding-Endpunkt nicht erreichbar. Bitte Modell-Server (Port 8080) oder API-Key prüfen.'}
-            </p>
-            {status?.embeddingError && indexError !== status.embeddingError ? (
-              <p className="text-[11px] text-amber-800/80 mt-1 break-words">{status.embeddingError}</p>
-            ) : null}
-          </div>
-        </div>
+        <RagEmbeddingAlert
+          summary={indexError || EMBEDDING_UNREACHABLE_SUMMARY}
+          detail={status?.embeddingError}
+        />
       ) : null}
 
       {loading ? (
@@ -510,7 +452,7 @@ export function AdminHubRagTab() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <StatusCard
+          <RagSourceStatusCard
             title={t('admin.rag.kbTitle', 'Wissensbasis-Artikel')}
             total={kb?.publishedArticles ?? 0}
             indexed={kb?.indexedArticles ?? 0}
@@ -520,8 +462,9 @@ export function AdminHubRagTab() {
             onIndexPending={() => void runIndexPending('kb')}
             backfilling={backfilling === 'kb'}
             progress={indexProgress?.type === 'kb' ? indexProgress : null}
+            indexingBlocked={Boolean(indexError || status?.embeddingError)}
           />
-          <StatusCard
+          <RagSourceStatusCard
             title={t('admin.rag.ticketsTitle', 'Gelöste Tickets')}
             total={tickets?.totalResolvedClosed ?? 0}
             indexed={tickets?.indexedTickets ?? 0}
@@ -531,6 +474,7 @@ export function AdminHubRagTab() {
             onIndexPending={() => void runIndexPending('ticket')}
             backfilling={backfilling === 'ticket'}
             progress={indexProgress?.type === 'ticket' ? indexProgress : null}
+            indexingBlocked={Boolean(indexError || status?.embeddingError)}
           />
         </div>
       )}
@@ -540,22 +484,35 @@ export function AdminHubRagTab() {
           <Search className="w-3.5 h-3.5 text-blue-600" />
           {t('admin.rag.searchTest', 'Ähnlichkeitssuche (End-to-End)')}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="z. B. Passwort zurücksetzen"
+            aria-label={t('admin.rag.searchQuery', 'Suchanfrage')}
+            className="focus-visible:ring-2 focus-visible:ring-primary/40"
             onKeyDown={(e) => {
               if (e.key === 'Enter') void runSearchTest();
             }}
           />
-          <Button size="sm" onClick={() => void runSearchTest()} disabled={searching}>
+          <Button
+            size="sm"
+            onClick={() => void runSearchTest()}
+            disabled={searching}
+            className="shrink-0 focus-visible:ring-2 focus-visible:ring-primary/40"
+          >
             {searching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
             Suchen
           </Button>
         </div>
+        {searchError ? (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-900" role="alert">
+            <p className="font-bold">Suche fehlgeschlagen</p>
+            <p className="mt-1 break-words font-mono">{searchError}</p>
+          </div>
+        ) : null}
         {hits !== null ? (
-          <div className="space-y-2">
+          <div className="space-y-2" aria-live="polite">
             <p className="text-[11px] text-slate-500">
               {hits.length} Treffer (cosine ≥ 0.65) — Workspace-{status?.tenantId || 'default'} (
               <span className="font-semibold text-emerald-600">tenant-isoliert</span>)
@@ -929,94 +886,6 @@ export function AdminHubRagTab() {
       </div>
 
       <AdminHubSectionGrid categories={categoriesForTab('rag')} />
-    </div>
-  );
-}
-
-function StatusCard({
-  title,
-  total,
-  indexed,
-  chunks,
-  missing,
-  kind,
-  onIndexPending,
-  backfilling,
-  progress,
-}: {
-  title: string;
-  total: number;
-  indexed: number;
-  chunks: number;
-  missing: number;
-  kind: 'kb' | 'ticket';
-  onIndexPending: () => void;
-  backfilling: boolean;
-  progress: IndexProgress | null;
-}) {
-  const syncedLabel =
-    kind === 'kb' ? '✓ Alle Artikel synchronisiert' : '✓ Alle Tickets synchronisiert';
-  const actionLabel =
-    missing === 0 && !backfilling
-      ? syncedLabel
-      : backfilling
-        ? `⏳ Indexierung läuft... (${progress?.completed ?? 0}/${progress?.enqueued || missing} in Bearbeitung)`
-        : `⚡ Jetzt in RAG indexieren (${missing} ausstehend)`;
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Database className="w-4 h-4 text-emerald-600" />
-          <h3 className="text-sm font-black text-slate-900">{title}</h3>
-        </div>
-        <Badge
-          className={cn(
-            'text-[10px] font-bold uppercase',
-            missing === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700',
-          )}
-        >
-          {missing === 0 ? (
-            <span className="flex items-center gap-1">
-              <CheckCircle2 className="w-3 h-3" /> Vollständig
-            </span>
-          ) : (
-            <span className="flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" /> {missing} offen
-            </span>
-          )}
-        </Badge>
-      </div>
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <Metric label="Quellen" value={indexed} />
-        <Metric label="Chunks" value={chunks} />
-        <Metric label="Total" value={total} />
-      </div>
-      <Button
-        variant={missing === 0 && !backfilling ? 'secondary' : 'outline'}
-        size="sm"
-        className="w-full"
-        onClick={onIndexPending}
-        disabled={backfilling || missing === 0}
-      >
-        {backfilling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-        {actionLabel}
-      </Button>
-      {progress?.message ? (
-        <p className="text-[11px] text-slate-500 font-medium" aria-live="polite">
-          {progress.message}
-          {backfilling && progress.queueDepth > 0 ? ` · Queue ${progress.queueDepth}` : ''}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-lg bg-slate-50 border border-slate-100 py-2">
-      <div className="text-lg font-black text-slate-800">{value}</div>
-      <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
     </div>
   );
 }

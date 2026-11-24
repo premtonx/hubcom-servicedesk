@@ -29,7 +29,7 @@ export function AdminHubSectionGrid({ categories }: AdminHubSectionGridProps) {
               const isAllowed = hasPermission(section.module || 'rbac', 'view');
               const sectionKey = section.title.toLowerCase().replace(/ & /g, '_and_').replace(/ /g, '_');
               return (
-                <div key={section.path} className={cn(!isAllowed && 'opacity-50 grayscale')}>
+                <div key={section.path} className={cn(!isAllowed && 'grayscale')}>
                   <AdminCard
                     title={t(`admin.sections.${sectionKey}.title`, section.title)}
                     description={t(`admin.sections.${sectionKey}.description`, section.description)}
@@ -43,6 +43,15 @@ export function AdminHubSectionGrid({ categories }: AdminHubSectionGridProps) {
                     color={section.color}
                     bgColor={section.bgColor}
                     borderColor={section.borderColor}
+                    disabled={!isAllowed}
+                    disabledReason={
+                      isAllowed
+                        ? undefined
+                        : t(
+                            'admin.sectionUnavailable',
+                            'Keine Berechtigung oder Modul nicht freigeschaltet.',
+                          )
+                    }
                     onClick={() => {
                       if (!isAllowed) return;
                       if (section.scrollTargetId) {

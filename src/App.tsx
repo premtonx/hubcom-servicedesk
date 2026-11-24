@@ -35,6 +35,8 @@ const EmailChannelsPage = lazy(() => import('./components/pages/EmailChannelsPag
 const LegalSettingsPage = lazy(() => import('./components/pages/LegalSettingsPage'));
 const AdminHubPage = lazy(() => import('./components/pages/AdminHubPage'));
 const AdminHubLayout = lazy(() => import('./components/admin/hub/AdminHubLayout'));
+const AdminHubRagPipelinePage = lazy(() => import('./components/admin/hub/AdminHubRagPipelinePage'));
+const AdminHubRagSearchPage = lazy(() => import('./components/admin/hub/AdminHubRagSearchPage'));
 const PolyglotBridgeAdminPage = lazy(() => import('./components/pages/PolyglotBridgeAdminPage'));
 const NotificationEnginePage = lazy(() => import('./components/pages/NotificationEnginePage'));
 const CompanySchemaPage = lazy(() => import('./components/pages/CompanySchemaPage'));
@@ -465,6 +467,8 @@ function AppRoutes() {
                       <Route path="ticket-categories" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Ticket Configuration" />}><LazyPage><TicketCategoriesAdminPage /></LazyPage></ErrorBoundary>} />
                       <Route path="email-channels" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Email Channels" />}><LazyPage><EmailChannelsPage /></LazyPage></ErrorBoundary>} />
                       <Route path="customers" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Customers" />}><LazyPage><CustomersPage /></LazyPage></ErrorBoundary>} />
+                      <Route path="rag/pipeline" element={<ErrorBoundary fallback={<ModuleCrashFallback module="RAG Pipeline" />}><LazyPage><AdminHubRagPipelinePage /></LazyPage></ErrorBoundary>} />
+                      <Route path="rag/search" element={<ErrorBoundary fallback={<ModuleCrashFallback module="RAG Search" />}><LazyPage><AdminHubRagSearchPage /></LazyPage></ErrorBoundary>} />
                     </Route>
                     <Route path="email-channels" element={<Navigate to="/admin/email-channels" replace />} />
                     <Route path="*" element={<Navigate to="/tickets" replace />} />
