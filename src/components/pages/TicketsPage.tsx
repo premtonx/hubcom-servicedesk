@@ -386,6 +386,7 @@ export default function TicketsPage() {
         setAllTickets(prev => prev.map(t => (t.id === ticketId ? original : t)));
       }
       toast.error(t('tickets.failedToast', 'Failed to update ticket'));
+      throw error;
     }
   };
 

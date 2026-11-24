@@ -1,5 +1,5 @@
-import React from 'react';
-import { ChevronDown } from 'lucide-react';
+import React, { useState } from 'react';
+import { AlertCircle, ChevronDown, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Avatar, AvatarFallback } from '../ui/avatar';
 import {
@@ -13,6 +13,25 @@ import { useTranslation } from '../../lib/context/I18nContext';
 import { getInitials, safeString } from '../../lib/utils';
 import { TICKET_DISPATCH_AGENTS } from '../../lib/ticketDispatchAgents';
 import { SELECTABLE_TICKET_STATUSES, isReadonlyTerminalStatus } from '../../lib/ticket-status';
+import type { TicketCategory } from '../../lib/ticket-categories/types';
+
+const DEFAULT_CATEGORY_COLOR = '#1B6CA8';
+
+export function resolveTicketCategoryColor(
+  categoryId: string | null | undefined,
+  categoryName: string | null | undefined,
+  categories: TicketCategory[],
+): string {
+  if (categoryId) {
+    const byId = categories.find((c) => c.id === categoryId);
+    if (byId?.color) return byId.color;
+  }
+  if (categoryName) {
+    const byName = categories.find((c) => c.name === categoryName);
+    if (byName?.color) return byName.color;
+  }
+  return DEFAULT_CATEGORY_COLOR;
+}
 
 const STATUS_STYLES: Record<string, { pill: string; dot: string }> = {
   open: { pill: 'bg-blue-50 text-blue-700 border-blue-100', dot: 'bg-blue-500' },
@@ -187,5 +206,132 @@ export function TicketAssigneeChip({
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+export type TicketCategoryPatch = {
+  categoryId: string | null;
+  categoryName: string | null;
+  categorySlug: string | null;
+};
+
+interface TicketCategoryChipProps {
+  categoryId?: string | null;
+  categoryName?: string | null;
+  categories: TicketCategory[];
+  disabled?: boolean;
+  onChange: (patch: TicketCategoryPatch) => void | Promise<void>;
+}
+
+/** Compact colored category chip — same label/colour mapping as ticket detail. */
+export function TicketCategoryChip({
+  categoryId,
+  categoryName,
+  categories,
+  disabled,
+  onChange,
+}: TicketCategoryChipProps) {
+  const { t } = useTranslation();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const label =
+    (categoryName && String(categoryName).trim()) ||
+    t('tickets.sidebar.noCategory', 'Keine Kategorie');
+  const hasCategory = Boolean(categoryId || (categoryName && String(categoryName).trim()));
+  const color = resolveTicketCategoryColor(categoryId, categoryName, categories);
+  const ariaLabel = t('tickets.table.categoryAria', 'Kategorie: {{name}}').replace(
+    '{{name}}',
+    label,
+  );
+
+  const apply = async (patch: TicketCategoryPatch) => {
+    if (saving || disabled) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onChange(patch);
+    } catch (err: any) {
+      setError(
+        err?.message ||
+          t('tickets.table.categoryUpdateFailed', 'Kategorie konnte nicht gespeichert werden.'),
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="inline-flex items-center gap-1 max-w-full min-w-0">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          disabled={saving || disabled}
+          render={
+            <button
+              type="button"
+              aria-label={ariaLabel}
+              aria-busy={saving || undefined}
+              aria-invalid={error ? true : undefined}
+              title={error || label}
+              disabled={saving || disabled}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold max-w-full transition-opacity',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1',
+                'disabled:opacity-60 disabled:cursor-not-allowed',
+                hasCategory ? 'text-white' : 'text-slate-600 border border-slate-200 bg-slate-50',
+              )}
+              style={hasCategory ? { backgroundColor: color } : undefined}
+            >
+              {saving ? (
+                <Loader2 className="w-3 h-3 shrink-0 animate-spin" aria-hidden />
+              ) : null}
+              <span className="truncate">{label}</span>
+              <ChevronDown
+                className={cn('w-3 h-3 shrink-0', hasCategory ? 'opacity-80' : 'opacity-40')}
+                aria-hidden
+              />
+            </button>
+          }
+        />
+        <DropdownMenuContent align="start" className="w-52 rounded-lg max-h-64 overflow-y-auto">
+          <DropdownMenuItem
+            className="text-xs"
+            disabled={saving}
+            onClick={() =>
+              void apply({ categoryId: null, categoryName: null, categorySlug: null })
+            }
+          >
+            {t('tickets.sidebar.noCategory', 'Keine Kategorie')}
+          </DropdownMenuItem>
+          {categories.map((cat) => (
+            <DropdownMenuItem
+              key={cat.id}
+              className="text-xs"
+              disabled={saving}
+              onClick={() =>
+                void apply({
+                  categoryId: cat.id,
+                  categoryName: cat.name,
+                  categorySlug: cat.slug,
+                })
+              }
+            >
+              <span
+                className="inline-block w-2 h-2 rounded-full shrink-0 mr-2"
+                style={{ backgroundColor: cat.color || DEFAULT_CATEGORY_COLOR }}
+                aria-hidden
+              />
+              {cat.name}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {error ? (
+        <span className="inline-flex items-center text-rose-600" title={error} role="alert">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden />
+          <span className="sr-only">{error}</span>
+        </span>
+      ) : null}
+    </div>
   );
 }
