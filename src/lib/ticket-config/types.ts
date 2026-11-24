@@ -15,10 +15,10 @@ export const STATUS_WORKFLOW_KINDS: Array<{
   label: string;
   hint: string;
 }> = [
-  { value: 'open', label: 'Open', hint: 'Neu / noch nicht in Bearbeitung' },
-  { value: 'in_progress', label: 'In progress', hint: 'Aktive Bearbeitung' },
-  { value: 'waiting', label: 'Waiting', hint: 'Wartet auf Kunde, Vendor oder interne Freigabe' },
-  { value: 'closed', label: 'Closed / resolved', hint: 'Abgeschlossen oder gelöst' },
+  { value: 'open', label: 'Offen', hint: 'Neu / noch nicht in Bearbeitung' },
+  { value: 'in_progress', label: 'In Bearbeitung', hint: 'Aktive Bearbeitung' },
+  { value: 'waiting', label: 'Wartend', hint: 'Wartet auf Kunde, Vendor oder interne Freigabe' },
+  { value: 'closed', label: 'Geschlossen / Gelöst', hint: 'Abgeschlossen oder gelöst' },
 ];
 
 export interface TicketStatusConfig {
