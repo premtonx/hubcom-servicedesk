@@ -130,6 +130,11 @@ import {
   toIsoDateOnly,
 } from '../src/lib/client-portal/hardware-returns-dates.js';
 import {
+  buildReturnsStatusColumns,
+  DEFAULT_RETURN_STATUSES,
+  resolveReturnsStatusColumn,
+} from '../src/lib/client-portal/hardware-returns-layout.js';
+import {
   evaluatePortalReturnsPageAccess,
   resolveHardwareReturnsModuleFlag,
 } from '../src/lib/client-portal/hardware-returns-nav.js';
@@ -4176,6 +4181,99 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
   );
 }
 
+/** Liste | Kanban | Karten on shared ReturnsWorkbench (portal + staff). */
+function testHardwareReturnsListeKanbanKarten(): void {
+  console.log('\n--- Hardware returns Liste | Kanban | Karten ---');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const selectorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsViewModeSelector.tsx'),
+    'utf8',
+  );
+  const kanbanSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsKanbanBoard.tsx'),
+    'utf8',
+  );
+  const cardsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsCardGrid.tsx'),
+    'utf8',
+  );
+  const sharedSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/returns-layout-shared.tsx'),
+    'utf8',
+  );
+
+  assert(
+    selectorSrc.includes('Liste') &&
+      selectorSrc.includes('Kanban') &&
+      selectorSrc.includes('Karten') &&
+      workbenchSrc.includes('ReturnsViewModeSelector') &&
+      workbenchSrc.includes("useState<ReturnsLayoutMode>('list')"),
+    'view switcher Liste|Kanban|Karten defaults to Liste',
+  );
+  assert(
+    workbenchSrc.includes('ReturnsKanbanBoard') &&
+      workbenchSrc.includes('ReturnsCardGrid') &&
+      workbenchSrc.includes('patchReturnStatus') &&
+      workbenchSrc.includes('axios.patch') &&
+      kanbanSrc.includes('draggable') &&
+      kanbanSrc.includes('onDrop') &&
+      kanbanSrc.includes('buildReturnsStatusColumns'),
+    'Kanban uses catalog columns + drag-and-drop status PATCH',
+  );
+  assert(
+    cardsSrc.includes('grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3') &&
+      sharedSrc.includes('CompactDevicePills') &&
+      sharedSrc.includes('ReminderProgress') &&
+      sharedSrc.includes('Details') &&
+      sharedSrc.includes('Zurück'),
+    'Karten grid renders device/reminder cards with Details/Zurück',
+  );
+
+  // Custom admin status becomes its own Kanban column; move resolves target.
+  const catalog = ['Neu', 'In Bearbeitung', 'Geschlossen', 'Warten auf Logistik'];
+  const items = [
+    { hardwareReturn: { status: 'Neu' } },
+    { hardwareReturn: { status: 'Warten auf Logistik' } },
+    { hardwareReturn: { status: 'Custom Escalation' } },
+  ];
+  const columns = buildReturnsStatusColumns(catalog, items);
+  assert(
+    columns.includes('Warten auf Logistik') && columns.includes('Custom Escalation'),
+    'Kanban columns include admin-added + orphan custom statuses',
+  );
+  assert(
+    resolveReturnsStatusColumn('warten auf logistik', columns) === 'Warten auf Logistik',
+    'moving card matches status column case-insensitively',
+  );
+  assert(
+    buildReturnsStatusColumns([], []).join('|') === DEFAULT_RETURN_STATUSES.join('|'),
+    'empty catalog falls back to default statuses',
+  );
+
+  // Portal mode: zero /api/db across layout surfaces.
+  for (const [label, src] of [
+    ['workbench', workbenchSrc],
+    ['selector', selectorSrc],
+    ['kanban', kanbanSrc],
+    ['cards', cardsSrc],
+    ['shared', sharedSrc],
+  ] as const) {
+    assert(
+      !src.includes("'/api/db") && !src.includes('"/api/db'),
+      `${label} never hardcodes /api/db`,
+    );
+  }
+  assert(
+    workbenchSrc.includes("/api/portal/returns") &&
+      workbenchSrc.includes('mode === \'portal\''),
+    'portal mode stays on /api/portal/returns',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -4200,6 +4298,7 @@ async function main(): Promise<void> {
   testHardwareReturnsWorkbenchDrawerContract();
   testHardwareReturnsSchemaCatalogsPart1();
   testHardwareReturnsPaginationErinnerungAndDashboard();
+  testHardwareReturnsListeKanbanKarten();
   await testOrganizationDirectorySyncPart2();
   testSharePointReturnsCsvImportApiIsolation();
   testSharePointReturnsCsvImportUiIsolation();

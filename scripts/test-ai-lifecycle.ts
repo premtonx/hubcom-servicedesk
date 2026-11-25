@@ -59,6 +59,10 @@ import {
   toIsoDateOnly,
 } from '../src/lib/client-portal/hardware-returns-dates.js';
 import {
+  buildReturnsStatusColumns,
+  resolveReturnsStatusColumn,
+} from '../src/lib/client-portal/hardware-returns-layout.js';
+import {
   evaluatePortalKbCategoryWriteAccess,
   portalCategoryId,
 } from '../src/lib/kb/kb-categories.js';
@@ -1177,6 +1181,49 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
   );
 }
 
+function testReturnsListeKanbanKartenLifecycle(): void {
+  console.log('\n[19d] Returns Liste | Kanban | Karten layouts');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const kanbanSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsKanbanBoard.tsx'),
+    'utf8',
+  );
+
+  assert(
+    workbenchSrc.includes('ReturnsViewModeSelector') &&
+      workbenchSrc.includes('ReturnsKanbanBoard') &&
+      workbenchSrc.includes('ReturnsCardGrid') &&
+      workbenchSrc.includes('patchReturnStatus'),
+    'workbench wires Liste|Kanban|Karten + status PATCH',
+  );
+
+  const cols = buildReturnsStatusColumns(
+    ['Neu', 'In Bearbeitung', 'Geschlossen', 'Warten auf Logistik'],
+    [
+      { hardwareReturn: { status: 'Neu' } },
+      { hardwareReturn: { status: 'Warten auf Logistik' } },
+      { hardwareReturn: { status: 'Sonderstatus DPG' } },
+    ],
+  );
+  assert(cols.includes('Warten auf Logistik'), 'admin-added status becomes Kanban column');
+  assert(cols.includes('Sonderstatus DPG'), 'orphan status gets its own column');
+  assert(
+    resolveReturnsStatusColumn('In Bearbeitung', cols) === 'In Bearbeitung',
+    'card move resolves target status column',
+  );
+  assert(
+    kanbanSrc.includes('draggable') &&
+      kanbanSrc.includes('onDrop') &&
+      !kanbanSrc.includes("'/api/db") &&
+      !workbenchSrc.includes("'/api/db"),
+    'Kanban DnD + portal-safe (no /api/db)',
+  );
+}
+
 function testSharePointReturnsCsvImportUiLifecycle(): void {
   console.log('\n[22] SharePoint Returns CSV import UI (Part 3) — modal preview/commit');
 
@@ -1337,6 +1384,7 @@ async function main(): Promise<void> {
   testPortalKbCategoryLifecycle();
   testPortalKbArticleEditLifecycle();
   testReturnsPaginationErinnerungDashboardLifecycle();
+  testReturnsListeKanbanKartenLifecycle();
   testPortalKbSharePointCsvImportLifecycle();
   testSharePointReturnsCsvImportApiLifecycle();
   testSharePointReturnsCsvImportUiLifecycle();

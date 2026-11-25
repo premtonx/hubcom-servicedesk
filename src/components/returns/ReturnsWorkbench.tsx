@@ -34,6 +34,13 @@ import {
   toIsoDateOnly,
 } from '../../lib/client-portal/hardware-returns-dates';
 import { ReturnsCsvImportModal } from './ReturnsCsvImportModal';
+import {
+  ReturnsViewModeSelector,
+  type ReturnsLayoutMode,
+} from './ReturnsViewModeSelector';
+import { ReturnsKanbanBoard } from './ReturnsKanbanBoard';
+import { ReturnsCardGrid } from './ReturnsCardGrid';
+import { DEFAULT_RETURN_STATUSES } from '../../lib/client-portal/hardware-returns-layout';
 
 type WorkbenchMode = 'portal' | 'staff';
 
@@ -380,6 +387,7 @@ export function ReturnsWorkbench({
   const orgQ = mode === 'staff' ? `organizationId=${encodeURIComponent(organizationId)}` : '';
 
   const [view, setView] = useState<(typeof VIEWS)[number]['id']>('open');
+  const [layoutMode, setLayoutMode] = useState<ReturnsLayoutMode>('list');
   const [q, setQ] = useState('');
   const [mailStatus, setMailStatus] = useState('all');
   const [overdueBucket, setOverdueBucket] = useState('all');
@@ -440,8 +448,10 @@ export function ReturnsWorkbench({
     );
   };
 
-  const effectiveLimit = pageSize === 'all' ? 2000 : pageSize;
-  const effectiveOffset = pageSize === 'all' ? 0 : (page - 1) * pageSize;
+  // Kanban / Karten need the full filtered set so columns/grid stay complete.
+  const boardMode = layoutMode === 'kanban' || layoutMode === 'cards';
+  const effectiveLimit = boardMode ? 2000 : pageSize === 'all' ? 2000 : pageSize;
+  const effectiveOffset = boardMode || pageSize === 'all' ? 0 : (page - 1) * pageSize;
 
   const load = useCallback(async () => {
     if (!organizationId) return;
@@ -495,7 +505,7 @@ export function ReturnsWorkbench({
     void load();
   }, [load]);
 
-  /** Reset to page 1 whenever search, filters, view tabs, or page size change. */
+  /** Reset to page 1 whenever search, filters, view tabs, layout, or page size change. */
   useEffect(() => {
     setPage(1);
   }, [
@@ -509,6 +519,7 @@ export function ReturnsWorkbench({
     assigneeFilter,
     sort,
     pageSize,
+    layoutMode,
   ]);
 
   const openSend = async (returnId: string, stage: 1 | 2 | 3) => {
@@ -609,10 +620,59 @@ export function ReturnsWorkbench({
 
   const catalogStatuses: string[] = settings?.catalogs?.statuses?.length
     ? settings.catalogs.statuses
-    : ['Neu', 'Warten auf Third Level', 'In Bearbeitung', 'Geschlossen'];
+    : [...DEFAULT_RETURN_STATUSES];
   const catalogShipping: string[] = settings?.catalogs?.shipping_methods?.length
     ? settings.catalogs.shipping_methods
     : ['Standard', 'Express', 'E-9 Express', 'E-1030 Express', 'E-1200 Express', 'E-Samstag Express', 'Samstag'];
+
+  const patchReturnStatus = async (it: ListItem, nextStatus: string) => {
+    const id = returnRowId(it);
+    if (!id) return;
+    const prev = items;
+    const current = String(it.hardwareReturn.status || 'Neu').trim() || 'Neu';
+    if (current.toLowerCase() === nextStatus.toLowerCase()) return;
+    setItems((list) =>
+      list.map((row) =>
+        returnRowId(row) === id
+          ? {
+              ...row,
+              hardwareReturn: { ...row.hardwareReturn, status: nextStatus },
+            }
+          : row,
+      ),
+    );
+    try {
+      await axios.patch(
+        `${base}/${encodeURIComponent(id)}`,
+        {
+          status: nextStatus,
+          hardwareReturn: { status: nextStatus },
+          ...(mode === 'staff' ? { organizationId } : {}),
+        },
+        { withCredentials: true },
+      );
+      toast.success(`Status → ${nextStatus}`);
+    } catch (err: any) {
+      setItems(prev);
+      toast.error(err?.response?.data?.error || 'Status konnte nicht aktualisiert werden');
+    }
+  };
+
+  const markReturnedItem = async (it: ListItem) => {
+    const id = returnRowId(it);
+    if (!id) return;
+    try {
+      await axios.post(
+        `${base}/${encodeURIComponent(id)}/mark-returned`,
+        mode === 'staff' ? { organizationId } : {},
+        { withCredentials: true },
+      );
+      toast.success('Als zurückgeliefert markiert');
+      void load();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Fehler');
+    }
+  };
 
   const assigneeOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -824,22 +884,25 @@ export function ReturnsWorkbench({
         })}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {VIEWS.map((v) => (
-          <button
-            key={v.id}
-            type="button"
-            onClick={() => setView(v.id)}
-            className={cn(
-              'rounded-full px-3 py-1.5 text-xs font-bold border transition',
-              view === v.id
-                ? 'bg-slate-900 text-white border-slate-900'
-                : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
-            )}
-          >
-            {v.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-2 justify-between">
+        <div className="flex flex-wrap gap-2">
+          {VIEWS.map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              onClick={() => setView(v.id)}
+              className={cn(
+                'rounded-full px-3 py-1.5 text-xs font-bold border transition',
+                view === v.id
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+              )}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <ReturnsViewModeSelector value={layoutMode} onChange={setLayoutMode} />
       </div>
 
       <div className="flex flex-wrap gap-2 items-center">
@@ -933,7 +996,7 @@ export function ReturnsWorkbench({
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-        {!loading && total > 0 ? (
+        {!loading && total > 0 && layoutMode === 'list' ? (
           <PaginationBar className="border-b border-slate-100 bg-slate-50/60" />
         ) : null}
         {loading ? (
@@ -942,6 +1005,22 @@ export function ReturnsWorkbench({
           </div>
         ) : items.length === 0 ? (
           <div className="p-10 text-center text-sm text-slate-500">Keine Einträge.</div>
+        ) : layoutMode === 'kanban' ? (
+          <ReturnsKanbanBoard
+            items={items}
+            catalogStatuses={catalogStatuses}
+            onOpenDetails={openEdit}
+            onMarkReturned={(it) => void markReturnedItem(it)}
+            onStatusChange={(it, status) => void patchReturnStatus(it, status)}
+          />
+        ) : layoutMode === 'cards' ? (
+          <ReturnsCardGrid
+            items={items}
+            catalogStatuses={catalogStatuses}
+            onOpenDetails={openEdit}
+            onMarkReturned={(it) => void markReturnedItem(it)}
+            onStatusChange={(it, status) => void patchReturnStatus(it, status)}
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -1118,19 +1197,7 @@ export function ReturnsWorkbench({
                                 type="button"
                                 size="sm"
                                 className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
-                                onClick={async () => {
-                                  try {
-                                    await axios.post(
-                                      `${base}/${encodeURIComponent(id)}/mark-returned`,
-                                      mode === 'staff' ? { organizationId } : {},
-                                      { withCredentials: true },
-                                    );
-                                    toast.success('Als zurückgeliefert markiert');
-                                    void load();
-                                  } catch (err: any) {
-                                    toast.error(err?.response?.data?.error || 'Fehler');
-                                  }
-                                }}
+                                onClick={() => void markReturnedItem(it)}
                               >
                                 <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
                                 Zurück
@@ -1151,7 +1218,7 @@ export function ReturnsWorkbench({
             </table>
           </div>
         )}
-        {!loading && total > 0 ? (
+        {!loading && total > 0 && layoutMode === 'list' ? (
           <PaginationBar className="border-t border-slate-100 bg-slate-50/60" />
         ) : null}
       </div>
