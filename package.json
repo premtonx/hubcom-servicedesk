@@ -126,6 +126,7 @@
     "lint:eslint:full": "eslint . --max-warnings 0",
     "test:lifecycle": "tsx scripts/test-ai-lifecycle.ts",
     "test:portal-isolation": "tsx scripts/test-client-portal-isolation.ts",
+    "test:returns-csv-parser": "tsx scripts/test-returns-csv-parser.ts",
     "test:email-html": "tsx scripts/test-email-html.ts",
     "test:email-signature": "tsx scripts/test-email-signature.ts",
     "test:admin-hub-layout": "tsx scripts/test-admin-hub-layout.ts",
