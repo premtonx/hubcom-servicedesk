@@ -5,9 +5,16 @@ import { useTranslation } from '../../lib/context/I18nContext';
 interface KBEmptyWorkspaceProps {
   onCreateArticle: () => void;
   onImportDocs: () => void;
+  showCreate?: boolean;
+  showImport?: boolean;
 }
 
-export function KBEmptyWorkspace({ onCreateArticle, onImportDocs }: KBEmptyWorkspaceProps) {
+export function KBEmptyWorkspace({
+  onCreateArticle,
+  onImportDocs,
+  showCreate = true,
+  showImport = true,
+}: KBEmptyWorkspaceProps) {
   const { t } = useTranslation();
 
   return (
@@ -24,15 +31,21 @@ export function KBEmptyWorkspace({ onCreateArticle, onImportDocs }: KBEmptyWorks
           'Erstellen Sie Ihre ersten Kategorien und Artikel oder nutzen Sie den Dokumenten-Import.',
         )}
       </p>
+      {(showCreate || showImport) ? (
       <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+        {showCreate ? (
         <Button type="button" className="h-10 rounded-xl text-sm font-semibold" onClick={onCreateArticle}>
           {t('kb.emptyWorkspace.createArticle', '+ Ersten Artikel erstellen')}
         </Button>
+        ) : null}
+        {showImport ? (
         <Button type="button" variant="outline" className="h-10 rounded-xl text-sm font-semibold gap-2" onClick={onImportDocs}>
           <Upload className="h-4 w-4" />
           {t('kb.emptyWorkspace.importDocs', 'Dokumente importieren')}
         </Button>
+        ) : null}
       </div>
+      ) : null}
     </section>
   );
 }

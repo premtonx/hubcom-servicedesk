@@ -995,12 +995,22 @@ function testPortalKbIsolation(): void {
     path.join(process.cwd(), 'src/components/pages/client-portal/ClientKbPage.tsx'),
     'utf8',
   );
-  const kbApiPaths = collectApiPathLiteralsFromSource(kbPageSrc);
-  assert(kbApiPaths.length > 0, 'ClientKbPage references at least one /api path');
   assert(
-    kbApiPaths.every((p) => isPortalKbFrontendApiAllowed(p)),
-    'ClientKbPage calls ONLY /api/portal/kb* (no staff /api/kb or /api/db)',
-    kbApiPaths.filter((p) => !isPortalKbFrontendApiAllowed(p)).join(', '),
+    kbPageSrc.includes('KnowledgeBaseWorkbench') && kbPageSrc.includes('usePortalKbAdapter'),
+    'ClientKbPage mounts shared workbench via portal adapter',
+  );
+  assert(
+    collectApiPathLiteralsFromSource(kbPageSrc).length === 0,
+    'ClientKbPage has zero direct /api literals (all via adapter)',
+  );
+  const portalAdapterPaths = collectApiPathLiteralsFromSource(
+    fs.readFileSync(path.join(process.cwd(), 'src/hooks/usePortalKbAdapter.ts'), 'utf8'),
+  );
+  assert(portalAdapterPaths.length > 0, 'usePortalKbAdapter references at least one /api path');
+  assert(
+    portalAdapterPaths.every((p) => isPortalKbFrontendApiAllowed(p)),
+    'usePortalKbAdapter calls ONLY /api/portal/kb* (no staff /api/kb or /api/db)',
+    portalAdapterPaths.filter((p) => !isPortalKbFrontendApiAllowed(p)).join(', '),
   );
 
   const kbRouteSrc = fs.readFileSync(
@@ -2197,6 +2207,14 @@ function testKbWorkbenchSharedUiIsolation(): void {
     path.join(process.cwd(), 'src/components/pages/KBPage.tsx'),
     'utf8',
   );
+  const portalPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientKbPage.tsx'),
+    'utf8',
+  );
+  const portalAdapterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/hooks/usePortalKbAdapter.ts'),
+    'utf8',
+  );
   const adapterSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/lib/kb/kb-workbench-adapter.ts'),
     'utf8',
@@ -2232,6 +2250,37 @@ function testKbWorkbenchSharedUiIsolation(): void {
   assert(
     adapterSrc.includes("'staff'") && adapterSrc.includes("'portal'"),
     'adapter typed for staff | portal modes',
+  );
+
+  assert(
+    portalPageSrc.includes('usePortalKbAdapter') && portalPageSrc.includes('mode="portal"'),
+    '/portal/kb mounts KnowledgeBaseWorkbench with portal adapter',
+  );
+  assert(
+    portalPageSrc.includes('PORTAL_KB_WRITER_CAPABILITIES') &&
+      portalPageSrc.includes('PORTAL_KB_READER_CAPABILITIES'),
+    'portal RBAC capabilities split writer vs reader',
+  );
+  const portalApiPaths = collectApiPathLiteralsFromSource(portalAdapterSrc);
+  assert(
+    portalApiPaths.length > 0 &&
+      portalApiPaths.every((p) => p === '/api/portal/kb' || p.startsWith('/api/portal/kb/')),
+    'usePortalKbAdapter calls only /api/portal/kb*',
+    portalApiPaths.filter((p) => !(p === '/api/portal/kb' || p.startsWith('/api/portal/kb/'))).join(', '),
+  );
+  assert(
+    !portalAdapterSrc.includes('/api/db') &&
+      !portalAdapterSrc.includes('/api/coverage') &&
+      !portalAdapterSrc.includes('kbService') &&
+      !portalAdapterSrc.includes('kbArticleApi'),
+    'usePortalKbAdapter never imports staff KB clients or /api/db',
+  );
+  assert(
+    adapterSrc.includes('canCreateArticles') &&
+      adapterSrc.includes('importDocs: false') &&
+      adapterSrc.includes('aiInsights: false') &&
+      adapterSrc.includes('reviewsNav: false'),
+    'portal capabilities hide staff-only chrome',
   );
 }
 

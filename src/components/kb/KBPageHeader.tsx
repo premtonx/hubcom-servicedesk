@@ -20,6 +20,12 @@ interface KBPageHeaderProps {
   showImportDocs?: boolean;
   /** Staff-only: KI generieren (default true). */
   showAiGenerate?: boolean;
+  /** Hide "+ Neu" create menu (CLIENT_USER read-only). */
+  showNewMenu?: boolean;
+  /** Portal: hide "Kategorie erstellen" in the new menu. */
+  showNewCategory?: boolean;
+  title?: string;
+  subtitle?: string;
 }
 
 export function KBPageHeader({
@@ -30,6 +36,10 @@ export function KBPageHeader({
   className,
   showImportDocs = true,
   showAiGenerate = true,
+  showNewMenu = true,
+  showNewCategory = true,
+  title,
+  subtitle,
 }: KBPageHeaderProps) {
   const { t } = useTranslation();
 
@@ -37,13 +47,14 @@ export function KBPageHeader({
     <header className={cn('flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4', className)}>
       <div className="min-w-0">
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          {t('kb.pageTitle', 'Knowledge Base')}
+          {title ?? t('kb.pageTitle', 'Knowledge Base')}
         </h1>
         <p className="text-sm text-slate-500 mt-1 max-w-2xl leading-relaxed">
-          {t(
-            'kb.pageSubtitle',
-            'Centralized documentation, SOPs, onboarding guides, and AI-powered company knowledge',
-          )}
+          {subtitle ??
+            t(
+              'kb.pageSubtitle',
+              'Centralized documentation, SOPs, onboarding guides, and AI-powered company knowledge',
+            )}
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -71,6 +82,7 @@ export function KBPageHeader({
           {t('kb.actions.aiGenerateShort', 'AI Generate')}
         </Button>
         ) : null}
+        {showNewMenu ? (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -89,11 +101,14 @@ export function KBPageHeader({
             <DropdownMenuItem onClick={onNewArticle} className="text-xs font-medium">
               {t('kb.actions.createArticle', '📄 Artikel erstellen')}
             </DropdownMenuItem>
+            {showNewCategory ? (
             <DropdownMenuItem onClick={onNewCategory ?? onNewArticle} className="text-xs font-medium">
               {t('kb.actions.createCategory', '📁 Kategorie erstellen')}
             </DropdownMenuItem>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
+        ) : null}
       </div>
     </header>
   );

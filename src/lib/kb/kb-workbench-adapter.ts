@@ -38,6 +38,23 @@ export type KbWorkbenchCapabilities = {
   categoryAdmin: boolean;
   /** RAG index toggle on articles */
   ragIndexToggle: boolean;
+  /** Show "+ Neu" / create article */
+  canCreateArticles: boolean;
+  /** Show edit actions (org articles only — shared guides stay read-only in UI) */
+  canEditArticles: boolean;
+  /** Show delete actions (org articles only) */
+  canDeleteArticles: boolean;
+  /** Show duplicate action */
+  canDuplicateArticles: boolean;
+  /** Show bulk selection / delete bar */
+  canBulkDelete: boolean;
+  /**
+   * Smart-view ids to show in the left sidebar.
+   * Omit / undefined → all staff smart views.
+   */
+  smartItemIds?: ReadonlyArray<
+    'popular' | 'recent' | 'mostViewed' | 'missing' | 'outdated'
+  >;
 };
 
 export const STAFF_KB_CAPABILITIES: KbWorkbenchCapabilities = {
@@ -54,8 +71,14 @@ export const STAFF_KB_CAPABILITIES: KbWorkbenchCapabilities = {
   crossTenantVisibilityFilters: true,
   categoryAdmin: true,
   ragIndexToggle: true,
+  canCreateArticles: true,
+  canEditArticles: true,
+  canDeleteArticles: true,
+  canDuplicateArticles: true,
+  canBulkDelete: true,
 };
 
+/** Base portal chrome — staff-only features off. Write flags set per role. */
 export const PORTAL_KB_CAPABILITIES: KbWorkbenchCapabilities = {
   importDocs: false,
   aiGenerate: false,
@@ -70,6 +93,25 @@ export const PORTAL_KB_CAPABILITIES: KbWorkbenchCapabilities = {
   crossTenantVisibilityFilters: false,
   categoryAdmin: false,
   ragIndexToggle: false,
+  canCreateArticles: false,
+  canEditArticles: false,
+  canDeleteArticles: false,
+  canDuplicateArticles: false,
+  canBulkDelete: false,
+  smartItemIds: ['popular', 'recent'],
+};
+
+/** CLIENT_ADMIN | CLIENT_SUPPORTER — write own-org articles only. */
+export const PORTAL_KB_WRITER_CAPABILITIES: KbWorkbenchCapabilities = {
+  ...PORTAL_KB_CAPABILITIES,
+  canCreateArticles: true,
+  canEditArticles: true,
+  canDeleteArticles: true,
+};
+
+/** CLIENT_USER — read-only. */
+export const PORTAL_KB_READER_CAPABILITIES: KbWorkbenchCapabilities = {
+  ...PORTAL_KB_CAPABILITIES,
 };
 
 export type KbRagSnippet = {

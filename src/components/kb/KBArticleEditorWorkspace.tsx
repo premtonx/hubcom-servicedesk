@@ -59,6 +59,9 @@ interface KBArticleEditorWorkspaceProps {
   /** Instant-persist RAG opt-in for existing articles (fires on toggle change). */
   onToggleIndexInRag?: (checked: boolean) => void;
   className?: string;
+  /** Kunden-Portal: force organization visibility; hide staff visibility/RAG controls. */
+  lockPortalOrgVisibility?: boolean;
+  showRagToggle?: boolean;
 }
 
 function draftVisibility(
@@ -92,6 +95,8 @@ export function KBArticleEditorWorkspace({
   onSave,
   onToggleIndexInRag,
   className,
+  lockPortalOrgVisibility = false,
+  showRagToggle = true,
 }: KBArticleEditorWorkspaceProps) {
   const { t } = useTranslation();
   const [titleTouched, setTitleTouched] = useState(false);
@@ -280,6 +285,15 @@ export function KBArticleEditorWorkspace({
             {t('kb.editor.accessScope', 'Sichtbarkeit (Kunden-Portal)')}
           </Label>
           <div className="p-3 bg-white border rounded-xl shadow-3xs space-y-2">
+            {lockPortalOrgVisibility ? (
+              <p className="text-[11px] text-slate-600 font-semibold leading-relaxed">
+                {t(
+                  'kb.editor.portalOrgLocked',
+                  'Artikel werden automatisch als Firmen-Anleitung für Ihre Organisation veröffentlicht.',
+                )}
+              </p>
+            ) : (
+              <>
             <select
               className="w-full h-9 rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs font-bold text-slate-800"
               value={draftVisibility(newArticle.visibility)}
@@ -332,9 +346,12 @@ export function KBArticleEditorWorkspace({
                     )}
               </p>
             )}
+              </>
+            )}
           </div>
         </div>
 
+        {showRagToggle ? (
         <div className="space-y-2">
           <Label className="text-[9.5px] uppercase font-black text-slate-400 tracking-wider">
             {t('kb.editor.ragAccess', 'KI-Wissensspeicher (RAG)')}
@@ -361,6 +378,7 @@ export function KBArticleEditorWorkspace({
             />
           </div>
         </div>
+        ) : null}
 
         <div className="space-y-2">
           <Label className="text-[9.5px] uppercase font-black text-slate-400 tracking-wider">

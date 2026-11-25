@@ -29,10 +29,12 @@ interface KBArticleViewsProps {
   onToggleSelect: (id: string) => void;
   onToggleSelectAll: () => void;
   onSelect: (article: KBArticleItem) => void;
-  onEdit: (article: KBArticleItem) => void;
-  onDuplicate: (article: KBArticleItem) => void;
-  onDelete: (id: string) => void;
+  onEdit?: (article: KBArticleItem) => void;
+  onDuplicate?: (article: KBArticleItem) => void;
+  onDelete?: (id: string) => void;
   onResetFilters?: () => void;
+  /** Hide bulk-select checkboxes (portal read-only / no bulk delete). */
+  showSelection?: boolean;
 }
 
 export function KBArticleViews({
@@ -47,6 +49,7 @@ export function KBArticleViews({
   onDuplicate,
   onDelete,
   onResetFilters,
+  showSelection = true,
 }: KBArticleViewsProps) {
   const { t } = useTranslation();
   const allSelected = articles.length > 0 && articles.every((a) => selectedIds.has(a.id));
@@ -67,6 +70,7 @@ export function KBArticleViews({
         onSelect={onSelect}
         onEdit={onEdit}
         onDelete={onDelete}
+        showSelection={showSelection}
       />
     );
   }
@@ -84,6 +88,7 @@ export function KBArticleViews({
             onSelect={onSelect}
             onEdit={onEdit}
             onDelete={onDelete}
+            showSelection={showSelection}
           />
         ))}
       </div>
@@ -101,6 +106,7 @@ export function KBArticleViews({
       onSelect={onSelect}
       onEdit={onEdit}
       onDelete={onDelete}
+      showSelection={showSelection}
     />
   );
 }
@@ -150,6 +156,7 @@ function ListView({
   onSelect,
   onEdit,
   onDelete,
+  showSelection = true,
 }: {
   articles: KBArticleItem[];
   categories: KBCategoryRecord[];
@@ -158,15 +165,18 @@ function ListView({
   onToggleSelect: (id: string) => void;
   onToggleSelectAll: () => void;
   onSelect: (a: KBArticleItem) => void;
-  onEdit: (a: KBArticleItem) => void;
-  onDelete: (id: string) => void;
+  onEdit?: (a: KBArticleItem) => void;
+  onDelete?: (id: string) => void;
+  showSelection?: boolean;
 }) {
   const { t } = useTranslation();
 
   return (
     <div className={cn(kbPanelClass(), 'w-full')}>
       <div className={cn('hidden md:grid px-4 py-2 border-b border-slate-100 bg-slate-50/80', KB_LIST_GRID)}>
+        {showSelection ? (
         <Checkbox checked={allSelected} onCheckedChange={onToggleSelectAll} aria-label={t('kb.bulk.selectAll', 'Select all')} />
+        ) : <span />}
         <span className={KB_LIST_HEADER_CELL}>{t('kb.table.title', 'Title')}</span>
         <span className={KB_LIST_HEADER_CELL}>{t('kb.table.category', 'Category')}</span>
         <span className={KB_LIST_HEADER_CELL}>{t('kb.table.workflowStatus', 'Status')}</span>
@@ -184,11 +194,13 @@ function ListView({
             )}
           >
             <div className={KB_LIST_CELL} onClick={(e) => e.stopPropagation()}>
+              {showSelection ? (
               <Checkbox
                 checked={selectedIds.has(art.id)}
                 onCheckedChange={() => onToggleSelect(art.id)}
                 aria-label={t('kb.bulk.selectItem', 'Select article')}
               />
+              ) : null}
             </div>
             <p
               className={cn(KB_LIST_CELL, 'text-xs font-semibold text-slate-900 truncate group-hover:text-blue-600')}
@@ -226,6 +238,7 @@ function TableView({
   onSelect,
   onEdit,
   onDelete,
+  showSelection = true,
 }: {
   articles: KBArticleItem[];
   categories: KBCategoryRecord[];
@@ -234,10 +247,12 @@ function TableView({
   onToggleSelect: (id: string) => void;
   onToggleSelectAll: () => void;
   onSelect: (a: KBArticleItem) => void;
-  onEdit: (a: KBArticleItem) => void;
-  onDelete: (id: string) => void;
+  onEdit?: (a: KBArticleItem) => void;
+  onDelete?: (id: string) => void;
+  showSelection?: boolean;
 }) {
   const { t } = useTranslation();
+  const showActions = Boolean(onEdit || onDelete);
 
   return (
     <div className={kbPanelClass()}>
@@ -245,16 +260,20 @@ function TableView({
         <table className="w-full text-left text-xs">
           <thead>
             <tr className="bg-slate-50/80 border-b border-slate-100 text-[10px] uppercase font-semibold tracking-wider text-slate-400">
+              {showSelection ? (
               <th className="px-4 py-3 w-10">
                 <Checkbox checked={allSelected} onCheckedChange={onToggleSelectAll} aria-label={t('kb.bulk.selectAll', 'Select all')} />
               </th>
+              ) : null}
               <th className="px-4 py-3">{t('kb.table.title', 'Title')}</th>
               <th className="px-4 py-3">{t('kb.table.category', 'Category')}</th>
               <th className="px-4 py-3">{t('kb.table.workflowStatus', 'Status')}</th>
               <th className="px-4 py-3">{t('kb.table.metadataOwner', 'Owner')}</th>
               <th className="px-4 py-3">{t('kb.table.updated', 'Updated')}</th>
               <th className="px-4 py-3">{t('kb.table.views', 'Views')}</th>
+              {showActions ? (
               <th className="px-4 py-3 text-right">{t('kb.table.actions', 'Actions')}</th>
+              ) : null}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -264,6 +283,7 @@ function TableView({
                 onClick={() => onSelect(art)}
                 className={cn('hover:bg-slate-50/50 cursor-pointer', selectedIds.has(art.id) && 'bg-blue-50/40')}
               >
+                {showSelection ? (
                 <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                   <Checkbox
                     checked={selectedIds.has(art.id)}
@@ -271,6 +291,7 @@ function TableView({
                     aria-label={t('kb.bulk.selectItem', 'Select article')}
                   />
                 </td>
+                ) : null}
                 <td className="px-4 py-3 max-w-[240px]">
                   <p className="font-semibold text-slate-900 truncate">{art.title}</p>
                   <p className="text-[10px] text-slate-400 truncate mt-0.5">{stripHtml(art.content ?? '').slice(0, 60)}</p>
@@ -286,16 +307,22 @@ function TableView({
                 <td className="px-4 py-3 text-slate-600">{art.owner ?? '—'}</td>
                 <td className="px-4 py-3 text-slate-400">{formatArticleDate(art)}</td>
                 <td className="px-4 py-3 font-medium tabular-nums">{art.views ?? 0}</td>
+                {showActions ? (
                 <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                   <div className="flex justify-end gap-1">
+                    {onEdit ? (
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onEdit(art)}>
                       <PenLine className="w-3.5 h-3.5" />
                     </Button>
+                    ) : null}
+                    {onDelete ? (
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-rose-500" onClick={() => onDelete(art.id)}>
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>
+                    ) : null}
                   </div>
                 </td>
+                ) : null}
               </tr>
             ))}
           </tbody>
@@ -313,14 +340,16 @@ function GridArticleCard({
   onSelect,
   onEdit,
   onDelete,
+  showSelection = true,
 }: {
   art: KBArticleItem;
   categories: KBCategoryRecord[];
   selected: boolean;
   onToggleSelect: () => void;
   onSelect: (a: KBArticleItem) => void;
-  onEdit: (a: KBArticleItem) => void;
-  onDelete: (id: string) => void;
+  onEdit?: (a: KBArticleItem) => void;
+  onDelete?: (id: string) => void;
+  showSelection?: boolean;
 }) {
   const { t } = useTranslation();
   const score = art.trustScore ?? 85;
@@ -333,13 +362,15 @@ function GridArticleCard({
         selected && 'border-blue-300 ring-2 ring-blue-500/15 bg-blue-50/20',
       )}
     >
+      {showSelection ? (
       <div
         className="absolute top-3 left-3 z-10"
         onClick={(e) => e.stopPropagation()}
       >
         <Checkbox checked={selected} onCheckedChange={onToggleSelect} aria-label={t('kb.bulk.selectItem', 'Select article')} />
       </div>
-      <div onClick={() => onSelect(art)} className="flex flex-col h-full pl-6">
+      ) : null}
+      <div onClick={() => onSelect(art)} className={cn('flex flex-col h-full', showSelection && 'pl-6')}>
         <div className="flex items-start justify-between gap-2 mb-2">
           <CategoryLabel art={art} categories={categories} />
           <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-lg border', getStatusBadgeClass(art.status))}>
@@ -368,6 +399,7 @@ function GridArticleCard({
           <div className="flex-1 h-1 rounded-full bg-slate-100 overflow-hidden ml-1">
             <div className={cn('h-full rounded-full', qualityBarClass(score))} style={{ width: `${score}%` }} />
           </div>
+          {onEdit ? (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onEdit(art); }}
@@ -375,6 +407,8 @@ function GridArticleCard({
           >
             <MoreHorizontal className="w-3.5 h-3.5" />
           </button>
+          ) : null}
+          {onDelete ? (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onDelete(art.id); }}
@@ -382,6 +416,7 @@ function GridArticleCard({
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
+          ) : null}
         </div>
       </div>
     </div>

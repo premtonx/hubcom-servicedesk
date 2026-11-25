@@ -47,6 +47,10 @@ interface KBLeftSidebarProps {
   >;
   /** Hide KB Health Score telemetry block. */
   showHealthScore?: boolean;
+  /** When set, only these smart-view ids are shown. */
+  smartItemIds?: ReadonlyArray<
+    'popular' | 'recent' | 'mostViewed' | 'missing' | 'outdated'
+  >;
 }
 
 const WORKSPACE_ITEMS = [
@@ -119,6 +123,7 @@ export function KBLeftSidebar({
   className,
   workspaceItemIds,
   showHealthScore = true,
+  smartItemIds,
 }: KBLeftSidebarProps) {
   const { t } = useTranslation();
 
@@ -128,6 +133,10 @@ export function KBLeftSidebar({
   const workspaceItems = workspaceItemIds
     ? WORKSPACE_ITEMS.filter((item) => workspaceItemIds.includes(item.id))
     : WORKSPACE_ITEMS;
+
+  const smartItems = smartItemIds
+    ? SMART_ITEMS.filter((item) => smartItemIds.includes(item.id))
+    : SMART_ITEMS;
 
   const workspaceCount = (id: string) => {
     if (id === 'all' || id === 'overview' || id === 'analytics') return counts.all;
@@ -189,9 +198,11 @@ export function KBLeftSidebar({
           )}
         </nav>
 
-        <SectionLabel>{t('kb.sidebar.smartViews', 'Smart Views')}</SectionLabel>
+        {smartItems.length > 0 ? (
+        <>
+        <SectionLabel>{t('kb.sidebar.smartViews', 'Intelligente Ansichten')}</SectionLabel>
         <nav className="space-y-0.5">
-          {SMART_ITEMS.map((item) => (
+          {smartItems.map((item) => (
             <NavButton
               key={item.id}
               active={isActive('smart', item.id)}
@@ -202,6 +213,8 @@ export function KBLeftSidebar({
             />
           ))}
         </nav>
+        </>
+        ) : null}
 
         {showHealthScore && typeof healthScore === 'number' ? (
           <div className="mt-4 mx-1 rounded-xl border border-slate-200/80 bg-slate-50 p-3">
@@ -222,14 +235,16 @@ export function KBLeftSidebar({
         ) : null}
       </div>
 
+      {onOpenSettings ? (
       <div className="border-t border-slate-200/80 p-2 shrink-0">
         <NavButton
           active={false}
-          onClick={() => onOpenSettings?.()}
+          onClick={() => onOpenSettings()}
           icon={Settings}
           label={t('kb.sidebar.settings', 'Settings')}
         />
       </div>
+      ) : null}
     </aside>
   );
 }

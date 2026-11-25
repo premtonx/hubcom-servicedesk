@@ -121,6 +121,7 @@ import {
   resolveArticleCategoryId,
   articleMatchesCategoryId,
   mapDbCategoryToRecord,
+  slugifyCategoryId,
 } from './kbCategoryUtils';
 import { KBCategoryAdminPanel } from './KBCategoryAdminPanel';
 import { KBCategoryCreateDialog } from './KBCategoryCreateDialog';
@@ -244,27 +245,28 @@ export function KnowledgeBaseWorkbench({
     if (searchParams.get('action') === 'create') {
       // Clear query param so it doesn't reopen
       setSearchParams({}, { replace: true });
+      if (!capabilities.canCreateArticles) return;
       // Open add article dialog
       setNewArticle({
         title: '',
         content: '',
         category: selectedCategory === 'All' ? UNCATEGORIZED_CATEGORY_ID : selectedCategory,
         subCategory: '',
-        visibility: 'internal',
+        visibility: mode === 'portal' ? 'organization' : 'internal',
         organizationId: '',
         tags: [],
         owner: user?.email || '',
         reviewer: '',
         lastEditor: user?.email || '',
-        status: 'Draft',
+        status: mode === 'portal' ? 'Published' : 'Draft',
         avgReadTime: '',
-        index_in_rag: true,
+        index_in_rag: mode !== 'portal',
       });
       setTagInput('');
       setEditingArticleId(null);
       setIsAddingArticle(true);
     }
-  }, [searchParams, setSearchParams, selectedCategory]);
+  }, [searchParams, setSearchParams, selectedCategory, capabilities.canCreateArticles, mode, user?.email]);
   const [activeSubTab, setActiveSubTab] = useState<string>('All');
   const [kbNav, setKbNav] = useState<KBNavFilter>({ type: 'workspace', id: 'overview' });
   const [viewLayout, setViewLayout] = useState<KBArticleViewMode>('grid');
@@ -278,6 +280,8 @@ export function KnowledgeBaseWorkbench({
   const [filterVisibility, setFilterVisibility] = useState<string>('All');
   const [filterLanguage, setFilterLanguage] = useState<string>('All');
   const [filterTag, setFilterTag] = useState<string>('All');
+  /** Portal scope tabs: Alle / Firmen-Anleitungen / Hubcom Guides */
+  const [portalScope, setPortalScope] = useState<'all' | 'organization' | 'shared_portal'>('all');
 
   const [aiSearchQuery, setAiSearchQuery] = useState<string | null>(null);
   const [aiSearchSummary, setAiSearchSummary] = useState<string | null>(null);
@@ -407,6 +411,21 @@ export function KnowledgeBaseWorkbench({
   useEffect(() => {
     void loadCategories();
   }, [loadCategories]);
+
+  // Portal has no category CRUD API — keep sidebar categories derived from visible articles.
+  useEffect(() => {
+    if (mode !== 'portal') return;
+    const seen = new Map<string, KBCategoryRecord>();
+    let order = 1;
+    for (const art of articles) {
+      const name = String(art.category || 'Allgemein').trim() || 'Allgemein';
+      const id = slugifyCategoryId(name);
+      if (seen.has(id)) continue;
+      seen.set(id, mapDbCategoryToRecord({ id, name, order }, order));
+      order += 1;
+    }
+    setCategories(Array.from(seen.values()));
+  }, [mode, articles]);
 
   useEffect(() => {
     void adapter
@@ -599,6 +618,7 @@ export function KnowledgeBaseWorkbench({
   }, [restorePendingDelete, t]);
 
   const openCreateArticle = (category = selectedCategory || UNCATEGORIZED_CATEGORY_ID) => {
+    if (!capabilities.canCreateArticles) return;
     const catId =
       category === 'All'
         ? (categories[0]?.id ?? UNCATEGORIZED_CATEGORY_ID)
@@ -608,22 +628,22 @@ export function KnowledgeBaseWorkbench({
       content: '',
       category: catId,
       subCategory: '',
-      visibility: 'internal',
+      visibility: mode === 'portal' ? 'organization' : 'internal',
       organizationId: '',
       tags: [],
       owner: user?.email || '',
       reviewer: '',
       lastEditor: user?.email || '',
-      status: 'Draft',
+      status: mode === 'portal' ? 'Published' : 'Draft',
       avgReadTime: '',
-      index_in_rag: true,
+      index_in_rag: mode !== 'portal',
     });
     setTagInput('');
     setEditingArticleId(null);
     setIsAddingArticle(true);
   };
 
-  const handleSaveArticle = async (mode: KBArticleSaveMode = 'draft') => {
+  const handleSaveArticle = async (saveMode: KBArticleSaveMode = 'draft') => {
     const title = newArticle.title.trim();
     const bodyText = stripHtml(newArticle.content || '').trim();
 
@@ -632,7 +652,7 @@ export function KnowledgeBaseWorkbench({
       return;
     }
 
-    if (mode === 'publish' && !bodyText) {
+    if (saveMode === 'publish' && !bodyText) {
       toast.error(
         t(
           'kb.editor.bodyRequiredToPublish',
@@ -650,10 +670,19 @@ export function KnowledgeBaseWorkbench({
     try {
       const tags = tagInput.split(',').map((tag) => tag.trim()).filter(Boolean);
       const status =
-        mode === 'publish' ? 'Published' : mode === 'draft' ? 'Draft' : newArticle.status || 'Draft';
+        saveMode === 'publish'
+          ? 'Published'
+          : saveMode === 'draft'
+            ? 'Draft'
+            : newArticle.status || 'Draft';
 
-      const visibility = normalizeKbVisibility(newArticle.visibility);
-      if (visibility === 'organization' && !String(newArticle.organizationId || '').trim()) {
+      const visibility =
+        mode === 'portal' ? 'organization' : normalizeKbVisibility(newArticle.visibility);
+      if (
+        mode !== 'portal' &&
+        visibility === 'organization' &&
+        !String(newArticle.organizationId || '').trim()
+      ) {
         toast.error(
           t('kb.editor.orgRequired', 'Bitte ein Unternehmen für organisationsbezogene Artikel wählen.'),
         );
@@ -695,7 +724,7 @@ export function KnowledgeBaseWorkbench({
             ),
           );
           toast.success(
-            mode === 'publish'
+            saveMode === 'publish'
               ? t('kb.editor.publishSuccess', 'Article published successfully.')
               : t('kb.editor.draftSuccess', 'Draft saved successfully.'),
           );
@@ -703,7 +732,7 @@ export function KnowledgeBaseWorkbench({
           const oldArticle = firestoreArticles.find((a) => a.id === editingArticleId);
           await adapter.updateArticle(editingArticleId, payload, oldArticle?.tags || []);
           toast.success(
-            mode === 'publish'
+            saveMode === 'publish'
               ? t('kb.editor.publishSuccess', 'Article published successfully.')
               : t('kb.editor.draftSuccess', 'Draft saved successfully.'),
           );
@@ -727,7 +756,7 @@ export function KnowledgeBaseWorkbench({
           authorId: user.uid,
         });
         toast.success(
-          mode === 'publish'
+          saveMode === 'publish'
             ? t('kb.editor.publishSuccess', 'Article published successfully.')
             : t('kb.editor.draftSuccess', 'Draft saved successfully.'),
         );
@@ -757,6 +786,13 @@ export function KnowledgeBaseWorkbench({
   };
 
   const handleEditArticle = (article: any) => {
+    if (!capabilities.canEditArticles) return;
+    if (mode === 'portal' && !isOrgWritableArticle(article)) {
+      toast.error(
+        t('kb.portal.sharedReadOnly', 'Hubcom Guides sind schreibgeschützt.'),
+      );
+      return;
+    }
     setEditingArticleId(article.id);
     setNewArticle({
       title: article.title,
@@ -857,8 +893,11 @@ export function KnowledgeBaseWorkbench({
   });
 
   const workspaceArticles = useMemo(
-    () => filterArticlesByWorkspace(withConfidence, workspace),
-    [withConfidence, workspace],
+    () =>
+      mode === 'portal'
+        ? withConfidence
+        : filterArticlesByWorkspace(withConfidence, workspace),
+    [withConfidence, workspace, mode],
   );
 
   const matchSidebarCategory = (art: { category?: string; tags?: string[] }, catId: string) =>
@@ -887,6 +926,9 @@ export function KnowledgeBaseWorkbench({
       normalizeKbVisibility(art.visibility) !== filterVisibility
     ) {
       return false;
+    }
+    if (mode === 'portal' && portalScope !== 'all') {
+      if (normalizeKbVisibility(art.visibility) !== portalScope) return false;
     }
     if (filterLanguage !== 'All' && art.language !== filterLanguage) return false;
     if (filterTag !== 'All' && !(art.tags && art.tags.includes(filterTag))) return false;
@@ -927,8 +969,15 @@ export function KnowledgeBaseWorkbench({
   });
 
   const handleDeleteArticle = (id: string) => {
+    if (!capabilities.canDeleteArticles) return;
     const article = articles.find((a) => a.id === id);
     if (!article) return;
+    if (mode === 'portal' && !isOrgWritableArticle(article)) {
+      toast.error(
+        t('kb.portal.sharedReadOnly', 'Hubcom Guides sind schreibgeschützt.'),
+      );
+      return;
+    }
     schedulePermanentDelete([article]);
     showUndoDeleteToast(1);
     if (viewingArticle?.id === id) dismissArticleDetail();
@@ -978,6 +1027,25 @@ export function KnowledgeBaseWorkbench({
   const missingTagsCount = dashboardMetrics.missingTagsCount;
   const recentActivity = buildRecentActivity(workspaceArticles, t);
   const topContributors = buildTopContributors(workspaceArticles);
+
+  const portalOrgCount = workspaceArticles.filter(
+    (a) => normalizeKbVisibility(a.visibility) === 'organization',
+  ).length;
+  const portalSharedCount = workspaceArticles.filter(
+    (a) => normalizeKbVisibility(a.visibility) === 'shared_portal',
+  ).length;
+  const portalRecentlyUpdatedCount = workspaceArticles.filter((a) => {
+    const raw = a.updatedAt?.toDate?.() ?? a.updatedAt ?? a.createdAt?.toDate?.() ?? a.createdAt;
+    const d = raw instanceof Date ? raw : raw ? new Date(raw as string) : null;
+    if (!d || Number.isNaN(d.getTime())) return false;
+    return Date.now() - d.getTime() < 30 * 24 * 60 * 60 * 1000;
+  }).length;
+  const portalPublishedCount = workspaceArticles.filter((a) =>
+    isPublishedStatus(a.status) || !a.status,
+  ).length;
+
+  const isOrgWritableArticle = (art: { visibility?: string }) =>
+    normalizeKbVisibility(art.visibility) === 'organization';
 
   const isOverviewMode = isKbOverviewMode(kbNav);
   const isAiAssistantMode = isKbAiAssistantMode(kbNav) && capabilities.aiAssistantNav;
@@ -1665,6 +1733,7 @@ export function KnowledgeBaseWorkbench({
               }
               workspaceItemIds={workspaceNavIds}
               showHealthScore={capabilities.kbHealthTelemetry}
+              smartItemIds={capabilities.smartItemIds}
             />
             {isAddingArticle ? (
               <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#F8F9FB] overflow-hidden">
@@ -1690,9 +1759,17 @@ export function KnowledgeBaseWorkbench({
                   portalOrganizations={portalOrganizations}
                   onClose={closeArticleDraft}
                   onSave={handleSaveArticle}
-                  onToggleIndexInRag={(checked) => {
-                    if (editingArticleId) void handleToggleArticleIndexInRag(editingArticleId, checked);
-                  }}
+                  onToggleIndexInRag={
+                    capabilities.ragIndexToggle
+                      ? (checked) => {
+                          if (editingArticleId) {
+                            void handleToggleArticleIndexInRag(editingArticleId, checked);
+                          }
+                        }
+                      : undefined
+                  }
+                  lockPortalOrgVisibility={mode === 'portal'}
+                  showRagToggle={capabilities.ragIndexToggle}
                   className="flex-1 min-h-0"
                 />
               </div>
@@ -1713,7 +1790,48 @@ export function KnowledgeBaseWorkbench({
                     }
                     showImportDocs={capabilities.importDocs}
                     showAiGenerate={capabilities.aiGenerate}
+                    showNewMenu={capabilities.canCreateArticles}
+                    showNewCategory={capabilities.categoryAdmin}
+                    title={
+                      mode === 'portal'
+                        ? t('kb.portal.pageTitle', 'Wissensdatenbank')
+                        : undefined
+                    }
+                    subtitle={
+                      mode === 'portal'
+                        ? t(
+                            'kb.portal.pageSubtitle',
+                            'Firmen-Anleitungen und Hubcom Guides',
+                          )
+                        : undefined
+                    }
                   />
+
+                  {mode === 'portal' ? (
+                    <div className="inline-flex flex-wrap bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1 text-[11px] font-black">
+                      {(
+                        [
+                          { id: 'all' as const, label: 'Alle Artikel' },
+                          { id: 'organization' as const, label: 'Firmen-Anleitungen' },
+                          { id: 'shared_portal' as const, label: 'Hubcom Guides' },
+                        ] as const
+                      ).map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setPortalScope(tab.id)}
+                          className={cn(
+                            'px-3.5 py-1.5 rounded-lg transition-all cursor-pointer',
+                            portalScope === tab.id
+                              ? 'bg-white text-indigo-650 shadow-sm'
+                              : 'text-slate-400 hover:text-slate-600',
+                          )}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
 
                   {/* Artikel / Dokumente / Datenquellen — staff-only chrome */}
                   {showDocsSourcesTabs ? (
@@ -1777,16 +1895,24 @@ export function KnowledgeBaseWorkbench({
                       onImportDocs={
                         capabilities.importDocs ? () => setIsImportOpen(true) : () => openCreateArticle()
                       }
+                      showCreate={capabilities.canCreateArticles}
+                      showImport={capabilities.importDocs}
                     />
                   ) : (
                     <>
                   {isOverviewMode ? (
                     <KBKpiCards
-                      publishedCount={publishedCount}
+                      variant={mode === 'portal' ? 'portal' : 'staff'}
+                      publishedCount={
+                        mode === 'portal' ? portalPublishedCount : publishedCount
+                      }
                       draftCount={draftCount}
                       healthScore={capabilities.kbHealthTelemetry ? healthScore : 0}
                       monthlyViews={monthlyViews}
-                      trends={dashboardMetrics.trends}
+                      trends={mode === 'portal' ? undefined : dashboardMetrics.trends}
+                      portalOrgCount={portalOrgCount}
+                      portalSharedCount={portalSharedCount}
+                      portalRecentlyUpdatedCount={portalRecentlyUpdatedCount}
                     />
                   ) : null}
 
@@ -1835,7 +1961,8 @@ export function KnowledgeBaseWorkbench({
                       <option value="organization">{t('kb.visibilityOrg', 'Nur für bestimmtes Unternehmen')}</option>
                     </ModuleToolbarSelect>
                     ) : null}
-                    {isDeveloperWorkspace ? (
+                    {mode === 'staff' ? (
+                      isDeveloperWorkspace ? (
                       <span className="text-[11px] text-violet-600 font-medium px-2 py-1 rounded-lg bg-violet-50 border border-violet-100">
                         {t('kb.workspaceDeveloperHint', 'Developer workspace — internal docs & runbooks')}
                       </span>
@@ -1843,7 +1970,8 @@ export function KnowledgeBaseWorkbench({
                       <span className="text-[11px] text-blue-600 font-medium px-2 py-1 rounded-lg bg-blue-50 border border-blue-100">
                         {t('kb.workspaceSupportHint', 'Support workspace — public customer FAQs')}
                       </span>
-                    )}
+                    )
+                    ) : null}
                   </div>
 
                   {showAdvancedFilters ? (
@@ -1889,12 +2017,14 @@ export function KnowledgeBaseWorkbench({
                           </div>
                         </div>
                       </div>
+                      {capabilities.canBulkDelete ? (
                       <KBBulkActionBar
                         selectedCount={selectedArticleIds.size}
                         onClear={() => setSelectedArticleIds(new Set())}
                         onBulkDelete={() => setBulkDeleteOpen(true)}
                         className="mb-3"
                       />
+                      ) : null}
                       <KBArticleViews
                         articles={processedArticles}
                         categories={categories}
@@ -1903,10 +2033,13 @@ export function KnowledgeBaseWorkbench({
                         onToggleSelectAll={toggleSelectAllArticles}
                         viewMode={viewLayout}
                         onSelect={(art) => openArticleView(art)}
-                        onEdit={handleEditArticle}
-                        onDuplicate={handleDuplicateArticle}
-                        onDelete={handleDeleteArticle}
+                        onEdit={capabilities.canEditArticles ? handleEditArticle : undefined}
+                        onDuplicate={
+                          capabilities.canDuplicateArticles ? handleDuplicateArticle : undefined
+                        }
+                        onDelete={capabilities.canDeleteArticles ? handleDeleteArticle : undefined}
                         onResetFilters={resetFilters}
+                        showSelection={capabilities.canBulkDelete}
                       />
                     </section>
                   ) : null}
@@ -1946,12 +2079,14 @@ export function KnowledgeBaseWorkbench({
                           </div>
                         </div>
                       </div>
+                      {capabilities.canBulkDelete ? (
                       <KBBulkActionBar
                         selectedCount={selectedArticleIds.size}
                         onClear={() => setSelectedArticleIds(new Set())}
                         onBulkDelete={() => setBulkDeleteOpen(true)}
                         className="mb-3"
                       />
+                      ) : null}
                       <KBArticleViews
                         articles={processedArticles}
                         categories={categories}
@@ -1960,10 +2095,13 @@ export function KnowledgeBaseWorkbench({
                         onToggleSelectAll={toggleSelectAllArticles}
                         viewMode={viewLayout}
                         onSelect={(art) => openArticleView(art)}
-                        onEdit={handleEditArticle}
-                        onDuplicate={handleDuplicateArticle}
-                        onDelete={handleDeleteArticle}
+                        onEdit={capabilities.canEditArticles ? handleEditArticle : undefined}
+                        onDuplicate={
+                          capabilities.canDuplicateArticles ? handleDuplicateArticle : undefined
+                        }
+                        onDelete={capabilities.canDeleteArticles ? handleDeleteArticle : undefined}
                         onResetFilters={resetFilters}
+                        showSelection={capabilities.canBulkDelete}
                       />
                     </section>
                   ) : null}
@@ -1971,7 +2109,7 @@ export function KnowledgeBaseWorkbench({
                   )}
                 </main>
 
-                {!isAiAssistantMode ? (
+                {!isAiAssistantMode && mode === 'staff' ? (
                 <aside className="xl:w-[280px] shrink-0 border-t xl:border-t-0 xl:border-l border-slate-200/80 bg-white px-4 py-6 xl:sticky xl:top-0 xl:self-start">
                   <KBActivitySidebar
                     recentActivity={recentActivity}

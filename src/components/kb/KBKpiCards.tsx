@@ -61,6 +61,11 @@ interface KBKpiCardsProps {
     views?: KpiTrend | null;
   };
   className?: string;
+  /** Portal KPIs: Veröffentlichte / Firmen / Hubcom Guides / Kürzlich */
+  variant?: 'staff' | 'portal';
+  portalOrgCount?: number;
+  portalSharedCount?: number;
+  portalRecentlyUpdatedCount?: number;
 }
 
 export function KBKpiCards({
@@ -70,8 +75,47 @@ export function KBKpiCards({
   monthlyViews,
   trends,
   className,
+  variant = 'staff',
+  portalOrgCount = 0,
+  portalSharedCount = 0,
+  portalRecentlyUpdatedCount = 0,
 }: KBKpiCardsProps) {
   const { t } = useTranslation();
+
+  if (variant === 'portal') {
+    return (
+      <div className={cn('grid grid-cols-2 lg:grid-cols-4 gap-4', className)}>
+        <KpiCard
+          icon={<BookOpen className="w-5 h-5 text-blue-600" />}
+          label={t('kb.kpi.publishedArticles', 'Veröffentlichte Artikel')}
+          value={publishedCount}
+          accent="from-blue-50/80 to-white"
+          iconBg="bg-blue-50 text-blue-600"
+        />
+        <KpiCard
+          icon={<FilePen className="w-5 h-5 text-sky-600" />}
+          label={t('kb.kpi.firmGuides', 'Firmen-Anleitungen')}
+          value={portalOrgCount}
+          accent="from-sky-50/80 to-white"
+          iconBg="bg-sky-50 text-sky-600"
+        />
+        <KpiCard
+          icon={<HeartPulse className="w-5 h-5 text-indigo-600" />}
+          label={t('kb.kpi.hubcomGuides', 'Hubcom Guides')}
+          value={portalSharedCount}
+          accent="from-indigo-50/80 to-white"
+          iconBg="bg-indigo-50 text-indigo-600"
+        />
+        <KpiCard
+          icon={<Eye className="w-5 h-5 text-emerald-600" />}
+          label={t('kb.kpi.recentlyUpdated', 'Kürzlich aktualisiert')}
+          value={portalRecentlyUpdatedCount}
+          accent="from-emerald-50/80 to-white"
+          iconBg="bg-emerald-50 text-emerald-600"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className={cn('grid grid-cols-2 lg:grid-cols-4 gap-4', className)}>
