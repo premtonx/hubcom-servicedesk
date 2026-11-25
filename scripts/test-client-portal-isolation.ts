@@ -2696,6 +2696,14 @@ function testHardwareReturnsSchemaCatalogsPart1(): void {
     unchecked.returned === false && unchecked.returned_at == null,
     'uncheck returned clears returned_at',
   );
+  const spoofedAt = normalizeHardwareReturnInput(
+    { returned: false, returned_at: '2026-01-15T12:00:00.000Z' },
+    { existing: baseHw({ returned: true, returned_at: stamped.returned_at as string }) },
+  );
+  assert(
+    spoofedAt.returned === false && spoofedAt.returned_at == null,
+    'returned=false clears returned_at even if client also sends returned_at',
+  );
 
   // Catalogs write RBAC: CLIENT_ADMIN own org OK; CLIENT_USER + disabled → 403.
   assert(
@@ -3315,9 +3323,9 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
     'settings tab Listen & Dropdowns',
   );
   assert(
-    workbenchSrc.includes('Mahnwesen & Empfänger') ||
-      workbenchSrc.includes('Mahnwesen &amp; Empfänger'),
-    'settings tab Mahnwesen & Empfänger',
+    workbenchSrc.includes('Erinnerungswesen & Empfänger') ||
+      workbenchSrc.includes('Erinnerungswesen &amp; Empfänger'),
+    'settings tab Erinnerungswesen & Empfänger',
   );
   assert(
     workbenchSrc.includes('CatalogTagList') &&
@@ -3384,18 +3392,18 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
     'device type empty default + returned toggle present',
   );
   assert(
-    editorSrc.includes('Erweiterte Mahntermine') &&
+    editorSrc.includes('Erweiterte Erinnerungstermine') &&
       editorSrc.includes('advancedOpen') &&
-      editorSrc.includes('Standard-Mahnplan aktiv'),
+      editorSrc.includes('Standard-Erinnerungsplan aktiv'),
     'mail 1/2/3 overrides collapsed by default with summary',
   );
   assert(
     (editorSrc.includes('Verlauf & E-Mail-Protokoll') ||
       editorSrc.includes('Verlauf &amp; E-Mail-Protokoll')) &&
       editorSrc.includes('activity_log') &&
-      editorSrc.includes('Mahnverlauf') &&
+      editorSrc.includes('Erinnerungsverlauf') &&
       editorSrc.includes('Mail senden'),
-    'edit mode renders Mahnverlauf + Verlauf & E-Mail-Protokoll',
+    'edit mode renders Erinnerungsverlauf + Verlauf & E-Mail-Protokoll',
   );
 
   // Full-page layout contract (cards + sticky sidebar).
@@ -4060,6 +4068,114 @@ function testKbWorkbenchSharedUiIsolation(): void {
   );
 }
 
+/** Pagination, Erinnerung labels, KPI strip, portal Übersicht returns card. */
+function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
+  console.log('\n--- Hardware returns pagination / Erinnerung / portal Übersicht ---');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const escalationSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-escalation.ts'),
+    'utf8',
+  );
+  const dashboardPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/PortalDashboardPage.tsx'),
+    'utf8',
+  );
+  const dashboardRouteSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalRoutes.ts'),
+    'utf8',
+  );
+  const dashboardSvcSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/portal-dashboard-service.ts'),
+    'utf8',
+  );
+  const normalizeSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns.ts'),
+    'utf8',
+  );
+
+  // Pagination: default 20, options 50/100/Alle, reset page on filter change.
+  assert(
+    workbenchSrc.includes('PAGE_SIZE_OPTIONS') &&
+      workbenchSrc.includes('pageSize') &&
+      workbenchSrc.includes("useState<PageSizeOption>(20)") &&
+      workbenchSrc.includes('Zeige') &&
+      workbenchSrc.includes('PaginationBar') &&
+      workbenchSrc.includes("value=\"all\">Alle</option>") &&
+      workbenchSrc.includes('offset') &&
+      workbenchSrc.includes('setPage(1)'),
+    'workbench paginates with 20 default + 50/100/Alle and resets page on filters',
+  );
+
+  // Pure slice math for 20 / 50 / 100 / Alle.
+  const totalRows = 888;
+  const slice = (size: number | 'all', page: number) => {
+    if (size === 'all') return { from: 1, to: totalRows, len: totalRows };
+    const from = (page - 1) * size + 1;
+    const to = Math.min(totalRows, page * size);
+    return { from, to, len: to - from + 1 };
+  };
+  assert(slice(20, 1).from === 1 && slice(20, 1).to === 20, 'page 1 @20 → 1–20');
+  assert(slice(20, 2).from === 21 && slice(20, 2).to === 40, 'page 2 @20 → 21–40');
+  assert(slice(50, 1).to === 50, 'page 1 @50 → 50 rows');
+  assert(slice(100, 9).from === 801 && slice(100, 9).to === 888, 'last page @100 → 801–888');
+  assert(slice('all', 1).len === 888, 'Alle shows full 888');
+
+  // KPI strip: no Nächste Mail; Erinnerung labels; 4 cards.
+  assert(
+    !workbenchSrc.includes('Nächste Mail fällig') &&
+      workbenchSrc.includes('3. Erinnerung gesendet') &&
+      workbenchSrc.includes('Erinnerungsverlauf') &&
+      workbenchSrc.includes('Erinnerungsstufe') &&
+      workbenchSrc.includes('lg:grid-cols-4') &&
+      !workbenchSrc.includes('lg:grid-cols-5'),
+    'KPI strip drops Nächste Mail; uses Erinnerung labels + 4 columns',
+  );
+
+  // returnedLast30 requires returned===true; stage3 only open+mail3.
+  assert(
+    escalationSrc.includes('!i.hardwareReturn.returned') &&
+      escalationSrc.includes('i.hardwareReturn.returned') &&
+      escalationSrc.includes('returned_at') &&
+      /returnedLast30:[\s\S]*!i\.hardwareReturn\.returned \|\| !i\.hardwareReturn\.returned_at/.test(
+        escalationSrc,
+      ),
+    'returnedLast30 requires returned=true AND returned_at within 30 days',
+  );
+  assert(
+    normalizeSrc.includes('if (!next.returned) next.returned_at = null') &&
+      normalizeSrc.includes('input.returned_at !== undefined && next.returned'),
+    'normalize forces returned_at=null when returned=false',
+  );
+
+  // Portal Übersicht returns card — DPG only, zero /api/db.
+  assert(
+    dashboardPageSrc.includes('Rücklieferungen') &&
+      dashboardPageSrc.includes('returnsKpis') &&
+      dashboardPageSrc.includes('hardwareReturnsEnabled') &&
+      dashboardPageSrc.includes('/portal/returns') &&
+      dashboardPageSrc.includes('Offene Rücklieferungen') &&
+      dashboardPageSrc.includes('3. Erinnerung gesendet') &&
+      !dashboardPageSrc.includes('/api/db'),
+    'portal Übersicht shows returns card when hardwareReturnsEnabled',
+  );
+  assert(
+    dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
+      dashboardRouteSrc.includes('hardware_returns_enabled') &&
+      dashboardRouteSrc.includes('returnsKpis') &&
+      !dashboardRouteSrc.includes('/api/db'),
+    'dashboard route loads returns KPIs via portal returns workbench (no /api/db)',
+  );
+  assert(
+    dashboardSvcSrc.includes('returnsKpis') &&
+      dashboardSvcSrc.includes('hardwareReturnsEnabled'),
+    'dashboard payload carries hardwareReturnsEnabled + returnsKpis',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -4083,6 +4199,7 @@ async function main(): Promise<void> {
   testHardwareReturnsDateSerializationAndMarkReturned();
   testHardwareReturnsWorkbenchDrawerContract();
   testHardwareReturnsSchemaCatalogsPart1();
+  testHardwareReturnsPaginationErinnerungAndDashboard();
   await testOrganizationDirectorySyncPart2();
   testSharePointReturnsCsvImportApiIsolation();
   testSharePointReturnsCsvImportUiIsolation();

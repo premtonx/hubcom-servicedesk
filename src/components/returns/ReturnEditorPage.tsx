@@ -566,7 +566,7 @@ export function ReturnEditorPage({
     ? `${formatReturnNumberDisplay(returnNumber) || 'Rücklieferung'} bearbeiten`
     : 'Neue Rücklieferung erstellen';
 
-  const mailSummary = `Standard-Mahnplan aktiv: 1. Mail nach ${mail1Days} Tagen · 2. Mail +${mail2Days} Tage · 3. Mail +${mail3Days} Tage`;
+  const mailSummary = `Standard-Erinnerungsplan aktiv: 1. Erinnerung nach ${mail1Days} Tagen · 2. Erinnerung +${mail2Days} Tage · 3. Erinnerung +${mail3Days} Tage`;
 
   if (loading) {
     return (
@@ -848,7 +848,7 @@ export function ReturnEditorPage({
                 <div>
                   <p className="text-sm font-black text-slate-900">Rücklieferung erfolgt (Erledigt)</p>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Markiert den Vorgang als zurückgeliefert und stoppt Mahnungen.
+                    Markiert den Vorgang als zurückgeliefert und stoppt Erinnerungen.
                   </p>
                   {form.returned ? (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -913,7 +913,7 @@ export function ReturnEditorPage({
                       ) : (
                         <ChevronRight className="w-4 h-4" />
                       )}
-                      Erweiterte Mahntermine &amp; Empfänger
+                      Erweiterte Erinnerungstermine &amp; Empfänger
                     </p>
                     {!advancedOpen ? (
                       <p className="text-[11px] text-slate-500 mt-1 truncate pl-6">{mailSummary}</p>
@@ -1133,7 +1133,7 @@ export function ReturnEditorPage({
                 <section className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-3">
                   <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
                     <Mail className="w-4 h-4 text-sky-600" />
-                    Mahnverlauf
+                    Erinnerungsverlauf
                   </h3>
                   <div className="space-y-2">
                     {([1, 2, 3] as const).map((stage) => {

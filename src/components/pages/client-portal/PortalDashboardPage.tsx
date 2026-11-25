@@ -17,8 +17,10 @@ import {
   Image,
   Loader2,
   Mail,
+  PackageOpen,
   Palette,
   Plus,
+  ShieldAlert,
   Ticket as TicketIcon,
   Users,
   Zap,
@@ -295,6 +297,38 @@ function PortalDashboardShell({
           </CardShell>
 
           <div className="space-y-4">
+            {isOrgWide &&
+            data.organization.hardwareReturnsEnabled &&
+            data.returnsKpis ? (
+              <CardShell>
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
+                  <PackageOpen className="w-4 h-4 text-sky-600" /> Rücklieferungen
+                </h3>
+                <dl className="space-y-2 text-sm">
+                  <SummaryRow
+                    label="Offene Rücklieferungen"
+                    value={data.returnsKpis.open}
+                  />
+                  <SummaryRow label="Überfällig" value={data.returnsKpis.overdue} />
+                  <SummaryRow
+                    label="3. Erinnerung gesendet"
+                    value={data.returnsKpis.stage3}
+                  />
+                  <SummaryRow
+                    label="Zurückgeliefert (30 Tage)"
+                    value={data.returnsKpis.returnedLast30}
+                  />
+                </dl>
+                <Button
+                  variant="outline"
+                  className="w-full mt-4 rounded-xl font-bold gap-2"
+                  onClick={() => navigate('/portal/returns')}
+                >
+                  <ShieldAlert className="w-4 h-4" />
+                  Zu Rücklieferungen
+                </Button>
+              </CardShell>
+            ) : null}
             {isAdmin ? (
               <>
                 <CardShell>

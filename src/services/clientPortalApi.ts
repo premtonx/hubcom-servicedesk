@@ -67,6 +67,13 @@ function assertNeverDb(path: string): void {
   }
 }
 
+export interface PortalDashboardReturnsKpis {
+  open: number;
+  overdue: number;
+  stage3: number;
+  returnedLast30: number;
+}
+
 export interface PortalDashboardResponse {
   role: string;
   organization: {
@@ -75,6 +82,7 @@ export interface PortalDashboardResponse {
     logoUrl: string | null;
     portalBannerUrl?: string | null;
     portalTitle: string;
+    hardwareReturnsEnabled?: boolean;
   };
   user: { id: string; name: string };
   kpis: Record<string, number | string>;
@@ -99,6 +107,7 @@ export interface PortalDashboardResponse {
     status: string | null;
     sendAsEnabled: boolean;
   } | null;
+  returnsKpis?: PortalDashboardReturnsKpis | null;
 }
 
 export const clientPortalApi = {

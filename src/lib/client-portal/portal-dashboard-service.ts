@@ -45,6 +45,13 @@ export interface PortalDashboardActivityPoint {
   resolved: number;
 }
 
+export interface PortalDashboardReturnsKpis {
+  open: number;
+  overdue: number;
+  stage3: number;
+  returnedLast30: number;
+}
+
 export interface PortalDashboardPayload {
   role: ClientPortalRole;
   organization: {
@@ -53,6 +60,7 @@ export interface PortalDashboardPayload {
     logoUrl: string | null;
     portalBannerUrl: string | null;
     portalTitle: string;
+    hardwareReturnsEnabled?: boolean;
   };
   user: {
     id: string;
@@ -65,6 +73,8 @@ export interface PortalDashboardPayload {
   activity?: PortalDashboardActivityPoint[];
   team?: PortalDashboardTeamSummary | null;
   email?: PortalDashboardEmailStatus | null;
+  /** Present when org has hardware_returns_enabled and caller is org-wide. */
+  returnsKpis?: PortalDashboardReturnsKpis | null;
 }
 
 function parseTs(value: unknown): number {
@@ -166,12 +176,14 @@ export function buildPortalDashboardPayload(params: {
     logoUrl?: string | null;
     portalBannerUrl?: string | null;
     portalTitle?: string | null;
+    hardwareReturnsEnabled?: boolean;
   };
   tickets: Array<Record<string, unknown>>;
   /** For CLIENT_USER: ticket ids where the user is a participant. */
   participantTicketIds?: string[];
   teamSummary?: PortalDashboardTeamSummary | null;
   emailStatus?: PortalDashboardEmailStatus | null;
+  returnsKpis?: PortalDashboardReturnsKpis | null;
 }): PortalDashboardPayload {
   if (!isClientPortalRole(params.role)) {
     throw Object.assign(new Error('Not a client portal role'), { status: 403 });
@@ -241,7 +253,14 @@ export function buildPortalDashboardPayload(params: {
     portalTitle:
       params.organization.portalTitle ||
       `${params.organization.name} ServiceDesk`,
+    hardwareReturnsEnabled: Boolean(params.organization.hardwareReturnsEnabled),
   };
+  const returnsBlock =
+    baseOrg.hardwareReturnsEnabled &&
+    (role === 'CLIENT_ADMIN' || role === 'CLIENT_SUPPORTER') &&
+    params.returnsKpis
+      ? { returnsKpis: params.returnsKpis }
+      : { returnsKpis: null };
 
   if (role === 'CLIENT_USER') {
     const myOpen = sortedOpen
@@ -280,6 +299,7 @@ export function buildPortalDashboardPayload(params: {
       activity: buildActivity(sanitized, 30),
       team: null,
       email: null,
+      ...returnsBlock,
     };
   }
 
@@ -302,6 +322,7 @@ export function buildPortalDashboardPayload(params: {
       activity: buildActivity(sanitized, 30),
       team: null,
       email: null,
+      ...returnsBlock,
     };
   }
 
@@ -334,6 +355,7 @@ export function buildPortalDashboardPayload(params: {
       status: null,
       sendAsEnabled: false,
     },
+    ...returnsBlock,
   };
 }
 

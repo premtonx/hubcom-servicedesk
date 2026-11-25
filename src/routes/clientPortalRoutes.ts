@@ -411,6 +411,34 @@ router.get(
         };
       }
 
+      let returnsKpis = null;
+      const hardwareReturnsEnabled = Boolean(org.hardware_returns_enabled);
+      if (
+        hardwareReturnsEnabled &&
+        (role === 'CLIENT_ADMIN' || role === 'CLIENT_SUPPORTER')
+      ) {
+        try {
+          const { listHardwareReturnsWorkbench } = await import(
+            '../lib/client-portal/hardware-returns-escalation.js'
+          );
+          const listed = await listHardwareReturnsWorkbench({
+            organizationId,
+            view: 'all',
+            limit: 1,
+            offset: 0,
+          });
+          returnsKpis = {
+            open: listed.kpis.open,
+            overdue: listed.kpis.overdue,
+            stage3: listed.kpis.stage3,
+            returnedLast30: listed.kpis.returnedLast30,
+          };
+        } catch (err: any) {
+          safeLog('warn', '[portal] dashboard returns KPIs skipped', err?.message || err);
+          returnsKpis = null;
+        }
+      }
+
       const payload = buildPortalDashboardPayload({
         role,
         userId,
@@ -422,11 +450,13 @@ router.get(
           logoUrl: org.logo_url,
           portalBannerUrl: org.portal_banner_url,
           portalTitle: resolvePortalTitle(org.name, org.portal_title),
+          hardwareReturnsEnabled,
         },
         tickets: orgTickets,
         participantTicketIds,
         teamSummary,
         emailStatus,
+        returnsKpis,
       });
 
       return res.json(payload);

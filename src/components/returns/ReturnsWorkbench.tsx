@@ -9,7 +9,6 @@ import {
   Download,
   Loader2,
   Mail,
-  MailWarning,
   Package,
   PackageOpen,
   PanelRight,
@@ -62,10 +61,12 @@ type ListItem = {
 const VIEWS = [
   { id: 'open', label: 'Offene Rücklieferungen' },
   { id: 'overdue', label: 'Fällige / Überfällige' },
-  { id: 'next_mail', label: 'Nächste Mail fällig' },
   { id: 'done', label: 'Erledigt' },
   { id: 'all', label: 'Alle' },
 ] as const;
+
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 'all'] as const;
+type PageSizeOption = (typeof PAGE_SIZE_OPTIONS)[number];
 
 const ROLE_LABELS: Record<string, string> = {
   employee: 'Mitarbeiter',
@@ -387,6 +388,9 @@ export function ReturnsWorkbench({
   const [statusFilter, setStatusFilter] = useState('all');
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [sort, setSort] = useState('due_asc');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSizeOption>(20);
+  const [total, setTotal] = useState(0);
   const [items, setItems] = useState<ListItem[]>([]);
   const [kpis, setKpis] = useState({
     open: 0,
@@ -436,6 +440,9 @@ export function ReturnsWorkbench({
     );
   };
 
+  const effectiveLimit = pageSize === 'all' ? 2000 : pageSize;
+  const effectiveOffset = pageSize === 'all' ? 0 : (page - 1) * pageSize;
+
   const load = useCallback(async () => {
     if (!organizationId) return;
     setLoading(true);
@@ -447,7 +454,8 @@ export function ReturnsWorkbench({
         overdueBucket,
         exportStatus,
         sort,
-        limit: '200',
+        limit: String(effectiveLimit),
+        offset: String(effectiveOffset),
       });
       if (shippingMethod !== 'all') params.set('shippingMethod', shippingMethod);
       if (statusFilter !== 'all') params.set('status', statusFilter);
@@ -455,12 +463,14 @@ export function ReturnsWorkbench({
       if (mode === 'staff') params.set('organizationId', organizationId);
       const res = await axios.get(`${base}?${params.toString()}`, { withCredentials: true });
       setItems(res.data?.items || []);
+      setTotal(Number(res.data?.total || 0));
       setKpis(res.data?.kpis || kpis);
       setAutoSendEnabled(Boolean(res.data?.autoSendEnabled));
       setSettings(res.data?.settings || null);
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Laden fehlgeschlagen');
       setItems([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
@@ -475,6 +485,8 @@ export function ReturnsWorkbench({
     statusFilter,
     assigneeFilter,
     sort,
+    effectiveLimit,
+    effectiveOffset,
     base,
     mode,
   ]);
@@ -482,6 +494,22 @@ export function ReturnsWorkbench({
   useEffect(() => {
     void load();
   }, [load]);
+
+  /** Reset to page 1 whenever search, filters, view tabs, or page size change. */
+  useEffect(() => {
+    setPage(1);
+  }, [
+    view,
+    q,
+    mailStatus,
+    overdueBucket,
+    exportStatus,
+    shippingMethod,
+    statusFilter,
+    assigneeFilter,
+    sort,
+    pageSize,
+  ]);
 
   const openSend = async (returnId: string, stage: 1 | 2 | 3) => {
     try {
@@ -620,17 +648,8 @@ export function ReturnsWorkbench({
         onClick: () => setView('overdue'),
       },
       {
-        key: 'next',
-        label: 'Nächste Mail fällig',
-        value: kpis.nextMailDue,
-        accent: 'border-t-amber-500',
-        Icon: MailWarning,
-        iconWrap: 'bg-amber-50 text-amber-800 border-amber-100',
-        onClick: () => setView('next_mail'),
-      },
-      {
         key: 's3',
-        label: 'Stufe 3 eskaliert',
+        label: '3. Erinnerung gesendet',
         value: kpis.stage3,
         accent: 'border-t-violet-500',
         Icon: ShieldAlert,
@@ -653,6 +672,66 @@ export function ReturnsWorkbench({
     [kpis],
   );
 
+  const pageCount =
+    pageSize === 'all' ? 1 : Math.max(1, Math.ceil(total / (pageSize as number)));
+  const rangeFrom = total === 0 ? 0 : pageSize === 'all' ? 1 : (page - 1) * (pageSize as number) + 1;
+  const rangeTo =
+    total === 0 ? 0 : pageSize === 'all' ? total : Math.min(total, page * (pageSize as number));
+
+  const PaginationBar = ({ className }: { className?: string }) => (
+    <div
+      className={cn(
+        'flex flex-wrap items-center justify-between gap-3 px-3 py-2.5 text-sm',
+        className,
+      )}
+    >
+      <p className="text-xs font-medium text-slate-600">
+        Zeige {rangeFrom}–{rangeTo} von {total}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-slate-500">
+          <span className="font-semibold">Pro Seite</span>
+          <select
+            className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold"
+            value={pageSize === 'all' ? 'all' : String(pageSize)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setPageSize(v === 'all' ? 'all' : (Number(v) as 20 | 50 | 100));
+            }}
+          >
+            <option value="20">20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="all">Alle</option>
+          </select>
+        </label>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8"
+          disabled={page <= 1 || pageSize === 'all'}
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+        >
+          Zurück
+        </Button>
+        <span className="text-xs text-slate-500 tabular-nums">
+          Seite {pageSize === 'all' ? 1 : page}/{pageCount}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8"
+          disabled={page >= pageCount || pageSize === 'all'}
+          onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+        >
+          Weiter
+        </Button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="w-full space-y-5">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -665,7 +744,7 @@ export function ReturnsWorkbench({
               Rücklieferungen
             </h2>
             <p className="text-sm text-slate-500 mt-0.5">
-              Hardware-Rückgaben, Mahnstufen und Empfängersteuerung
+              Hardware-Rückgaben, Erinnerungsstufen und Empfängersteuerung
             </p>
           </div>
         </div>
@@ -713,7 +792,7 @@ export function ReturnsWorkbench({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {kpiCards.map((c) => {
           const Icon = c.Icon;
           return (
@@ -778,11 +857,11 @@ export function ReturnsWorkbench({
           value={mailStatus}
           onChange={(e) => setMailStatus(e.target.value)}
         >
-          <option value="all">Mahnstufe: Alle</option>
-          <option value="none">Keine Mail gesendet</option>
-          <option value="mail1">1. Mail versendet</option>
-          <option value="mail2">2. Mail versendet</option>
-          <option value="mail3">3. Mail versendet</option>
+          <option value="all">Erinnerungsstufe: Alle</option>
+          <option value="none">Keine Erinnerung gesendet</option>
+          <option value="mail1">1. Erinnerung versendet</option>
+          <option value="mail2">2. Erinnerung versendet</option>
+          <option value="mail3">3. Erinnerung versendet</option>
           <option value="missing_recipients">Empfänger fehlt</option>
         </select>
         <select
@@ -854,6 +933,9 @@ export function ReturnsWorkbench({
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+        {!loading && total > 0 ? (
+          <PaginationBar className="border-b border-slate-100 bg-slate-50/60" />
+        ) : null}
         {loading ? (
           <div className="p-10 flex items-center justify-center text-slate-500 gap-2">
             <Loader2 className="w-5 h-5 animate-spin" /> Laden…
@@ -882,7 +964,7 @@ export function ReturnsWorkbench({
                   <th className="p-3">Gerätetyp / Seriennummern</th>
                   <th className="p-3">Status &amp; Rückgabe</th>
                   <th className="p-3">Lieferung &amp; Fälligkeit</th>
-                  <th className="p-3">Mahnverlauf</th>
+                  <th className="p-3">Erinnerungsverlauf</th>
                   <th className="p-3">Aktionen</th>
                 </tr>
               </thead>
@@ -1026,10 +1108,10 @@ export function ReturnsWorkbench({
                                   variant="outline"
                                   className="h-8 border-amber-200 text-amber-800 hover:bg-amber-50"
                                   onClick={() => void openSend(id, it.nextDueStage!)}
-                                  title={`${it.nextDueStage}. Mail senden`}
+                                  title={`${it.nextDueStage}. Erinnerung senden`}
                                 >
                                   <Mail className="w-3.5 h-3.5 mr-1" />
-                                  {it.nextDueStage}. Mail
+                                  {it.nextDueStage}. Erinnerung
                                 </Button>
                               ) : null}
                               <Button
@@ -1069,6 +1151,9 @@ export function ReturnsWorkbench({
             </table>
           </div>
         )}
+        {!loading && total > 0 ? (
+          <PaginationBar className="border-t border-slate-100 bg-slate-50/60" />
+        ) : null}
       </div>
 
       {selected.size > 0 ? (
@@ -1093,7 +1178,7 @@ export function ReturnsWorkbench({
           <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl border border-slate-200 overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b">
               <h3 className="font-black flex items-center gap-2">
-                <Mail className="w-4 h-4" /> E-Mail senden — {sendModal.stage}. Mail
+                <Mail className="w-4 h-4" /> E-Mail senden — {sendModal.stage}. Erinnerung
               </h3>
               <button type="button" onClick={() => setSendModal(null)}>
                 <X className="w-5 h-5 text-slate-400" />
@@ -1471,7 +1556,7 @@ function SettingsDrawer(props: {
 
   const tabs: Array<{ id: SettingsTab; label: string }> = [
     { id: 'catalogs', label: 'Listen & Dropdowns' },
-    { id: 'reminders', label: 'Mahnwesen & Empfänger' },
+    { id: 'reminders', label: 'Erinnerungswesen & Empfänger' },
     { id: 'm365', label: 'M365 Mitarbeiter-Sync' },
   ];
 

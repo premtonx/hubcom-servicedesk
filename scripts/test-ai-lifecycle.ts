@@ -649,6 +649,14 @@ function testHardwareReturnsSchemaCatalogsLifecycle(): void {
     { existing: { ...(created as any), returned: true, returned_at: stamped.returned_at } },
   );
   assert(cleared.returned_at == null, 'returned=false clears returned_at');
+  const clearedWithSpoof = normalizeHardwareReturnInput(
+    { returned: false, returned_at: '2026-01-01T00:00:00.000Z' },
+    { existing: { ...(created as any), returned: true, returned_at: stamped.returned_at } },
+  );
+  assert(
+    clearedWithSpoof.returned === false && clearedWithSpoof.returned_at == null,
+    'returned=false wins over spoofed returned_at → back in Offene, out of 30-Tage',
+  );
 
   assert(
     evaluateHardwareCatalogsWriteAccess({
@@ -1115,6 +1123,60 @@ function testSharePointReturnsCsvImportApiLifecycle(): void {
   );
 }
 
+function testReturnsPaginationErinnerungDashboardLifecycle(): void {
+  console.log('\n[19c] Returns pagination / Erinnerung KPIs / portal Übersicht');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const escalationSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-escalation.ts'),
+    'utf8',
+  );
+  const dashboardPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/PortalDashboardPage.tsx'),
+    'utf8',
+  );
+  const dashboardRouteSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalRoutes.ts'),
+    'utf8',
+  );
+
+  const total = 888;
+  const pageSlice = (size: number | 'all', page: number) => {
+    if (size === 'all') return total;
+    return Math.min(size, Math.max(0, total - (page - 1) * size));
+  };
+  assert(pageSlice(20, 1) === 20, 'pagination default 20');
+  assert(pageSlice(50, 1) === 50, 'pagination 50');
+  assert(pageSlice(100, 9) === 88, 'pagination 100 last page');
+  assert(pageSlice('all', 1) === 888, 'pagination Alle');
+
+  assert(
+    workbenchSrc.includes('PAGE_SIZE_OPTIONS') &&
+      workbenchSrc.includes('Erinnerungsverlauf') &&
+      !workbenchSrc.includes('Nächste Mail fällig') &&
+      workbenchSrc.includes('3. Erinnerung gesendet'),
+    'workbench pagination + Erinnerung KPI strip',
+  );
+  assert(
+    escalationSrc.includes('Math.min(2000') &&
+      /returnedLast30:[\s\S]{0,200}!i\.hardwareReturn\.returned \|\| !i\.hardwareReturn\.returned_at/.test(
+        escalationSrc,
+      ),
+    'KPI returnedLast30 ignores returned=false; Alle limit ≤2000',
+  );
+  assert(
+    dashboardPageSrc.includes('returnsKpis') &&
+      dashboardPageSrc.includes('hardwareReturnsEnabled') &&
+      dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
+      !dashboardPageSrc.includes('/api/db') &&
+      !dashboardRouteSrc.includes("'/api/db"),
+    'portal Übersicht returns stats for enabled orgs via /api/portal only',
+  );
+}
+
 function testSharePointReturnsCsvImportUiLifecycle(): void {
   console.log('\n[22] SharePoint Returns CSV import UI (Part 3) — modal preview/commit');
 
@@ -1274,6 +1336,7 @@ async function main(): Promise<void> {
   testPortalUserDeleteLifecycle();
   testPortalKbCategoryLifecycle();
   testPortalKbArticleEditLifecycle();
+  testReturnsPaginationErinnerungDashboardLifecycle();
   testPortalKbSharePointCsvImportLifecycle();
   testSharePointReturnsCsvImportApiLifecycle();
   testSharePointReturnsCsvImportUiLifecycle();

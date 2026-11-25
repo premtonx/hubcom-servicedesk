@@ -873,15 +873,17 @@ export function normalizeHardwareReturnInput(
     if (next.returned && input.returned_at === undefined && !next.returned_at) {
       next.returned_at = new Date().toISOString();
     }
+    // Not-returned must never keep a stale returned_at (even if client also sends one).
     if (!next.returned) next.returned_at = null;
   }
-  if (input.returned_at !== undefined) {
+  if (input.returned_at !== undefined && next.returned) {
     const raw = input.returned_at ? new Date(String(input.returned_at)) : null;
     if (raw && Number.isNaN(raw.getTime())) {
       throw Object.assign(new Error('Ungültiger returned_at Zeitstempel.'), { status: 400 });
     }
     next.returned_at = raw ? raw.toISOString() : null;
   }
+  if (!next.returned) next.returned_at = null;
 
   return next;
 }

@@ -594,18 +594,28 @@ export async function listHardwareReturnsWorkbench(
 
   const total = filtered.length;
   const offset = Math.max(0, filters.offset || 0);
-  const limit = Math.min(500, Math.max(1, filters.limit || 100));
+  // Allow up to 2000 so "Alle" can page the full in-memory set.
+  const limit = Math.min(2000, Math.max(1, filters.limit || 100));
   const page = filtered.slice(offset, offset + limit);
 
-  const openItems = items.filter((i) => !i.hardwareReturn.returned && i.hardwareReturn.return_required);
+  const openItems = items.filter(
+    (i) => !i.hardwareReturn.returned && i.hardwareReturn.return_required,
+  );
   const kpis: HardwareReturnsKpis = {
     open: openItems.length,
     overdue: openItems.filter((i) => i.overdueDays > 0).length,
     nextMailDue: openItems.filter((i) => i.nextDueStage != null).length,
-    stage3: openItems.filter((i) => i.hardwareReturn.mail3_sent_at).length,
+    stage3: openItems.filter(
+      (i) =>
+        !i.hardwareReturn.returned &&
+        i.hardwareReturn.return_required &&
+        Boolean(i.hardwareReturn.mail3_sent_at),
+    ).length,
+    // Only count rows that are still marked returned with a recent returned_at.
     returnedLast30: items.filter((i) => {
-      if (!i.hardwareReturn.returned_at) return false;
+      if (!i.hardwareReturn.returned || !i.hardwareReturn.returned_at) return false;
       const t = new Date(i.hardwareReturn.returned_at).getTime();
+      if (Number.isNaN(t)) return false;
       return t >= now.getTime() - 30 * 24 * 60 * 60 * 1000;
     }).length,
   };

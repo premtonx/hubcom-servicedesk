@@ -237,11 +237,13 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
       const existing = await resolveHardwareReturnByParam(idOrTicketId, ctx.organizationId);
       if (!existing) return res.status(404).json({ error: 'Rücklieferung nicht gefunden.' });
 
+      const hwPatch = parsed.data.hardwareReturn as Record<string, unknown>;
+      const wasReturned = Boolean(existing.returned);
       const hardwareReturn = await updateHardwareReturnById({
         id: existing.id,
         organizationId: ctx.organizationId,
         input: {
-          ...(parsed.data.hardwareReturn as any),
+          ...(hwPatch as any),
           ...(parsed.data.subject !== undefined ? { subject: parsed.data.subject } : {}),
           ...(parsed.data.description !== undefined
             ? { description: parsed.data.description }
@@ -260,11 +262,21 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         },
         mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
       });
+      const nowReturned = Boolean(hardwareReturn.returned);
+      let activityType: 'updated' | 'returned' | 'unreturned' = 'updated';
+      let activityMessage = 'Rücklieferung aktualisiert';
+      if (!wasReturned && nowReturned) {
+        activityType = 'returned';
+        activityMessage = 'Als zurückgeliefert markiert';
+      } else if (wasReturned && !nowReturned) {
+        activityType = 'unreturned';
+        activityMessage = 'Zurücklieferung zurückgesetzt (nicht zurückgeliefert)';
+      }
       await appendHardwareReturnActivity(existing.id, {
         at: new Date().toISOString(),
-        type: 'updated',
+        type: activityType,
         actor: req.user?.name || req.user?.email || null,
-        message: 'Rücklieferung aktualisiert',
+        message: activityMessage,
       });
       return res.json({
         success: true,
