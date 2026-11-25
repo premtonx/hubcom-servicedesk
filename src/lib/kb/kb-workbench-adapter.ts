@@ -15,6 +15,8 @@ export type KbWorkbenchMode = 'staff' | 'portal';
 export type KbWorkbenchCapabilities = {
   /** "Dokumente importieren" / Import Docs header action + importer dialog */
   importDocs: boolean;
+  /** CSV / SharePoint import (staff always; portal writers only) */
+  importCsv: boolean;
   /** "KI generieren" header action */
   aiGenerate: boolean;
   /** Artikel / Dokumente / Datenquellen segmented control */
@@ -59,6 +61,7 @@ export type KbWorkbenchCapabilities = {
 
 export const STAFF_KB_CAPABILITIES: KbWorkbenchCapabilities = {
   importDocs: true,
+  importCsv: true,
   aiGenerate: true,
   documentsTab: true,
   externalSourcesTab: true,
@@ -81,6 +84,7 @@ export const STAFF_KB_CAPABILITIES: KbWorkbenchCapabilities = {
 /** Base portal chrome — staff-only features off. Write flags set per role. */
 export const PORTAL_KB_CAPABILITIES: KbWorkbenchCapabilities = {
   importDocs: false,
+  importCsv: false,
   aiGenerate: false,
   documentsTab: false,
   externalSourcesTab: false,
@@ -105,6 +109,7 @@ export const PORTAL_KB_CAPABILITIES: KbWorkbenchCapabilities = {
 export const PORTAL_KB_WRITER_CAPABILITIES: KbWorkbenchCapabilities = {
   ...PORTAL_KB_CAPABILITIES,
   categoryAdmin: true,
+  importCsv: true,
   canCreateArticles: true,
   canEditArticles: true,
   canDeleteArticles: true,
@@ -176,6 +181,33 @@ export interface KbWorkbenchAdapter {
   setIndexInRag(articleId: string, indexInRag: boolean): Promise<void>;
 
   listPortalOrganizations(): Promise<Array<{ id: string; name: string }>>;
+
+  /**
+   * CSV / SharePoint import. Staff → /api/kb/import-csv; portal → /api/portal/kb/import-csv.
+   * Portal adapters ignore organizationId/visibility spoof (server locks session org).
+   */
+  importCsvArticles?(payload: {
+    organizationId?: string;
+    visibility?: 'organization' | 'public' | 'internal' | 'shared_portal';
+    category?: string;
+    publishImmediately?: boolean;
+    csv?: string;
+    articles?: Array<{
+      title: string;
+      content: string;
+      sharePointId?: string;
+      matchcode?: string;
+      hasAttachments?: boolean;
+      category?: string;
+    }>;
+    dryRun?: boolean;
+  }): Promise<{
+    imported: number;
+    skipped: number;
+    errors: string[];
+    attachmentSharePointIds: string[];
+    summary: string;
+  }>;
 
   /** Staff coverage map (optional for portal). */
   fetchCoverage?(forceRecalc?: boolean): Promise<unknown>;

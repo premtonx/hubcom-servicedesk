@@ -126,6 +126,19 @@ export function useStaffKbAdapter(): KbWorkbenchAdapter {
         }
       },
 
+      async importCsvArticles(payload) {
+        const res = await axios.post('/api/kb/import-csv', payload, { withCredentials: true });
+        return {
+          imported: Number(res.data?.imported || 0),
+          skipped: Number(res.data?.skipped || 0),
+          errors: Array.isArray(res.data?.errors) ? res.data.errors.map(String) : [],
+          attachmentSharePointIds: Array.isArray(res.data?.attachmentSharePointIds)
+            ? res.data.attachmentSharePointIds.map(String)
+            : [],
+          summary: String(res.data?.summary || ''),
+        };
+      },
+
       async fetchCoverage(forceRecalc = false) {
         const url = forceRecalc ? '/api/coverage/recalculate' : '/api/coverage';
         const method = forceRecalc ? 'POST' : 'GET';

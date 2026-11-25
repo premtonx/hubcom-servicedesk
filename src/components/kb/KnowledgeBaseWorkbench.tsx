@@ -134,8 +134,8 @@ import {
 } from '../../lib/kb-dashboard-metrics';
 import { KBCategoryDeleteModal, type CategoryDeleteStrategy } from './KBCategoryDeleteModal';
 import { useWorkspace } from '../../lib/context/WorkspaceContext';
-import { KBImporter } from '../KBImporter';
 import { KBAutopilotDashboard } from '../KBAutopilotDashboard';
+import { KBSharePointCsvImportModal } from './KBSharePointCsvImportModal';
 import { KBArticle } from '../../types';
 import { KnowledgeBaseArticlePage } from '../pages/KnowledgeBaseArticlePage';
 import { buildKbArticleDeepLink } from './kb-content-format';
@@ -271,7 +271,7 @@ export function KnowledgeBaseWorkbench({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortBy, setSortBy] = useState<'date' | 'views' | 'confidence' | 'popular'>('popular');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [isCsvImportOpen, setIsCsvImportOpen] = useState(false);
   
   // Custom interactive layout filters
   const [filterOwner, setFilterOwner] = useState<string>('All');
@@ -1823,7 +1823,8 @@ export function KnowledgeBaseWorkbench({
               <div className="flex flex-col xl:flex-row gap-0 min-h-full">
                 <main className="flex-1 min-w-0 px-4 sm:px-6 py-6 space-y-6 pb-10">
                   <KBPageHeader
-                    onImportDocs={() => setIsImportOpen(true)}
+                    onImportDocs={() => setIsCsvImportOpen(true)}
+                    onImportCsv={() => setIsCsvImportOpen(true)}
                     onAiGenerate={() => handleKbNavigate({ type: 'workspace', id: 'ai' })}
                     onNewArticle={() => openCreateArticle()}
                     onNewCategory={
@@ -1832,6 +1833,7 @@ export function KnowledgeBaseWorkbench({
                         : undefined
                     }
                     showImportDocs={capabilities.importDocs}
+                    showImportCsv={capabilities.importCsv && !capabilities.importDocs}
                     showAiGenerate={capabilities.aiGenerate}
                     showNewMenu={capabilities.canCreateArticles}
                     showNewCategory={capabilities.categoryAdmin}
@@ -1936,10 +1938,12 @@ export function KnowledgeBaseWorkbench({
                     <KBEmptyWorkspace
                       onCreateArticle={() => openCreateArticle()}
                       onImportDocs={
-                        capabilities.importDocs ? () => setIsImportOpen(true) : () => openCreateArticle()
+                        capabilities.importDocs || capabilities.importCsv
+                          ? () => setIsCsvImportOpen(true)
+                          : () => openCreateArticle()
                       }
                       showCreate={capabilities.canCreateArticles}
-                      showImport={capabilities.importDocs}
+                      showImport={capabilities.importDocs || capabilities.importCsv}
                     />
                   ) : (
                     <>
@@ -2172,16 +2176,19 @@ export function KnowledgeBaseWorkbench({
         )}
 
 
-      {capabilities.importDocs ? (
-      <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl">
-          <DialogHeader>
-            <DialogTitle>{t('kb.actions.importDocs', 'Import Docs')}</DialogTitle>
-            <DialogDescription>{t('kb.importDesc', 'Import documentation from URLs or files with AI-assisted parsing.')}</DialogDescription>
-          </DialogHeader>
-          <KBImporter categories={categories} />
-        </DialogContent>
-      </Dialog>
+      {capabilities.importDocs || capabilities.importCsv ? (
+        <KBSharePointCsvImportModal
+          open={isCsvImportOpen}
+          onOpenChange={setIsCsvImportOpen}
+          mode={mode}
+          adapter={adapter}
+          categories={categories}
+          organizations={portalOrganizations}
+          existingTitles={articles.map((a) => String(a.title || ''))}
+          onImported={() => {
+            /* Adapter refresh (portal) / firestore subscribe (staff) updates the list. */
+          }}
+        />
       ) : null}
 
       {capabilities.categoryAdmin ? (

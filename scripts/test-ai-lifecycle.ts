@@ -62,6 +62,17 @@ import {
   evaluatePortalKbCategoryWriteAccess,
   portalCategoryId,
 } from '../src/lib/kb/kb-categories.js';
+import {
+  assertPortalKbWriteRole,
+  isKbArticleVisibleToPortal,
+} from '../src/lib/client-portal/kb-visibility.js';
+import {
+  buildSharePointPreviewArticles,
+  buildSmartTitle,
+  countMatchcodeOccurrences,
+  parseSharePointCsvRows,
+} from '../src/lib/kb/sharepoint-csv-import.js';
+import { planKbCsvImportArticles } from '../src/lib/kb/kb-csv-import-service.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -893,6 +904,80 @@ function testPortalKbCategoryLifecycle(): void {
   );
 }
 
+function testPortalKbSharePointCsvImportLifecycle(): void {
+  console.log('\n[20] Portal KB SharePoint CSV import lifecycle');
+
+  const ORG_A = 'org-a-aaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const ORG_B = 'org-b-bbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+  const sampleCsv =
+    '\uFEFFID;Matchcode;Problem;GenaueProblembeschreibung;Loesungsweg;Webseite;Anlagen\n' +
+    '10;DPG PrüfApp PRO;"Login Fehler:\nDetails";Genau;"=> Fix";example.dpg.de/path;1\n' +
+    '11;DPG PrüfApp PRO;"Absturz beim Start";"Genau 2";"=> Restart";;0\n' +
+    '21;;"Ohne Matchcode Titel";"x";"y";;0\n';
+
+  const rows = parseSharePointCsvRows(sampleCsv);
+  const counts = countMatchcodeOccurrences(rows);
+  assert((counts.get('DPG PrüfApp PRO') || 0) === 2, 'duplicate Matchcode counted');
+  assert(
+    buildSmartTitle(rows[0], counts) !== buildSmartTitle(rows[1], counts),
+    'two PrüfApp rows keep distinct titles',
+  );
+
+  const previews = buildSharePointPreviewArticles(sampleCsv);
+  const planned = planKbCsvImportArticles(
+    previews.map((p) => ({
+      title: p.title,
+      content: p.content,
+      sharePointId: p.sharePointId,
+      hasAttachments: p.hasAttachments,
+    })),
+    [],
+  );
+  assert(planned.toImport.length >= 3, 'CSV plans multiple articles');
+
+  const reimport = planKbCsvImportArticles(
+    planned.toImport,
+    planned.toImport.map((a) => a.title),
+  );
+  assert(
+    reimport.toImport.length === 0 && reimport.skipped.length === planned.toImport.length,
+    're-import skips duplicates cleanly',
+  );
+
+  const dpgDoc = {
+    title: planned.toImport[0].title,
+    content: planned.toImport[0].content,
+    visibility: 'organization',
+    organizationId: ORG_B,
+  };
+  assert(isKbArticleVisibleToPortal(dpgDoc, ORG_B) === true, 'DPG sees own import');
+  assert(isKbArticleVisibleToPortal(dpgDoc, ORG_A) === false, 'Citadelle cannot see DPG import');
+
+  assert(assertPortalKbWriteRole('CLIENT_USER') === false, 'CLIENT_USER → 403 on import');
+  assert(assertPortalKbWriteRole('CLIENT_ADMIN') === true, 'CLIENT_ADMIN may import');
+
+  const portalKbSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalKbRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    portalKbSrc.includes('/import-csv') &&
+      portalKbSrc.includes("visibility: 'organization'") &&
+      portalKbSrc.includes('sessionOrg(req)'),
+    'portal import-csv ignores spoofed organizationId (session lock)',
+  );
+
+  const adapterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/kb/kb-workbench-adapter.ts'),
+    'utf8',
+  );
+  assert(
+    /PORTAL_KB_WRITER_CAPABILITIES[\s\S]*importCsv:\s*true/.test(adapterSrc),
+    'portal writers expose CSV import capability',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('AI Request Lifecycle — dry-run test suite');
   console.log('='.repeat(50));
@@ -918,6 +1003,7 @@ async function main(): Promise<void> {
   await testOrganizationDirectorySyncLifecycle();
   testPortalUserDeleteLifecycle();
   testPortalKbCategoryLifecycle();
+  testPortalKbSharePointCsvImportLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);

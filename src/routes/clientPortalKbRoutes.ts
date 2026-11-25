@@ -2,6 +2,7 @@
  * Kunden-Portal Knowledge Base API — strict multi-tenant isolation.
  *
  * GET  /api/portal/kb          — list visible articles
+ * POST /api/portal/kb/import-csv — CLIENT_ADMIN|SUPPORTER SharePoint CSV import (own org)
  * GET  /api/portal/kb/:id      — read one (404 if internal/other-org)
  * POST /api/portal/kb          — CLIENT_ADMIN|SUPPORTER create (forced org visibility)
  * PATCH /api/portal/kb/:id     — CLIENT_ADMIN|SUPPORTER update own-org articles
@@ -9,6 +10,7 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import { z } from 'zod';
 import {
   addDocDirect,
   deleteDocDirect,
@@ -31,6 +33,10 @@ import {
   sanitizeKbArticleForPortal,
   type PortalKbScopeFilter,
 } from '../lib/client-portal/kb-visibility.js';
+import {
+  formatKbCsvImportSummary,
+  importKbCsvArticles,
+} from '../lib/kb/kb-csv-import-service.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 
@@ -44,6 +50,77 @@ router.use(authenticate, attachClientOrganizationContext);
 function sessionOrg(req: Request): string | null {
   return resolveOrganizationIdFromUser(req.user!);
 }
+
+const portalCsvImportSchema = z
+  .object({
+    // Spoof fields ignored server-side — session org + organization visibility win.
+    organizationId: z.string().max(120).optional(),
+    visibility: z.string().max(40).optional(),
+    category: z.string().max(200).optional(),
+    publishImmediately: z.boolean().optional().default(true),
+    csv: z.string().max(8_000_000).optional(),
+    articles: z
+      .array(
+        z.object({
+          title: z.string().min(1).max(500),
+          content: z.string().min(1).max(500_000),
+          sharePointId: z.string().max(80).optional(),
+          matchcode: z.string().max(500).optional(),
+          hasAttachments: z.boolean().optional(),
+          category: z.string().max(200).optional(),
+        }),
+      )
+      .max(5_000)
+      .optional(),
+    dryRun: z.boolean().optional(),
+  })
+  .refine((b) => Boolean(b.csv?.trim()) || (Array.isArray(b.articles) && b.articles.length > 0), {
+    message: 'csv or articles[] required',
+  });
+
+/** SharePoint CSV import — locked to session organization + visibility=organization. */
+router.post(
+  '/import-csv',
+  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      if (!assertPortalKbWriteRole(req.user?.role)) {
+        return res.status(403).json({ error: 'Forbidden.' });
+      }
+      const organizationId = sessionOrg(req);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organization missing.' });
+      }
+      const parsed = portalCsvImportSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'Ungültige Import-Daten.', details: parsed.error.flatten() });
+      }
+      // Cross-org spoof → still locked to session org (never trust body.organizationId).
+      const body = parsed.data;
+      const result = await importKbCsvArticles({
+        organizationId,
+        visibility: 'organization',
+        category: body.category,
+        publishImmediately: body.publishImmediately,
+        csv: body.csv,
+        articles: body.articles,
+        dryRun: body.dryRun,
+        authorId: req.user!.id,
+        authorName: req.user!.name || req.user!.email || req.user!.id,
+      });
+      return res.json({
+        success: true,
+        ...result,
+        summary: formatKbCsvImportSummary(result),
+      });
+    } catch (err: any) {
+      safeLog('error', '[portal/kb] import-csv failed', err?.message || err);
+      return res
+        .status(err?.status || 500)
+        .json({ error: safeErrorMessage(err, 'CSV-Import fehlgeschlagen') });
+    }
+  },
+);
 
 router.get(
   '/',

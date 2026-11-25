@@ -60,6 +60,18 @@ import {
   evaluatePortalKbCategoryWriteAccess,
   portalCategoryId,
 } from '../src/lib/kb/kb-categories.js';
+import {
+  buildSharePointPreviewArticles,
+  buildSmartTitle,
+  countMatchcodeOccurrences,
+  ensureAbsoluteUrl,
+  isLikelyTestSharePointRow,
+  parseSharePointCsvRows,
+} from '../src/lib/kb/sharepoint-csv-import.js';
+import {
+  formatKbCsvImportSummary,
+  planKbCsvImportArticles,
+} from '../src/lib/kb/kb-csv-import-service.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -1144,6 +1156,190 @@ function testPortalKbIsolation(): void {
       kbRouteSrc.includes("reviewer: ''") &&
       kbRouteSrc.includes('uncategorized'),
     'portal article create auto-stamps author; ignores client owner/reviewer; optional category',
+  );
+
+  testPortalKbSharePointCsvImport();
+}
+
+function testPortalKbSharePointCsvImport(): void {
+  console.log('\n[12c] Portal KB SharePoint CSV import — parser, titles, tenant lock');
+
+  const sampleCsv =
+    '\uFEFF' +
+    [
+      'ID;Matchcode;Problem;GenaueProblembeschreibung;Loesungsweg;Webseite;Anlagen',
+      '10;DPG PrüfApp PRO;"Anmeldung nicht möglich:\n- Benutzer sieht Fehler";Genaubeschreibung mit\tführendem Tab;"1. Cache leeren\n=> Neu anmelden";testverwaltung.dpg-gruppe.de/applink.html;1',
+      '11;DPG PrüfApp PRO;"PrüfApp PRO stürzt ab:\nSchrittschritte";Genaue Details zum Absturz;"=> Neu starten\n=> Support informieren";;0',
+      '21;;"Leerer Matchcode Fall:\nZweite Zeile";"Genauere Info";"Schrittung A";;0',
+      '28;OneDrive;"OneDrive Sync hängt";"Details";"=> Neu anmelden";;1',
+      '99;Test123456789;"Nur ein Test";"x";"y";;0',
+    ].join('\n');
+
+  const rows = parseSharePointCsvRows(sampleCsv);
+  assert(rows.length >= 4, 'BOM + semicolon CSV parses SharePoint rows');
+  assert(
+    rows[0].exactProblem.includes('führendem Tab') && !rows[0].exactProblem.startsWith('\t'),
+    'leading tabs normalized out of GenaueProblembeschreibung',
+  );
+
+  const counts = countMatchcodeOccurrences(rows);
+  assert((counts.get('DPG PrüfApp PRO') || 0) === 2, 'duplicate Matchcode counted across CSV');
+
+  const title10 = buildSmartTitle(rows[0], counts);
+  const title11 = buildSmartTitle(rows[1], counts);
+  assert(
+    title10 !== title11 &&
+      title10.includes('DPG PrüfApp PRO') &&
+      title11.includes('DPG PrüfApp PRO'),
+    'duplicate Matchcode rows get distinct smart titles',
+    `${title10} vs ${title11}`,
+  );
+
+  const emptyMatch = rows.find((r) => r.id === '21');
+  assert(
+    Boolean(emptyMatch) &&
+      buildSmartTitle(emptyMatch!, counts).toLowerCase().includes('leerer matchcode'),
+    'empty Matchcode falls back to Problem first line',
+  );
+
+  const previews = buildSharePointPreviewArticles(sampleCsv);
+  const withLink = previews.find((p) => p.sharePointId === '10');
+  assert(
+    Boolean(withLink?.hasAttachments) &&
+      Boolean(withLink?.hasLink) &&
+      withLink!.content.includes('## Problembeschreibung') &&
+      withLink!.content.includes('## Lösungsweg') &&
+      withLink!.content.includes('## Weiterführender Link') &&
+      withLink!.content.includes('https://testverwaltung.dpg-gruppe.de/applink.html'),
+    'markdown body + protocol-less Webseite + Anlagen=1 flag',
+  );
+  assert(
+    ensureAbsoluteUrl('testverwaltung.dpg-gruppe.de/applink.html').startsWith('https://'),
+    'protocol-less Webseite gets https://',
+  );
+  assert(
+    isLikelyTestSharePointRow({ title: 'Test123456789', matchcode: 'Test123456789' }) === true,
+    'Test123456789 flagged as likely test row',
+  );
+
+  const dpgArticles = previews
+    .filter((p) => !p.isLikelyTest)
+    .map((p) => ({
+      id: `kb-${p.sharePointId}`,
+      title: p.title,
+      content: p.content,
+      visibility: 'organization',
+      organizationId: ORG_B,
+      status: 'Published',
+    }));
+
+  assert(
+    dpgArticles.every((a) => isKbArticleVisibleToPortal(a, ORG_B)),
+    'imported DPG articles visible to DPG portal',
+  );
+  assert(
+    dpgArticles.every((a) => isKbArticleVisibleToPortal(a, ORG_A) === false),
+    'imported DPG articles invisible to Citadelle AG',
+  );
+
+  const planned = planKbCsvImportArticles(
+    previews.map((p) => ({
+      title: p.title,
+      content: p.content,
+      sharePointId: p.sharePointId,
+      hasAttachments: p.hasAttachments,
+    })),
+    [],
+  );
+  assert(planned.toImport.length >= 4, 'first import plans distinct articles');
+
+  const reimport = planKbCsvImportArticles(
+    planned.toImport,
+    planned.toImport.map((a) => a.title),
+  );
+  assert(
+    reimport.toImport.length === 0 && reimport.skipped.length === planned.toImport.length,
+    're-import skips all duplicates (imported: 0, skipped: N)',
+    `import=${reimport.toImport.length} skip=${reimport.skipped.length}`,
+  );
+
+  const summary = formatKbCsvImportSummary({
+    imported: 28,
+    skipped: 0,
+    errors: [],
+    attachmentSharePointIds: ['10', '21', '28', '34', '35', '38'],
+    importedIds: [],
+    skippedTitles: [],
+  });
+  assert(
+    summary.includes('28 Artikel importiert') &&
+      summary.includes('Anhänge in SharePoint') &&
+      summary.includes('10, 21, 28'),
+    'German import summary mentions attachment SharePoint IDs',
+  );
+
+  assert(assertPortalKbWriteRole('CLIENT_USER') === false, 'CLIENT_USER forbidden on CSV import');
+  assert(assertPortalKbWriteRole('CLIENT_ADMIN') === true, 'CLIENT_ADMIN may CSV import');
+  assert(assertPortalKbWriteRole('CLIENT_SUPPORTER') === true, 'CLIENT_SUPPORTER may CSV import');
+
+  assert(
+    isPortalKbFrontendApiAllowed('/api/portal/kb/import-csv') === true,
+    'portal CSV import path allowed for frontend',
+  );
+
+  const kbRouteSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalKbRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    kbRouteSrc.includes('/import-csv') &&
+      kbRouteSrc.includes("visibility: 'organization'") &&
+      kbRouteSrc.includes('assertPortalKbWriteRole') &&
+      kbRouteSrc.includes('sessionOrg(req)'),
+    'portal import-csv locks session org + organization visibility',
+  );
+
+  const staffIngestSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/kbIngestionRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    staffIngestSrc.includes('/import-csv') &&
+      staffIngestSrc.includes('assertStaffKbCategoryWriteRole'),
+    'staff POST /api/kb/import-csv gated for SYSTEM_ADMIN/AGENT',
+  );
+
+  const portalAdapterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/hooks/usePortalKbAdapter.ts'),
+    'utf8',
+  );
+  assert(
+    portalAdapterSrc.includes('/import-csv') &&
+      portalAdapterSrc.includes('importCsvArticles') &&
+      !portalAdapterSrc.includes('/api/kb/import-csv'),
+    'portal adapter posts only /api/portal/kb/import-csv',
+  );
+
+  const adapterCapsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/kb/kb-workbench-adapter.ts'),
+    'utf8',
+  );
+  assert(
+    adapterCapsSrc.includes('importCsv: true') &&
+      /PORTAL_KB_WRITER_CAPABILITIES[\s\S]*importCsv:\s*true/.test(adapterCapsSrc) &&
+      /PORTAL_KB_CAPABILITIES[\s\S]*importCsv:\s*false/.test(adapterCapsSrc),
+    'portal writers get importCsv; readers do not',
+  );
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KnowledgeBaseWorkbench.tsx'),
+    'utf8',
+  );
+  assert(
+    workbenchSrc.includes('KBSharePointCsvImportModal') &&
+      workbenchSrc.includes('setIsCsvImportOpen') &&
+      !workbenchSrc.includes("'/api/kb/import-csv'"),
+    'workbench uses SharePoint CSV modal via adapter (no hardcoded staff import URL)',
   );
 }
 

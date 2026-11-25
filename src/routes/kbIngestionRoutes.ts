@@ -12,6 +12,12 @@ import {
   normalizeKbIngestStatus,
   parseKbIngestBuffer,
 } from '../lib/kb-ingestion.js';
+import { assertStaffKbCategoryWriteRole } from '../lib/kb/kb-categories.js';
+import {
+  formatKbCsvImportSummary,
+  importKbCsvArticles,
+} from '../lib/kb/kb-csv-import-service.js';
+import { safeErrorMessage } from '../lib/safe-log.js';
 
 const require = createRequire(
   typeof import.meta !== 'undefined' && import.meta.url
@@ -236,5 +242,68 @@ async function handleScrape(req: Request, res: Response) {
 
 router.post('/scrape', authenticate, handleScrape);
 router.post('/crawl', authenticate, handleScrape);
+
+const staffCsvImportSchema = z
+  .object({
+    organizationId: z.string().min(1).max(120),
+    visibility: z
+      .enum(['organization', 'public', 'internal', 'shared_portal'])
+      .optional()
+      .default('organization'),
+    category: z.string().max(200).optional(),
+    publishImmediately: z.boolean().optional().default(true),
+    csv: z.string().max(8_000_000).optional(),
+    articles: z
+      .array(
+        z.object({
+          title: z.string().min(1).max(500),
+          content: z.string().min(1).max(500_000),
+          sharePointId: z.string().max(80).optional(),
+          matchcode: z.string().max(500).optional(),
+          hasAttachments: z.boolean().optional(),
+          category: z.string().max(200).optional(),
+        }),
+      )
+      .max(5_000)
+      .optional(),
+    dryRun: z.boolean().optional(),
+  })
+  .refine((b) => Boolean(b.csv?.trim()) || (Array.isArray(b.articles) && b.articles.length > 0), {
+    message: 'csv or articles[] required',
+  });
+
+/** SharePoint / CSV KB import — SYSTEM_ADMIN / AGENT (staff). */
+router.post('/import-csv', authenticate, async (req: Request, res: Response): Promise<any> => {
+  try {
+    if (!assertStaffKbCategoryWriteRole(req.user?.role)) {
+      return res.status(403).json({ error: 'Forbidden: SYSTEM_ADMIN or AGENT required.' });
+    }
+    const parsed = staffCsvImportSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Ungültige Import-Daten.', details: parsed.error.flatten() });
+    }
+    const body = parsed.data;
+    const result = await importKbCsvArticles({
+      organizationId: body.organizationId,
+      visibility: body.visibility,
+      category: body.category,
+      publishImmediately: body.publishImmediately,
+      csv: body.csv,
+      articles: body.articles,
+      dryRun: body.dryRun,
+      authorId: req.user?.id,
+      authorName: req.user?.name || req.user?.email || req.user?.id,
+    });
+    return res.json({
+      success: true,
+      ...result,
+      summary: formatKbCsvImportSummary(result),
+    });
+  } catch (err: any) {
+    return res
+      .status(err?.status || 500)
+      .json({ error: safeErrorMessage(err, 'CSV-Import fehlgeschlagen') });
+  }
+});
 
 export default router;

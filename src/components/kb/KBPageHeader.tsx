@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronDown, Sparkles, Upload, Plus } from 'lucide-react';
+import { ChevronDown, FileSpreadsheet, Sparkles, Upload, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { Button } from '../ui/button';
@@ -15,9 +15,13 @@ interface KBPageHeaderProps {
   onAiGenerate: () => void;
   onNewArticle: () => void;
   onNewCategory?: () => void;
+  /** Portal writers: open CSV / SharePoint import beside + Neu. */
+  onImportCsv?: () => void;
   className?: string;
   /** Staff-only: Dokumente importieren (default true for identical staff UI). */
   showImportDocs?: boolean;
+  /** Portal writers / staff: CSV-Import button. */
+  showImportCsv?: boolean;
   /** Staff-only: KI generieren (default true). */
   showAiGenerate?: boolean;
   /** Hide "+ Neu" create menu (CLIENT_USER read-only). */
@@ -33,8 +37,10 @@ export function KBPageHeader({
   onAiGenerate,
   onNewArticle,
   onNewCategory,
+  onImportCsv,
   className,
   showImportDocs = true,
+  showImportCsv = false,
   showAiGenerate = true,
   showNewMenu = true,
   showNewCategory = true,
@@ -68,6 +74,18 @@ export function KBPageHeader({
         >
           <Upload className="w-3.5 h-3.5 mr-1.5" />
           {t('kb.actions.importDocs', 'Import Docs')}
+        </Button>
+        ) : null}
+        {showImportCsv && !showImportDocs ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onImportCsv}
+          className="h-9 rounded-xl text-xs font-semibold border-slate-200/80"
+        >
+          <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5" />
+          {t('kb.actions.importCsv', 'CSV-Import')}
         </Button>
         ) : null}
         {showAiGenerate ? (

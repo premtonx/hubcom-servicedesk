@@ -175,6 +175,30 @@ export function usePortalKbAdapter(): KbWorkbenchAdapter {
       async listAssignableUsers() {
         return [];
       },
+
+      async importCsvArticles(payload) {
+        const res = await axios.post(
+          `${PORTAL_KB}/import-csv`,
+          {
+            category: payload.category,
+            publishImmediately: payload.publishImmediately,
+            csv: payload.csv,
+            articles: payload.articles,
+            dryRun: payload.dryRun,
+          },
+          { withCredentials: true },
+        );
+        await refresh();
+        return {
+          imported: Number(res.data?.imported || 0),
+          skipped: Number(res.data?.skipped || 0),
+          errors: Array.isArray(res.data?.errors) ? res.data.errors.map(String) : [],
+          attachmentSharePointIds: Array.isArray(res.data?.attachmentSharePointIds)
+            ? res.data.attachmentSharePointIds.map(String)
+            : [],
+          summary: String(res.data?.summary || ''),
+        };
+      },
     };
 
     return adapter;
