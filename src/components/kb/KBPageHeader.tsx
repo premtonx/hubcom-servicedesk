@@ -16,6 +16,10 @@ interface KBPageHeaderProps {
   onNewArticle: () => void;
   onNewCategory?: () => void;
   className?: string;
+  /** Staff-only: Dokumente importieren (default true for identical staff UI). */
+  showImportDocs?: boolean;
+  /** Staff-only: KI generieren (default true). */
+  showAiGenerate?: boolean;
 }
 
 export function KBPageHeader({
@@ -24,6 +28,8 @@ export function KBPageHeader({
   onNewArticle,
   onNewCategory,
   className,
+  showImportDocs = true,
+  showAiGenerate = true,
 }: KBPageHeaderProps) {
   const { t } = useTranslation();
 
@@ -41,6 +47,7 @@ export function KBPageHeader({
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2 shrink-0">
+        {showImportDocs ? (
         <Button
           type="button"
           variant="outline"
@@ -51,6 +58,8 @@ export function KBPageHeader({
           <Upload className="w-3.5 h-3.5 mr-1.5" />
           {t('kb.actions.importDocs', 'Import Docs')}
         </Button>
+        ) : null}
+        {showAiGenerate ? (
         <Button
           type="button"
           variant="outline"
@@ -61,6 +70,7 @@ export function KBPageHeader({
           <Sparkles className="w-3.5 h-3.5 mr-1.5 text-blue-500" />
           {t('kb.actions.aiGenerateShort', 'AI Generate')}
         </Button>
+        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={

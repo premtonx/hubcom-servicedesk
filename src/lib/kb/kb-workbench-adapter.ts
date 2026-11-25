@@ -1,0 +1,146 @@
+/**
+ * Typed adapter for KnowledgeBaseWorkbench — Shared UI, Separate APIs.
+ *
+ * The presentational workbench must not import /api/db or staff-only API clients.
+ * All network I/O goes through this adapter (staff → /api/kb* + kbService; portal → /api/portal/kb*).
+ */
+
+import type { KBArticle } from '../../types';
+import type { KBGlobalSettings } from '../kb-dashboard-metrics';
+import type { KBCategoryDto } from '../../services/kbDashboardApi';
+
+export type KbWorkbenchMode = 'staff' | 'portal';
+
+/** Feature flags for staff-only chrome. Staff mode enables all; portal disables them. */
+export type KbWorkbenchCapabilities = {
+  /** "Dokumente importieren" / Import Docs header action + importer dialog */
+  importDocs: boolean;
+  /** "KI generieren" header action */
+  aiGenerate: boolean;
+  /** Artikel / Dokumente / Datenquellen segmented control */
+  documentsTab: boolean;
+  externalSourcesTab: boolean;
+  /** Sidebar: Entwürfe */
+  draftsNav: boolean;
+  /** Sidebar: Prüfungen */
+  reviewsNav: boolean;
+  /** Sidebar: KI-Assistent + Autopilot dashboard */
+  aiAssistantNav: boolean;
+  /** Sidebar: Analytik + coverage map mode */
+  analyticsNav: boolean;
+  /** KI-Wissens-Einblicke / AI search overlay + Ask AI */
+  aiInsights: boolean;
+  /** KB-Gesundheit telemetry in sidebar / activity */
+  kbHealthTelemetry: boolean;
+  /** Cross-tenant / visibility admin filters (internal / shared_portal / organization) */
+  crossTenantVisibilityFilters: boolean;
+  /** Category admin / rename / delete */
+  categoryAdmin: boolean;
+  /** RAG index toggle on articles */
+  ragIndexToggle: boolean;
+};
+
+export const STAFF_KB_CAPABILITIES: KbWorkbenchCapabilities = {
+  importDocs: true,
+  aiGenerate: true,
+  documentsTab: true,
+  externalSourcesTab: true,
+  draftsNav: true,
+  reviewsNav: true,
+  aiAssistantNav: true,
+  analyticsNav: true,
+  aiInsights: true,
+  kbHealthTelemetry: true,
+  crossTenantVisibilityFilters: true,
+  categoryAdmin: true,
+  ragIndexToggle: true,
+};
+
+export const PORTAL_KB_CAPABILITIES: KbWorkbenchCapabilities = {
+  importDocs: false,
+  aiGenerate: false,
+  documentsTab: false,
+  externalSourcesTab: false,
+  draftsNav: false,
+  reviewsNav: false,
+  aiAssistantNav: false,
+  analyticsNav: false,
+  aiInsights: false,
+  kbHealthTelemetry: false,
+  crossTenantVisibilityFilters: false,
+  categoryAdmin: false,
+  ragIndexToggle: false,
+};
+
+export type KbRagSnippet = {
+  text: string;
+} & Record<string, unknown>;
+
+/**
+ * Data + mutation surface injected into KnowledgeBaseWorkbench.
+ * Portal adapters implement the core methods; staff adds telemetry/AI helpers.
+ */
+export interface KbWorkbenchAdapter {
+  subscribeArticles(callback: (articles: KBArticle[]) => void): () => void;
+
+  createArticle(article: Partial<KBArticle>): Promise<string | void>;
+
+  updateArticle(
+    id: string,
+    patch: Partial<KBArticle>,
+    previousTags?: string[],
+  ): Promise<void>;
+
+  deleteArticle(id: string, tags?: string[]): Promise<void>;
+
+  deleteArticles(items: Array<{ id: string; tags?: string[] }>): Promise<void>;
+
+  listCategories(): Promise<KBCategoryDto[]>;
+
+  updateCategory(
+    id: string,
+    payload: Partial<{
+      name: string;
+      desc: string;
+      owner: string;
+      subCategory: string;
+      iconName: string;
+      order: number;
+    }>,
+  ): Promise<KBCategoryDto>;
+
+  removeCategory(
+    id: string,
+    strategy: 'reassign' | 'purge',
+  ): Promise<{ success: boolean; strategy: string; affectedCount: number }>;
+
+  getGlobalSettings(): Promise<KBGlobalSettings | null>;
+
+  setIndexInRag(articleId: string, indexInRag: boolean): Promise<void>;
+
+  listPortalOrganizations(): Promise<Array<{ id: string; name: string }>>;
+
+  /** Staff coverage map (optional for portal). */
+  fetchCoverage?(forceRecalc?: boolean): Promise<unknown>;
+
+  recalculateCoverage?(): Promise<unknown>;
+
+  findRelevantContext?(
+    query: string,
+    articles: unknown[],
+  ): KbRagSnippet[];
+
+  isAiSearchConfigured?(): boolean;
+
+  answerKnowledgeQuery?(
+    query: string,
+    snippets: KbRagSnippet[],
+    options?: { entityId?: string; forceRefresh?: boolean },
+  ): Promise<string>;
+
+  /**
+   * Raw staff AI adapter for KnowledgeBaseArticlePage (staff mode only).
+   * Portal adapters omit this.
+   */
+  getAiAdapter?(): unknown;
+}

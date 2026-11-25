@@ -2186,6 +2186,55 @@ function testPortalUserDeleteAccess(): void {
   );
 }
 
+function testKbWorkbenchSharedUiIsolation(): void {
+  console.log('\n[KB Workbench] Shared UI adapter — no staff API clients in presentational shell');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KnowledgeBaseWorkbench.tsx'),
+    'utf8',
+  );
+  const pageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/KBPage.tsx'),
+    'utf8',
+  );
+  const adapterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/kb/kb-workbench-adapter.ts'),
+    'utf8',
+  );
+
+  assert(
+    workbenchSrc.includes('KbWorkbenchAdapter') && workbenchSrc.includes('mode'),
+    'KnowledgeBaseWorkbench accepts mode + adapter',
+  );
+  assert(
+    !workbenchSrc.includes("from '../../services/kbService'") &&
+      !workbenchSrc.includes("from '../services/kbService'"),
+    'workbench does not import kbService',
+  );
+  assert(
+    !workbenchSrc.includes("from '../../services/kbArticleApi'") &&
+      !workbenchSrc.includes('kbArticleApi.'),
+    'workbench does not import/call kbArticleApi',
+  );
+  assert(
+    !workbenchSrc.includes("from 'axios'") && !workbenchSrc.includes('axios.get'),
+    'workbench has zero axios imports (staff org list via adapter)',
+  );
+  assert(
+    !workbenchSrc.includes('/api/db') && !workbenchSrc.includes("'/api/kb"),
+    'workbench has zero /api/db or hardcoded /api/kb paths',
+  );
+  assert(
+    pageSrc.includes('useStaffKbAdapter') && pageSrc.includes('mode="staff"'),
+    '/kb mounts KnowledgeBaseWorkbench with staff adapter',
+  );
+  assert(!pageSrc.includes('ClientKbPage'), 'staff /kb page stays separate from ClientKbPage');
+  assert(
+    adapterSrc.includes("'staff'") && adapterSrc.includes("'portal'"),
+    'adapter typed for staff | portal modes',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -2209,6 +2258,7 @@ async function main(): Promise<void> {
   testDefaultTicketCreateExcludesRmaFields();
   testPortalReturnsPageNavigationGate();
   testPortalUserDeleteAccess();
+  testKbWorkbenchSharedUiIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

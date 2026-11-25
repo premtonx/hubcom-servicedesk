@@ -41,6 +41,12 @@ interface KBLeftSidebarProps {
   };
   healthScore?: number;
   className?: string;
+  /** When set, only these workspace nav ids are shown (staff default = all). */
+  workspaceItemIds?: ReadonlyArray<
+    'overview' | 'all' | 'drafts' | 'reviews' | 'ai' | 'analytics'
+  >;
+  /** Hide KB Health Score telemetry block. */
+  showHealthScore?: boolean;
 }
 
 const WORKSPACE_ITEMS = [
@@ -111,11 +117,17 @@ export function KBLeftSidebar({
   counts,
   healthScore,
   className,
+  workspaceItemIds,
+  showHealthScore = true,
 }: KBLeftSidebarProps) {
   const { t } = useTranslation();
 
   const isActive = (type: KBNavFilter['type'], id: string) =>
     active.type === type && active.id === id;
+
+  const workspaceItems = workspaceItemIds
+    ? WORKSPACE_ITEMS.filter((item) => workspaceItemIds.includes(item.id))
+    : WORKSPACE_ITEMS;
 
   const workspaceCount = (id: string) => {
     if (id === 'all' || id === 'overview' || id === 'analytics') return counts.all;
@@ -145,7 +157,7 @@ export function KBLeftSidebar({
       <div className="flex-1 overflow-y-auto py-3 px-2">
         <SectionLabel>{t('kb.sidebar.workspace', 'Workspace')}</SectionLabel>
         <nav className="space-y-0.5">
-          {WORKSPACE_ITEMS.map((item) => (
+          {workspaceItems.map((item) => (
             <NavButton
               key={item.id}
               active={isActive('workspace', item.id)}
@@ -191,7 +203,7 @@ export function KBLeftSidebar({
           ))}
         </nav>
 
-        {typeof healthScore === 'number' ? (
+        {showHealthScore && typeof healthScore === 'number' ? (
           <div className="mt-4 mx-1 rounded-xl border border-slate-200/80 bg-slate-50 p-3">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               {t('kb.sidebar.healthScore', 'KB Health Score')}
