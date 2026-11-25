@@ -8,6 +8,7 @@ import {
   Loader2,
   Mail,
   Package,
+  Plus,
   Search,
   Settings2,
   Upload,
@@ -18,6 +19,10 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { cn } from '../../lib/utils';
+import {
+  ReturnCreateEditDrawer,
+  type ReturnMemberOption,
+} from './ReturnCreateEditDrawer';
 
 type WorkbenchMode = 'portal' | 'staff';
 
@@ -95,6 +100,83 @@ export function ReturnsWorkbench({
     saveOverride: boolean;
   } | null>(null);
   const [sending, setSending] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editItem, setEditItem] = useState<{
+    ticketId: string;
+    subject?: string | null;
+    customerName?: string | null;
+    customerEmail?: string | null;
+    hardwareReturn: Record<string, unknown>;
+  } | null>(null);
+  const [members, setMembers] = useState<ReturnMemberOption[]>([]);
+
+  useEffect(() => {
+    if (!organizationId) return;
+    let active = true;
+    void (async () => {
+      try {
+        if (mode === 'portal') {
+          const res = await axios.get('/api/portal/members', { withCredentials: true });
+          const rows = (res.data?.members || res.data?.users || []) as Array<Record<string, any>>;
+          if (!active) return;
+          setMembers(
+            rows.map((u) => ({
+              id: String(u.id),
+              name: String(u.name || u.email || ''),
+              email: String(u.email || ''),
+              phone_office: u.phone_office || u.phoneOffice || null,
+              phone_mobile: u.phone_mobile || u.phoneMobile || null,
+              project_manager_name: u.project_manager_name || null,
+              project_manager_email: u.project_manager_email || null,
+              manager_name: u.manager_name || null,
+              manager_email: u.manager_email || null,
+            })),
+          );
+        } else {
+          const res = await axios.get(
+            `/api/admin/organizations/${encodeURIComponent(organizationId)}/users`,
+            { withCredentials: true },
+          );
+          const rows = (res.data?.users || []) as Array<Record<string, any>>;
+          if (!active) return;
+          setMembers(
+            rows.map((u) => ({
+              id: String(u.id),
+              name: String(u.name || u.email || ''),
+              email: String(u.email || ''),
+              phone_office: u.phone_office || u.phoneOffice || null,
+              phone_mobile: u.phone_mobile || u.phoneMobile || null,
+              project_manager_name: u.project_manager_name || null,
+              project_manager_email: u.project_manager_email || null,
+              manager_name: u.manager_name || null,
+              manager_email: u.manager_email || null,
+            })),
+          );
+        }
+      } catch {
+        if (active) setMembers([]);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [organizationId, mode]);
+
+  const openCreate = () => {
+    setEditItem(null);
+    setDrawerOpen(true);
+  };
+
+  const openEdit = (it: ListItem) => {
+    setEditItem({
+      ticketId: String(it.hardwareReturn.ticket_id),
+      subject: it.ticket.subject,
+      customerName: it.ticket.customerName,
+      customerEmail: it.ticket.customerEmail,
+      hardwareReturn: it.hardwareReturn,
+    });
+    setDrawerOpen(true);
+  };
 
   const load = useCallback(async () => {
     if (!organizationId) return;
@@ -318,6 +400,15 @@ export function ReturnsWorkbench({
             <Download className="w-4 h-4 mr-1.5" />
             CSV-Export
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold"
+            onClick={openCreate}
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            Neue Rücklieferung erstellen
+          </Button>
         </div>
       </div>
 
@@ -446,8 +537,12 @@ export function ReturnsWorkbench({
                   const hw = it.hardwareReturn;
                   const checked = selected.has(hw.ticket_id);
                   return (
-                    <tr key={hw.ticket_id} className="align-top hover:bg-slate-50/60">
-                      <td className="p-3">
+                    <tr
+                      key={hw.ticket_id}
+                      className="align-top hover:bg-slate-50/60 cursor-pointer"
+                      onClick={() => openEdit(it)}
+                    >
+                      <td className="p-3" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={checked}
@@ -460,16 +555,9 @@ export function ReturnsWorkbench({
                         />
                       </td>
                       <td className="p-3">
-                        <a
-                          className="font-mono text-xs font-bold text-slate-800 hover:underline"
-                          href={
-                            mode === 'portal'
-                              ? `/portal/tickets/${hw.ticket_id}`
-                              : `/tickets/${hw.ticket_id}`
-                          }
-                        >
+                        <span className="font-mono text-xs font-bold text-slate-800">
                           #{hw.ticket_id.slice(0, 8)}
-                        </a>
+                        </span>
                         {hw.external_ref_id ? (
                           <span className="ml-1 inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
                             PA {hw.external_ref_id}
@@ -511,7 +599,7 @@ export function ReturnsWorkbench({
                           </span>
                         ) : null}
                       </td>
-                      <td className="p-3">
+                      <td className="p-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
                           {([1, 2, 3] as const).map((stage) => {
                             const sentAt =
@@ -549,32 +637,42 @@ export function ReturnsWorkbench({
                           })}
                         </div>
                       </td>
-                      <td className="p-3">
-                        {!hw.returned ? (
+                      <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex flex-col gap-1.5 items-start">
                           <Button
                             type="button"
                             size="sm"
                             variant="outline"
-                            onClick={async () => {
-                              try {
-                                await axios.post(
-                                  `${base}/${encodeURIComponent(hw.ticket_id)}/mark-returned`,
-                                  mode === 'staff' ? { organizationId } : {},
-                                  { withCredentials: true },
-                                );
-                                toast.success('Als zurückgeliefert markiert');
-                                void load();
-                              } catch (err: any) {
-                                toast.error(err?.response?.data?.error || 'Fehler');
-                              }
-                            }}
+                            onClick={() => openEdit(it)}
                           >
-                            <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                            Zurück
+                            Details
                           </Button>
-                        ) : (
-                          <span className="text-xs font-bold text-emerald-700">Erledigt</span>
-                        )}
+                          {!hw.returned ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={async () => {
+                                try {
+                                  await axios.post(
+                                    `${base}/${encodeURIComponent(hw.ticket_id)}/mark-returned`,
+                                    mode === 'staff' ? { organizationId } : {},
+                                    { withCredentials: true },
+                                  );
+                                  toast.success('Als zurückgeliefert markiert');
+                                  void load();
+                                } catch (err: any) {
+                                  toast.error(err?.response?.data?.error || 'Fehler');
+                                }
+                              }}
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                              Zurück
+                            </Button>
+                          ) : (
+                            <span className="text-xs font-bold text-emerald-700">Erledigt</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -693,6 +791,20 @@ export function ReturnsWorkbench({
           onSave={saveSettings}
         />
       ) : null}
+
+      <ReturnCreateEditDrawer
+        open={drawerOpen}
+        mode={mode}
+        organizationId={organizationId}
+        editItem={editItem}
+        members={members}
+        orgCeoEmail={settings?.ceo_email || null}
+        onClose={() => {
+          setDrawerOpen(false);
+          setEditItem(null);
+        }}
+        onSaved={() => void load()}
+      />
     </div>
   );
 }

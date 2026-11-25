@@ -10,6 +10,7 @@ import {
   normalizeHardwareReturnsConfig,
   upsertHardwareReturn,
   type HardwareReturnsConfig,
+  type TicketHardwareReturnInput,
   type TicketHardwareReturnRecord,
 } from './hardware-returns.js';
 import { getOrganization, listOrganizations } from './organizations.js';
@@ -41,6 +42,73 @@ async function loadTicket(ticketId: string): Promise<Record<string, unknown> | n
   const doc = await getDocDirect('tickets', ticketId);
   if (!doc) return null;
   return { id: ticketId, ...doc };
+}
+
+/**
+ * Create a new Hardware-Rücklieferung from the workbench drawer:
+ * lightweight ticket + ticket_hardware_returns row (module must already be gated by the route).
+ */
+export async function createHardwareReturnFromWorkbench(params: {
+  organizationId: string;
+  actorId: string;
+  actorName?: string | null;
+  actorEmail?: string | null;
+  subject: string;
+  description?: string | null;
+  requesterId?: string | null;
+  customerName?: string | null;
+  customerEmail?: string | null;
+  hardwareReturn: TicketHardwareReturnInput;
+}): Promise<{ ticketId: string; hardwareReturn: TicketHardwareReturnRecord; ticket: Record<string, unknown> }> {
+  const org = await getOrganization(params.organizationId);
+  if (!org?.hardware_returns_enabled) {
+    throw Object.assign(new Error('Hardware-Rücklieferungen nicht aktiv.'), { status: 404 });
+  }
+  const subject = String(params.subject || 'Hardware').trim() || 'Hardware';
+  const now = new Date().toISOString();
+  const ticketPayload = {
+    subject,
+    description:
+      String(params.description || '').trim() ||
+      String(params.hardwareReturn.device_details || '').trim() ||
+      'Hardware-Rücklieferung',
+    status: 'open',
+    priority: 'medium',
+    team: 'support',
+    channel: 'hardware_returns',
+    categoryName: 'Hardware',
+    organizationId: params.organizationId,
+    organization_id: params.organizationId,
+    company: org.name,
+    customerName: params.customerName || params.actorName || null,
+    customerEmail: params.customerEmail || params.actorEmail || null,
+    customerId: params.customerEmail || params.actorEmail || null,
+    requesterId: params.requesterId || params.actorId,
+    requester_id: params.requesterId || params.actorId,
+    creatorId: params.actorId,
+    createdBy: params.actorId,
+    tags: ['hardware-returns', 'ruecklieferung'],
+    include_in_rag: false,
+    is_internal: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const created = await addDocDirect('tickets', ticketPayload);
+  const hardwareReturn = await upsertHardwareReturn({
+    ticketId: String(created.id),
+    organizationId: params.organizationId,
+    input: {
+      return_required: true,
+      auto_reminder_enabled: true,
+      ...params.hardwareReturn,
+    },
+    mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
+  });
+  return {
+    ticketId: String(created.id),
+    hardwareReturn,
+    ticket: { id: created.id, ...ticketPayload },
+  };
 }
 
 export async function stampMailStageSent(params: {

@@ -6,6 +6,8 @@ import { Textarea } from '../ui/textarea';
 import { cn } from '../../lib/utils';
 
 export interface HardwareReturnFormState {
+  /** Ticket subject — defaults to "Hardware" in the workbench drawer. */
+  subject: string;
   request_type: string;
   device_details: string;
   employee_phone: string;
@@ -25,6 +27,7 @@ export interface HardwareReturnFormState {
   project_manager_email: string;
   manager_name: string;
   manager_email: string;
+  ceo_email_override: string;
   auto_reminder_enabled: boolean;
   returned: boolean;
   returned_at: string;
@@ -43,6 +46,7 @@ export interface HardwareReturnFormState {
 
 export function emptyHardwareReturnForm(): HardwareReturnFormState {
   return {
+    subject: 'Hardware',
     request_type: '',
     device_details: '',
     employee_phone: '',
@@ -55,13 +59,14 @@ export function emptyHardwareReturnForm(): HardwareReturnFormState {
     shipping_reference: '',
     solution_summary: '',
     exported: false,
-    return_required: false,
+    return_required: true,
     delivery_date: '',
     return_due_date: '',
     project_manager_name: '',
     project_manager_email: '',
     manager_name: '',
     manager_email: '',
+    ceo_email_override: '',
     auto_reminder_enabled: true,
     returned: false,
     returned_at: '',
@@ -76,6 +81,7 @@ export function hardwareFormFromRecord(raw: Record<string, unknown> | null | und
   const override = (raw.stage_recipients_override || {}) as Record<string, { to?: string[]; cc?: string[] }>;
   return {
     ...base,
+    subject: String(raw.subject || base.subject),
     request_type: String(raw.request_type || ''),
     device_details: String(raw.device_details || ''),
     employee_phone: String(raw.employee_phone || ''),
@@ -88,13 +94,14 @@ export function hardwareFormFromRecord(raw: Record<string, unknown> | null | und
     shipping_reference: String(raw.shipping_reference || ''),
     solution_summary: String(raw.solution_summary || ''),
     exported: Boolean(raw.exported),
-    return_required: Boolean(raw.return_required),
+    return_required: raw.return_required !== false && raw.return_required !== 'f',
     delivery_date: String(raw.delivery_date || '').slice(0, 10),
     return_due_date: String(raw.return_due_date || '').slice(0, 10),
     project_manager_name: String(raw.project_manager_name || ''),
     project_manager_email: String(raw.project_manager_email || ''),
     manager_name: String(raw.manager_name || ''),
     manager_email: String(raw.manager_email || ''),
+    ceo_email_override: String(raw.ceo_email_override || ''),
     auto_reminder_enabled: raw.auto_reminder_enabled !== false,
     returned: Boolean(raw.returned),
     returned_at: raw.returned_at ? String(raw.returned_at).slice(0, 16) : '',
@@ -157,6 +164,7 @@ export function hardwareFormToPayload(form: HardwareReturnFormState): Record<str
     project_manager_email: form.project_manager_email || null,
     manager_name: form.manager_name || null,
     manager_email: form.manager_email || null,
+    ceo_email_override: form.ceo_email_override || null,
     auto_reminder_enabled: form.auto_reminder_enabled,
     returned: form.returned,
     returned_at: form.returned_at ? new Date(form.returned_at).toISOString() : null,

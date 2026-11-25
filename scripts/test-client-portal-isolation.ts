@@ -1773,6 +1773,61 @@ function testHardwareReturnsEscalationEngine(): void {
   );
 }
 
+/** Workbench create/edit drawer contract — dedicated action + module gate. */
+function testHardwareReturnsWorkbenchDrawerContract(): void {
+  console.log('\n--- Hardware returns workbench create/edit drawer ---');
+
+  const primaryLabel = '+ Neue Rücklieferung erstellen';
+  assert(
+    primaryLabel.includes('Neue Rücklieferung') && !primaryLabel.includes('Neues Ticket'),
+    'primary action is Neue Rücklieferung erstellen (never Neues Ticket erstellen)',
+  );
+
+  // Drawer layout contract (3 cards).
+  const cards = [
+    '1. Mitarbeiter & Kontakte',
+    '2. Hardware & Service-Level (SL1–SL3)',
+    '3. Rücklieferung & Mahnstufen',
+  ];
+  assert(cards.length === 3, 'drawer has exactly 3 German cards');
+  assert(cards[0].startsWith('1.'), 'card 1 Mitarbeiter & Kontakte');
+  assert(cards[1].includes('SL1–SL3'), 'card 2 Hardware & SL');
+  assert(cards[2].includes('Mahnstufen'), 'card 3 Rücklieferung & Mahnstufen');
+
+  // Module gate still blocks Citadelle / CLIENT_USER (create endpoint uses same resolveOrg).
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: false,
+      sessionOrgId: ORG_A,
+      ticketOrgId: ORG_A,
+      role: 'CLIENT_ADMIN',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === false,
+    'org without hardware_returns_enabled cannot create returns',
+  );
+  const clientUserGate = evaluateHardwareModuleAccess({
+    orgEnabled: true,
+    sessionOrgId: ORG_B,
+    ticketOrgId: ORG_B,
+    role: 'CLIENT_USER',
+    allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+  });
+  assert(
+    clientUserGate.ok === false && clientUserGate.status === 403,
+    'CLIENT_USER still 403 on returns create/edit',
+  );
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: true,
+      sessionOrgId: ORG_B,
+      ticketOrgId: ORG_B,
+      role: 'CLIENT_ADMIN',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === true,
+    'DPG CLIENT_ADMIN can create/edit returns',
+  );
+}
+
 /**
  * Default Neues Ticket erstellen must stay free of RMA / SL1–SL3 fields.
  * (Hardware-Rücklieferung lives only under the dedicated returns workbench.)
@@ -2083,6 +2138,7 @@ async function main(): Promise<void> {
   testPortalTresorVaultIsolation();
   testHardwareReturnsModuleGate();
   testHardwareReturnsEscalationEngine();
+  testHardwareReturnsWorkbenchDrawerContract();
   testDefaultTicketCreateExcludesRmaFields();
   testPortalReturnsPageNavigationGate();
   testPortalUserDeleteAccess();
