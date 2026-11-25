@@ -1051,6 +1051,65 @@ function testSharePointReturnsCsvImportApiLifecycle(): void {
   );
 }
 
+function testSharePointReturnsCsvImportUiLifecycle(): void {
+  console.log('\n[22] SharePoint Returns CSV import UI (Part 3) — modal preview/commit');
+
+  const modalSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsCsvImportModal.tsx'),
+    'utf8',
+  );
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const portalPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientReturnsPage.tsx'),
+    'utf8',
+  );
+  const staffPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/StaffReturnsPage.tsx'),
+    'utf8',
+  );
+
+  assert(
+    workbenchSrc.includes('ReturnsCsvImportModal') &&
+      staffPageSrc.includes('canImportCsv') &&
+      portalPageSrc.includes('canImportCsv={isOrgWide}'),
+    'staff + portal wire CSV import into shared workbench',
+  );
+  assert(
+    modalSrc.includes('/import-csv/preview') &&
+      modalSrc.includes('${apiBase}/import-csv') &&
+      !modalSrc.includes("'/api/db") &&
+      !modalSrc.includes('"/api/db') &&
+      !workbenchSrc.includes("'/api/db") &&
+      !workbenchSrc.includes('"/api/db'),
+    'UI never calls /api/db; uses preview then commit',
+  );
+  assert(
+    modalSrc.includes('excludeTestRows') &&
+      modalSrc.includes('mergeCatalogs') &&
+      modalSrc.includes('seedDirectory') &&
+      modalSrc.includes('enableAutoReminders') &&
+      modalSrc.includes('setEnableAutoReminders(false)') &&
+      modalSrc.includes('Empfohlen: Aus lassen'),
+    'commit payload flags match API; auto-reminders default unchecked',
+  );
+  assert(
+    modalSrc.includes('employeesSeeded') &&
+      modalSrc.includes('Rücklieferungen importiert') &&
+      modalSrc.includes('onImported') &&
+      workbenchSrc.includes('onImported={() =>') &&
+      workbenchSrc.includes('void load()'),
+    'success toast + list/KPI refresh after import',
+  );
+  assert(
+    workbenchSrc.includes('Neue Rücklieferung erstellen') &&
+      workbenchSrc.includes('openCreate'),
+    'create CTA unchanged alongside CSV modal',
+  );
+}
+
 function testPortalKbSharePointCsvImportLifecycle(): void {
   console.log('\n[20] Portal KB SharePoint CSV import lifecycle');
 
@@ -1152,6 +1211,7 @@ async function main(): Promise<void> {
   testPortalKbCategoryLifecycle();
   testPortalKbSharePointCsvImportLifecycle();
   testSharePointReturnsCsvImportApiLifecycle();
+  testSharePointReturnsCsvImportUiLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);

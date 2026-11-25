@@ -14,7 +14,13 @@ import {
  * and sidebar clicks do not bounce back to /portal/dashboard.
  */
 export default function ClientReturnsPage() {
-  const { session, isClient, isClientAdmin, loading: sessionLoading } = useClientPortalSession();
+  const {
+    session,
+    isClient,
+    isClientAdmin,
+    isOrgWide,
+    loading: sessionLoading,
+  } = useClientPortalSession();
   const [moduleEnabled, setModuleEnabled] = useState<boolean | null>(null);
   const [moduleLoading, setModuleLoading] = useState(true);
 
@@ -74,7 +80,7 @@ export default function ClientReturnsPage() {
         mode="portal"
         organizationId={session.organizationId}
         canEditSettings={isClientAdmin}
-        canImportCsv={isClientAdmin}
+        canImportCsv={isOrgWide}
       />
     </div>
   );

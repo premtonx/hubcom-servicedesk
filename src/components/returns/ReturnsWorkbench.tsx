@@ -34,6 +34,7 @@ import {
   formatDateDeOnly,
   toIsoDateOnly,
 } from '../../lib/client-portal/hardware-returns-dates';
+import { ReturnsCsvImportModal } from './ReturnsCsvImportModal';
 
 type WorkbenchMode = 'portal' | 'staff';
 
@@ -399,6 +400,7 @@ export function ReturnsWorkbench({
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
   const [sendModal, setSendModal] = useState<{
     returnId: string;
     stage: 1 | 2 | 3;
@@ -556,22 +558,6 @@ export function ReturnsWorkbench({
     }
   };
 
-  const onImportCsv = async (file: File | null) => {
-    if (!file || !canImportCsv) return;
-    const text = await file.text();
-    try {
-      const res = await axios.post(
-        `${base}/import-csv`,
-        { csv: text, ...(mode === 'staff' ? { organizationId } : {}) },
-        { withCredentials: true },
-      );
-      toast.success(`Import: ${res.data?.imported || 0} · übersprungen ${res.data?.skipped || 0}`);
-      void load();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Import fehlgeschlagen');
-    }
-  };
-
   const saveSettings = async (patch: Record<string, unknown>) => {
     if (!canEditSettings) return;
     try {
@@ -701,16 +687,15 @@ export function ReturnsWorkbench({
             </Button>
           ) : null}
           {canImportCsv ? (
-            <label className="inline-flex items-center h-9 px-3 rounded-md border border-slate-200 bg-white text-sm font-semibold cursor-pointer hover:bg-slate-50">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCsvImportOpen(true)}
+            >
               <Upload className="w-4 h-4 mr-1.5" />
               CSV-Import
-              <input
-                type="file"
-                accept=".csv,text/csv"
-                className="hidden"
-                onChange={(e) => void onImportCsv(e.target.files?.[0] || null)}
-              />
-            </label>
+            </Button>
           ) : null}
           <Button type="button" variant="outline" size="sm" onClick={() => void bulk('csv_export')}>
             <Download className="w-4 h-4 mr-1.5" />
@@ -1205,6 +1190,20 @@ export function ReturnsWorkbench({
           onSettingsRefresh={(next) => {
             setSettings(next);
             setAutoSendEnabled(Boolean(next?.auto_send_enabled));
+          }}
+        />
+      ) : null}
+
+      {canImportCsv ? (
+        <ReturnsCsvImportModal
+          open={csvImportOpen}
+          onOpenChange={setCsvImportOpen}
+          mode={mode}
+          organizationId={organizationId}
+          apiBase={base}
+          idPrefix={String(settings?.id_prefix || 'DPG')}
+          onImported={() => {
+            void load();
           }}
         />
       ) : null}

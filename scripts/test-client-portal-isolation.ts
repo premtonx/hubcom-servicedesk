@@ -3015,6 +3015,80 @@ function testSharePointReturnsCsvImportApiIsolation(): void {
   );
 }
 
+/** Part 3 — CSV-Import modal UI (preview → commit) on shared ReturnsWorkbench. */
+function testSharePointReturnsCsvImportUiIsolation(): void {
+  console.log('\n--- SharePoint Returns CSV import UI (Part 3) ---');
+
+  const modalSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsCsvImportModal.tsx'),
+    'utf8',
+  );
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const portalPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientReturnsPage.tsx'),
+    'utf8',
+  );
+
+  assert(
+    workbenchSrc.includes('ReturnsCsvImportModal') &&
+      workbenchSrc.includes('csvImportOpen') &&
+      workbenchSrc.includes('CSV-Import') &&
+      !workbenchSrc.includes('onImportCsv'),
+    'workbench opens ReturnsCsvImportModal (no one-shot file handler)',
+  );
+  assert(
+    !workbenchSrc.includes("'/api/db") &&
+      !workbenchSrc.includes('"/api/db') &&
+      !modalSrc.includes("'/api/db") &&
+      !modalSrc.includes('"/api/db') &&
+      modalSrc.includes('${apiBase}/import-csv/preview') &&
+      modalSrc.includes('${apiBase}/import-csv') &&
+      modalSrc.includes('csvText') &&
+      modalSrc.includes('enableAutoReminders') &&
+      modalSrc.includes('mergeCatalogs') &&
+      modalSrc.includes('seedDirectory'),
+    'modal posts preview+commit via apiBase only (never /api/db)',
+  );
+  assert(
+    modalSrc.includes('Testzeilen automatisch ausschließen') &&
+      modalSrc.includes('Kataloge (Gerätetypen, Versandarten, Status, SLA) aus CSV ergänzen') &&
+      modalSrc.includes('Mitarbeiter-Verzeichnis aus CSV mitbefüllen') &&
+      modalSrc.includes('Auto-Mahnversand für importierte Zeilen aktivieren') &&
+      modalSrc.includes('Empfohlen: Aus lassen') &&
+      modalSrc.includes("useState(false)") &&
+      modalSrc.includes('enableAutoReminders') &&
+      modalSrc.includes('Alle gültigen Einträge (Offen + Historie)') &&
+      modalSrc.includes('Nur offene Rücklieferungen'),
+    'step-1 German options + auto-reminders default off with amber warning',
+  );
+  assert(
+    modalSrc.includes('Zu importieren') &&
+      modalSrc.includes('Testdaten ausgeschlossen') &&
+      modalSrc.includes('Duplikate übersprungen') &&
+      modalSrc.includes('Mitarbeiter erkannt') &&
+      modalSrc.includes('newCatalogItems') &&
+      modalSrc.includes('Gerätetypen') &&
+      modalSrc.includes('Versandarten') &&
+      modalSrc.includes('PAGE_SIZE') &&
+      modalSrc.includes('Rücklieferungen importieren'),
+    'step-2 summary pills, catalog box, paginated preview, import CTA',
+  );
+  assert(
+    workbenchSrc.includes('Neue Rücklieferung erstellen') &&
+      !modalSrc.includes('device_old_type') &&
+      !modalSrc.includes('Neue Rücklieferung'),
+    'CSV modal does not alter Neue Rücklieferung form fields',
+  );
+  assert(
+    portalPageSrc.includes('canImportCsv={isOrgWide}') &&
+      portalPageSrc.includes('isOrgWide'),
+    'portal CSV-Import available to CLIENT_ADMIN + CLIENT_SUPPORTER',
+  );
+}
+
 /** Workbench create/edit → full-page ReturnEditorPage contract (Part 3). */
 function testHardwareReturnsWorkbenchDrawerContract(): void {
   console.log('\n--- Hardware returns workbench full-page editor ---');
@@ -3877,6 +3951,7 @@ async function main(): Promise<void> {
   testHardwareReturnsSchemaCatalogsPart1();
   await testOrganizationDirectorySyncPart2();
   testSharePointReturnsCsvImportApiIsolation();
+  testSharePointReturnsCsvImportUiIsolation();
   testDefaultTicketCreateExcludesRmaFields();
   testPortalReturnsPageNavigationGate();
   testPortalUserDeleteAccess();
