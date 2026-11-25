@@ -30,6 +30,10 @@ import {
   authStatusWhenUserMissing,
   evaluatePortalUserDeleteAccess,
 } from '../src/lib/client-portal/portal-user-delete.js';
+import {
+  evaluatePortalReturnsPageAccess,
+  resolveHardwareReturnsModuleFlag,
+} from '../src/lib/client-portal/hardware-returns-nav.js';
 
 let passed = 0;
 let failed = 0;
@@ -366,8 +370,50 @@ function testPortalTicketApiNeverUsesDb(): void {
   assert(detail.messages.length === 1, 'portal detail strips internal messages');
 }
 
+function testPortalReturnsNavLifecycle(): void {
+  console.log('\n[16] Portal /portal/returns navigation — wait for module, no bounce');
+
+  assert(
+    evaluatePortalReturnsPageAccess({
+      sessionLoading: false,
+      moduleLoading: true,
+      isClient: true,
+      role: 'CLIENT_ADMIN',
+      moduleEnabled: null,
+    }).action === 'spinner',
+    'hard refresh waits for /api/portal/me before redirect',
+  );
+  assert(
+    evaluatePortalReturnsPageAccess({
+      sessionLoading: false,
+      moduleLoading: false,
+      isClient: true,
+      role: 'CLIENT_ADMIN',
+      moduleEnabled: true,
+    }).action === 'allow',
+    'DPG CLIENT_ADMIN can open /portal/returns',
+  );
+  assert(
+    evaluatePortalReturnsPageAccess({
+      sessionLoading: false,
+      moduleLoading: false,
+      isClient: true,
+      role: 'CLIENT_USER',
+      moduleEnabled: true,
+    }).action === 'redirect',
+    'CLIENT_USER cannot open /portal/returns',
+  );
+  assert(
+    resolveHardwareReturnsModuleFlag({
+      enabledModules: { hardwareReturns: true },
+      organization: { hardware_returns_enabled: true },
+    }) === true,
+    'canonical module flag resolves from /api/portal/me',
+  );
+}
+
 function testPortalUserDeleteLifecycle(): void {
-  console.log('\n[16] Portal user delete — RBAC lifecycle + email free + JWT 401');
+  console.log('\n[17] Portal user delete — RBAC lifecycle + email free + JWT 401');
 
   const ORG_A = 'org-a';
   const ORG_B = 'org-b';
@@ -484,6 +530,7 @@ async function main(): Promise<void> {
   await testEntityCacheHitBypassesExecutor();
   await testForceRefreshBypassesCache();
   testPortalTicketApiNeverUsesDb();
+  testPortalReturnsNavLifecycle();
   testPortalUserDeleteLifecycle();
 
   console.log('\n' + '='.repeat(50));

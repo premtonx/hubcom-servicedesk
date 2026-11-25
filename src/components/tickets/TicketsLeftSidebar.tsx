@@ -1,5 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Archive,
   Building2,
@@ -10,6 +9,7 @@ import {
   Package,
   Settings2,
   Star,
+  Ticket,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useTranslation } from '../../lib/context/I18nContext';
@@ -44,6 +44,10 @@ export interface KundenSidebarOrg {
   name: string;
   logo_url?: string | null;
   openCount?: number;
+  /** When true, org expands to Tickets + Rücklieferungen nested items. */
+  hardware_returns_enabled?: boolean;
+  /** Open RMA / Rücklieferungen count for badge. */
+  returnsOpenCount?: number;
 }
 
 type BadgeTone = 'default' | 'amber' | 'rose';
@@ -344,10 +348,14 @@ interface TicketsLeftSidebarProps {
   footer?: ReactNode;
   /** Hubcom staff only — collapsible Kunden client filter. */
   kundenOrgs?: KundenSidebarOrg[];
-  /** Show quick link to /returns when at least one org has the module enabled. */
-  showHardwareReturnsLink?: boolean;
   selectedOrganizationId?: string | null;
   onSelectOrganization?: (organizationId: string | null) => void;
+  /** When `returns`, highlight nested Rücklieferungen under the selected org. */
+  kundenPanel?: 'tickets' | 'returns' | null;
+  /** Open tickets list for an org (nested Tickets under expandable client). */
+  onSelectOrganizationTickets?: (organizationId: string) => void;
+  /** Open Rücklieferungen workbench for an org (nested under expandable client). */
+  onSelectOrganizationReturns?: (organizationId: string) => void;
 }
 
 export function TicketsLeftSidebar({
@@ -366,15 +374,28 @@ export function TicketsLeftSidebar({
   isMobileSidebarOpen,
   footer,
   kundenOrgs,
-  showHardwareReturnsLink,
   selectedOrganizationId,
   onSelectOrganization,
+  kundenPanel,
+  onSelectOrganizationTickets,
+  onSelectOrganizationReturns,
 }: TicketsLeftSidebarProps) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const favoriteAriaLabel = t('tickets.sidebar.toggleFavorite', 'Toggle favorite');
   const showKunden = Boolean(kundenOrgs && onSelectOrganization);
   const [kundenFilter, setKundenFilter] = useState('');
+  const [expandedKundenIds, setExpandedKundenIds] = useState<Record<string, boolean>>({});
+
+  // Auto-expand the active org when Tickets/Rücklieferungen under it is selected.
+  useEffect(() => {
+    if (!selectedOrganizationId) return;
+    const org = kundenOrgs?.find((o) => o.id === selectedOrganizationId);
+    if (org?.hardware_returns_enabled) {
+      setExpandedKundenIds((prev) =>
+        prev[selectedOrganizationId] ? prev : { ...prev, [selectedOrganizationId]: true },
+      );
+    }
+  }, [selectedOrganizationId, kundenOrgs]);
 
   const isSectionCollapsed = (sectionId: CompactSidebarSectionId) =>
     collapsedGroups[sectionId] ?? DEFAULT_COLLAPSED_GROUPS[sectionId] ?? true;
@@ -831,19 +852,6 @@ export function TicketsLeftSidebar({
           </div>
         )}
 
-        {showHardwareReturnsLink && !effectiveCollapsed && (
-          <div className="mt-2 pt-1 border-t border-slate-100 px-1">
-            <button
-              type="button"
-              onClick={() => navigate('/returns')}
-              className="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-left text-[12px] font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 transition-colors"
-            >
-              <Package className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              {t('tickets.sidebar.returns', 'Rücklieferungen')}
-            </button>
-          </div>
-        )}
-
         {showKunden && !effectiveCollapsed && (
           <div className="mt-2 pt-1 border-t border-slate-100">
             <CollapsibleSectionHeader
@@ -887,56 +895,174 @@ export function TicketsLeftSidebar({
                 {filteredKunden.map((org) => {
                   const active = selectedOrganizationId === org.id;
                   const count = org.openCount ?? 0;
-                  return (
-                    <button
-                      key={org.id}
-                      type="button"
-                      onClick={() =>
-                        onSelectOrganization?.(active ? null : org.id)
-                      }
-                      className={cn(
-                        'flex h-8 w-full min-w-0 items-center justify-between gap-2 px-2.5 py-1.5 text-[13px] font-medium leading-none rounded-md transition-colors',
-                        active
-                          ? 'bg-blue-600 text-white font-semibold shadow-sm ring-2 ring-blue-300 ring-offset-1'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100',
-                      )}
-                      title={
-                        active
-                          ? t('tickets.sidebar.clickToClearClient', 'Erneut klicken zum Aufheben')
-                          : org.name
-                      }
-                      aria-pressed={active}
-                    >
-                      <span className="flex items-center gap-2 min-w-0">
-                        {org.logo_url ? (
-                          <img
-                            src={org.logo_url}
-                            alt=""
-                            className="w-4 h-4 rounded object-contain bg-white shrink-0"
-                          />
-                        ) : (
+                  const expandable = Boolean(org.hardware_returns_enabled);
+                  const expanded = Boolean(expandedKundenIds[org.id]);
+                  const ticketsActive = active && kundenPanel !== 'returns';
+                  const returnsActive = active && kundenPanel === 'returns';
+                  const returnsCount = org.returnsOpenCount ?? 0;
+
+                  if (!expandable) {
+                    return (
+                      <button
+                        key={org.id}
+                        type="button"
+                        onClick={() =>
+                          onSelectOrganization?.(active ? null : org.id)
+                        }
+                        className={cn(
+                          'flex h-8 w-full min-w-0 items-center justify-between gap-2 px-2.5 py-1.5 text-[13px] font-medium leading-none rounded-md transition-colors',
+                          active
+                            ? 'bg-blue-600 text-white font-semibold shadow-sm ring-2 ring-blue-300 ring-offset-1'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100',
+                        )}
+                        title={
+                          active
+                            ? t('tickets.sidebar.clickToClearClient', 'Erneut klicken zum Aufheben')
+                            : org.name
+                        }
+                        aria-pressed={active}
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          {org.logo_url ? (
+                            <img
+                              src={org.logo_url}
+                              alt=""
+                              className="w-4 h-4 rounded object-contain bg-white shrink-0"
+                            />
+                          ) : (
+                            <span
+                              className={cn(
+                                'w-4 h-4 rounded text-[8px] font-black flex items-center justify-center shrink-0',
+                                active ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600',
+                              )}
+                            >
+                              {organizationInitials(org.name)}
+                            </span>
+                          )}
+                          <span className="truncate text-left">{org.name}</span>
+                        </span>
+                        {count > 0 && (
                           <span
                             className={cn(
-                              'w-4 h-4 rounded text-[8px] font-black flex items-center justify-center shrink-0',
-                              active ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600',
+                              'font-mono tabular-nums text-[11px] font-medium shrink-0',
+                              active ? 'text-white/80' : 'text-slate-400',
                             )}
                           >
-                            {organizationInitials(org.name)}
+                            {formatCount(count)}
                           </span>
                         )}
-                        <span className="truncate text-left">{org.name}</span>
-                      </span>
-                      {count > 0 && (
-                        <span
-                          className={cn(
-                            'font-mono tabular-nums text-[11px] font-medium shrink-0',
-                            active ? 'text-white/80' : 'text-slate-400',
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <div key={org.id} className="space-y-0.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedKundenIds((prev) => ({
+                            ...prev,
+                            [org.id]: !prev[org.id],
+                          }))
+                        }
+                        className={cn(
+                          'flex h-8 w-full min-w-0 items-center justify-between gap-2 px-2.5 py-1.5 text-[13px] font-semibold leading-none rounded-md transition-colors',
+                          active
+                            ? 'bg-slate-100 text-slate-900'
+                            : 'text-slate-700 hover:text-slate-900 hover:bg-slate-100',
+                        )}
+                        aria-expanded={expanded}
+                        title={org.name}
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          {expanded ? (
+                            <ChevronDown className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                          ) : (
+                            <ChevronRight className="w-3.5 h-3.5 shrink-0 text-slate-500" />
                           )}
-                        >
-                          {formatCount(count)}
+                          {org.logo_url ? (
+                            <img
+                              src={org.logo_url}
+                              alt=""
+                              className="w-4 h-4 rounded object-contain bg-white shrink-0"
+                            />
+                          ) : (
+                            <span className="w-4 h-4 rounded text-[8px] font-black flex items-center justify-center shrink-0 bg-slate-200 text-slate-600">
+                              {organizationInitials(org.name)}
+                            </span>
+                          )}
+                          <span className="truncate text-left">{org.name}</span>
                         </span>
-                      )}
-                    </button>
+                      </button>
+                      {expanded ? (
+                        <div className="ml-4 pl-2 border-l border-slate-200 space-y-0.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (onSelectOrganizationTickets) {
+                                onSelectOrganizationTickets(org.id);
+                              } else {
+                                onSelectOrganization?.(org.id);
+                              }
+                            }}
+                            className={cn(
+                              'flex h-7 w-full min-w-0 items-center justify-between gap-2 px-2 py-1 text-[12px] font-medium leading-none rounded-md transition-colors',
+                              ticketsActive
+                                ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100',
+                            )}
+                            aria-pressed={ticketsActive}
+                          >
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <Ticket className="w-3 h-3 shrink-0 opacity-80" />
+                              <span className="truncate">
+                                {t('tickets.sidebar.kundenTickets', 'Tickets')}
+                              </span>
+                            </span>
+                            {count > 0 && (
+                              <span
+                                className={cn(
+                                  'font-mono tabular-nums text-[10px] font-medium shrink-0',
+                                  ticketsActive ? 'text-white/80' : 'text-slate-400',
+                                )}
+                              >
+                                {formatCount(count)}
+                              </span>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onSelectOrganizationReturns?.(org.id)}
+                            className={cn(
+                              'flex h-7 w-full min-w-0 items-center justify-between gap-2 px-2 py-1 text-[12px] font-medium leading-none rounded-md transition-colors',
+                              returnsActive
+                                ? 'bg-emerald-700 text-white font-semibold shadow-sm'
+                                : 'text-slate-600 hover:text-emerald-800 hover:bg-emerald-50',
+                            )}
+                            aria-pressed={returnsActive}
+                          >
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <Package className="w-3 h-3 shrink-0 opacity-80" />
+                              <span className="truncate">
+                                {t('tickets.sidebar.returns', 'Rücklieferungen')}
+                              </span>
+                            </span>
+                            {returnsCount > 0 && (
+                              <span
+                                className={cn(
+                                  'font-mono tabular-nums text-[10px] font-bold shrink-0 rounded-full px-1.5 py-0.5',
+                                  returnsActive
+                                    ? 'bg-white/20 text-white'
+                                    : 'bg-emerald-100 text-emerald-800',
+                                )}
+                              >
+                                {formatCount(returnsCount)}
+                              </span>
+                            )}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
                 {filteredKunden.length === 0 && (

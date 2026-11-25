@@ -3,39 +3,69 @@ import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
 import { ReturnsWorkbench } from '../../returns/ReturnsWorkbench';
 import { useEffect, useState } from 'react';
 import axios from 'axios';
+import {
+  evaluatePortalReturnsPageAccess,
+  resolveHardwareReturnsModuleFlag,
+} from '../../../lib/client-portal/hardware-returns-nav';
 
+/**
+ * DPG (and other module-enabled orgs) Rücklieferungen workbench.
+ * Waits for session + /api/portal/me before redirecting so hard refresh
+ * and sidebar clicks do not bounce back to /portal/dashboard.
+ */
 export default function ClientReturnsPage() {
-  const { session, isOrgWide, isClientAdmin } = useClientPortalSession();
-  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const { session, isClient, isClientAdmin, loading: sessionLoading } = useClientPortalSession();
+  const [moduleEnabled, setModuleEnabled] = useState<boolean | null>(null);
+  const [moduleLoading, setModuleLoading] = useState(true);
 
   useEffect(() => {
+    if (sessionLoading) return;
+    if (!session?.organizationId) {
+      setModuleEnabled(false);
+      setModuleLoading(false);
+      return;
+    }
     let active = true;
+    setModuleLoading(true);
     void axios
       .get('/api/portal/me', { withCredentials: true })
       .then((res) => {
         if (!active) return;
-        setEnabled(Boolean(res.data?.enabledModules?.hardwareReturns));
+        setModuleEnabled(resolveHardwareReturnsModuleFlag(res.data));
       })
       .catch(() => {
-        if (active) setEnabled(false);
+        if (active) setModuleEnabled(false);
+      })
+      .finally(() => {
+        if (active) setModuleLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [session?.organizationId]);
+  }, [session?.organizationId, sessionLoading]);
 
-  if (!session || !isOrgWide) {
-    return <Navigate to="/portal/dashboard" replace />;
-  }
-  if (enabled === false) {
-    return <Navigate to="/portal/dashboard" replace />;
-  }
-  if (enabled === null) {
+  const gate = evaluatePortalReturnsPageAccess({
+    sessionLoading,
+    moduleLoading,
+    isClient,
+    role: session?.role,
+    moduleEnabled,
+  });
+
+  if (gate.action === 'spinner') {
     return (
-      <div className="p-10 flex justify-center">
+      <div className="p-10 flex justify-center" aria-busy="true" aria-label="Laden">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-800" />
       </div>
     );
+  }
+
+  if (gate.action === 'redirect') {
+    return <Navigate to={gate.to} replace />;
+  }
+
+  if (!session) {
+    return <Navigate to="/portal/dashboard" replace />;
   }
 
   return (

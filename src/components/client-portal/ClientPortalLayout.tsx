@@ -23,6 +23,7 @@ import {
   organizationInitials,
   resolvePortalTitle,
 } from '../../lib/client-portal/org-branding';
+import { resolveHardwareReturnsModuleFlag } from '../../lib/client-portal/hardware-returns-nav';
 
 const NAV_ALL = [
   { to: '/portal/dashboard', label: 'Übersicht', icon: LayoutDashboard, end: true },
@@ -64,22 +65,33 @@ export default function ClientPortalLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [org, setOrg] = useState<OrgBranding | null>(null);
+  /** null = still resolving /api/portal/me module flags */
+  const [hardwareReturnsEnabled, setHardwareReturnsEnabled] = useState<boolean | null>(null);
   const isTicketsWorkbench =
     location.pathname === '/portal/tickets' ||
     /^\/portal\/tickets\/[^/]+$/.test(location.pathname);
+  const isReturnsWorkbench = location.pathname === '/portal/returns';
 
   useEffect(() => {
     if (!session?.organizationId) {
       setOrg(null);
+      setHardwareReturnsEnabled(false);
       return;
     }
     let active = true;
     void (async () => {
       try {
-        const res = await axios.get('/api/portal/organization', { withCredentials: true });
-        if (active) setOrg(res.data?.organization || null);
+        const [orgRes, meRes] = await Promise.all([
+          axios.get('/api/portal/organization', { withCredentials: true }),
+          axios.get('/api/portal/me', { withCredentials: true }),
+        ]);
+        if (!active) return;
+        setOrg(orgRes.data?.organization || null);
+        setHardwareReturnsEnabled(resolveHardwareReturnsModuleFlag(meRes.data));
       } catch {
-        if (active) setOrg(null);
+        if (!active) return;
+        setOrg(null);
+        setHardwareReturnsEnabled(false);
       }
     })();
     return () => {
@@ -95,10 +107,8 @@ export default function ClientPortalLayout() {
     );
   }
 
-  const hardwareReturnsEnabled = Boolean(
-    org?.enabledModules?.hardwareReturns || org?.hardware_returns_enabled,
-  );
-  const showReturns = isOrgWide && hardwareReturnsEnabled;
+  // Keep nav stable while module flag loads; show returns for org-wide roles once confirmed.
+  const showReturns = isOrgWide && hardwareReturnsEnabled === true;
 
   const navItems = [
     ...NAV_ALL.slice(0, 3),
@@ -189,12 +199,18 @@ export default function ClientPortalLayout() {
 
       <main
         className={
-          isTicketsWorkbench
+          isTicketsWorkbench || isReturnsWorkbench
             ? 'flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col'
             : 'flex-1 min-w-0 min-h-0 overflow-y-auto overflow-x-hidden'
         }
       >
-        <Outlet context={{ organization: org, setOrganization: setOrg }} />
+        <Outlet
+          context={{
+            organization: org,
+            setOrganization: setOrg,
+            hardwareReturnsEnabled: hardwareReturnsEnabled === true,
+          }}
+        />
       </main>
     </div>
   );

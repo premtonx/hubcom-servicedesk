@@ -76,6 +76,7 @@ import { useTranslation } from '../../lib/context/I18nContext';
 import { validateDraft, LegalValidationResult } from '../../services/legalService';
 import { CreateTicketDialog } from '../CreateTicketDialog';
 import { TicketsLeftSidebar, type KundenSidebarOrg } from '../tickets/TicketsLeftSidebar';
+import { ReturnsWorkbench } from '../returns/ReturnsWorkbench';
 import { TicketsSidebarManageSheet } from '../tickets/TicketsSidebarManageSheet';
 import { TicketListView } from '../tickets/TicketListView';
 import { TicketDetailContextPane } from '../tickets/TicketDetailContextPane';
@@ -125,24 +126,53 @@ export default function TicketsPage() {
   const isStaffUser = isHubcomStaffRole(roleName) && !isClientPortalRole(roleName);
 
   const [kundenOrgs, setKundenOrgs] = useState<KundenSidebarOrg[]>([]);
-  const [showHardwareReturnsLink, setShowHardwareReturnsLink] = useState(false);
   const selectedOrganizationId = searchParams.get('organizationId') || null;
   const urlViewParam = searchParams.get('view');
   const urlStatusParam = searchParams.get('status');
+  const urlPanelParam = searchParams.get('panel');
+  const kundenPanel: 'tickets' | 'returns' | null =
+    urlPanelParam === 'returns' ? 'returns' : selectedOrganizationId ? 'tickets' : null;
+  const showReturnsWorkbench =
+    isStaffUser && kundenPanel === 'returns' && Boolean(selectedOrganizationId);
   const resolvedWithinDays = parseResolvedWithinDays(searchParams.get('resolvedWithin'));
 
   const setSelectedOrganizationId = useCallback(
     (organizationId: string | null) => {
       const next = new URLSearchParams(searchParams);
+      next.delete('panel');
       if (organizationId) next.set('organizationId', organizationId);
       else next.delete('organizationId');
       // Org picks from the Kunden sidebar should show open tickets for that org,
       // not silently keep an unrelated assignment filter.
-      if (organizationId && !next.get('view')) {
-        next.set('view', 'team_all_open');
+      if (organizationId) {
+        if (!next.get('view') || next.get('view') === 'returns') {
+          next.set('view', 'team_all_open');
+        }
       }
       const qs = next.toString();
       navigate(qs ? `/tickets?${qs}` : '/tickets', { replace: true });
+    },
+    [navigate, searchParams],
+  );
+
+  const selectOrganizationTickets = useCallback(
+    (organizationId: string) => {
+      const next = new URLSearchParams(searchParams);
+      next.set('organizationId', organizationId);
+      next.delete('panel');
+      next.set('view', 'team_all_open');
+      navigate(`/tickets?${next.toString()}`, { replace: true });
+    },
+    [navigate, searchParams],
+  );
+
+  const selectOrganizationReturns = useCallback(
+    (organizationId: string) => {
+      const next = new URLSearchParams(searchParams);
+      next.set('organizationId', organizationId);
+      next.set('panel', 'returns');
+      next.delete('view');
+      navigate(`/tickets?${next.toString()}`, { replace: true });
     },
     [navigate, searchParams],
   );
@@ -266,6 +296,7 @@ export default function TicketsPage() {
 
   // Apply dashboard / deep-link query params (`status`, `view`, org without view).
   useEffect(() => {
+    if (urlPanelParam === 'returns') return;
     const mapped = resolveTicketsListDeepLink({
       status: urlStatusParam,
       view: urlViewParam,
@@ -279,7 +310,7 @@ export default function TicketsPage() {
     }
     // Intentionally omit activeView from deps — URL is source of truth for deep links.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlViewParam, urlStatusParam, selectedOrganizationId]);
+  }, [urlViewParam, urlStatusParam, urlPanelParam, selectedOrganizationId]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [legalViolation, setLegalViolation] = useState<LegalValidationResult | null>(null);
@@ -326,7 +357,6 @@ export default function TicketsPage() {
   useEffect(() => {
     if (!isStaffUser) {
       setKundenOrgs([]);
-      setShowHardwareReturnsLink(false);
       return;
     }
     let active = true;
@@ -336,34 +366,63 @@ export default function TicketsPage() {
         const raw = (res.data?.organizations || []) as Array<Record<string, any>>;
         const orgs = raw
           .filter((o) => o.is_active !== false)
-          .map((o) => ({
-            id: String(o.id),
-            name: String(o.name || ''),
-            logo_url: o.logo_url || null,
-            openCount: 0,
-          })) as KundenSidebarOrg[];
-        if (active) {
-          setKundenOrgs(orgs);
-          setShowHardwareReturnsLink(
-            raw.some(
-              (o) =>
-                o.is_active !== false &&
-                (o.hardware_returns_enabled === true ||
-                  o.enabledModules?.hardwareReturns === true),
-            ),
+          .map((o) => {
+            const hardwareEnabled =
+              o.hardware_returns_enabled === true ||
+              o.enabledModules?.hardwareReturns === true;
+            return {
+              id: String(o.id),
+              name: String(o.name || ''),
+              logo_url: o.logo_url || null,
+              openCount: 0,
+              hardware_returns_enabled: hardwareEnabled,
+              returnsOpenCount: 0,
+            };
+          }) as KundenSidebarOrg[];
+        if (active) setKundenOrgs(orgs);
+
+        // Best-effort open RMA counts for expandable orgs (sidebar badges).
+        const hwOrgs = orgs.filter((o) => o.hardware_returns_enabled);
+        if (hwOrgs.length && active) {
+          const counts = await Promise.all(
+            hwOrgs.map(async (o) => {
+              try {
+                const r = await axios.get(
+                  `/api/returns?organizationId=${encodeURIComponent(o.id)}&view=open&limit=1`,
+                  { withCredentials: true },
+                );
+                return {
+                  id: o.id,
+                  open: Number(r.data?.kpis?.open || 0),
+                };
+              } catch {
+                return { id: o.id, open: 0 };
+              }
+            }),
+          );
+          if (!active) return;
+          setKundenOrgs((prev) =>
+            prev.map((o) => {
+              const hit = counts.find((c) => c.id === o.id);
+              return hit ? { ...o, returnsOpenCount: hit.open } : o;
+            }),
           );
         }
       } catch {
-        if (active) {
-          setKundenOrgs([]);
-          setShowHardwareReturnsLink(false);
-        }
+        if (active) setKundenOrgs([]);
       }
     })();
     return () => {
       active = false;
     };
   }, [isStaffUser]);
+
+  // Leaving ticket detail when opening the nested Rücklieferungen panel.
+  useEffect(() => {
+    if (showReturnsWorkbench && selectedTicketId) {
+      setSelectedTicketId(null);
+    }
+  }, [showReturnsWorkbench, selectedTicketId]);
 
   const [filters, setFilters] = useState({
     agent: 'any',
@@ -665,7 +724,12 @@ export default function TicketsPage() {
         const status = String(t.status || '').toLowerCase();
         return status !== 'resolved' && status !== 'closed' && status !== 'deleted' && status !== 'trash' && status !== 'spam' && status !== 'merged';
       }).length;
-      return { ...org, openCount };
+      return {
+        ...org,
+        openCount,
+        hardware_returns_enabled: Boolean(org.hardware_returns_enabled),
+        returnsOpenCount: org.returnsOpenCount ?? 0,
+      };
     });
   }, [kundenOrgs, allTickets]);
 
@@ -1933,9 +1997,11 @@ export default function TicketsPage() {
         selectedTicketId={selectedTicketId}
         isMobileSidebarOpen={isMobileSidebarOpen}
         kundenOrgs={isStaffUser ? kundenOrgsWithCounts : undefined}
-        showHardwareReturnsLink={isStaffUser && showHardwareReturnsLink}
         selectedOrganizationId={selectedOrganizationId}
         onSelectOrganization={isStaffUser ? setSelectedOrganizationId : undefined}
+        kundenPanel={isStaffUser ? kundenPanel : null}
+        onSelectOrganizationTickets={isStaffUser ? selectOrganizationTickets : undefined}
+        onSelectOrganizationReturns={isStaffUser ? selectOrganizationReturns : undefined}
       />
 
       <TicketsSidebarManageSheet
@@ -1959,7 +2025,12 @@ export default function TicketsPage() {
         "flex-1 min-w-0 min-h-0 h-full flex flex-col overflow-hidden bg-slate-50 text-foreground",
         isMobileSidebarOpen ? "hidden md:flex" : "flex"
       )}>
-        {isStaffUser && selectedOrganizationId && selectedKundenName && !selectedTicketId && !isCreateTicketOpen ? (
+        {isStaffUser &&
+        selectedOrganizationId &&
+        selectedKundenName &&
+        !selectedTicketId &&
+        !isCreateTicketOpen &&
+        !showReturnsWorkbench ? (
           <div className="shrink-0 px-4 md:px-6 pt-3 bg-slate-50">
             <button
               type="button"
@@ -1973,7 +2044,18 @@ export default function TicketsPage() {
             </button>
           </div>
         ) : null}
-        {isCreateTicketOpen ? (
+        {showReturnsWorkbench && selectedOrganizationId ? (
+          <div className="flex-1 min-w-0 min-h-0 overflow-y-auto">
+            <div className="p-4 md:p-6 max-w-7xl mx-auto">
+              <ReturnsWorkbench
+                mode="staff"
+                organizationId={selectedOrganizationId}
+                canEditSettings
+                canImportCsv
+              />
+            </div>
+          </div>
+        ) : isCreateTicketOpen ? (
           <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#F8F9FB] overflow-hidden">
             <CreateTicketDialog
               isOpen={isCreateTicketOpen}

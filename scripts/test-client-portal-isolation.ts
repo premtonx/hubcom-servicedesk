@@ -87,6 +87,10 @@ import {
   type TicketHardwareReturnRecord,
 } from '../src/lib/client-portal/hardware-returns.js';
 import {
+  evaluatePortalReturnsPageAccess,
+  resolveHardwareReturnsModuleFlag,
+} from '../src/lib/client-portal/hardware-returns-nav.js';
+import {
   evaluateDueReminderStage,
   resolveStageRecipients,
   shouldSkipAutoSend,
@@ -1769,6 +1773,104 @@ function testHardwareReturnsEscalationEngine(): void {
   );
 }
 
+/** /portal/returns page gate — no premature redirect while me/module still loading. */
+function testPortalReturnsPageNavigationGate(): void {
+  console.log('\n--- Portal /portal/returns navigation gate ---');
+
+  assert(
+    evaluatePortalReturnsPageAccess({
+      sessionLoading: true,
+      moduleLoading: false,
+      isClient: true,
+      role: 'CLIENT_ADMIN',
+      moduleEnabled: null,
+    }).action === 'spinner',
+    'shows spinner while session is loading (no redirect)',
+  );
+  assert(
+    evaluatePortalReturnsPageAccess({
+      sessionLoading: false,
+      moduleLoading: true,
+      isClient: true,
+      role: 'CLIENT_ADMIN',
+      moduleEnabled: null,
+    }).action === 'spinner',
+    'shows spinner while /api/portal/me module flag is loading',
+  );
+
+  const dpgAdmin = evaluatePortalReturnsPageAccess({
+    sessionLoading: false,
+    moduleLoading: false,
+    isClient: true,
+    role: 'CLIENT_ADMIN',
+    moduleEnabled: true,
+  });
+  assert(dpgAdmin.action === 'allow', 'DPG CLIENT_ADMIN allowed on /portal/returns');
+
+  const dpgSupporter = evaluatePortalReturnsPageAccess({
+    sessionLoading: false,
+    moduleLoading: false,
+    isClient: true,
+    role: 'CLIENT_SUPPORTER',
+    moduleEnabled: true,
+  });
+  assert(dpgSupporter.action === 'allow', 'DPG CLIENT_SUPPORTER allowed on /portal/returns');
+
+  const clientUser = evaluatePortalReturnsPageAccess({
+    sessionLoading: false,
+    moduleLoading: false,
+    isClient: true,
+    role: 'CLIENT_USER',
+    moduleEnabled: true,
+  });
+  assert(
+    clientUser.action === 'redirect' && clientUser.to === '/portal/dashboard',
+    'CLIENT_USER redirected away from /portal/returns',
+  );
+
+  const citadelle = evaluatePortalReturnsPageAccess({
+    sessionLoading: false,
+    moduleLoading: false,
+    isClient: true,
+    role: 'CLIENT_ADMIN',
+    moduleEnabled: false,
+  });
+  assert(
+    citadelle.action === 'redirect' && citadelle.to === '/portal/dashboard',
+    'Citadelle (module off) redirected away from /portal/returns',
+  );
+
+  assert(
+    resolveHardwareReturnsModuleFlag({
+      enabledModules: { hardwareReturns: true },
+    }) === true,
+    'module flag from enabledModules.hardwareReturns',
+  );
+  assert(
+    resolveHardwareReturnsModuleFlag({
+      organization: { hardware_returns_enabled: true },
+    }) === true,
+    'module flag from organization.hardware_returns_enabled',
+  );
+  assert(
+    resolveHardwareReturnsModuleFlag({
+      enabledModules: { hardwareReturns: false },
+      organization: { hardware_returns_enabled: false },
+    }) === false,
+    'module flag false when disabled',
+  );
+
+  // Staff Kunden accordion contract: only hardware-enabled orgs expand.
+  const staffKunden = [
+    { id: 'citadelle', hardware_returns_enabled: false },
+    { id: 'dpg', hardware_returns_enabled: true },
+  ];
+  assert(
+    staffKunden.filter((o) => o.hardware_returns_enabled).map((o) => o.id).join(',') === 'dpg',
+    'only DPG expands under KUNDEN with Tickets + Rücklieferungen',
+  );
+}
+
 /**
  * Portal user / contact hard-delete RBAC:
  * - SYSTEM_ADMIN may delete CLIENT_* (incl. sole CLIENT_ADMIN) of an org
@@ -1937,6 +2039,7 @@ async function main(): Promise<void> {
   testPortalTresorVaultIsolation();
   testHardwareReturnsModuleGate();
   testHardwareReturnsEscalationEngine();
+  testPortalReturnsPageNavigationGate();
   testPortalUserDeleteAccess();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
