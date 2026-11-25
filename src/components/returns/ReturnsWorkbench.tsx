@@ -10,6 +10,7 @@ import {
   Loader2,
   Mail,
   Package,
+  PackageCheck,
   PackageOpen,
   PanelRight,
   Plug,
@@ -19,6 +20,7 @@ import {
   Settings2,
   ShieldAlert,
   Tablet,
+  Undo2,
   Upload,
   X,
   Zap,
@@ -41,6 +43,11 @@ import {
 import { ReturnsKanbanBoard } from './ReturnsKanbanBoard';
 import { ReturnsCardGrid } from './ReturnsCardGrid';
 import { DEFAULT_RETURN_STATUSES } from '../../lib/client-portal/hardware-returns-layout';
+import {
+  DeviceSerialPopover,
+  InlineStatusSelect,
+  type DeviceFieldsPatch,
+} from './ReturnsInlineEditors';
 
 type WorkbenchMode = 'portal' | 'staff';
 
@@ -377,6 +384,29 @@ function MailStageStepper({
   );
 }
 
+const DEFAULT_CATALOG_LISTS = {
+  statuses: ['Neu', 'Warten auf Third Level', 'In Bearbeitung', 'Geschlossen'],
+  device_types: [
+    'VL2E Adapter',
+    'Secutest Pro',
+    'Secutest S2 N+10',
+    'PRCD Adapter',
+    'BT Adapter',
+    'Tablet & Dockingstation',
+  ],
+  service_levels: ['1', '2', '3'],
+  slas: ['Niedrig', 'Normal', 'Hoch'],
+  shipping_methods: [
+    'Standard',
+    'Express',
+    'E-9 Express',
+    'E-1030 Express',
+    'E-1200 Express',
+    'E-Samstag Express',
+    'Samstag',
+  ],
+};
+
 export function ReturnsWorkbench({
   mode,
   organizationId,
@@ -624,38 +654,67 @@ export function ReturnsWorkbench({
   const catalogShipping: string[] = settings?.catalogs?.shipping_methods?.length
     ? settings.catalogs.shipping_methods
     : ['Standard', 'Express', 'E-9 Express', 'E-1030 Express', 'E-1200 Express', 'E-Samstag Express', 'Samstag'];
+  const catalogDeviceTypes: string[] = settings?.catalogs?.device_types?.length
+    ? settings.catalogs.device_types
+    : [...DEFAULT_CATALOG_LISTS.device_types];
 
-  const patchReturnStatus = async (it: ListItem, nextStatus: string) => {
+  const patchReturnFields = async (
+    it: ListItem,
+    patch: Record<string, unknown>,
+    opts?: { successToast?: string; mergeLocal?: Record<string, unknown> },
+  ) => {
     const id = returnRowId(it);
     if (!id) return;
     const prev = items;
-    const current = String(it.hardwareReturn.status || 'Neu').trim() || 'Neu';
-    if (current.toLowerCase() === nextStatus.toLowerCase()) return;
-    setItems((list) =>
-      list.map((row) =>
-        returnRowId(row) === id
-          ? {
-              ...row,
-              hardwareReturn: { ...row.hardwareReturn, status: nextStatus },
-            }
-          : row,
-      ),
-    );
+    if (opts?.mergeLocal) {
+      setItems((list) =>
+        list.map((row) =>
+          returnRowId(row) === id
+            ? {
+                ...row,
+                hardwareReturn: { ...row.hardwareReturn, ...opts.mergeLocal },
+              }
+            : row,
+        ),
+      );
+    }
     try {
       await axios.patch(
         `${base}/${encodeURIComponent(id)}`,
         {
-          status: nextStatus,
-          hardwareReturn: { status: nextStatus },
+          ...(typeof patch.status === 'string' ? { status: patch.status } : {}),
+          hardwareReturn: patch,
           ...(mode === 'staff' ? { organizationId } : {}),
         },
         { withCredentials: true },
       );
-      toast.success(`Status → ${nextStatus}`);
+      if (opts?.successToast) toast.success(opts.successToast);
     } catch (err: any) {
       setItems(prev);
-      toast.error(err?.response?.data?.error || 'Status konnte nicht aktualisiert werden');
+      toast.error(err?.response?.data?.error || 'Speichern fehlgeschlagen');
+      throw err;
     }
+  };
+
+  const patchReturnStatus = async (it: ListItem, nextStatus: string) => {
+    const current = String(it.hardwareReturn.status || 'Neu').trim() || 'Neu';
+    if (current.toLowerCase() === nextStatus.toLowerCase()) return;
+    try {
+      await patchReturnFields(
+        it,
+        { status: nextStatus },
+        { successToast: `Status → ${nextStatus}`, mergeLocal: { status: nextStatus } },
+      );
+    } catch {
+      /* rolled back in patchReturnFields */
+    }
+  };
+
+  const patchDeviceFields = async (it: ListItem, fields: DeviceFieldsPatch) => {
+    await patchReturnFields(it, fields, {
+      successToast: 'Gerätetyp & Seriennummern gespeichert',
+      mergeLocal: fields,
+    });
   };
 
   const markReturnedItem = async (it: ListItem) => {
@@ -667,10 +726,26 @@ export function ReturnsWorkbench({
         mode === 'staff' ? { organizationId } : {},
         { withCredentials: true },
       );
-      toast.success('Als zurückgeliefert markiert');
+      toast.success('Eingang bestätigt');
       void load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Fehler');
+    }
+  };
+
+  const unreturnItem = async (it: ListItem) => {
+    try {
+      await patchReturnFields(
+        it,
+        { returned: false, returned_at: null },
+        {
+          successToast: 'Eingang zurückgesetzt',
+          mergeLocal: { returned: false, returned_at: null },
+        },
+      );
+      void load();
+    } catch {
+      /* rolled back */
     }
   };
 
@@ -1011,6 +1086,7 @@ export function ReturnsWorkbench({
             catalogStatuses={catalogStatuses}
             onOpenDetails={openEdit}
             onMarkReturned={(it) => void markReturnedItem(it)}
+            onUnreturn={(it) => void unreturnItem(it)}
             onStatusChange={(it, status) => void patchReturnStatus(it, status)}
           />
         ) : layoutMode === 'cards' ? (
@@ -1019,6 +1095,7 @@ export function ReturnsWorkbench({
             catalogStatuses={catalogStatuses}
             onOpenDetails={openEdit}
             onMarkReturned={(it) => void markReturnedItem(it)}
+            onUnreturn={(it) => void unreturnItem(it)}
             onStatusChange={(it, status) => void patchReturnStatus(it, status)}
           />
         ) : (
@@ -1118,21 +1195,30 @@ export function ReturnsWorkbench({
                           </span>
                         </div>
                       </td>
-                      <td className="p-3">{renderDeviceColumn(hw)}</td>
-                      <td className="p-3">
+                      <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                        <DeviceSerialPopover
+                          deviceTypes={catalogDeviceTypes}
+                          initial={{
+                            device_old_type: hw.device_old_type || null,
+                            device_old_serial: hw.device_old_serial || null,
+                            device_new_type: hw.device_new_type || null,
+                            device_new_serial: hw.device_new_serial || null,
+                          }}
+                          renderReadOnly={renderDeviceColumn(hw)}
+                          onSave={(fields) => patchDeviceFields(it, fields)}
+                        />
+                      </td>
+                      <td className="p-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex flex-col items-start gap-1.5">
-                          <span
-                            className={cn(
-                              'inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-bold',
-                              statusBadgeClass(statusLabel),
-                            )}
-                          >
-                            {statusLabel}
-                          </span>
+                          <InlineStatusSelect
+                            value={statusLabel}
+                            statuses={catalogStatuses}
+                            onChange={(status) => void patchReturnStatus(it, status)}
+                          />
                           {hw.returned ? (
                             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-100 px-2 py-0.5 text-[10px] font-bold">
-                              <CheckCircle2 className="w-3 h-3" />
-                              Zurück am{' '}
+                              <PackageCheck className="w-3 h-3" />
+                              Eingegangen am{' '}
                               {formatBerlinDateTime(hw.returned_at) ||
                                 formatDateDeOnly(hw.returned_at) ||
                                 '—'}
@@ -1197,17 +1283,34 @@ export function ReturnsWorkbench({
                                 type="button"
                                 size="sm"
                                 className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
+                                title="Eingang bestätigen"
                                 onClick={() => void markReturnedItem(it)}
                               >
-                                <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                                Zurück
+                                <PackageCheck className="w-3.5 h-3.5 mr-1" />
+                                Eingang bestätigen
                               </Button>
                             </>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 px-2">
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              Erledigt
-                            </span>
+                            <div className="flex flex-col items-start gap-1">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-100 px-2 py-0.5 text-[10px] font-bold">
+                                <PackageCheck className="w-3 h-3" />
+                                Eingegangen
+                                {formatBerlinDateTime(hw.returned_at)
+                                  ? ` am ${formatBerlinDateTime(hw.returned_at)}`
+                                  : ''}
+                              </span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-[11px] text-slate-500 hover:text-slate-800"
+                                title="Eingang rückgängig machen"
+                                onClick={() => void unreturnItem(it)}
+                              >
+                                <Undo2 className="w-3 h-3 mr-1" />
+                                Rückgängig
+                              </Button>
+                            </div>
                           )}
                         </div>
                       </td>
@@ -1228,7 +1331,7 @@ export function ReturnsWorkbench({
           <p className="text-sm font-bold">{selected.size} ausgewählt</p>
           <div className="flex flex-wrap gap-2">
             <Button type="button" size="sm" onClick={() => void bulk('mark_returned')}>
-              Als zurückgeliefert markieren
+              Eingang bestätigen
             </Button>
             <Button type="button" size="sm" variant="outline" onClick={() => void bulk('mark_exported')}>
               Als exportiert markieren
@@ -1428,29 +1531,6 @@ function EmailChips(props: {
 }
 
 type SettingsTab = 'catalogs' | 'reminders' | 'm365';
-
-const DEFAULT_CATALOG_LISTS = {
-  statuses: ['Neu', 'Warten auf Third Level', 'In Bearbeitung', 'Geschlossen'],
-  device_types: [
-    'VL2E Adapter',
-    'Secutest Pro',
-    'Secutest S2 N+10',
-    'PRCD Adapter',
-    'BT Adapter',
-    'Tablet & Dockingstation',
-  ],
-  service_levels: ['1', '2', '3'],
-  slas: ['Niedrig', 'Normal', 'Hoch'],
-  shipping_methods: [
-    'Standard',
-    'Express',
-    'E-9 Express',
-    'E-1030 Express',
-    'E-1200 Express',
-    'E-Samstag Express',
-    'Samstag',
-  ],
-};
 
 function CatalogTagList(props: {
   label: string;

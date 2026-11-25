@@ -9,6 +9,7 @@ interface ReturnsCardGridProps {
   catalogStatuses: string[];
   onOpenDetails: (item: ReturnsListItem) => void;
   onMarkReturned: (item: ReturnsListItem) => void;
+  onUnreturn?: (item: ReturnsListItem) => void;
   onStatusChange: (item: ReturnsListItem, status: string) => void;
 }
 
@@ -17,6 +18,7 @@ export function ReturnsCardGrid({
   catalogStatuses,
   onOpenDetails,
   onMarkReturned,
+  onUnreturn,
   onStatusChange,
 }: ReturnsCardGridProps) {
   return (
@@ -36,6 +38,7 @@ export function ReturnsCardGrid({
               showStatusSelect
               onOpenDetails={() => onOpenDetails(item)}
               onMarkReturned={() => onMarkReturned(item)}
+              onUnreturn={onUnreturn ? () => onUnreturn(item) : undefined}
               onStatusChange={(status) => onStatusChange(item, status)}
             />
           </button>

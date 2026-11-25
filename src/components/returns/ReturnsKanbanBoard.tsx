@@ -16,6 +16,7 @@ interface ReturnsKanbanBoardProps {
   catalogStatuses: string[];
   onOpenDetails: (item: ReturnsListItem) => void;
   onMarkReturned: (item: ReturnsListItem) => void;
+  onUnreturn?: (item: ReturnsListItem) => void;
   onStatusChange: (item: ReturnsListItem, status: string) => void;
 }
 
@@ -24,6 +25,7 @@ export function ReturnsKanbanBoard({
   catalogStatuses,
   onOpenDetails,
   onMarkReturned,
+  onUnreturn,
   onStatusChange,
 }: ReturnsKanbanBoardProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -124,6 +126,7 @@ export function ReturnsKanbanBoard({
                       showStatusSelect
                       onOpenDetails={() => onOpenDetails(item)}
                       onMarkReturned={() => onMarkReturned(item)}
+                      onUnreturn={onUnreturn ? () => onUnreturn(item) : undefined}
                       onStatusChange={(status) => onStatusChange(item, status)}
                     />
                   </div>

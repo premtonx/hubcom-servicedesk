@@ -1,4 +1,14 @@
-import { Check, CheckCircle2, Package, PanelRight, Plug, Tablet, Zap, type LucideIcon } from 'lucide-react';
+import {
+  Check,
+  Package,
+  PackageCheck,
+  PanelRight,
+  Plug,
+  Tablet,
+  Undo2,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react';
 import { Button } from '../ui/button';
 import { cn } from '../../lib/utils';
 import {
@@ -225,6 +235,7 @@ export function ReturnsItemCardBody({
   statuses,
   onOpenDetails,
   onMarkReturned,
+  onUnreturn,
   onStatusChange,
   showStatusSelect,
   compact,
@@ -233,6 +244,7 @@ export function ReturnsItemCardBody({
   statuses: string[];
   onOpenDetails: () => void;
   onMarkReturned: () => void;
+  onUnreturn?: () => void;
   onStatusChange?: (status: string) => void;
   showStatusSelect?: boolean;
   compact?: boolean;
@@ -307,16 +319,32 @@ export function ReturnsItemCardBody({
             type="button"
             size="sm"
             className="h-7 text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white"
+            title="Eingang bestätigen"
             onClick={onMarkReturned}
           >
-            <CheckCircle2 className="w-3 h-3 mr-1" />
-            Zurück
+            <PackageCheck className="w-3 h-3 mr-1" />
+            Eingang bestätigen
           </Button>
         ) : (
-          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 px-1">
-            <CheckCircle2 className="w-3 h-3" />
-            Erledigt
-          </span>
+          <>
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 px-1">
+              <PackageCheck className="w-3 h-3" />
+              Eingegangen
+            </span>
+            {onUnreturn ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-1.5 text-[10px] text-slate-500"
+                title="Eingang rückgängig machen"
+                onClick={onUnreturn}
+              >
+                <Undo2 className="w-3 h-3 mr-0.5" />
+                Rückgängig
+              </Button>
+            ) : null}
+          </>
         )}
       </div>
     </div>

@@ -1181,6 +1181,33 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
   );
 }
 
+function testReturnsInlineListEditorsLifecycle(): void {
+  console.log('\n[19e] Returns inline Status / Geräte / Eingang bestätigen');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const inlineSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsInlineEditors.tsx'),
+    'utf8',
+  );
+
+  assert(
+    workbenchSrc.includes('Eingang bestätigen') &&
+      workbenchSrc.includes('unreturnItem') &&
+      workbenchSrc.includes('Rückgängig') &&
+      workbenchSrc.includes('InlineStatusSelect') &&
+      workbenchSrc.includes('DeviceSerialPopover') &&
+      workbenchSrc.includes('patchDeviceFields') &&
+      inlineSrc.includes('device_old_type') &&
+      inlineSrc.includes('device_new_serial') &&
+      !workbenchSrc.includes("'/api/db") &&
+      !inlineSrc.includes("'/api/db"),
+    'inline Status + device popover + Eingang/Rückgängig via portal-safe PATCH',
+  );
+}
+
 function testReturnsListeKanbanKartenLifecycle(): void {
   console.log('\n[19d] Returns Liste | Kanban | Karten layouts');
 
@@ -1385,6 +1412,7 @@ async function main(): Promise<void> {
   testPortalKbArticleEditLifecycle();
   testReturnsPaginationErinnerungDashboardLifecycle();
   testReturnsListeKanbanKartenLifecycle();
+  testReturnsInlineListEditorsLifecycle();
   testPortalKbSharePointCsvImportLifecycle();
   testSharePointReturnsCsvImportApiLifecycle();
   testSharePointReturnsCsvImportUiLifecycle();

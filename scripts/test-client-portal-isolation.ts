@@ -3314,7 +3314,7 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
       workbenchSrc.includes("kind=\"neu\"") &&
       workbenchSrc.includes('device_old_type') &&
       workbenchSrc.includes('device_new_type') &&
-      workbenchSrc.includes('Zurück am'),
+      workbenchSrc.includes('Eingegangen am'),
     'Gerät ALT/NEU badges + Status/Rückgabe column',
   );
   assert(
@@ -4229,8 +4229,8 @@ function testHardwareReturnsListeKanbanKarten(): void {
       sharedSrc.includes('CompactDevicePills') &&
       sharedSrc.includes('ReminderProgress') &&
       sharedSrc.includes('Details') &&
-      sharedSrc.includes('Zurück'),
-    'Karten grid renders device/reminder cards with Details/Zurück',
+      sharedSrc.includes('Eingang bestätigen'),
+    'Karten grid renders device/reminder cards with Details/Eingang bestätigen',
   );
 
   // Custom admin status becomes its own Kanban column; move resolves target.
@@ -4274,6 +4274,94 @@ function testHardwareReturnsListeKanbanKarten(): void {
   );
 }
 
+/** Inline list Status + Gerätetyp popover + Eingang bestätigen / Rückgängig. */
+function testHardwareReturnsInlineListEditors(): void {
+  console.log('\n--- Hardware returns inline list editors ---');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const inlineSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsInlineEditors.tsx'),
+    'utf8',
+  );
+  const sharedSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/returns-layout-shared.tsx'),
+    'utf8',
+  );
+  const routesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/hardwareReturnsRoutes.ts'),
+    'utf8',
+  );
+
+  assert(
+    workbenchSrc.includes('Eingang bestätigen') &&
+      workbenchSrc.includes('unreturnItem') &&
+      workbenchSrc.includes('Rückgängig') &&
+      workbenchSrc.includes('Eingegangen am') &&
+      workbenchSrc.includes('PackageCheck') &&
+      !workbenchSrc.includes('>Zurück</') &&
+      !workbenchSrc.includes("'Zurück'"),
+    'list uses Eingang bestätigen / Eingegangen / Rückgängig (not ambiguous Zurück action)',
+  );
+  assert(
+    workbenchSrc.includes('InlineStatusSelect') &&
+      inlineSrc.includes('DropdownMenu') &&
+      inlineSrc.includes('Status ändern') &&
+      workbenchSrc.includes('patchReturnStatus') &&
+      workbenchSrc.includes('stopPropagation'),
+    'inline Status dropdown PATCHes without navigating to details',
+  );
+  assert(
+    workbenchSrc.includes('DeviceSerialPopover') &&
+      inlineSrc.includes('Bestehendes Gerät (Alt)') &&
+      inlineSrc.includes('Neues Gerät (Neu)') &&
+      inlineSrc.includes('— Keine Auswahl —') &&
+      inlineSrc.includes('Seriennummer (Alt)') &&
+      inlineSrc.includes('Seriennummer (Neu)') &&
+      inlineSrc.includes('Speichern') &&
+      inlineSrc.includes('Pencil') &&
+      workbenchSrc.includes('patchDeviceFields') &&
+      workbenchSrc.includes('device_old_type') &&
+      workbenchSrc.includes('device_new_serial'),
+    'device/serial popover saves ALT/NEU via PATCH',
+  );
+  assert(
+    workbenchSrc.includes('bulk(') &&
+      workbenchSrc.includes("bulk('mark_returned')") &&
+      /Eingang bestätigen/.test(workbenchSrc),
+    'bulk action labeled Eingang bestätigen',
+  );
+  assert(
+    routesSrc.includes("activityType = 'unreturned'") &&
+      routesSrc.includes('appendHardwareReturnActivity'),
+    'PATCH returned=false writes unreturned activity_log entry',
+  );
+  assert(
+    sharedSrc.includes('Eingang bestätigen') &&
+      sharedSrc.includes('Rückgängig') &&
+      sharedSrc.includes('onUnreturn'),
+    'Kanban/Karten cards share Eingang bestätigen + Rückgängig',
+  );
+
+  for (const [label, src] of [
+    ['workbench', workbenchSrc],
+    ['inline', inlineSrc],
+    ['shared', sharedSrc],
+  ] as const) {
+    assert(
+      !src.includes("'/api/db") && !src.includes('"/api/db'),
+      `${label} never hardcodes /api/db`,
+    );
+  }
+  assert(
+    workbenchSrc.includes('/api/portal/returns') &&
+      workbenchSrc.includes('/api/returns'),
+    'staff + portal bases remain /api/returns and /api/portal/returns',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -4299,6 +4387,7 @@ async function main(): Promise<void> {
   testHardwareReturnsSchemaCatalogsPart1();
   testHardwareReturnsPaginationErinnerungAndDashboard();
   testHardwareReturnsListeKanbanKarten();
+  testHardwareReturnsInlineListEditors();
   await testOrganizationDirectorySyncPart2();
   testSharePointReturnsCsvImportApiIsolation();
   testSharePointReturnsCsvImportUiIsolation();
