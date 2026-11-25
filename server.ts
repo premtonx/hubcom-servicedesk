@@ -873,6 +873,12 @@ async function startServer() {
   );
   app.use("/api/portal/vault", clientPortalVaultRoutes);
   app.use("/api/portal", clientPortalRoutes);
+  // CLIENT_* ticket REST (org-isolated). Non-CLIENT roles fall through via next('router')
+  // so legacy role=customer handlers in portalRoutes remain reachable.
+  const { default: clientPortalTicketRoutes } = await import(
+    "./src/routes/clientPortalTicketRoutes.js"
+  );
+  app.use("/api/portal", clientPortalTicketRoutes);
   app.use("/api/admin/import", importRoutes);
   app.use("/api/ai", aiRoutes);
   app.use("/api/kb/articles", kbArticleRoutes);

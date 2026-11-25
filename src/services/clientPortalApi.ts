@@ -60,9 +60,11 @@ export interface PortalEmailOrgSettings {
   ssoEnabled?: boolean;
 }
 
-async function dbAction<T = unknown>(payload: Record<string, unknown>): Promise<T> {
-  const res = await axios.post('/api/db', payload, { withCredentials: true });
-  return res.data?.result as T;
+/** @deprecated Portal ticket paths must never call /api/db — kept only as a hard guard. */
+function assertNeverDb(path: string): void {
+  if (path.includes('/api/db')) {
+    throw new Error('Portal ticket client must not call /api/db');
+  }
 }
 
 export interface PortalDashboardResponse {
@@ -200,22 +202,52 @@ export const clientPortalApi = {
     };
   },
 
-  async listTickets(): Promise<Ticket[]> {
-    const docs = await dbAction<Ticket[]>({
-      action: 'get_docs',
-      collection: 'tickets',
-      constraints: [],
+  async listTickets(params?: {
+    scope?: 'mine' | 'all';
+    status?: string;
+    q?: string;
+  }): Promise<{
+    tickets: Ticket[];
+    counts: Record<string, number>;
+    scope: 'mine' | 'all';
+  }> {
+    const path = '/api/portal/tickets';
+    assertNeverDb(path);
+    const res = await axios.get(path, {
+      withCredentials: true,
+      params: {
+        scope: params?.scope,
+        status: params?.status,
+        q: params?.q,
+      },
     });
-    return Array.isArray(docs) ? docs : [];
+    return {
+      tickets: Array.isArray(res.data?.tickets) ? res.data.tickets : [],
+      counts: (res.data?.counts || {}) as Record<string, number>,
+      scope: res.data?.scope === 'all' ? 'all' : 'mine',
+    };
   },
 
-  async getTicket(id: string): Promise<Ticket | null> {
-    const doc = await dbAction<Ticket | null>({
-      action: 'get_doc',
-      collection: 'tickets',
-      id,
-    });
-    return doc || null;
+  async getTicket(id: string): Promise<{
+    ticket: Ticket | null;
+    messages: any[];
+    participants: Array<{
+      ticket_id: string;
+      user_id: string;
+      added_by: string | null;
+      created_at: string;
+    }>;
+    attachments: PortalTicketAttachment[];
+  }> {
+    const path = `/api/portal/tickets/${encodeURIComponent(id)}`;
+    assertNeverDb(path);
+    const res = await axios.get(path, { withCredentials: true });
+    return {
+      ticket: (res.data?.ticket as Ticket) || null,
+      messages: Array.isArray(res.data?.messages) ? res.data.messages : [],
+      participants: Array.isArray(res.data?.participants) ? res.data.participants : [],
+      attachments: Array.isArray(res.data?.attachments) ? res.data.attachments : [],
+    };
   },
 
   async createTicket(payload: {
@@ -230,68 +262,51 @@ export const clientPortalApi = {
     customerName?: string;
     customerEmail?: string;
   }): Promise<string> {
-    const created = await dbAction<{ id: string }>({
-      action: 'add_doc',
-      collection: 'tickets',
-      data: {
+    const path = '/api/portal/tickets';
+    assertNeverDb(path);
+    const res = await axios.post(
+      path,
+      {
         subject: payload.subject,
         description: payload.description,
-        html_content: payload.description,
         priority: payload.priority,
-        status: payload.status || 'open',
-        tags: payload.category ? ['client-portal', `category:${payload.category}`] : ['client-portal'],
-        channel: 'portal',
-        type: 'incident',
-        ticketKind: 'support',
+        category: payload.category,
+        requesterId: payload.requesterId,
+        participantIds: payload.participantIds,
+        attachments: payload.attachments || [],
         customerName: payload.customerName || '',
         customerEmail: payload.customerEmail || '',
-        requesterId: payload.requesterId,
-        attachments: payload.attachments || [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
       },
-    });
-
-    const ticketId = created?.id;
+      { withCredentials: true },
+    );
+    const ticketId = res.data?.ticket?.id as string | undefined;
     if (!ticketId) throw new Error('Ticket create failed — missing id.');
-
-    // Add participants after create (server stamps organizationId).
-    for (const userId of payload.participantIds || []) {
-      if (!userId || userId === payload.requesterId) continue;
-      try {
-        await axios.post(
-          `/api/tickets/${encodeURIComponent(ticketId)}/participants`,
-          { userId },
-          { withCredentials: true },
-        );
-      } catch {
-        /* non-fatal — ticket already exists */
-      }
-    }
-
     return ticketId;
   },
 
+  /** @deprecated Prefer getTicket() which already returns public messages. */
   async listMessages(ticketId: string): Promise<any[]> {
-    const docs = await dbAction<any[]>({
-      action: 'get_docs',
-      collection: `tickets/${ticketId}/messages`,
-      constraints: [],
-    });
-    return Array.isArray(docs) ? docs : [];
+    const detail = await this.getTicket(ticketId);
+    return detail.messages;
   },
 
   async reply(
     ticketId: string,
-    payload: { content: string; senderId: string; senderName?: string },
+    payload: {
+      content: string;
+      senderId?: string;
+      senderName?: string;
+      attachments?: PortalTicketAttachment[];
+    },
   ) {
+    const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}/messages`;
+    assertNeverDb(path);
     const res = await axios.post(
-      `/api/tickets/${encodeURIComponent(ticketId)}/replies`,
+      path,
       {
         content: payload.content,
-        senderId: payload.senderId,
         senderName: payload.senderName,
-        senderType: 'customer',
+        attachments: payload.attachments || [],
       },
       { withCredentials: true },
     );
@@ -299,11 +314,9 @@ export const clientPortalApi = {
   },
 
   async updateTicketStatus(ticketId: string, status: TicketStatus) {
-    const res = await axios.patch(
-      `/api/tickets/${encodeURIComponent(ticketId)}`,
-      { status },
-      { withCredentials: true },
-    );
+    const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}`;
+    assertNeverDb(path);
+    const res = await axios.patch(path, { status }, { withCredentials: true });
     return res.data?.ticket;
   },
 

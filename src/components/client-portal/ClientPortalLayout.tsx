@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Ticket,
   PlusCircle,
@@ -52,7 +52,11 @@ interface OrgBranding {
 export default function ClientPortalLayout() {
   const { session, isClientAdmin, isOrgWide, loading } = useClientPortalSession();
   const navigate = useNavigate();
+  const location = useLocation();
   const [org, setOrg] = useState<OrgBranding | null>(null);
+  const isTicketsWorkbench =
+    location.pathname === '/portal/tickets' ||
+    /^\/portal\/tickets\/[^/]+$/.test(location.pathname);
 
   useEffect(() => {
     if (!session?.organizationId) {
@@ -166,7 +170,13 @@ export default function ClientPortalLayout() {
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0 min-h-0 overflow-y-auto overflow-x-hidden">
+      <main
+        className={
+          isTicketsWorkbench
+            ? 'flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col'
+            : 'flex-1 min-w-0 min-h-0 overflow-y-auto overflow-x-hidden'
+        }
+      >
         <Outlet context={{ organization: org, setOrganization: setOrg }} />
       </main>
     </div>

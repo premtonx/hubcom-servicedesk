@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, Loader2, Paperclip, UserPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../ui/button';
 import { Label } from '../../ui/label';
 import { RichTextEditor } from '../../RichTextEditor';
-import { cn } from '../../../lib/utils';
+import { cn, getInitials, safeString } from '../../../lib/utils';
 import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
 import {
   clientPortalApi,
@@ -15,7 +15,8 @@ import {
 import type { Ticket, TicketStatus } from '../../../types';
 import { sanitizeTimelineHtml } from '../../../lib/sanitize-html';
 import { portalPriorityLabel, portalStatusLabel } from '../../../lib/portal/status';
-import { safeString } from '../../../lib/utils';
+import { portalPriorityBadgeClass, portalStatusBadgeClass } from '../../portal/portalUi';
+import { formatRelativeTime } from '../../../lib/dashboard-format-utils';
 
 type TimelineItem = {
   id: string;
@@ -44,16 +45,9 @@ function roleBadge(params: {
   return member ? 'Mitarbeiter' : 'Hubcom Support';
 }
 
-const STATUS_OPTIONS: { value: TicketStatus; label: string }[] = [
-  { value: 'resolved', label: 'Gelöst' },
-  { value: 'closed', label: 'Geschlossen' },
-  { value: 'open', label: 'Wiedereröffnen' },
-  { value: 'in_progress', label: 'In Bearbeitung' },
-];
-
 export default function ClientTicketDetailPage() {
   const { ticketId = '' } = useParams();
-  const { session, isOrgWide } = useClientPortalSession();
+  const { session, isOrgWide, isClientAdmin } = useClientPortalSession();
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [members, setMembers] = useState<PortalMember[]>([]);
@@ -65,26 +59,25 @@ export default function ClientTicketDetailPage() {
   const [addUserId, setAddUserId] = useState('');
 
   const membersById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
+  const canManageParticipants = isOrgWide;
 
   const refresh = useCallback(async () => {
     if (!ticketId) return;
     setLoading(true);
     try {
-      const [t, msgs, parts, mems] = await Promise.all([
+      // Single portal REST call — never /api/db for ticket/messages.
+      const [detail, mems] = await Promise.all([
         clientPortalApi.getTicket(ticketId),
-        clientPortalApi.listMessages(ticketId),
-        clientPortalApi.listParticipants(ticketId).catch(() => []),
         isOrgWide ? clientPortalApi.listMembers().catch(() => []) : Promise.resolve([]),
       ]);
-      setTicket(t);
-      setMessages(
-        (msgs || []).filter((m) => !(m.is_internal === true || m.isInternal === true)),
-      );
-      setParticipants((parts || []).map((p) => p.user_id));
+      setTicket(detail.ticket);
+      setMessages(detail.messages || []);
+      setParticipants((detail.participants || []).map((p) => p.user_id));
       setMembers(mems || []);
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Ticket konnte nicht geladen werden');
       setTicket(null);
+      setMessages([]);
     } finally {
       setLoading(false);
     }
@@ -96,20 +89,7 @@ export default function ClientTicketDetailPage() {
 
   const timeline: TimelineItem[] = useMemo(() => {
     if (!ticket) return [];
-    const opener: TimelineItem = {
-      id: 'opener',
-      content: String(ticket.html_content || ticket.description || ''),
-      senderName: String(ticket.customerName || ticket.customerEmail || 'Mitarbeiter'),
-      badge: roleBadge({
-        senderType: 'customer',
-        senderId: String(ticket.requesterId || ticket.requester_id || ticket.creatorId || ''),
-        membersById,
-      }),
-      createdAt: String(ticket.createdAt || ''),
-      attachments: Array.isArray((ticket as any).attachments)
-        ? ((ticket as any).attachments as PortalTicketAttachment[])
-        : undefined,
-    };
+    const openerContent = String(ticket.html_content || ticket.description || '').trim();
     const rest = messages
       .slice()
       .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))
@@ -125,6 +105,31 @@ export default function ClientTicketDetailPage() {
         createdAt: String(m.createdAt || ''),
         attachments: Array.isArray(m.attachments) ? m.attachments : undefined,
       }));
+
+    // Avoid duplicating the opener when the first message mirrors the description.
+    const firstIsDuplicate =
+      rest.length > 0 &&
+      openerContent &&
+      String(rest[0].content || '')
+        .replace(/<[^>]+>/g, '')
+        .trim() === openerContent.replace(/<[^>]+>/g, '').trim();
+
+    if (!openerContent || firstIsDuplicate) return rest;
+
+    const opener: TimelineItem = {
+      id: 'opener',
+      content: openerContent,
+      senderName: String(ticket.customerName || ticket.customerEmail || 'Mitarbeiter'),
+      badge: roleBadge({
+        senderType: 'customer',
+        senderId: String(ticket.requesterId || ticket.requester_id || ticket.creatorId || ''),
+        membersById,
+      }),
+      createdAt: String(ticket.createdAt || ''),
+      attachments: Array.isArray((ticket as any).attachments)
+        ? ((ticket as any).attachments as PortalTicketAttachment[])
+        : undefined,
+    };
     return [opener, ...rest];
   }, [ticket, messages, membersById]);
 
@@ -136,20 +141,11 @@ export default function ClientTicketDetailPage() {
     }
     setSending(true);
     try {
-      // Persist reply via portal API (never internal).
       await clientPortalApi.reply(ticketId, {
         content: reply,
-        senderId: session.id,
         senderName: session.name || session.email,
+        attachments,
       });
-      // Optional: store attachment metadata as a follow-up message note via /api/db.
-      if (attachments.length > 0) {
-        await clientPortalApi.reply(ticketId, {
-          content: `<p><em>Anhänge:</em> ${attachments.map((a) => a.filename).join(', ')}</p>`,
-          senderId: session.id,
-          senderName: session.name || session.email,
-        });
-      }
       setReply('');
       setAttachments([]);
       toast.success('Antwort gesendet.');
@@ -195,9 +191,31 @@ export default function ClientTicketDetailPage() {
     }
   };
 
+  const onPickFiles = async (files: FileList | null) => {
+    if (!files?.length) return;
+    const next: PortalTicketAttachment[] = [];
+    for (const file of Array.from(files).slice(0, 5)) {
+      if (file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg')) {
+        toast.error('SVG-Uploads sind nicht erlaubt.');
+        continue;
+      }
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]!);
+      next.push({
+        filename: file.name,
+        contentType: file.type || 'application/octet-stream',
+        size: file.size,
+        contentBase64: btoa(binary),
+      });
+    }
+    setAttachments((prev) => [...prev, ...next].slice(0, 5));
+  };
+
   if (loading) {
     return (
-      <div className="p-20 text-center text-slate-400">
+      <div className="h-full flex items-center justify-center text-slate-400">
         <Loader2 className="w-5 h-5 animate-spin inline mr-2" />
         Ticket wird geladen…
       </div>
@@ -207,8 +225,11 @@ export default function ClientTicketDetailPage() {
   if (!ticket) {
     return (
       <div className="p-10 space-y-4">
-        <Link to="/portal/tickets" className="text-sm font-semibold text-slate-600 hover:underline inline-flex items-center gap-1">
-          <ArrowLeft className="w-4 h-4" /> Zurück
+        <Link
+          to="/portal/tickets"
+          className="text-sm font-semibold text-slate-600 hover:underline inline-flex items-center gap-1"
+        >
+          <ArrowLeft className="w-4 h-4" /> Zurück zur Ticketliste
         </Link>
         <p className="text-slate-500">Ticket nicht gefunden oder kein Zugriff.</p>
       </div>
@@ -218,241 +239,286 @@ export default function ClientTicketDetailPage() {
   const creatorName =
     safeString(ticket.customerName) || safeString(ticket.customerEmail) || '—';
   const assigneeName = safeString(ticket.agentName) || (ticket.agentId ? 'Zugewiesen' : 'In Prüfung');
+  const customId = String(ticket.customId || ticket.id || '');
+  const status = String(ticket.status || 'open');
+  const isClosed = ['resolved', 'closed'].includes(status.toLowerCase());
 
   return (
-    <div className="h-full min-h-0 flex flex-col lg:flex-row bg-[#F8F9FA]">
-      <div className="flex-1 min-w-0 p-6 lg:p-8 space-y-6 overflow-y-auto">
-        <div>
-          <Link
-            to="/portal/tickets"
-            className="text-xs font-bold uppercase tracking-wider text-slate-400 hover:text-slate-700 inline-flex items-center gap-1"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" /> Tickets
-          </Link>
-          <h1 className="text-2xl font-black tracking-tight mt-2 text-slate-900">{ticket.subject}</h1>
-          <p className="text-xs text-slate-400 font-mono mt-1">
-            {ticket.customId || `#TKT-${String(ticket.id).slice(-4).toUpperCase()}`}
+    <div className="h-full min-h-0 flex flex-col bg-white overflow-hidden">
+      <div className="shrink-0 h-12 px-4 border-b border-slate-200 flex items-center gap-3 bg-white">
+        <Link
+          to="/portal/tickets"
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-600 hover:text-slate-900"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Tickets
+        </Link>
+        <span className="text-slate-300">/</span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold text-slate-900 truncate">{ticket.subject}</p>
+          <p className="text-[11px] font-mono text-slate-400">
+            {customId.startsWith('#') ? customId : `#${customId}`}
           </p>
         </div>
+        <span className={cn('text-[11px] font-bold px-2 py-0.5 rounded-full', portalStatusBadgeClass(status))}>
+          {portalStatusLabel(status)}
+        </span>
+      </div>
 
-        <div className="space-y-4">
-          {timeline.map((item) => (
-            <div key={item.id} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm font-bold truncate">{item.senderName}</span>
-                  <Badge label={item.badge} />
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
+        {/* Left: conversation */}
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col border-r border-slate-100">
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-5 space-y-4">
+            {timeline.map((item) => (
+              <article
+                key={item.id}
+                className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+              >
+                <div className="flex items-start gap-3 mb-3">
+                  <div className="w-9 h-9 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center text-[11px] font-bold shrink-0">
+                    {getInitials(item.senderName)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-bold text-slate-900">{item.senderName}</p>
+                      <span
+                        className={cn(
+                          'text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full',
+                          item.badge === 'Hubcom Support'
+                            ? 'bg-blue-50 text-blue-700'
+                            : item.badge === 'Kunden-Support'
+                              ? 'bg-violet-50 text-violet-700'
+                              : 'bg-slate-100 text-slate-600',
+                        )}
+                      >
+                        {item.badge}
+                      </span>
+                      <span className="text-[11px] text-slate-400 ml-auto">
+                        {formatRelativeTime(item.createdAt)}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <span className="text-[11px] text-slate-400 shrink-0">
-                  {formatDate(item.createdAt)}
-                </span>
-              </div>
-              <div
-                className="prose prose-sm max-w-none text-slate-700"
-                dangerouslySetInnerHTML={{
-                  __html: sanitizeTimelineHtml(item.content || ''),
-                }}
-              />
-              {item.attachments?.length ? (
-                <ul className="mt-3 space-y-1">
-                  {item.attachments.map((a) => (
-                    <li key={a.filename} className="text-xs text-slate-500 flex items-center gap-1.5">
-                      <Paperclip className="w-3 h-3" />
-                      {a.filename}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          ))}
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3">
-          <Label className="text-sm font-bold">Öffentliche Antwort</Label>
-          <div className="border border-slate-200 rounded-xl overflow-hidden">
-            <RichTextEditor value={reply} onChange={setReply} />
+                <div
+                  className="prose prose-sm max-w-none text-slate-700"
+                  dangerouslySetInnerHTML={{ __html: sanitizeTimelineHtml(item.content) }}
+                />
+                {item.attachments && item.attachments.length > 0 ? (
+                  <ul className="mt-3 space-y-1">
+                    {item.attachments.map((a, idx) => (
+                      <li
+                        key={`${a.filename}-${idx}`}
+                        className="text-xs text-slate-500 inline-flex items-center gap-1.5 mr-3"
+                      >
+                        <Paperclip className="w-3.5 h-3.5" />
+                        {a.filename}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </article>
+            ))}
           </div>
-          <label className="inline-flex items-center gap-2 text-xs text-slate-500 cursor-pointer">
-            <Paperclip className="w-3.5 h-3.5" />
-            Anhang hinzufügen
-            <input
-              type="file"
-              className="hidden"
-              multiple
-              onChange={async (e) => {
-                const files = e.target.files;
-                if (!files?.length) return;
-                const next: PortalTicketAttachment[] = [];
-                for (const file of Array.from(files)) {
-                  const dataUrl = await readFile(file);
-                  next.push({
-                    filename: file.name,
-                    contentType: file.type || 'application/octet-stream',
-                    size: file.size,
-                    contentBase64: dataUrl.split(',')[1] || '',
-                  });
-                }
-                setAttachments((prev) => [...prev, ...next]);
-              }}
-            />
-          </label>
-          {attachments.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
+
+          <div className="shrink-0 border-t border-slate-200 bg-slate-50/60 p-4 space-y-3">
+            <Label className="text-xs font-bold text-slate-600">Öffentliche Antwort</Label>
+            <RichTextEditor value={reply} onChange={setReply} placeholder="Antwort schreiben…" />
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer">
+                <Paperclip className="w-3.5 h-3.5" />
+                Anhang
+                <input
+                  type="file"
+                  className="hidden"
+                  multiple
+                  onChange={(e) => void onPickFiles(e.target.files)}
+                />
+              </label>
               {attachments.map((a) => (
                 <span
                   key={a.filename}
-                  className="text-[11px] bg-slate-100 rounded-full px-2 py-1 inline-flex items-center gap-1"
+                  className="inline-flex items-center gap-1 rounded-full bg-white border border-slate-200 px-2 py-0.5 text-[11px]"
                 >
                   {a.filename}
-                  <button type="button" onClick={() => setAttachments((p) => p.filter((x) => x !== a))}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAttachments((prev) => prev.filter((x) => x.filename !== a.filename))
+                    }
+                  >
                     <X className="w-3 h-3" />
                   </button>
                 </span>
               ))}
-            </div>
-          ) : null}
-          <div className="flex justify-end">
-            <Button
-              type="button"
-              disabled={sending}
-              onClick={() => void sendReply()}
-              className="gap-2 bg-[#1B6CA8] hover:bg-[#155a8a] text-white"
-            >
-              {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              Antwort senden
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <aside className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l border-slate-200 bg-white p-5 space-y-6 overflow-y-auto">
-        <div>
-          <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-3">
-            Eigenschaften
-          </h2>
-          <dl className="space-y-3 text-sm">
-            <PropRow label="Status" value={portalStatusLabel(ticket.status)} />
-            <PropRow label="Priorität" value={portalPriorityLabel(ticket.priority)} />
-            <PropRow label="Kategorie" value={safeString(ticket.categoryName) || '—'} />
-            <PropRow label="Zuständiger" value={assigneeName} />
-            <PropRow label="Ersteller" value={creatorName} />
-          </dl>
-        </div>
-
-        {isOrgWide ? (
-          <div>
-            <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-3">
-              Schließen / Wieder öffnen
-            </h2>
-            <div className="space-y-2">
-              {STATUS_OPTIONS.map((opt) => (
-                <Button
-                  key={opt.value}
-                  type="button"
-                  variant={ticket.status === opt.value ? 'default' : 'outline'}
-                  className="w-full justify-start"
-                  onClick={() => void updateStatus(opt.value)}
-                >
-                  {opt.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {isOrgWide ? (
-          <div>
-            <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 mb-3">
-              Beteiligte
-            </h2>
-            <ul className="space-y-2 mb-3">
-              {participants.length === 0 ? (
-                <li className="text-xs text-slate-400">Noch keine Teilnehmer.</li>
-              ) : (
-                participants.map((uid) => {
-                  const m = membersById.get(uid);
-                  return (
-                    <li
-                      key={uid}
-                      className="flex items-center justify-between gap-2 text-sm bg-slate-50 rounded-lg px-3 py-2"
-                    >
-                      <span className="truncate font-medium">{m?.name || m?.email || uid}</span>
-                      <button
-                        type="button"
-                        className="text-slate-400 hover:text-rose-600"
-                        onClick={() => void removeParticipant(uid)}
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </li>
-                  );
-                })
-              )}
-            </ul>
-            <div className="flex gap-2">
-              <select
-                className="flex-1 h-9 rounded-md border border-input bg-background px-2 text-sm"
-                value={addUserId}
-                onChange={(e) => setAddUserId(e.target.value)}
+              <Button
+                type="button"
+                className="ml-auto h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold"
+                disabled={sending}
+                onClick={() => void sendReply()}
               >
-                <option value="">Mitglied wählen…</option>
-                {members
-                  .filter((m) => !participants.includes(m.id))
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name || m.email}
-                    </option>
-                  ))}
-              </select>
-              <Button type="button" size="sm" className="gap-1" onClick={() => void addParticipant()}>
-                <UserPlus className="w-3.5 h-3.5" />
+                {sending ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}
+                Senden
               </Button>
             </div>
           </div>
-        ) : null}
-      </aside>
+        </div>
+
+        {/* Right: properties */}
+        <aside className="w-full lg:w-[320px] shrink-0 border-t lg:border-t-0 bg-white overflow-y-auto">
+          <div className="p-4 space-y-5">
+            <section className="space-y-2">
+              <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
+                Eigenschaften
+              </h3>
+              <PropRow label="Status">
+                <span className={cn('text-[11px] font-bold px-2 py-0.5 rounded-full', portalStatusBadgeClass(status))}>
+                  {portalStatusLabel(status)}
+                </span>
+              </PropRow>
+              <PropRow label="Priorität">
+                <span className={cn('text-[11px] font-bold px-2 py-0.5 rounded-full', portalPriorityBadgeClass(ticket.priority))}>
+                  {portalPriorityLabel(ticket.priority)}
+                </span>
+              </PropRow>
+              <PropRow label="Kategorie">
+                <span className="text-sm text-slate-800">
+                  {safeString(ticket.categoryName) || '—'}
+                </span>
+              </PropRow>
+              <PropRow label="Zuständiger Techniker">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-6 h-6 rounded-full bg-blue-50 text-blue-700 flex items-center justify-center text-[9px] font-bold">
+                    {getInitials(assigneeName)}
+                  </div>
+                  <span className="text-sm text-slate-800 truncate">{assigneeName}</span>
+                </div>
+              </PropRow>
+              <PropRow label="Ersteller">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center text-[9px] font-bold">
+                    {getInitials(creatorName)}
+                  </div>
+                  <span className="text-sm text-slate-800 truncate">{creatorName}</span>
+                </div>
+              </PropRow>
+            </section>
+
+            <section className="space-y-2">
+              <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
+                Beteiligte
+              </h3>
+              <ul className="space-y-1.5">
+                {participants.length === 0 ? (
+                  <li className="text-xs text-slate-400">Keine zusätzlichen Beteiligten</li>
+                ) : (
+                  participants.map((uid) => {
+                    const m = membersById.get(uid);
+                    const label = m?.name || m?.email || uid;
+                    return (
+                      <li
+                        key={uid}
+                        className="flex items-center gap-2 rounded-lg border border-slate-100 px-2 py-1.5"
+                      >
+                        <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[9px] font-bold">
+                          {getInitials(label)}
+                        </div>
+                        <span className="text-xs font-semibold text-slate-700 flex-1 truncate">
+                          {label}
+                        </span>
+                        {canManageParticipants ? (
+                          <button
+                            type="button"
+                            className="text-slate-400 hover:text-rose-600"
+                            onClick={() => void removeParticipant(uid)}
+                            title="Entfernen"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        ) : null}
+                      </li>
+                    );
+                  })
+                )}
+              </ul>
+              {canManageParticipants ? (
+                <div className="flex gap-2 pt-1">
+                  <select
+                    className="flex-1 h-9 rounded-md border border-slate-200 bg-white px-2 text-xs"
+                    value={addUserId}
+                    onChange={(e) => setAddUserId(e.target.value)}
+                  >
+                    <option value="">Mitarbeiter wählen…</option>
+                    {members
+                      .filter((m) => !participants.includes(m.id) && m.id !== session?.id)
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name || m.email}
+                        </option>
+                      ))}
+                  </select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9"
+                    disabled={!addUserId}
+                    onClick={() => void addParticipant()}
+                    title="Hinzufügen"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                  </Button>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="space-y-2 pt-1">
+              <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
+                Aktionen
+              </h3>
+              {isClosed ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => void updateStatus('open')}
+                >
+                  Ticket wieder öffnen
+                </Button>
+              ) : (
+                <div className="grid grid-cols-1 gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => void updateStatus('resolved')}
+                  >
+                    Ticket schließen (Gelöst)
+                  </Button>
+                  {isClientAdmin || isOrgWide ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="w-full text-slate-600"
+                      onClick={() => void updateStatus('closed')}
+                    >
+                      Als geschlossen markieren
+                    </Button>
+                  ) : null}
+                </div>
+              )}
+            </section>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }
 
-function PropRow({ label, value }: { label: string; value: string }) {
+function PropRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-3">
-      <dt className="text-slate-500 font-medium shrink-0">{label}</dt>
-      <dd className="font-semibold text-slate-900 text-right">{value}</dd>
+    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-slate-50">
+      <span className="text-[11px] font-semibold text-slate-500 shrink-0 pt-0.5">{label}</span>
+      <div className="min-w-0 text-right">{children}</div>
     </div>
   );
-}
-
-function Badge({ label }: { label: TimelineItem['badge'] }) {
-  const tone =
-    label === 'Hubcom Support'
-      ? 'bg-blue-50 text-blue-700'
-      : label === 'Kunden-Support'
-        ? 'bg-violet-50 text-violet-700'
-        : 'bg-slate-100 text-slate-600';
-  return (
-    <span className={cn('text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full', tone)}>
-      {label}
-    </span>
-  );
-}
-
-function formatDate(value: string): string {
-  try {
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
-  } catch {
-    return '';
-  }
-}
-
-function readFile(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('read failed'));
-    reader.readAsDataURL(file);
-  });
 }

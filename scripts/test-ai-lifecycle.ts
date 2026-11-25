@@ -22,6 +22,10 @@ import {
   persistAiResponseCache,
   resetInMemoryAiCache,
 } from '../src/lib/ai-response-cache.js';
+import {
+  buildPortalTicketDetailResponse,
+  isPortalTicketFrontendApiAllowed,
+} from '../src/lib/client-portal/portal-ticket-api.js';
 
 let passed = 0;
 let failed = 0;
@@ -336,6 +340,28 @@ async function testForceRefreshBypassesCache(): Promise<void> {
   );
 }
 
+function testPortalTicketApiNeverUsesDb(): void {
+  console.log('\n[15] Portal ticket frontend API allowlist (no /api/db)');
+
+  assert(isPortalTicketFrontendApiAllowed('/api/portal/tickets/t1') === true, 'portal GET allowed');
+  assert(
+    isPortalTicketFrontendApiAllowed('/api/portal/tickets/t1/messages') === true,
+    'portal POST messages allowed',
+  );
+  assert(isPortalTicketFrontendApiAllowed('/api/db') === false, '/api/db blocked for portal tickets');
+
+  const detail = buildPortalTicketDetailResponse({
+    ticket: { id: 't1', subject: 'x', organizationId: 'o1', agentComments: 'secret' },
+    messages: [
+      { id: '1', content: 'hi', createdAt: '2026-01-01T00:00:00.000Z', is_internal: false },
+      { id: '2', content: 'note', createdAt: '2026-01-01T01:00:00.000Z', is_internal: true },
+    ],
+    participants: [],
+  });
+  assert(!('agentComments' in detail.ticket), 'portal detail strips internal ticket fields');
+  assert(detail.messages.length === 1, 'portal detail strips internal messages');
+}
+
 async function main(): Promise<void> {
   console.log('AI Request Lifecycle — dry-run test suite');
   console.log('='.repeat(50));
@@ -354,6 +380,7 @@ async function main(): Promise<void> {
   await testLocalRouteSkipsReversibleScrub();
   await testEntityCacheHitBypassesExecutor();
   await testForceRefreshBypassesCache();
+  testPortalTicketApiNeverUsesDb();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);

@@ -19,6 +19,12 @@ import {
   ticketOrganizationId,
 } from '../src/lib/client-portal/ticket-visibility.js';
 import {
+  assertPortalTicketAccess,
+  buildPortalTicketDetailResponse,
+  isPortalTicketFrontendApiAllowed,
+  sortMessagesOldestFirst,
+} from '../src/lib/client-portal/portal-ticket-api.js';
+import {
   enforceClientDbTicketAccess,
   postFilterClientDbResult,
 } from '../src/lib/client-portal/db-ticket-guard.js';
@@ -250,6 +256,83 @@ function testInternalNotesBlock(): void {
   for (const role of ['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']) {
     assert(isClientPortalRole(role), `${role} is a portal role`);
   }
+}
+
+async function testPortalTicketDetailApiContract(): Promise<void> {
+  console.log('\n[2b] GET /api/portal/tickets/:id detail contract (public messages only)');
+
+  const older = {
+    id: 'm-old',
+    content: 'first public',
+    createdAt: '2026-01-01T10:00:00.000Z',
+    is_internal: false,
+  };
+  const newer = {
+    id: 'm-new',
+    content: 'second public',
+    createdAt: '2026-01-01T12:00:00.000Z',
+    isInternal: false,
+  };
+  const secret = {
+    id: 'm-secret',
+    content: 'agent only',
+    createdAt: '2026-01-01T11:00:00.000Z',
+    is_internal: true,
+  };
+
+  const payload = buildPortalTicketDetailResponse({
+    ticket: {
+      ...ticketOrgA,
+      agentComments: 'leak',
+      aiSummary: 'leak',
+      attachments: [{ filename: 'a.pdf', size: 1 }],
+    },
+    messages: [newer, secret, older] as any,
+    participants: [
+      {
+        ticket_id: ticketOrgA.id,
+        user_id: orgAUser.id,
+        added_by: orgAAdmin.id,
+        created_at: '2026-01-01T09:00:00.000Z',
+      },
+    ],
+  });
+
+  assert(!('agentComments' in payload.ticket), 'detail ticket strips agentComments');
+  assert(!('aiSummary' in payload.ticket), 'detail ticket strips aiSummary');
+  assert(payload.messages.length === 2, 'internal note stripped from detail messages');
+  assert(
+    payload.messages[0].id === 'm-old' && payload.messages[1].id === 'm-new',
+    'public messages sorted oldest → newest',
+  );
+  assert(payload.participants.length === 1, 'participants included in detail payload');
+  assert(Array.isArray(payload.attachments) && payload.attachments.length === 1, 'attachments surfaced');
+
+  const sorted = sortMessagesOldestFirst([newer, older] as any);
+  assert(sorted[0].id === 'm-old', 'sortMessagesOldestFirst works');
+
+  const denyCross = await assertPortalTicketAccess(orgAAdmin, ticketOrgB as any, ticketOrgB.id);
+  assert(denyCross.ok === false, 'cross-tenant ticket detail access denied');
+
+  const allowSame = await assertPortalTicketAccess(orgAAdmin, ticketOrgA as any, ticketOrgA.id);
+  assert(allowSame.ok === true, 'same-org CLIENT_ADMIN can access detail');
+
+  assert(
+    isPortalTicketFrontendApiAllowed('/api/portal/tickets/abc') === true,
+    'portal ticket GET path allowed',
+  );
+  assert(
+    isPortalTicketFrontendApiAllowed('/api/portal/tickets/abc/messages') === true,
+    'portal ticket messages path allowed',
+  );
+  assert(
+    isPortalTicketFrontendApiAllowed('/api/db') === false,
+    'opening ticket detail must never call /api/db',
+  );
+  assert(
+    isPortalTicketFrontendApiAllowed('/api/db?action=get_docs') === false,
+    'query-string /api/db still blocked',
+  );
 }
 
 async function testClientUserScoping(): Promise<void> {
@@ -1333,6 +1416,7 @@ async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
   testInternalNotesBlock();
+  await testPortalTicketDetailApiContract();
   await testClientUserScoping();
   await testPrivilegeEscalation();
   testSecretProtection();
