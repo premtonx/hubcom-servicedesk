@@ -7,22 +7,35 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import {
+  AlertTriangle,
   ArrowLeft,
+  Briefcase,
+  Calendar,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Clock,
+  Hash,
   HardDrive,
   Loader2,
   Mail,
   Package,
+  Phone,
+  Plug,
   Plus,
+  RotateCcw,
   Save,
   Search,
+  Smartphone,
+  Tablet,
   Truck,
+  User,
   UserCircle2,
   Users,
   X,
+  Zap,
+  type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
@@ -108,6 +121,13 @@ const DEFAULT_CATALOGS: Catalogs = {
   ],
 };
 
+const STEPS = [
+  { id: 'kundendaten', label: 'Kundendaten', sectionId: 'section-kundendaten' },
+  { id: 'geraete', label: 'Gerätedetails', sectionId: 'section-geraete' },
+  { id: 'rueckgabe', label: 'Rückgabedetails', sectionId: 'section-rueckgabe' },
+  { id: 'abschluss', label: 'Abschluss', sectionId: 'section-abschluss' },
+] as const;
+
 function addDaysIso(dateIso: string, days: number): string {
   const d = new Date(`${dateIso}T00:00:00`);
   if (Number.isNaN(d.getTime())) return '';
@@ -144,44 +164,80 @@ function slaBadgeClass(sla: string): string {
   return 'bg-amber-50 text-amber-800 border-amber-100';
 }
 
+function resolveDeviceIcon(deviceType: string): LucideIcon {
+  const t = deviceType.toLowerCase();
+  if (/secutest|prüfgerät|pruefgeraet|mxtra|gossen|messgerät|messgeraet/.test(t)) return Zap;
+  if (/adapter|prcd|vl2e|\bbt\b|kabel|leitung/.test(t)) return Plug;
+  if (/tablet|dock|tastatur|laptop|getac|notebook/.test(t)) return Tablet;
+  return Package;
+}
+
 function Field({
   label,
   children,
   className,
+  required,
 }: {
   label: string;
   children: ReactNode;
   className?: string;
+  required?: boolean;
 }) {
   return (
     <div className={cn('space-y-1.5', className)}>
       <Label className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
         {label}
+        {required ? <span className="text-sky-600"> *</span> : null}
       </Label>
       {children}
     </div>
   );
 }
 
+function IconFieldShell({
+  icon: Icon,
+  children,
+  className,
+}: {
+  icon: LucideIcon;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn('relative', className)}>
+      <Icon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+      {children}
+    </div>
+  );
+}
+
 function SectionCard({
+  id,
   title,
   icon,
   tone,
+  badge,
   children,
 }: {
+  id?: string;
   title: string;
   icon: ReactNode;
-  tone: 'blue' | 'indigo' | 'emerald' | 'amber';
+  tone: 'blue' | 'green' | 'purple' | 'teal' | 'amber';
+  badge?: ReactNode;
   children: ReactNode;
 }) {
   const tones = {
     blue: 'from-sky-50 to-white border-sky-100 text-sky-700',
-    indigo: 'from-cyan-50 to-white border-cyan-100 text-cyan-700',
-    emerald: 'from-emerald-50 to-white border-emerald-100 text-emerald-700',
+    green: 'from-emerald-50 to-white border-emerald-100 text-emerald-700',
+    purple: 'from-violet-50 to-white border-violet-100 text-violet-700',
+    teal: 'from-teal-50 to-white border-teal-100 text-teal-700',
     amber: 'from-amber-50 to-white border-amber-100 text-amber-800',
   };
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+    <section
+      id={id}
+      className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden scroll-mt-24"
+    >
       <div
         className={cn(
           'flex items-center gap-2.5 px-5 py-3.5 border-b bg-gradient-to-r',
@@ -191,7 +247,8 @@ function SectionCard({
         <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/80 border border-white shadow-sm">
           {icon}
         </div>
-        <h2 className="text-sm font-black text-slate-900 tracking-tight">{title}</h2>
+        <h2 className="text-sm font-black text-slate-900 tracking-tight flex-1">{title}</h2>
+        {badge}
       </div>
       <div className="p-5 space-y-4">{children}</div>
     </section>
@@ -294,7 +351,14 @@ export function ReturnEditorPage({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [timeOpen, setTimeOpen] = useState(false);
   const [sendingStage, setSendingStage] = useState<number | null>(null);
+  const [activeStep, setActiveStep] = useState(0);
   const dirBoxRef = useRef<HTMLDivElement>(null);
+  const initialSnapshot = useRef<{
+    form: HardwareReturnFormState;
+    customerName: string;
+    customerEmail: string;
+    dirQuery: string;
+  } | null>(null);
 
   const setField = <K extends keyof HardwareReturnFormState>(
     key: K,
@@ -376,6 +440,12 @@ export function ReturnEditorPage({
           setDirQuery(String(hw.employee_name || ''));
           setReturnNumber(hw.return_number ? String(hw.return_number) : null);
           setActivityLog(Array.isArray(hw.activity_log) ? hw.activity_log : []);
+          initialSnapshot.current = {
+            form: mapped,
+            customerName: String(hw.employee_name || ''),
+            customerEmail: String(hw.employee_email || ''),
+            dirQuery: String(hw.employee_name || ''),
+          };
         } else {
           const blank = emptyHardwareReturnForm();
           blank.status = 'Neu';
@@ -388,6 +458,12 @@ export function ReturnEditorPage({
           setDirQuery('');
           setReturnNumber(null);
           setActivityLog([]);
+          initialSnapshot.current = {
+            form: blank,
+            customerName: '',
+            customerEmail: '',
+            dirQuery: '',
+          };
         }
       } catch (err: any) {
         toast.error(err?.response?.data?.error || 'Laden fehlgeschlagen');
@@ -554,6 +630,18 @@ export function ReturnEditorPage({
     }
   };
 
+  const resetForm = () => {
+    const snap = initialSnapshot.current;
+    if (!snap) return;
+    setForm({ ...snap.form });
+    setCustomerName(snap.customerName);
+    setCustomerEmail(snap.customerEmail);
+    setDirQuery(snap.dirQuery);
+    setAdvancedOpen(false);
+    setTimeOpen(false);
+    toast.message('Formular zurückgesetzt');
+  };
+
   const sendReminder = async (stage: number) => {
     if (!returnId) return;
     setSendingStage(stage);
@@ -586,6 +674,8 @@ export function ReturnEditorPage({
   const title = isEdit
     ? `${formatReturnNumberDisplay(returnNumber) || 'Rücklieferung'} bearbeiten`
     : 'Neue Rücklieferung erstellen';
+
+  const railTitle = isEdit ? 'Rücklieferung bearbeiten' : 'Rücklieferung erfassen';
 
   const mailSummary = `Standard-Erinnerungsplan aktiv: ${configuredStages
     .map((s, i) =>
@@ -635,6 +725,47 @@ export function ReturnEditorPage({
     reminder_stages: form.reminder_stages || [],
     reminder_count: form.reminder_count || 0,
   });
+
+  const stepDone = useMemo(() => {
+    const kundendaten = Boolean(customerName.trim() || customerEmail.trim());
+    const geraete = Boolean(
+      form.device_old_type.trim() ||
+        form.device_old_serial.trim() ||
+        form.device_new_type.trim() ||
+        form.device_new_serial.trim() ||
+        form.solution_summary.trim() ||
+        form.device_details.trim(),
+    );
+    const rueckgabe = Boolean(
+      form.shipping_method.trim() || form.delivery_date || form.returned,
+    );
+    const abschluss = Boolean(
+      form.assignee_user_id || form.assignee_name.trim() || form.status.trim(),
+    );
+    return [kundendaten, geraete, rueckgabe, abschluss] as const;
+  }, [customerName, customerEmail, form]);
+
+  useEffect(() => {
+    const firstOpen = stepDone.findIndex((d) => !d);
+    setActiveStep(firstOpen === -1 ? STEPS.length - 1 : firstOpen);
+  }, [stepDone]);
+
+  const scrollToStep = (index: number) => {
+    setActiveStep(index);
+    const el = document.getElementById(STEPS[index]!.sectionId);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const deviceCount =
+    (form.device_old_type || form.device_old_serial ? 1 : 0) +
+    (form.device_new_type || form.device_new_serial ? 1 : 0);
+  const OldDeviceIcon = resolveDeviceIcon(form.device_old_type);
+  const NewDeviceIcon = resolveDeviceIcon(form.device_new_type);
+  const assigneeLabel =
+    form.assignee_name ||
+    assignees.find((a) => a.id === form.assignee_user_id)?.name ||
+    user?.displayName ||
+    '—';
 
   if (loading) {
     return (
@@ -690,17 +821,91 @@ export function ReturnEditorPage({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto pb-16">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 grid grid-cols-1 xl:grid-cols-3 gap-5 items-start">
-          <div className="xl:col-span-2 space-y-5">
+        <div className="mx-auto max-w-[1440px] px-4 sm:px-6 py-6 grid grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)_300px] gap-5 items-start">
+          {/* Left step rail */}
+          <aside className="lg:sticky lg:top-4 space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-5">
+              <div className="flex items-start gap-3">
+                <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-600 text-white shadow-sm">
+                  <Package className="w-6 h-6" />
+                  <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-white border border-sky-100 text-sky-700 shadow-sm">
+                    <RotateCcw className="w-3 h-3" />
+                  </span>
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-base font-black text-slate-900 tracking-tight">
+                    {railTitle}
+                  </h2>
+                  <p className="text-[12px] text-slate-500 font-medium mt-1 leading-relaxed">
+                    Erfassen Sie hier die Details zur Rückgabe eines Geräts oder Zubehörs.
+                  </p>
+                </div>
+              </div>
+
+              <ol className="space-y-1">
+                {STEPS.map((step, idx) => {
+                  const done = stepDone[idx];
+                  const current = activeStep === idx;
+                  const nextHighlight = idx > 0 && stepDone[idx - 1] && !done;
+                  return (
+                    <li key={step.id}>
+                      <button
+                        type="button"
+                        onClick={() => scrollToStep(idx)}
+                        className={cn(
+                          'w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition',
+                          current || nextHighlight
+                            ? 'bg-sky-50 border border-sky-100'
+                            : 'hover:bg-slate-50 border border-transparent',
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-black border',
+                            done
+                              ? 'bg-emerald-500 border-emerald-500 text-white'
+                              : current || nextHighlight
+                                ? 'bg-sky-600 border-sky-600 text-white'
+                                : 'bg-white border-slate-200 text-slate-500',
+                          )}
+                        >
+                          {done ? <Check className="w-3.5 h-3.5" /> : idx + 1}
+                        </span>
+                        <span
+                          className={cn(
+                            'text-sm font-bold',
+                            done
+                              ? 'text-emerald-800'
+                              : current || nextHighlight
+                                ? 'text-sky-900'
+                                : 'text-slate-600',
+                          )}
+                        >
+                          {step.label}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+
+              <div className="rounded-xl border border-sky-100 bg-sky-50/80 px-3 py-2.5 text-[11px] font-semibold text-sky-800 leading-relaxed">
+                Alle Felder mit * sind Pflichtfelder.
+              </div>
+            </div>
+          </aside>
+
+          {/* Center form */}
+          <div className="space-y-5 min-w-0">
             <SectionCard
+              id="section-kundendaten"
               title="Mitarbeiter & Kontakt"
               tone="blue"
               icon={<Users className="w-4 h-4" />}
             >
               <div ref={dirBoxRef} className="relative">
-                <Field label="Mitarbeiter">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Field label="Mitarbeiter" required>
+                  <IconFieldShell icon={Search}>
                     <Input
                       className="pl-9 h-11"
                       value={dirQuery}
@@ -715,7 +920,7 @@ export function ReturnEditorPage({
                     {dirLoading ? (
                       <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-slate-400" />
                     ) : null}
-                  </div>
+                  </IconFieldShell>
                 </Field>
                 {dirOpen && dirHits.length > 0 ? (
                   <ul className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
@@ -750,111 +955,141 @@ export function ReturnEditorPage({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="E-Mail">
-                  <Input
-                    type="email"
-                    className="h-11"
-                    value={customerEmail}
-                    onChange={(e) => setCustomerEmail(e.target.value)}
-                    placeholder="name@firma.de"
-                  />
+                  <IconFieldShell icon={Mail}>
+                    <Input
+                      type="email"
+                      className="pl-9 h-11"
+                      value={customerEmail}
+                      onChange={(e) => setCustomerEmail(e.target.value)}
+                      placeholder="name@firma.de"
+                    />
+                  </IconFieldShell>
                 </Field>
-                <Field label="Telefon Büro">
-                  <Input
-                    className="h-11"
-                    value={form.employee_phone}
-                    onChange={(e) => setField('employee_phone', e.target.value)}
-                  />
+                <Field label="Telefon (Büro)">
+                  <IconFieldShell icon={Phone}>
+                    <Input
+                      className="pl-9 h-11"
+                      value={form.employee_phone}
+                      onChange={(e) => setField('employee_phone', e.target.value)}
+                    />
+                  </IconFieldShell>
                 </Field>
-                <Field label="Telefon Mobil">
-                  <Input
-                    className="h-11"
-                    value={form.employee_mobile}
-                    onChange={(e) => setField('employee_mobile', e.target.value)}
-                  />
+                <Field label="Telefon (Mobil)">
+                  <IconFieldShell icon={Smartphone}>
+                    <Input
+                      className="pl-9 h-11"
+                      value={form.employee_mobile}
+                      onChange={(e) => setField('employee_mobile', e.target.value)}
+                    />
+                  </IconFieldShell>
                 </Field>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
                 <Field label="Projektmanager Name">
-                  <Input
-                    className="h-11"
-                    value={form.project_manager_name}
-                    onChange={(e) => setField('project_manager_name', e.target.value)}
-                  />
+                  <IconFieldShell icon={Briefcase}>
+                    <Input
+                      className="pl-9 h-11"
+                      value={form.project_manager_name}
+                      onChange={(e) => setField('project_manager_name', e.target.value)}
+                    />
+                  </IconFieldShell>
                 </Field>
                 <Field label="Projektmanager E-Mail">
-                  <Input
-                    type="email"
-                    className="h-11"
-                    value={form.project_manager_email}
-                    onChange={(e) => setField('project_manager_email', e.target.value)}
-                  />
+                  <IconFieldShell icon={Mail}>
+                    <Input
+                      type="email"
+                      className="pl-9 h-11"
+                      value={form.project_manager_email}
+                      onChange={(e) => setField('project_manager_email', e.target.value)}
+                    />
+                  </IconFieldShell>
                 </Field>
                 <Field label="Vorgesetzter / Chef Name">
-                  <Input
-                    className="h-11"
-                    value={form.manager_name}
-                    onChange={(e) => setField('manager_name', e.target.value)}
-                  />
+                  <IconFieldShell icon={User}>
+                    <Input
+                      className="pl-9 h-11"
+                      value={form.manager_name}
+                      onChange={(e) => setField('manager_name', e.target.value)}
+                    />
+                  </IconFieldShell>
                 </Field>
                 <Field label="Vorgesetzter / Chef E-Mail">
-                  <Input
-                    type="email"
-                    className="h-11"
-                    value={form.manager_email}
-                    onChange={(e) => setField('manager_email', e.target.value)}
-                  />
+                  <IconFieldShell icon={Mail}>
+                    <Input
+                      type="email"
+                      className="pl-9 h-11"
+                      value={form.manager_email}
+                      onChange={(e) => setField('manager_email', e.target.value)}
+                    />
+                  </IconFieldShell>
                 </Field>
               </div>
             </SectionCard>
 
             <SectionCard
+              id="section-geraete"
               title="Geräte & Seriennummern"
-              tone="indigo"
+              tone="green"
               icon={<HardDrive className="w-4 h-4" />}
+              badge={
+                deviceCount > 0 ? (
+                  <span className="rounded-full bg-emerald-100 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-black text-emerald-800">
+                    {deviceCount} Gerät{deviceCount === 1 ? '' : 'e'}
+                  </span>
+                ) : null
+              }
             >
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Field label="Bestehendes Gerät (Rücksendung / Alt)">
-                  <select
-                    className="h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
-                    value={form.device_old_type}
-                    onChange={(e) => setField('device_old_type', e.target.value)}
-                  >
-                    <option value="">— Keine Auswahl —</option>
-                    {catalogs.device_types.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
-                    ))}
-                  </select>
+                <Field label="Bestehendes Gerät (Alt)">
+                  <IconFieldShell icon={OldDeviceIcon}>
+                    <select
+                      className="h-11 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm"
+                      value={form.device_old_type}
+                      onChange={(e) => setField('device_old_type', e.target.value)}
+                    >
+                      <option value="">— Keine Auswahl —</option>
+                      {catalogs.device_types.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                  </IconFieldShell>
                 </Field>
                 <Field label="Seriennummer (Alt)">
-                  <Input
-                    className="h-11"
-                    value={form.device_old_serial}
-                    onChange={(e) => setField('device_old_serial', e.target.value)}
-                  />
+                  <IconFieldShell icon={Hash}>
+                    <Input
+                      className="pl-9 h-11"
+                      value={form.device_old_serial}
+                      onChange={(e) => setField('device_old_serial', e.target.value)}
+                    />
+                  </IconFieldShell>
                 </Field>
-                <Field label="Neues Gerät (Lieferung / Neu)">
-                  <select
-                    className="h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
-                    value={form.device_new_type}
-                    onChange={(e) => setField('device_new_type', e.target.value)}
-                  >
-                    <option value="">— Keine Auswahl —</option>
-                    {catalogs.device_types.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
-                    ))}
-                  </select>
+                <Field label="Neues Gerät (Neu)">
+                  <IconFieldShell icon={NewDeviceIcon}>
+                    <select
+                      className="h-11 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm"
+                      value={form.device_new_type}
+                      onChange={(e) => setField('device_new_type', e.target.value)}
+                    >
+                      <option value="">— Keine Auswahl —</option>
+                      {catalogs.device_types.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                  </IconFieldShell>
                 </Field>
                 <Field label="Seriennummer (Neu)">
-                  <Input
-                    className="h-11"
-                    value={form.device_new_serial}
-                    onChange={(e) => setField('device_new_serial', e.target.value)}
-                  />
+                  <IconFieldShell icon={Hash}>
+                    <Input
+                      className="pl-9 h-11"
+                      value={form.device_new_serial}
+                      onChange={(e) => setField('device_new_serial', e.target.value)}
+                    />
+                  </IconFieldShell>
                 </Field>
               </div>
               <Field label="Notiz / Zusatzinfo">
@@ -871,32 +1106,37 @@ export function ReturnEditorPage({
             </SectionCard>
 
             <SectionCard
+              id="section-rueckgabe"
               title="Versand & Rücklieferung"
-              tone="emerald"
+              tone="purple"
               icon={<Truck className="w-4 h-4" />}
             >
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Versandart">
-                  <select
-                    className="h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
-                    value={form.shipping_method}
-                    onChange={(e) => setField('shipping_method', e.target.value)}
-                  >
-                    <option value="">— Keine Auswahl —</option>
-                    {catalogs.shipping_methods.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
+                  <IconFieldShell icon={Package}>
+                    <select
+                      className="h-11 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm"
+                      value={form.shipping_method}
+                      onChange={(e) => setField('shipping_method', e.target.value)}
+                    >
+                      <option value="">— Keine Auswahl —</option>
+                      {catalogs.shipping_methods.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </IconFieldShell>
                 </Field>
-                <Field label="Datum der Rücklieferung / Lieferung">
-                  <Input
-                    type="date"
-                    className="h-11"
-                    value={toIsoDateOnly(form.delivery_date) || ''}
-                    onChange={(e) => setField('delivery_date', e.target.value)}
-                  />
+                <Field label="Datum der Rücklieferung">
+                  <IconFieldShell icon={Calendar}>
+                    <Input
+                      type="date"
+                      className="pl-9 h-11"
+                      value={toIsoDateOnly(form.delivery_date) || ''}
+                      onChange={(e) => setField('delivery_date', e.target.value)}
+                    />
+                  </IconFieldShell>
                   {form.delivery_date ? (
                     <p className="text-[11px] text-slate-500 mt-1">
                       Anzeige: {formatDateDeOnly(form.delivery_date)}
@@ -914,10 +1154,14 @@ export function ReturnEditorPage({
                 )}
               >
                 <div>
-                  <p className="text-sm font-black text-slate-900">Rücklieferung erfolgt (Erledigt)</p>
+                  <p className="text-sm font-black text-slate-900">
+                    Rücksendung erfolgt (Eingang bestätigt)
+                  </p>
                   <p className="text-xs text-slate-500 mt-0.5">
                     Markiert den Vorgang als zurückgeliefert und stoppt Erinnerungen.
                   </p>
+                  {/* Keep legacy phrase for isolation contract */}
+                  <span className="sr-only">Rücklieferung erfolgt</span>
                   {form.returned ? (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-bold text-emerald-800">
@@ -1065,263 +1309,415 @@ export function ReturnEditorPage({
                 ) : null}
               </div>
             </SectionCard>
-          </div>
 
-          <aside className="xl:sticky xl:top-4 space-y-5">
             <SectionCard
-              title="Bearbeitung & Steuerung"
-              tone="amber"
-              icon={<UserCircle2 className="w-4 h-4" />}
+              id="section-abschluss"
+              title="Erinnerungsmanagement & Empfänger"
+              tone="teal"
+              icon={<Clock className="w-4 h-4" />}
             >
-              <Field label="Bearbeiter">
-                <select
-                  className="h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
-                  value={form.assignee_user_id}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    const a = assignees.find((x) => x.id === id);
-                    setForm((prev) => ({
-                      ...prev,
-                      assignee_user_id: id,
-                      assignee_name: a?.name || a?.email || prev.assignee_name,
-                    }));
-                  }}
-                >
-                  {!assignees.some((a) => a.id === form.assignee_user_id) && form.assignee_user_id ? (
-                    <option value={form.assignee_user_id}>
-                      {form.assignee_name || user?.displayName || user?.email || 'Aktueller Benutzer'}
-                    </option>
-                  ) : null}
-                  {!form.assignee_user_id ? (
-                    <option value="">
-                      {form.assignee_name || user?.displayName || 'Aktueller Benutzer'}
-                    </option>
-                  ) : null}
-                  {assignees.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name || a.email}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="Status">
-                <div className="relative">
-                  <span
-                    className={cn(
-                      'pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full',
-                      statusDotClass(form.status),
-                    )}
-                  />
-                  <select
-                    className="h-11 w-full rounded-md border border-slate-200 bg-white pl-8 pr-3 text-sm"
-                    value={form.status}
-                    onChange={(e) => setField('status', e.target.value)}
-                  >
-                    {catalogs.statuses.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </Field>
-
-              <Field label="SLA">
-                <select
-                  className={cn(
-                    'h-11 w-full rounded-md border px-3 text-sm font-semibold',
-                    slaBadgeClass(form.sla),
-                  )}
-                  value={form.sla}
-                  onChange={(e) => setField('sla', e.target.value)}
-                >
-                  {catalogs.slas.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="Service Level">
-                <div className="flex flex-wrap gap-1.5">
-                  {catalogs.service_levels.map((sl) => (
-                    <button
-                      key={sl}
-                      type="button"
-                      className={cn(
-                        'min-w-[2.5rem] rounded-lg border px-3 py-2 text-sm font-black transition',
-                        form.service_level === sl
-                          ? 'bg-blue-600 text-white border-blue-600'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50',
-                      )}
-                      onClick={() => setField('service_level', form.service_level === sl ? '' : sl)}
-                    >
-                      {sl}
-                    </button>
-                  ))}
-                </div>
-              </Field>
-
-              <button
-                type="button"
-                className="text-[11px] font-bold text-slate-500 hover:text-slate-800 inline-flex items-center gap-1"
-                onClick={() => setTimeOpen((v) => !v)}
-              >
-                {timeOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                Benötigte Zeit &amp; Export
-              </button>
-              {timeOpen ? (
-                <div className="grid grid-cols-3 gap-2">
-                  {(['time_sl1_minutes', 'time_sl2_minutes', 'time_sl3_minutes'] as const).map(
-                    (key, i) => (
-                      <Field key={key} label={`SL${i + 1} Min.`}>
-                        <Input
-                          type="number"
-                          min={0}
-                          className="h-10"
-                          value={form[key]}
-                          onChange={(e) => setField(key, Number(e.target.value) || 0)}
-                        />
-                      </Field>
-                    ),
-                  )}
-                  <label className="col-span-3 flex items-center justify-between text-sm font-semibold pt-1">
-                    Exportiert
-                    <input
-                      type="checkbox"
-                      checked={form.exported}
-                      onChange={(e) => setField('exported', e.target.checked)}
+              <div className="rounded-xl border border-teal-100 bg-teal-50/40 p-3 space-y-2">
+                <Field label="Erinnerungsintervall">
+                  <IconFieldShell icon={Clock}>
+                    <Input
+                      className="pl-9 h-11 bg-white"
+                      readOnly
+                      value={
+                        configuredStages[0]
+                          ? `${configuredStages[0].delayDays} Tage (1. Stufe)`
+                          : '14 Tage'
+                      }
                     />
-                  </label>
+                  </IconFieldShell>
+                </Field>
+                <p className="text-[11px] text-slate-600 font-medium leading-relaxed">
+                  {mailSummary}
+                </p>
+                <Field label="Empfänger (Mitarbeiter)">
+                  <IconFieldShell icon={User}>
+                    <Input
+                      className="pl-9 h-11 bg-white"
+                      readOnly
+                      value={customerName || customerEmail || '—'}
+                    />
+                  </IconFieldShell>
+                </Field>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 space-y-4">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-500">
+                  Bearbeitung &amp; Steuerung
+                </h3>
+                <Field label="Bearbeiter">
+                  <IconFieldShell icon={UserCircle2}>
+                    <select
+                      className="h-11 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm"
+                      value={form.assignee_user_id}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        const a = assignees.find((x) => x.id === id);
+                        setForm((prev) => ({
+                          ...prev,
+                          assignee_user_id: id,
+                          assignee_name: a?.name || a?.email || prev.assignee_name,
+                        }));
+                      }}
+                    >
+                      {!assignees.some((a) => a.id === form.assignee_user_id) &&
+                      form.assignee_user_id ? (
+                        <option value={form.assignee_user_id}>
+                          {form.assignee_name ||
+                            user?.displayName ||
+                            user?.email ||
+                            'Aktueller Benutzer'}
+                        </option>
+                      ) : null}
+                      {!form.assignee_user_id ? (
+                        <option value="">
+                          {form.assignee_name || user?.displayName || 'Aktueller Benutzer'}
+                        </option>
+                      ) : null}
+                      {assignees.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name || a.email}
+                        </option>
+                      ))}
+                    </select>
+                  </IconFieldShell>
+                </Field>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Field label="Status">
+                    <div className="relative">
+                      <span
+                        className={cn(
+                          'pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full',
+                          statusDotClass(form.status),
+                        )}
+                      />
+                      <select
+                        className="h-11 w-full rounded-md border border-slate-200 bg-white pl-8 pr-3 text-sm"
+                        value={form.status}
+                        onChange={(e) => setField('status', e.target.value)}
+                      >
+                        {catalogs.statuses.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </Field>
+                  <Field label="SLA">
+                    <select
+                      className={cn(
+                        'h-11 w-full rounded-md border px-3 text-sm font-semibold',
+                        slaBadgeClass(form.sla),
+                      )}
+                      value={form.sla}
+                      onChange={(e) => setField('sla', e.target.value)}
+                    >
+                      {catalogs.slas.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+
+                <Field label="Service Level">
+                  <div className="flex flex-wrap gap-1.5">
+                    {catalogs.service_levels.map((sl) => (
+                      <button
+                        key={sl}
+                        type="button"
+                        className={cn(
+                          'min-w-[2.5rem] rounded-lg border px-3 py-2 text-sm font-black transition',
+                          form.service_level === sl
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50',
+                        )}
+                        onClick={() =>
+                          setField('service_level', form.service_level === sl ? '' : sl)
+                        }
+                      >
+                        {sl}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+
+                <button
+                  type="button"
+                  className="text-[11px] font-bold text-slate-500 hover:text-slate-800 inline-flex items-center gap-1"
+                  onClick={() => setTimeOpen((v) => !v)}
+                >
+                  {timeOpen ? (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  )}
+                  Benötigte Zeit &amp; Export
+                </button>
+                {timeOpen ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['time_sl1_minutes', 'time_sl2_minutes', 'time_sl3_minutes'] as const).map(
+                      (key, i) => (
+                        <Field key={key} label={`SL${i + 1} Min.`}>
+                          <Input
+                            type="number"
+                            min={0}
+                            className="h-10"
+                            value={form[key]}
+                            onChange={(e) => setField(key, Number(e.target.value) || 0)}
+                          />
+                        </Field>
+                      ),
+                    )}
+                    <label className="col-span-3 flex items-center justify-between text-sm font-semibold pt-1">
+                      Exportiert
+                      <input
+                        type="checkbox"
+                        checked={form.exported}
+                        onChange={(e) => setField('exported', e.target.checked)}
+                      />
+                    </label>
+                  </div>
+                ) : null}
+              </div>
+
+              {isEdit ? (
+                <div className="space-y-4 pt-2 border-t border-slate-100">
+                  <section className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-3">
+                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                      <Mail className="w-4 h-4 text-sky-600" />
+                      Erinnerungsverlauf
+                    </h3>
+                    <ReturnsReminderStepper
+                      hw={{
+                        returned: form.returned,
+                        mail1_sent_at: form.mail1_sent_at,
+                        mail2_sent_at: form.mail2_sent_at,
+                        mail3_sent_at: form.mail3_sent_at,
+                        mail1_sent_recipients: form.mail1_sent_recipients,
+                        mail2_sent_recipients: form.mail2_sent_recipients,
+                        mail3_sent_recipients: form.mail3_sent_recipients,
+                        reminder_stages: form.reminder_stages || [],
+                        reminder_count: form.reminder_count || 0,
+                      }}
+                      configuredStages={configuredStages}
+                      onOpenSend={(stage) => void sendReminder(stage)}
+                    />
+                    <div className="space-y-2">
+                      {verlaufStages.map((stage) => {
+                        const sent = getStageSentAt(
+                          {
+                            reminder_stages: (form.reminder_stages || []) as any,
+                            mail1_sent_at: form.mail1_sent_at || null,
+                            mail2_sent_at: form.mail2_sent_at || null,
+                            mail3_sent_at: form.mail3_sent_at || null,
+                          },
+                          stage,
+                        );
+                        return (
+                          <div
+                            key={stage}
+                            className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-white px-3 py-2"
+                          >
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-slate-800">
+                                {reminderStageLabel(stage)}
+                              </p>
+                              <p className="text-[11px] text-slate-500">
+                                {sent ? formatBerlinDateTime(sent) : 'Noch nicht gesendet'}
+                              </p>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-8 text-[11px] font-bold"
+                              disabled={sendingStage === stage || form.returned}
+                              onClick={() => void sendReminder(stage)}
+                            >
+                              {sendingStage === stage ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                `${stage}. senden`
+                              )}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                      {!form.returned ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full h-9 text-[11px] font-bold border-dashed"
+                          disabled={sendingStage === nextPlusStage}
+                          onClick={() => void sendReminder(nextPlusStage)}
+                        >
+                          {sendingStage === nextPlusStage ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                          ) : (
+                            <Plus className="w-3.5 h-3.5 mr-1.5" />
+                          )}
+                          {reminderStageLabel(nextPlusStage)} hinzufügen
+                        </Button>
+                      ) : null}
+                    </div>
+                  </section>
+
+                  <section className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-3">
+                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-slate-600" />
+                      Verlauf &amp; E-Mail-Protokoll
+                    </h3>
+                    {activityLog.length === 0 ? (
+                      <p className="text-sm text-slate-500">Noch keine Verlaufseinträge.</p>
+                    ) : (
+                      <ol className="space-y-3">
+                        {activityLog
+                          .slice()
+                          .reverse()
+                          .slice(0, 30)
+                          .map((entry: any, idx: number) => (
+                            <li key={`${entry.at}-${idx}`} className="flex gap-3">
+                              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-white border-slate-200 text-slate-600">
+                                {entry.type === 'mail_sent' ? (
+                                  <Mail className="w-3.5 h-3.5" />
+                                ) : entry.type === 'returned' ? (
+                                  <Package className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Clock className="w-3.5 h-3.5" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1 border-b border-slate-100 pb-2">
+                                <p className="text-sm font-semibold text-slate-900">
+                                  {entry.message || entry.type || 'Aktualisiert'}
+                                </p>
+                                <p className="text-[11px] text-slate-400 mt-1 tabular-nums">
+                                  {formatBerlinDateTime(entry.at)}
+                                  {entry.actor ? ` · ${entry.actor}` : ''}
+                                </p>
+                              </div>
+                            </li>
+                          ))}
+                      </ol>
+                    )}
+                  </section>
                 </div>
               ) : null}
             </SectionCard>
+          </div>
 
-            {isEdit ? (
-              <>
-                <section className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-3">
-                  <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-sky-600" />
-                    Erinnerungsverlauf
-                  </h3>
-                  <ReturnsReminderStepper
-                    hw={{
-                      returned: form.returned,
-                      mail1_sent_at: form.mail1_sent_at,
-                      mail2_sent_at: form.mail2_sent_at,
-                      mail3_sent_at: form.mail3_sent_at,
-                      mail1_sent_recipients: form.mail1_sent_recipients,
-                      mail2_sent_recipients: form.mail2_sent_recipients,
-                      mail3_sent_recipients: form.mail3_sent_recipients,
-                      reminder_stages: form.reminder_stages || [],
-                      reminder_count: form.reminder_count || 0,
-                    }}
-                    configuredStages={configuredStages}
-                    onOpenSend={(stage) => void sendReminder(stage)}
-                  />
-                  <div className="space-y-2">
-                    {verlaufStages.map((stage) => {
-                      const sent = getStageSentAt(
-                        {
-                          reminder_stages: (form.reminder_stages || []) as any,
-                          mail1_sent_at: form.mail1_sent_at || null,
-                          mail2_sent_at: form.mail2_sent_at || null,
-                          mail3_sent_at: form.mail3_sent_at || null,
-                        },
-                        stage,
-                      );
-                      return (
-                        <div
-                          key={stage}
-                          className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2"
-                        >
-                          <div className="min-w-0">
-                            <p className="text-xs font-bold text-slate-800">
-                              {reminderStageLabel(stage)}
-                            </p>
-                            <p className="text-[11px] text-slate-500">
-                              {sent ? formatBerlinDateTime(sent) : 'Noch nicht gesendet'}
-                            </p>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="h-8 text-[11px] font-bold"
-                            disabled={sendingStage === stage || form.returned}
-                            onClick={() => void sendReminder(stage)}
-                          >
-                            {sendingStage === stage ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              `${stage}. senden`
-                            )}
-                          </Button>
-                        </div>
-                      );
-                    })}
-                    {!form.returned ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="w-full h-9 text-[11px] font-bold border-dashed"
-                        disabled={sendingStage === nextPlusStage}
-                        onClick={() => void sendReminder(nextPlusStage)}
-                      >
-                        {sendingStage === nextPlusStage ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                        ) : (
-                          <Plus className="w-3.5 h-3.5 mr-1.5" />
-                        )}
-                        {reminderStageLabel(nextPlusStage)} hinzufügen
-                      </Button>
-                    ) : null}
-                  </div>
-                </section>
+          {/* Right Überblick */}
+          <aside className="xl:sticky xl:top-4 space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div className="px-5 py-3.5 border-b bg-gradient-to-r from-slate-50 to-white">
+                <h2 className="text-sm font-black text-slate-900 tracking-tight">Überblick</h2>
+              </div>
+              <div className="p-5 space-y-3">
+                <OverviewRow
+                  icon={<UserCircle2 className="w-3.5 h-3.5" />}
+                  label="Bearbeiter"
+                  value={assigneeLabel}
+                />
+                <OverviewRow
+                  icon={<User className="w-3.5 h-3.5" />}
+                  label="Mitarbeiter"
+                  value={customerName || '—'}
+                />
+                <OverviewRow
+                  icon={<Package className="w-3.5 h-3.5" />}
+                  label="Gerät (Alt / Neu)"
+                  value={
+                    [
+                      form.device_old_type ? `Alt: ${form.device_old_type}` : null,
+                      form.device_new_type ? `Neu: ${form.device_new_type}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || '—'
+                  }
+                />
+                <OverviewRow
+                  icon={<Hash className="w-3.5 h-3.5" />}
+                  label="Seriennummern"
+                  value={
+                    [
+                      form.device_old_serial ? `Alt: ${form.device_old_serial}` : null,
+                      form.device_new_serial ? `Neu: ${form.device_new_serial}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || '—'
+                  }
+                />
+                <OverviewRow
+                  icon={<Truck className="w-3.5 h-3.5" />}
+                  label="Versandart"
+                  value={form.shipping_method || '—'}
+                />
+                <OverviewRow
+                  icon={<Calendar className="w-3.5 h-3.5" />}
+                  label="Rücklieferung am"
+                  value={
+                    form.delivery_date ? formatDateDeOnly(form.delivery_date) || '—' : '—'
+                  }
+                />
 
-                <section className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-3">
-                  <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-slate-600" />
-                    Verlauf &amp; E-Mail-Protokoll
-                  </h3>
-                  {activityLog.length === 0 ? (
-                    <p className="text-sm text-slate-500">Noch keine Verlaufseinträge.</p>
+                <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 flex gap-2 text-[11px] font-semibold text-amber-900 leading-relaxed">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  Bitte prüfen Sie die Angaben vor dem Speichern.
+                </div>
+
+                <Button
+                  type="button"
+                  className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold"
+                  disabled={saving}
+                  onClick={() => void save()}
+                >
+                  {saving ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
                   ) : (
-                    <ol className="space-y-3">
-                      {activityLog
-                        .slice()
-                        .reverse()
-                        .slice(0, 30)
-                        .map((entry: any, idx: number) => (
-                          <li key={`${entry.at}-${idx}`} className="flex gap-3">
-                            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-slate-50 border-slate-200 text-slate-600">
-                              {entry.type === 'mail_sent' ? (
-                                <Mail className="w-3.5 h-3.5" />
-                              ) : entry.type === 'returned' ? (
-                                <Package className="w-3.5 h-3.5" />
-                              ) : (
-                                <Clock className="w-3.5 h-3.5" />
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1 border-b border-slate-100 pb-2">
-                              <p className="text-sm font-semibold text-slate-900">
-                                {entry.message || entry.type || 'Aktualisiert'}
-                              </p>
-                              <p className="text-[11px] text-slate-400 mt-1 tabular-nums">
-                                {formatBerlinDateTime(entry.at)}
-                                {entry.actor ? ` · ${entry.actor}` : ''}
-                              </p>
-                            </div>
-                          </li>
-                        ))}
-                    </ol>
+                    <Check className="w-4 h-4 mr-1.5" />
                   )}
-                </section>
-              </>
-            ) : null}
+                  Rücklieferung speichern
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full h-10 font-bold text-sky-700 border-sky-200"
+                  onClick={resetForm}
+                >
+                  <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                  Zurücksetzen
+                </Button>
+              </div>
+            </div>
           </aside>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function OverviewRow({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-50 border border-slate-100 text-slate-500">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+        <p className="text-sm font-semibold text-slate-900 truncate">{value}</p>
       </div>
     </div>
   );

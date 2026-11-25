@@ -3503,9 +3503,16 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
     'card 3 Versand & Rücklieferung',
   );
   assert(
-    editorSrc.includes('Bearbeitung & Steuerung') ||
-      editorSrc.includes('Bearbeitung &amp; Steuerung'),
-    'sticky sidebar Bearbeitung & Steuerung',
+    (editorSrc.includes('Bearbeitung & Steuerung') ||
+      editorSrc.includes('Bearbeitung &amp; Steuerung')) &&
+      editorSrc.includes('Überblick') &&
+      editorSrc.includes('Rücklieferung erfassen') &&
+      editorSrc.includes('Kundendaten') &&
+      editorSrc.includes('Gerätedetails') &&
+      editorSrc.includes('Rückgabedetails') &&
+      editorSrc.includes('Abschluss') &&
+      editorSrc.includes('Zurücksetzen'),
+    '3-column workspace: step rail + Überblick + Bearbeitung & Steuerung',
   );
   assert(
     editorSrc.includes('mode="staff"') === false &&
