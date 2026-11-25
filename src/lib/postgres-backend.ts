@@ -393,20 +393,24 @@ export async function initDb() {
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS crm_company_id TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hardware_returns_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hardware_returns_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hardware_returns_seq INTEGER NOT NULL DEFAULT 0;
     CREATE TABLE IF NOT EXISTS ticket_hardware_returns (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
       ticket_id VARCHAR(255) UNIQUE,
       return_number TEXT,
-      subject TEXT NOT NULL DEFAULT 'Hardware',
+      subject TEXT DEFAULT NULL,
       employee_name TEXT,
       employee_email TEXT,
       assignee_name TEXT,
-      status TEXT NOT NULL DEFAULT 'open',
+      assignee_user_id TEXT,
+      directory_user_id TEXT,
+      status TEXT NOT NULL DEFAULT 'Neu',
       description TEXT,
       activity_log JSONB NOT NULL DEFAULT '[]'::jsonb,
       external_ref_id TEXT,
-      service_level SMALLINT,
+      service_level TEXT,
+      sla TEXT DEFAULT 'Normal',
       time_sl1_minutes INT NOT NULL DEFAULT 0,
       time_sl2_minutes INT NOT NULL DEFAULT 0,
       time_sl3_minutes INT NOT NULL DEFAULT 0,
@@ -414,6 +418,10 @@ export async function initDb() {
       exported_at TIMESTAMPTZ,
       request_type TEXT,
       device_details TEXT,
+      device_old_type TEXT,
+      device_old_serial TEXT,
+      device_new_type TEXT,
+      device_new_serial TEXT,
       employee_phone TEXT,
       employee_mobile TEXT,
       project_manager_name TEXT,
@@ -429,6 +437,9 @@ export async function initDb() {
       delivery_date DATE,
       return_due_date DATE,
       auto_reminder_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      mail1_scheduled_date DATE,
+      mail2_scheduled_date DATE,
+      mail3_scheduled_date DATE,
       mail1_sent_at TIMESTAMPTZ,
       mail1_sent_recipients JSONB,
       mail2_sent_at TIMESTAMPTZ,
@@ -443,13 +454,29 @@ export async function initDb() {
     -- Upgrade path for DBs that already had the Part-1 NOT NULL ticket_id shape.
     ALTER TABLE ticket_hardware_returns ALTER COLUMN ticket_id DROP NOT NULL;
     ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS return_number TEXT;
-    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS subject TEXT NOT NULL DEFAULT 'Hardware';
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS subject TEXT;
+    ALTER TABLE ticket_hardware_returns ALTER COLUMN subject DROP NOT NULL;
+    ALTER TABLE ticket_hardware_returns ALTER COLUMN subject SET DEFAULT NULL;
     ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS employee_name TEXT;
     ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS employee_email TEXT;
     ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS assignee_name TEXT;
-    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open';
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS assignee_user_id TEXT;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS directory_user_id TEXT;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Neu';
+    ALTER TABLE ticket_hardware_returns ALTER COLUMN status SET DEFAULT 'Neu';
     ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS description TEXT;
     ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS activity_log JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS device_old_type TEXT;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS device_old_serial TEXT;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS device_new_type TEXT;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS device_new_serial TEXT;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS sla TEXT DEFAULT 'Normal';
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS mail1_scheduled_date DATE;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS mail2_scheduled_date DATE;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS mail3_scheduled_date DATE;
+    ALTER TABLE ticket_hardware_returns
+      ALTER COLUMN service_level TYPE TEXT
+      USING CASE WHEN service_level IS NULL THEN NULL ELSE TRIM(service_level::text) END;
     CREATE INDEX IF NOT EXISTS idx_ticket_hw_returns_org
       ON ticket_hardware_returns (organization_id);
     CREATE INDEX IF NOT EXISTS idx_ticket_hw_returns_ticket
@@ -502,10 +529,12 @@ export async function initDb() {
 
   // Detach Hardware-Rücklieferungen from normal tickets (idempotent data backfill).
   try {
-    const { backfillHardwareReturnsStandalone } = await import(
-      './client-portal/hardware-returns.js'
-    );
+    const {
+      backfillHardwareReturnsStandalone,
+      backfillHardwareReturnsSequentialNumbers,
+    } = await import('./client-portal/hardware-returns.js');
     await backfillHardwareReturnsStandalone();
+    await backfillHardwareReturnsSequentialNumbers();
   } catch (hwErr: any) {
     console.warn(
       '[initDb] hardware-returns standalone backfill skipped:',

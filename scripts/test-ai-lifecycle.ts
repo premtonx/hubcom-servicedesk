@@ -40,7 +40,13 @@ import {
 } from '../src/lib/client-portal/hardware-returns-recipients.js';
 import {
   defaultHardwareReturnsConfig,
+  deriveIdPrefixFromOrgName,
+  evaluateHardwareCatalogsWriteAccess,
+  formatReturnNumber,
+  formatReturnNumberDisplay,
   mapHardwareRow,
+  needsReturnNumberBackfill,
+  normalizeHardwareReturnInput,
   type TicketHardwareReturnRecord,
 } from '../src/lib/client-portal/hardware-returns.js';
 import {
@@ -487,11 +493,14 @@ function testHardwareReturnsStandaloneLifecycle(): void {
     employee_name: 'Ada',
     employee_email: 'ada@dpg.test',
     assignee_name: 'Support',
+    assignee_user_id: null,
+    directory_user_id: null,
     status: 'open',
     description: null,
     activity_log: [{ at: '2026-10-01T00:00:00.000Z', type: 'created' }],
     external_ref_id: null,
     service_level: null,
+    sla: 'Normal',
     time_sl1_minutes: 0,
     time_sl2_minutes: 0,
     time_sl3_minutes: 0,
@@ -499,6 +508,10 @@ function testHardwareReturnsStandaloneLifecycle(): void {
     exported_at: null,
     request_type: null,
     device_details: 'Notebook',
+    device_old_type: null,
+    device_old_serial: null,
+    device_new_type: null,
+    device_new_serial: null,
     employee_phone: null,
     employee_mobile: null,
     project_manager_name: null,
@@ -514,6 +527,9 @@ function testHardwareReturnsStandaloneLifecycle(): void {
     delivery_date: '2026-10-01',
     return_due_date: '2026-10-15',
     auto_reminder_enabled: true,
+    mail1_scheduled_date: null,
+    mail2_scheduled_date: null,
+    mail3_scheduled_date: null,
     mail1_sent_at: null,
     mail1_sent_recipients: null,
     mail2_sent_at: null,
@@ -542,6 +558,103 @@ function testHardwareReturnsStandaloneLifecycle(): void {
   assert(
     ticketsAfterCreateReturn - ticketsBefore === 0,
     'GET /api/tickets + GET /api/portal/tickets count unchanged (+0) after returns create',
+  );
+}
+
+function testHardwareReturnsSchemaCatalogsLifecycle(): void {
+  console.log('\n[17b] Hardware returns Part-1 — sequential IDs, catalogs, returned_at');
+
+  assert(deriveIdPrefixFromOrgName('DPG') === 'DPG', 'DPG prefix from org name');
+  assert(
+    formatReturnNumber('DPG', 1) === 'DPG-1' && formatReturnNumber('DPG', 2) === 'DPG-2',
+    'sequential DPG-1 then DPG-2',
+  );
+  assert(formatReturnNumberDisplay('DPG-1') === '#DPG-1', 'display #DPG-1');
+  assert(needsReturnNumberBackfill('c6175496'), 'UUID-slice return_number needs backfill');
+
+  const cfg = defaultHardwareReturnsConfig();
+  assert(
+    cfg.id_prefix === 'DPG' &&
+      cfg.catalogs.statuses[0] === 'Neu' &&
+      cfg.catalogs.device_types.includes('Secutest Pro'),
+    'default catalogs + id_prefix',
+  );
+
+  const created = normalizeHardwareReturnInput({
+    subject: null,
+    assignee_name: 'Creator',
+    assignee_user_id: 'u-1',
+    device_old_type: 'VL2E Adapter',
+    device_old_serial: 'S-OLD',
+    device_new_type: 'Secutest Pro',
+    device_new_serial: 'S-NEW',
+    sla: 'Normal',
+    service_level: '1',
+    shipping_method: 'Express',
+    return_number: 'DPG-1',
+    status: 'Neu',
+  });
+  assert(
+    created.return_number === 'DPG-1' &&
+      !created.subject &&
+      created.assignee_name === 'Creator' &&
+      created.device_old_type === 'VL2E Adapter' &&
+      created.device_new_serial === 'S-NEW' &&
+      created.sla === 'Normal' &&
+      created.service_level === '1' &&
+      created.shipping_method === 'Express',
+    'create without subject; assignee + device/sla/SL/shipping persisted',
+  );
+
+  const stamped = normalizeHardwareReturnInput({ returned: true }, { existing: created as any });
+  assert(
+    stamped.returned === true &&
+      typeof stamped.returned_at === 'string' &&
+      !Number.isNaN(Date.parse(String(stamped.returned_at))),
+    'returned=true stamps valid ISO returned_at (no PG date syntax error)',
+  );
+  const cleared = normalizeHardwareReturnInput(
+    { returned: false },
+    { existing: { ...(created as any), returned: true, returned_at: stamped.returned_at } },
+  );
+  assert(cleared.returned_at == null, 'returned=false clears returned_at');
+
+  assert(
+    evaluateHardwareCatalogsWriteAccess({
+      orgEnabled: true,
+      sessionOrgId: 'org-dpg',
+      targetOrgId: 'org-dpg',
+      role: 'CLIENT_ADMIN',
+    }).ok === true,
+    'CLIENT_ADMIN catalogs write own org',
+  );
+  assert(
+    evaluateHardwareCatalogsWriteAccess({
+      orgEnabled: true,
+      sessionOrgId: 'org-dpg',
+      targetOrgId: 'org-dpg',
+      role: 'CLIENT_USER',
+    }).ok === false,
+    'CLIENT_USER catalogs write 403',
+  );
+  assert(
+    evaluateHardwareCatalogsWriteAccess({
+      orgEnabled: false,
+      sessionOrgId: 'org-x',
+      targetOrgId: 'org-x',
+      role: 'CLIENT_ADMIN',
+    }).ok === false,
+    'disabled org catalogs write 403',
+  );
+
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns.ts'),
+    'utf8',
+  );
+  assert(
+    src.includes('hardware_returns_seq = hardware_returns_seq + 1') &&
+      src.includes('listHardwareReturnAssignees'),
+    'atomic seq allocation + assignees helper present',
   );
 }
 
@@ -665,6 +778,7 @@ async function main(): Promise<void> {
   testPortalTicketApiNeverUsesDb();
   testPortalReturnsNavLifecycle();
   testHardwareReturnsStandaloneLifecycle();
+  testHardwareReturnsSchemaCatalogsLifecycle();
   testPortalUserDeleteLifecycle();
 
   console.log('\n' + '='.repeat(50));

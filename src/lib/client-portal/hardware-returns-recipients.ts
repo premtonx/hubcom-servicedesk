@@ -201,6 +201,7 @@ export function evaluateDueReminderStage(
 
   if (!row.mail1_sent_at) {
     const due =
+      parseDateOnly(row.mail1_scheduled_date) ||
       parseDateOnly(row.return_due_date) ||
       (parseDateOnly(row.delivery_date)
         ? addDays(parseDateOnly(row.delivery_date)!, orgConfig.mail1_days_after_delivery)
@@ -210,6 +211,11 @@ export function evaluateDueReminderStage(
   }
 
   if (!row.mail2_sent_at) {
+    const override = parseDateOnly(row.mail2_scheduled_date);
+    if (override) {
+      if (today.getTime() >= override.getTime()) return 2;
+      return null;
+    }
     const mail1 = new Date(row.mail1_sent_at);
     if (Number.isNaN(mail1.getTime())) return null;
     const threshold = addDays(mail1, orgConfig.mail2_days_after_mail1);
@@ -218,6 +224,11 @@ export function evaluateDueReminderStage(
   }
 
   if (!row.mail3_sent_at) {
+    const override = parseDateOnly(row.mail3_scheduled_date);
+    if (override) {
+      if (today.getTime() >= override.getTime()) return 3;
+      return null;
+    }
     const mail2 = new Date(row.mail2_sent_at);
     if (Number.isNaN(mail2.getTime())) return null;
     const threshold = addDays(mail2, orgConfig.mail3_days_after_mail2);

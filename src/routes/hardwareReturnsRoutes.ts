@@ -28,7 +28,9 @@ import {
 import {
   appendHardwareReturnActivity,
   deleteHardwareReturn,
+  evaluateHardwareCatalogsWriteAccess,
   evaluateHardwareModuleAccess,
+  listHardwareReturnAssignees,
   resolveHardwareReturnByParam,
   updateHardwareReturnById,
 } from '../lib/client-portal/hardware-returns.js';
@@ -137,7 +139,8 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
 
   const createSchema = z.object({
     organizationId: z.string().uuid().optional(),
-    subject: z.string().trim().min(1).max(500).default('Hardware'),
+    /** Betreff — optional (no longer required). */
+    subject: z.string().trim().max(500).optional().nullable(),
     description: z.string().trim().max(100_000).optional().nullable(),
     requesterId: z.string().trim().max(128).optional().nullable(),
     customerName: z.string().trim().max(255).optional().nullable(),
@@ -191,9 +194,9 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
 
   const updateSchema = z.object({
     organizationId: z.string().uuid().optional(),
-    subject: z.string().trim().min(1).max(500).optional(),
+    subject: z.string().trim().max(500).optional().nullable(),
     description: z.string().trim().max(100_000).optional().nullable(),
-    status: z.string().trim().max(64).optional(),
+    status: z.string().trim().max(120).optional(),
     customerName: z.string().trim().max(255).optional().nullable(),
     customerEmail: z.string().trim().max(255).optional().nullable(),
     assigneeName: z.string().trim().max(255).optional().nullable(),
@@ -284,6 +287,8 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
       return res.json({
         hardware_returns_enabled: Boolean(org?.hardware_returns_enabled),
         hardware_returns_config: org?.hardware_returns_config,
+        catalogs: org?.hardware_returns_config?.catalogs || null,
+        id_prefix: org?.hardware_returns_config?.id_prefix || null,
         enabledModules: organizationEnabledModules(org),
       });
     } catch (err: any) {
@@ -291,9 +296,40 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
     }
   });
 
+  /** GET /assignees — selectable Bearbeiter candidates for the org. */
+  router.get('/assignees', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      const assignees = await listHardwareReturnAssignees(ctx.organizationId);
+      return res.json({
+        organizationId: ctx.organizationId,
+        assignees,
+      });
+    } catch (err: any) {
+      return res
+        .status(err?.status || 500)
+        .json({ error: safeErrorMessage(err, 'Bearbeiter laden fehlgeschlagen') });
+    }
+  });
+
   const settingsSchema = z.object({
     organizationId: z.string().uuid().optional(),
     hardware_returns_config: z.record(z.string(), z.unknown()).optional(),
+    catalogs: z
+      .object({
+        statuses: z.array(z.string()).optional(),
+        device_types: z.array(z.string()).optional(),
+        service_levels: z.array(z.string()).optional(),
+        slas: z.array(z.string()).optional(),
+        shipping_methods: z.array(z.string()).optional(),
+      })
+      .optional(),
+    id_prefix: z.string().trim().max(12).optional(),
     auto_send_enabled: z.boolean().optional(),
   });
 
@@ -303,41 +339,78 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
       if (!parsed.success) {
         return res.status(400).json({ error: 'Invalid settings payload' });
       }
-      const ctx = await resolveOrgForReturns(
-        req,
-        res,
+      const preferredOrgId =
         mode === 'staff'
           ? parsed.data.organizationId || String(req.query.organizationId || '')
-          : null,
-      );
-      if (!ctx) return;
-      const role = ctx.role;
-      if (mode === 'portal' && role !== 'CLIENT_ADMIN') {
-        return res.status(403).json({ error: 'Forbidden: CLIENT_ADMIN required.' });
-      }
-      if (mode === 'staff' && role !== 'SYSTEM_ADMIN' && !isHubcomStaffRole(role)) {
+          : null;
+
+      // Catalogs write: CLIENT_USER + disabled orgs → 403 (not 404).
+      const role = String(req.user?.role || '');
+      let organizationId: string | null = null;
+      if (isClientPortalRole(role)) {
+        organizationId = resolveOrganizationIdFromUser(req.user!);
+        if (role === 'CLIENT_USER') {
+          return res.status(403).json({ error: 'Forbidden: CLIENT_USER cannot update catalogs.' });
+        }
+      } else if (role === 'SYSTEM_ADMIN' || isHubcomStaffRole(role)) {
+        organizationId = String(preferredOrgId || '').trim() || null;
+        if (!organizationId) {
+          return res.status(400).json({ error: 'organizationId ist erforderlich.' });
+        }
+        if (mode === 'staff' && role !== 'SYSTEM_ADMIN') {
+          return res.status(403).json({ error: 'Forbidden: SYSTEM_ADMIN required for settings.' });
+        }
+      } else {
         return res.status(403).json({ error: 'Forbidden.' });
       }
-      // SYSTEM_ADMIN or CLIENT_ADMIN only for writes (staff AGENT can read but not write settings).
-      if (mode === 'staff' && role !== 'SYSTEM_ADMIN') {
-        return res.status(403).json({ error: 'Forbidden: SYSTEM_ADMIN required for settings.' });
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Forbidden: no organization.' });
       }
 
-      const org = await getOrganization(ctx.organizationId);
+      const org = await getOrganization(organizationId);
       if (!org) return res.status(404).json({ error: 'Organization not found.' });
+
+      const writeGate = evaluateHardwareCatalogsWriteAccess({
+        orgEnabled: Boolean(org.hardware_returns_enabled),
+        sessionOrgId: isClientPortalRole(role) ? organizationId : organizationId,
+        targetOrgId: organizationId,
+        role: mode === 'portal' ? role : role === 'SYSTEM_ADMIN' ? 'SYSTEM_ADMIN' : role,
+      });
+      if (mode === 'portal' && role !== 'CLIENT_ADMIN' && role !== 'SYSTEM_ADMIN') {
+        return res.status(403).json({ error: 'Forbidden: CLIENT_ADMIN required.' });
+      }
+      if (writeGate.ok === false) {
+        return res.status(403).json({
+          error: org.hardware_returns_enabled
+            ? 'Forbidden.'
+            : 'Forbidden: Hardware-Rücklieferungen nicht aktiv.',
+        });
+      }
+
       const nextConfig = normalizeHardwareReturnsConfig({
         ...org.hardware_returns_config,
         ...(parsed.data.hardware_returns_config || {}),
+        ...(parsed.data.catalogs
+          ? {
+              catalogs: {
+                ...org.hardware_returns_config.catalogs,
+                ...parsed.data.catalogs,
+              },
+            }
+          : {}),
+        ...(parsed.data.id_prefix !== undefined ? { id_prefix: parsed.data.id_prefix } : {}),
         ...(parsed.data.auto_send_enabled !== undefined
           ? { auto_send_enabled: parsed.data.auto_send_enabled }
           : {}),
       });
-      const updated = await updateOrganizationHardwareModule(ctx.organizationId, {
+      const updated = await updateOrganizationHardwareModule(organizationId, {
         hardware_returns_config: nextConfig,
       });
       return res.json({
         hardware_returns_enabled: Boolean(updated?.hardware_returns_enabled),
         hardware_returns_config: updated?.hardware_returns_config,
+        catalogs: updated?.hardware_returns_config?.catalogs || null,
+        id_prefix: updated?.hardware_returns_config?.id_prefix || null,
         enabledModules: organizationEnabledModules(updated),
       });
     } catch (err: any) {

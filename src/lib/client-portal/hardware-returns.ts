@@ -4,8 +4,9 @@
  */
 
 import { randomUUID } from 'crypto';
-import { queryDb } from '../postgres-backend.js';
+import { getDocsDirect, queryDb, withPgTransaction } from '../postgres-backend.js';
 import { getOrganization } from './organizations.js';
+import { isClientPortalRole } from './roles.js';
 import { toIsoDateOnly } from './hardware-returns-dates.js';
 
 export { toIsoDateOnly, formatDateDeOnly } from './hardware-returns-dates.js';
@@ -24,6 +25,37 @@ export interface HardwareMailTemplate {
   body: string;
 }
 
+export interface HardwareReturnsCatalogs {
+  statuses: string[];
+  device_types: string[];
+  service_levels: string[];
+  slas: string[];
+  shipping_methods: string[];
+}
+
+export const DEFAULT_HARDWARE_RETURNS_CATALOGS: HardwareReturnsCatalogs = {
+  statuses: ['Neu', 'Warten auf Third Level', 'In Bearbeitung', 'Geschlossen'],
+  device_types: [
+    'VL2E Adapter',
+    'Secutest Pro',
+    'Secutest S2 N+10',
+    'PRCD Adapter',
+    'BT Adapter',
+    'Tablet & Dockingstation',
+  ],
+  service_levels: ['1', '2', '3'],
+  slas: ['Niedrig', 'Normal', 'Hoch'],
+  shipping_methods: [
+    'Standard',
+    'Express',
+    'E-9 Express',
+    'E-1030 Express',
+    'E-1200 Express',
+    'E-Samstag Express',
+    'Samstag',
+  ],
+};
+
 export interface HardwareReturnsConfig {
   auto_send_enabled: boolean;
   mail1_days_after_delivery: number;
@@ -32,6 +64,9 @@ export interface HardwareReturnsConfig {
   ceo_name: string | null;
   ceo_email: string | null;
   fallback_manager_email: string | null;
+  /** Org-scoped display prefix for return numbers (e.g. DPG → #DPG-1). */
+  id_prefix: string;
+  catalogs: HardwareReturnsCatalogs;
   stage_recipients: {
     mail1: HardwareStageRecipients;
     mail2: HardwareStageRecipients;
@@ -49,12 +84,8 @@ export interface HardwareStageOverride {
   cc: string[];
 }
 
-export type HardwareReturnStatus =
-  | 'open'
-  | 'in_progress'
-  | 'waiting'
-  | 'returned'
-  | 'closed';
+/** Free-form org-configured status string (default "Neu"). Legacy English values still accepted. */
+export type HardwareReturnStatus = string;
 
 export interface HardwareReturnActivityEntry {
   at: string;
@@ -73,15 +104,23 @@ export interface TicketHardwareReturnRecord {
   /** Legacy soft link — nullable; standalone returns keep this null. */
   ticket_id: string | null;
   return_number: string | null;
-  subject: string;
+  /** Betreff — optional/nullable (no longer required). */
+  subject: string | null;
   employee_name: string | null;
   employee_email: string | null;
   assignee_name: string | null;
+  /** Bearbeiter user id (defaults to creator). */
+  assignee_user_id: string | null;
+  /** Synced M365 directory employee when selected. */
+  directory_user_id: string | null;
   status: HardwareReturnStatus;
   description: string | null;
   activity_log: HardwareReturnActivityEntry[];
   external_ref_id: string | null;
-  service_level: 1 | 2 | 3 | null;
+  /** Free-form service level (catalog-driven; was 1|2|3). */
+  service_level: string | null;
+  /** SLA label (default Normal). */
+  sla: string | null;
   time_sl1_minutes: number;
   time_sl2_minutes: number;
   time_sl3_minutes: number;
@@ -89,6 +128,10 @@ export interface TicketHardwareReturnRecord {
   exported_at: string | null;
   request_type: string | null;
   device_details: string | null;
+  device_old_type: string | null;
+  device_old_serial: string | null;
+  device_new_type: string | null;
+  device_new_serial: string | null;
   employee_phone: string | null;
   employee_mobile: string | null;
   project_manager_name: string | null;
@@ -108,6 +151,10 @@ export interface TicketHardwareReturnRecord {
   delivery_date: string | null;
   return_due_date: string | null;
   auto_reminder_enabled: boolean;
+  /** Optional per-record mail schedule overrides (NULL → org defaults 14/7/7). */
+  mail1_scheduled_date: string | null;
+  mail2_scheduled_date: string | null;
+  mail3_scheduled_date: string | null;
   mail1_sent_at: string | null;
   mail1_sent_recipients: HardwareStageOverride | null;
   mail2_sent_at: string | null;
@@ -124,24 +171,99 @@ export type TicketHardwareReturnInput = Partial<
   Omit<TicketHardwareReturnRecord, 'id' | 'organization_id' | 'created_at' | 'updated_at'>
 >;
 
-const STATUS_VALUES: HardwareReturnStatus[] = [
-  'open',
-  'in_progress',
-  'waiting',
-  'returned',
-  'closed',
-];
+/** Legacy English statuses kept for older rows; new default is German "Neu". */
+const LEGACY_STATUS_MAP: Record<string, string> = {
+  pending: 'in_progress',
+  on_hold: 'waiting',
+  waiting_customer: 'waiting',
+  resolved: 'closed',
+};
 
 export function normalizeHardwareReturnStatus(raw: unknown): HardwareReturnStatus {
-  const s = String(raw || '')
-    .toLowerCase()
+  const original = String(raw ?? '').trim();
+  if (!original) return 'Neu';
+  const key = original.toLowerCase().replace(/-/g, '_');
+  if (LEGACY_STATUS_MAP[key]) return LEGACY_STATUS_MAP[key];
+  // Allow any org-configured status string (including German catalogs).
+  return original.slice(0, 120);
+}
+
+/** Uppercase alphanumeric prefix from org name (e.g. "DPG" → "DPG", "Acme Corp" → "AC"). */
+export function deriveIdPrefixFromOrgName(name: string): string {
+  const words = String(name || '')
     .trim()
-    .replace(/-/g, '_');
-  if (s === 'pending') return 'in_progress';
-  if (s === 'on_hold' || s === 'waiting_customer') return 'waiting';
-  if (s === 'resolved') return 'closed';
-  if ((STATUS_VALUES as string[]).includes(s)) return s as HardwareReturnStatus;
-  return 'open';
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length >= 2) {
+    const acronym = words
+      .map((w) => w.replace(/[^a-zA-Z0-9]/g, '').charAt(0))
+      .join('')
+      .toUpperCase();
+    if (acronym.length >= 2) return acronym.slice(0, 12);
+  }
+  const alnum = String(name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '')
+    .toUpperCase();
+  return (alnum || 'ORG').slice(0, 12);
+}
+
+export function formatReturnNumber(prefix: string, seq: number): string {
+  const clean = String(prefix || 'ORG')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 12) || 'ORG';
+  const n = Math.max(1, Math.floor(Number(seq) || 1));
+  return `${clean}-${n}`;
+}
+
+/** Display form with leading hash (#DPG-1). */
+export function formatReturnNumberDisplay(returnNumber: string | null | undefined): string {
+  const raw = String(returnNumber || '').trim();
+  if (!raw) return '';
+  return raw.startsWith('#') ? raw : `#${raw}`;
+}
+
+/** Missing / UUID-slice / RL-LEGACY placeholders need sequential backfill. */
+export function needsReturnNumberBackfill(returnNumber: string | null | undefined): boolean {
+  const raw = String(returnNumber || '').trim();
+  if (!raw) return true;
+  if (/^RL-LEGACY-/i.test(raw)) return true;
+  // Bare UUID slice e.g. c6175496
+  if (/^[0-9a-f]{6,12}$/i.test(raw)) return true;
+  return false;
+}
+
+function asCatalogList(raw: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(raw)) return [...fallback];
+  const out = raw
+    .map((x) => String(x ?? '').trim())
+    .filter((x) => x.length > 0 && x.length <= 200)
+    .slice(0, 100);
+  return out.length ? out : [...fallback];
+}
+
+function mergeCatalogs(
+  patch: Partial<HardwareReturnsCatalogs> | undefined,
+): HardwareReturnsCatalogs {
+  const base = DEFAULT_HARDWARE_RETURNS_CATALOGS;
+  if (!patch || typeof patch !== 'object') {
+    return {
+      statuses: [...base.statuses],
+      device_types: [...base.device_types],
+      service_levels: [...base.service_levels],
+      slas: [...base.slas],
+      shipping_methods: [...base.shipping_methods],
+    };
+  }
+  return {
+    statuses: asCatalogList(patch.statuses, base.statuses),
+    device_types: asCatalogList(patch.device_types, base.device_types),
+    service_levels: asCatalogList(patch.service_levels, base.service_levels),
+    slas: asCatalogList(patch.slas, base.slas),
+    shipping_methods: asCatalogList(patch.shipping_methods, base.shipping_methods),
+  };
 }
 
 const ROLE_TOKENS: HardwareRoleToken[] = ['employee', 'project_manager', 'manager', 'ceo'];
@@ -159,6 +281,8 @@ export function defaultHardwareReturnsConfig(): HardwareReturnsConfig {
     ceo_name: null,
     ceo_email: null,
     fallback_manager_email: null,
+    id_prefix: 'DPG',
+    catalogs: mergeCatalogs(undefined),
     stage_recipients: {
       mail1: defaultStage(['employee'], []),
       mail2: defaultStage(['employee'], ['project_manager']),
@@ -248,6 +372,18 @@ export function normalizeHardwareReturnsConfig(raw: unknown): HardwareReturnsCon
       ? (src.templates as Record<string, Partial<HardwareMailTemplate>>)
       : {};
 
+  const catalogSrc =
+    src.catalogs && typeof src.catalogs === 'object'
+      ? (src.catalogs as Partial<HardwareReturnsCatalogs>)
+      : undefined;
+  const rawPrefix =
+    src.id_prefix == null || String(src.id_prefix).trim() === ''
+      ? defaults.id_prefix
+      : String(src.id_prefix)
+          .replace(/[^a-zA-Z0-9]/g, '')
+          .toUpperCase()
+          .slice(0, 12) || defaults.id_prefix;
+
   return {
     auto_send_enabled: src.auto_send_enabled === true,
     mail1_days_after_delivery:
@@ -274,6 +410,8 @@ export function normalizeHardwareReturnsConfig(raw: unknown): HardwareReturnsCon
       src.fallback_manager_email == null || String(src.fallback_manager_email).trim() === ''
         ? null
         : String(src.fallback_manager_email).trim().toLowerCase().slice(0, 320),
+    id_prefix: rawPrefix,
+    catalogs: mergeCatalogs(catalogSrc),
     stage_recipients: {
       mail1: mergeStage(defaults.stage_recipients.mail1, stageSrc.mail1),
       mail2: mergeStage(defaults.stage_recipients.mail2, stageSrc.mail2),
@@ -285,6 +423,19 @@ export function normalizeHardwareReturnsConfig(raw: unknown): HardwareReturnsCon
       mail3: mergeTemplate(defaults.templates.mail3, templateSrc.mail3),
     },
   };
+}
+
+/** Resolve id_prefix from config, falling back to org name derivation. */
+export function resolveHardwareReturnIdPrefix(params: {
+  config?: HardwareReturnsConfig | null;
+  organizationName?: string | null;
+}): string {
+  const fromConfig = String(params.config?.id_prefix || '')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 12);
+  if (fromConfig) return fromConfig;
+  return deriveIdPrefixFromOrgName(params.organizationName || '');
 }
 
 export function isHardwareReturnsEnabled(org: {
@@ -370,24 +521,28 @@ function parseActivityLog(raw: unknown): HardwareReturnActivityEntry[] {
 }
 
 export function mapHardwareRow(row: any): TicketHardwareReturnRecord {
-  const sl = row.service_level == null ? null : Number(row.service_level);
   const returned = row.returned === true || row.returned === 't';
+  const slRaw =
+    row.service_level == null || String(row.service_level).trim() === ''
+      ? null
+      : String(row.service_level).trim().slice(0, 80);
   return {
     id: String(row.id),
     organization_id: String(row.organization_id),
     ticket_id: row.ticket_id == null || row.ticket_id === '' ? null : String(row.ticket_id),
     return_number: nullStr(row.return_number, 120),
-    subject: nullStr(row.subject, 500) || 'Hardware',
+    subject: nullStr(row.subject, 500),
     employee_name: nullStr(row.employee_name, 255),
     employee_email: nullEmail(row.employee_email),
     assignee_name: nullStr(row.assignee_name, 255),
-    status: returned
-      ? 'returned'
-      : normalizeHardwareReturnStatus(row.status),
+    assignee_user_id: nullStr(row.assignee_user_id, 128),
+    directory_user_id: nullStr(row.directory_user_id, 128),
+    status: returned ? (row.status ? normalizeHardwareReturnStatus(row.status) : 'returned') : normalizeHardwareReturnStatus(row.status),
     description: nullStr(row.description, 100_000),
     activity_log: parseActivityLog(row.activity_log),
     external_ref_id: nullStr(row.external_ref_id, 120),
-    service_level: sl === 1 || sl === 2 || sl === 3 ? sl : null,
+    service_level: slRaw,
+    sla: nullStr(row.sla, 80) || 'Normal',
     time_sl1_minutes: Math.max(0, Number(row.time_sl1_minutes) || 0),
     time_sl2_minutes: Math.max(0, Number(row.time_sl2_minutes) || 0),
     time_sl3_minutes: Math.max(0, Number(row.time_sl3_minutes) || 0),
@@ -395,6 +550,10 @@ export function mapHardwareRow(row: any): TicketHardwareReturnRecord {
     exported_at: row.exported_at ? new Date(row.exported_at).toISOString() : null,
     request_type: nullStr(row.request_type, 200),
     device_details: nullStr(row.device_details, 4000),
+    device_old_type: nullStr(row.device_old_type, 200),
+    device_old_serial: nullStr(row.device_old_serial, 200),
+    device_new_type: nullStr(row.device_new_type, 200),
+    device_new_serial: nullStr(row.device_new_serial, 200),
     employee_phone: nullStr(row.employee_phone, 80),
     employee_mobile: nullStr(row.employee_mobile, 80),
     project_manager_name: nullStr(row.project_manager_name, 200),
@@ -411,6 +570,9 @@ export function mapHardwareRow(row: any): TicketHardwareReturnRecord {
     return_due_date: toIsoDateOnly(row.return_due_date),
     auto_reminder_enabled:
       row.auto_reminder_enabled !== false && row.auto_reminder_enabled !== 'f',
+    mail1_scheduled_date: toIsoDateOnly(row.mail1_scheduled_date),
+    mail2_scheduled_date: toIsoDateOnly(row.mail2_scheduled_date),
+    mail3_scheduled_date: toIsoDateOnly(row.mail3_scheduled_date),
     mail1_sent_at: row.mail1_sent_at ? new Date(row.mail1_sent_at).toISOString() : null,
     mail1_sent_recipients: parseSentRecipients(row.mail1_sent_recipients),
     mail2_sent_at: row.mail2_sent_at ? new Date(row.mail2_sent_at).toISOString() : null,
@@ -440,8 +602,16 @@ export function normalizeHardwareReturnInput(
   const next: TicketHardwareReturnInput = { ...(existing || {}), ...input };
 
   if (input.service_level !== undefined) {
-    const sl = Number(input.service_level);
-    next.service_level = sl === 1 || sl === 2 || sl === 3 ? sl : null;
+    next.service_level =
+      input.service_level == null || String(input.service_level).trim() === ''
+        ? null
+        : String(input.service_level).trim().slice(0, 80);
+  }
+  if (input.sla !== undefined) {
+    next.sla =
+      input.sla == null || String(input.sla).trim() === ''
+        ? 'Normal'
+        : String(input.sla).trim().slice(0, 80);
   }
   for (const key of ['time_sl1_minutes', 'time_sl2_minutes', 'time_sl3_minutes'] as const) {
     if (input[key] !== undefined) {
@@ -465,12 +635,25 @@ export function normalizeHardwareReturnInput(
     next.return_due_date = toIsoDateOnly(existing.return_due_date);
   }
 
+  for (const key of [
+    'mail1_scheduled_date',
+    'mail2_scheduled_date',
+    'mail3_scheduled_date',
+  ] as const) {
+    if (input[key] !== undefined) {
+      next[key] = toIsoDateOnly(input[key]);
+    } else if (existing?.[key] !== undefined) {
+      next[key] = toIsoDateOnly(existing[key]);
+    }
+  }
+
   if (input.stage_recipients_override !== undefined) {
     next.stage_recipients_override = parseStageOverride(input.stage_recipients_override);
   }
 
   if (input.subject !== undefined) {
-    next.subject = nullStr(input.subject, 500) || 'Hardware';
+    // Betreff is optional — empty/null stays null (no forced "Hardware" default).
+    next.subject = nullStr(input.subject, 500);
   }
   if (input.employee_name !== undefined) {
     next.employee_name = nullStr(input.employee_name, 255);
@@ -480,6 +663,12 @@ export function normalizeHardwareReturnInput(
   }
   if (input.assignee_name !== undefined) {
     next.assignee_name = nullStr(input.assignee_name, 255);
+  }
+  if (input.assignee_user_id !== undefined) {
+    next.assignee_user_id = nullStr(input.assignee_user_id, 128);
+  }
+  if (input.directory_user_id !== undefined) {
+    next.directory_user_id = nullStr(input.directory_user_id, 128);
   }
   if (input.status !== undefined) {
     next.status = normalizeHardwareReturnStatus(input.status);
@@ -506,6 +695,18 @@ export function normalizeHardwareReturnInput(
     input.request_type !== undefined ? nullStr(input.request_type, 200) : next.request_type;
   next.device_details =
     input.device_details !== undefined ? nullStr(input.device_details, 4000) : next.device_details;
+  next.device_old_type =
+    input.device_old_type !== undefined ? nullStr(input.device_old_type, 200) : next.device_old_type;
+  next.device_old_serial =
+    input.device_old_serial !== undefined
+      ? nullStr(input.device_old_serial, 200)
+      : next.device_old_serial;
+  next.device_new_type =
+    input.device_new_type !== undefined ? nullStr(input.device_new_type, 200) : next.device_new_type;
+  next.device_new_serial =
+    input.device_new_serial !== undefined
+      ? nullStr(input.device_new_serial, 200)
+      : next.device_new_serial;
   next.employee_phone =
     input.employee_phone !== undefined ? nullStr(input.employee_phone, 80) : next.employee_phone;
   next.employee_mobile =
@@ -552,10 +753,13 @@ export function normalizeHardwareReturnInput(
       next.returned_at = new Date().toISOString();
     }
     if (!next.returned) next.returned_at = null;
-    if (next.returned) next.status = 'returned';
   }
   if (input.returned_at !== undefined) {
-    next.returned_at = input.returned_at ? new Date(String(input.returned_at)).toISOString() : null;
+    const raw = input.returned_at ? new Date(String(input.returned_at)) : null;
+    if (raw && Number.isNaN(raw.getTime())) {
+      throw Object.assign(new Error('Ungültiger returned_at Zeitstempel.'), { status: 400 });
+    }
+    next.returned_at = raw ? raw.toISOString() : null;
   }
 
   return next;
@@ -614,20 +818,35 @@ export async function resolveHardwareReturnByParam(
   return row;
 }
 
-export async function allocateReturnNumber(organizationId: string): Promise<string> {
-  const res = await queryDb(
-    `SELECT return_number FROM ticket_hardware_returns
-     WHERE organization_id = $1 AND return_number ~ '^RL-[0-9]+$'
-     ORDER BY NULLIF(regexp_replace(return_number, '\\D', '', 'g'), '')::int DESC NULLS LAST
-     LIMIT 1`,
+/**
+ * Atomically allocate the next return_number for an org
+ * (`UPDATE organizations SET hardware_returns_seq = hardware_returns_seq + 1 … RETURNING`).
+ * Prefer calling inside withPgTransaction together with the INSERT.
+ */
+export async function allocateReturnNumber(
+  organizationId: string,
+  opts?: { prefix?: string | null; organizationName?: string | null; client?: { query: typeof queryDb } },
+): Promise<string> {
+  const q = opts?.client?.query?.bind(opts.client) || queryDb;
+  const org = await getOrganization(organizationId);
+  const prefix = resolveHardwareReturnIdPrefix({
+    config: opts?.prefix
+      ? ({ id_prefix: opts.prefix } as HardwareReturnsConfig)
+      : org?.hardware_returns_config,
+    organizationName: opts?.organizationName || org?.name,
+  });
+  const res = await q(
+    `UPDATE organizations
+     SET hardware_returns_seq = hardware_returns_seq + 1,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING hardware_returns_seq`,
     [organizationId],
   );
-  let next = 1001;
-  if (res.rowCount) {
-    const n = Number(String(res.rows[0].return_number).replace(/\D/g, ''));
-    if (Number.isFinite(n) && n >= 1000) next = n + 1;
+  if (!res.rowCount) {
+    throw Object.assign(new Error('Organization not found.'), { status: 404 });
   }
-  return `RL-${next}`;
+  return formatReturnNumber(prefix, Number(res.rows[0].hardware_returns_seq));
 }
 
 export async function appendHardwareReturnActivity(
@@ -682,35 +901,45 @@ export async function updateHardwareReturnById(params: {
       employee_name = $5,
       employee_email = $6,
       assignee_name = $7,
-      status = $8,
-      description = $9,
-      activity_log = COALESCE($10::jsonb, activity_log),
-      external_ref_id = $11,
-      service_level = $12,
-      time_sl1_minutes = $13,
-      time_sl2_minutes = $14,
-      time_sl3_minutes = $15,
-      exported = $16,
-      exported_at = $17,
-      request_type = $18,
-      device_details = $19,
-      employee_phone = $20,
-      employee_mobile = $21,
-      project_manager_name = $22,
-      project_manager_email = $23,
-      manager_name = $24,
-      manager_email = $25,
-      ceo_email_override = $26,
-      stage_recipients_override = $27::jsonb,
-      solution_summary = $28,
-      shipping_method = $29,
-      shipping_reference = $30,
-      return_required = $31,
-      delivery_date = $32,
-      return_due_date = $33,
-      auto_reminder_enabled = $34,
-      returned = $35,
-      returned_at = $36,
+      assignee_user_id = $8,
+      directory_user_id = $9,
+      status = $10,
+      description = $11,
+      activity_log = COALESCE($12::jsonb, activity_log),
+      external_ref_id = $13,
+      service_level = $14,
+      sla = $15,
+      time_sl1_minutes = $16,
+      time_sl2_minutes = $17,
+      time_sl3_minutes = $18,
+      exported = $19,
+      exported_at = $20,
+      request_type = $21,
+      device_details = $22,
+      device_old_type = $23,
+      device_old_serial = $24,
+      device_new_type = $25,
+      device_new_serial = $26,
+      employee_phone = $27,
+      employee_mobile = $28,
+      project_manager_name = $29,
+      project_manager_email = $30,
+      manager_name = $31,
+      manager_email = $32,
+      ceo_email_override = $33,
+      stage_recipients_override = $34::jsonb,
+      solution_summary = $35,
+      shipping_method = $36,
+      shipping_reference = $37,
+      return_required = $38,
+      delivery_date = $39,
+      return_due_date = $40,
+      auto_reminder_enabled = $41,
+      mail1_scheduled_date = $42,
+      mail2_scheduled_date = $43,
+      mail3_scheduled_date = $44,
+      returned = $45,
+      returned_at = $46,
       updated_at = NOW()
     WHERE id = $1::uuid
     RETURNING *`,
@@ -718,15 +947,18 @@ export async function updateHardwareReturnById(params: {
       params.id,
       normalized.ticket_id ?? null,
       normalized.return_number ?? existing.return_number,
-      normalized.subject || existing.subject || 'Hardware',
+      normalized.subject ?? null,
       normalized.employee_name ?? null,
       normalized.employee_email ?? null,
       normalized.assignee_name ?? null,
-      normalized.status || existing.status || 'open',
+      normalized.assignee_user_id ?? null,
+      normalized.directory_user_id ?? null,
+      normalized.status || existing.status || 'Neu',
       normalized.description ?? null,
       normalized.activity_log ? JSON.stringify(normalized.activity_log) : null,
       normalized.external_ref_id ?? null,
       normalized.service_level ?? null,
+      normalized.sla ?? existing.sla ?? 'Normal',
       normalized.time_sl1_minutes ?? 0,
       normalized.time_sl2_minutes ?? 0,
       normalized.time_sl3_minutes ?? 0,
@@ -734,6 +966,10 @@ export async function updateHardwareReturnById(params: {
       normalized.exported_at ?? null,
       normalized.request_type ?? null,
       normalized.device_details ?? null,
+      normalized.device_old_type ?? null,
+      normalized.device_old_serial ?? null,
+      normalized.device_new_type ?? null,
+      normalized.device_new_serial ?? null,
       normalized.employee_phone ?? null,
       normalized.employee_mobile ?? null,
       normalized.project_manager_name ?? null,
@@ -751,6 +987,9 @@ export async function updateHardwareReturnById(params: {
       normalized.delivery_date ?? null,
       normalized.return_due_date ?? null,
       normalized.auto_reminder_enabled !== false,
+      normalized.mail1_scheduled_date ?? null,
+      normalized.mail2_scheduled_date ?? null,
+      normalized.mail3_scheduled_date ?? null,
       Boolean(normalized.returned),
       normalized.returned_at ?? null,
     ],
@@ -760,6 +999,7 @@ export async function updateHardwareReturnById(params: {
 
 /**
  * Insert a standalone Rücklieferung (ticket_id always NULL).
+ * Atomically allocates `PREFIX-N` via organizations.hardware_returns_seq.
  * Never creates a normal support ticket.
  */
 export async function insertStandaloneHardwareReturn(params: {
@@ -767,95 +1007,154 @@ export async function insertStandaloneHardwareReturn(params: {
   input: TicketHardwareReturnInput;
   mail1Days?: number;
   actorName?: string | null;
+  actorId?: string | null;
 }): Promise<TicketHardwareReturnRecord> {
   const normalized = normalizeHardwareReturnInput(
     {
       return_required: true,
       auto_reminder_enabled: true,
-      status: 'open',
-      subject: 'Hardware',
+      status: 'Neu',
+      sla: 'Normal',
+      subject: null,
       ...params.input,
       ticket_id: null,
     },
     { mail1Days: params.mail1Days },
   );
-  const returnNumber =
-    normalized.return_number ||
-    normalized.external_ref_id ||
-    (await allocateReturnNumber(params.organizationId));
-  const now = new Date().toISOString();
-  const activity: HardwareReturnActivityEntry[] = [
-    {
-      at: now,
-      type: 'created',
-      actor: params.actorName || null,
-      message: 'Rücklieferung erstellt',
-    },
-    ...(Array.isArray(normalized.activity_log) ? normalized.activity_log : []),
-  ];
-  const id = randomUUID();
-  const res = await queryDb(
-    `INSERT INTO ticket_hardware_returns (
-      id, organization_id, ticket_id,
-      return_number, subject, employee_name, employee_email, assignee_name, status, description, activity_log,
-      external_ref_id, service_level, time_sl1_minutes, time_sl2_minutes, time_sl3_minutes,
-      exported, exported_at, request_type, device_details, employee_phone, employee_mobile,
-      project_manager_name, project_manager_email, manager_name, manager_email,
-      ceo_email_override, stage_recipients_override, solution_summary,
-      shipping_method, shipping_reference, return_required, delivery_date, return_due_date,
-      auto_reminder_enabled, returned, returned_at
-    ) VALUES (
-      $1,$2,NULL,
-      $3,$4,$5,$6,$7,$8,$9,$10::jsonb,
-      $11,$12,$13,$14,$15,
-      $16,$17,$18,$19,$20,$21,
-      $22,$23,$24,$25,
-      $26,$27::jsonb,$28,
-      $29,$30,$31,$32,$33,
-      $34,$35,$36
-    ) RETURNING *`,
-    [
-      id,
-      params.organizationId,
-      returnNumber,
-      normalized.subject || 'Hardware',
-      normalized.employee_name ?? null,
-      normalized.employee_email ?? null,
-      normalized.assignee_name ?? 'Support',
-      normalized.status || 'open',
-      normalized.description ?? null,
-      JSON.stringify(activity),
-      normalized.external_ref_id ?? null,
-      normalized.service_level ?? null,
-      normalized.time_sl1_minutes ?? 0,
-      normalized.time_sl2_minutes ?? 0,
-      normalized.time_sl3_minutes ?? 0,
-      Boolean(normalized.exported),
-      normalized.exported_at ?? null,
-      normalized.request_type ?? null,
-      normalized.device_details ?? null,
-      normalized.employee_phone ?? null,
-      normalized.employee_mobile ?? null,
-      normalized.project_manager_name ?? null,
-      normalized.project_manager_email ?? null,
-      normalized.manager_name ?? null,
-      normalized.manager_email ?? null,
-      normalized.ceo_email_override ?? null,
-      normalized.stage_recipients_override
-        ? JSON.stringify(normalized.stage_recipients_override)
-        : null,
-      normalized.solution_summary ?? null,
-      normalized.shipping_method ?? null,
-      normalized.shipping_reference ?? null,
-      normalized.return_required !== false,
-      normalized.delivery_date ?? null,
-      normalized.return_due_date ?? null,
-      normalized.auto_reminder_enabled !== false,
-      Boolean(normalized.returned),
-      normalized.returned_at ?? null,
-    ],
-  );
-  return mapHardwareRow(res.rows[0]);
+  // Default Bearbeiter to creating user when not explicitly chosen.
+  if (!normalized.assignee_user_id && params.actorId) {
+    normalized.assignee_user_id = String(params.actorId).slice(0, 128);
+  }
+  if (!normalized.assignee_name && params.actorName) {
+    normalized.assignee_name = String(params.actorName).trim().slice(0, 255) || null;
+  }
+
+  return withPgTransaction(async (client) => {
+    const orgRes = await client.query(
+      `SELECT id, name, hardware_returns_config FROM organizations WHERE id = $1 LIMIT 1`,
+      [params.organizationId],
+    );
+    if (!orgRes.rowCount) {
+      throw Object.assign(new Error('Organization not found.'), { status: 404 });
+    }
+    const orgRow = orgRes.rows[0];
+    const config = normalizeHardwareReturnsConfig(orgRow.hardware_returns_config);
+    const prefix = resolveHardwareReturnIdPrefix({
+      config,
+      organizationName: orgRow.name,
+    });
+
+    let returnNumber = normalized.return_number || null;
+    if (!returnNumber) {
+      const seqRes = await client.query(
+        `UPDATE organizations
+         SET hardware_returns_seq = hardware_returns_seq + 1,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING hardware_returns_seq`,
+        [params.organizationId],
+      );
+      returnNumber = formatReturnNumber(prefix, Number(seqRes.rows[0].hardware_returns_seq));
+    }
+
+    const now = new Date().toISOString();
+    const activity: HardwareReturnActivityEntry[] = [
+      {
+        at: now,
+        type: 'created',
+        actor: params.actorName || null,
+        message: 'Rücklieferung erstellt',
+      },
+      ...(Array.isArray(normalized.activity_log) ? normalized.activity_log : []),
+    ];
+    const id = randomUUID();
+    const res = await client.query(
+      `INSERT INTO ticket_hardware_returns (
+        id, organization_id, ticket_id,
+        return_number, subject, employee_name, employee_email,
+        assignee_name, assignee_user_id, directory_user_id,
+        status, description, activity_log,
+        external_ref_id, service_level, sla,
+        time_sl1_minutes, time_sl2_minutes, time_sl3_minutes,
+        exported, exported_at, request_type, device_details,
+        device_old_type, device_old_serial, device_new_type, device_new_serial,
+        employee_phone, employee_mobile,
+        project_manager_name, project_manager_email, manager_name, manager_email,
+        ceo_email_override, stage_recipients_override, solution_summary,
+        shipping_method, shipping_reference, return_required, delivery_date, return_due_date,
+        auto_reminder_enabled,
+        mail1_scheduled_date, mail2_scheduled_date, mail3_scheduled_date,
+        returned, returned_at
+      ) VALUES (
+        $1,$2,NULL,
+        $3,$4,$5,$6,
+        $7,$8,$9,
+        $10,$11,$12::jsonb,
+        $13,$14,$15,
+        $16,$17,$18,
+        $19,$20,$21,$22,
+        $23,$24,$25,$26,
+        $27,$28,
+        $29,$30,$31,$32,
+        $33,$34::jsonb,$35,
+        $36,$37,$38,$39,$40,
+        $41,
+        $42,$43,$44,
+        $45,$46
+      ) RETURNING *`,
+      [
+        id,
+        params.organizationId,
+        returnNumber,
+        normalized.subject ?? null,
+        normalized.employee_name ?? null,
+        normalized.employee_email ?? null,
+        normalized.assignee_name ?? params.actorName ?? null,
+        normalized.assignee_user_id ?? params.actorId ?? null,
+        normalized.directory_user_id ?? null,
+        normalized.status || 'Neu',
+        normalized.description ?? null,
+        JSON.stringify(activity),
+        normalized.external_ref_id ?? null,
+        normalized.service_level ?? null,
+        normalized.sla ?? 'Normal',
+        normalized.time_sl1_minutes ?? 0,
+        normalized.time_sl2_minutes ?? 0,
+        normalized.time_sl3_minutes ?? 0,
+        Boolean(normalized.exported),
+        normalized.exported_at ?? null,
+        normalized.request_type ?? null,
+        normalized.device_details ?? null,
+        normalized.device_old_type ?? null,
+        normalized.device_old_serial ?? null,
+        normalized.device_new_type ?? null,
+        normalized.device_new_serial ?? null,
+        normalized.employee_phone ?? null,
+        normalized.employee_mobile ?? null,
+        normalized.project_manager_name ?? null,
+        normalized.project_manager_email ?? null,
+        normalized.manager_name ?? null,
+        normalized.manager_email ?? null,
+        normalized.ceo_email_override ?? null,
+        normalized.stage_recipients_override
+          ? JSON.stringify(normalized.stage_recipients_override)
+          : null,
+        normalized.solution_summary ?? null,
+        normalized.shipping_method ?? null,
+        normalized.shipping_reference ?? null,
+        normalized.return_required !== false,
+        normalized.delivery_date ?? null,
+        normalized.return_due_date ?? null,
+        normalized.auto_reminder_enabled !== false,
+        normalized.mail1_scheduled_date ?? null,
+        normalized.mail2_scheduled_date ?? null,
+        normalized.mail3_scheduled_date ?? null,
+        Boolean(normalized.returned),
+        normalized.returned_at ?? null,
+      ],
+    );
+    return mapHardwareRow(res.rows[0]);
+  });
 }
 
 /**
@@ -978,6 +1277,129 @@ export async function backfillHardwareReturnsStandalone(): Promise<void> {
   await queryDb(`DROP TABLE IF EXISTS _hw_rma_stub_tickets`);
 }
 
+/**
+ * One-time safe backfill: assign PREFIX-N to rows whose return_number is missing
+ * or looks like a UUID slice / RL-LEGACY placeholder. Updates hardware_returns_seq.
+ */
+export async function backfillHardwareReturnsSequentialNumbers(): Promise<void> {
+  const orgs = await queryDb(
+    `SELECT id, name, hardware_returns_config, hardware_returns_seq FROM organizations`,
+  );
+  for (const org of orgs.rows) {
+    const config = normalizeHardwareReturnsConfig(org.hardware_returns_config);
+    const prefix = resolveHardwareReturnIdPrefix({
+      config,
+      organizationName: org.name,
+    });
+
+    // Max existing sequential number for this prefix (keep RL-1001 / PREFIX-N as-is).
+    const maxRes = await queryDb(
+      `SELECT COALESCE(MAX(
+         CASE
+           WHEN return_number ~ ('^' || $2 || '-[0-9]+$')
+           THEN NULLIF(substring(return_number from '[0-9]+$'), '')::int
+           ELSE NULL
+         END
+       ), 0) AS max_seq
+       FROM ticket_hardware_returns
+       WHERE organization_id = $1`,
+      [org.id, prefix],
+    );
+    let nextSeq = Math.max(
+      Number(org.hardware_returns_seq) || 0,
+      Number(maxRes.rows[0]?.max_seq) || 0,
+    );
+
+    const candidates = await queryDb(
+      `SELECT id, return_number
+       FROM ticket_hardware_returns
+       WHERE organization_id = $1
+       ORDER BY created_at ASC NULLS LAST, id ASC`,
+      [org.id],
+    );
+
+    for (const row of candidates.rows) {
+      if (!needsReturnNumberBackfill(row.return_number)) continue;
+      nextSeq += 1;
+      const returnNumber = formatReturnNumber(prefix, nextSeq);
+      await queryDb(
+        `UPDATE ticket_hardware_returns
+         SET return_number = $2, updated_at = NOW()
+         WHERE id = $1::uuid`,
+        [row.id, returnNumber],
+      );
+    }
+
+    if (nextSeq > (Number(org.hardware_returns_seq) || 0)) {
+      await queryDb(
+        `UPDATE organizations
+         SET hardware_returns_seq = $2, updated_at = NOW()
+         WHERE id = $1 AND hardware_returns_seq < $2`,
+        [org.id, nextSeq],
+      );
+    }
+  }
+}
+
+export interface HardwareReturnAssigneeCandidate {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  source: 'org' | 'hubcom';
+}
+
+function userOrgIdFromDoc(user: Record<string, unknown> | null | undefined): string | null {
+  if (!user) return null;
+  const raw =
+    (typeof user.organizationId === 'string' && user.organizationId.trim()) ||
+    (typeof user.organization_id === 'string' && user.organization_id.trim()) ||
+    '';
+  return raw || null;
+}
+
+/** Bearbeiter candidates: org CLIENT_ADMIN/CLIENT_SUPPORTER + Hubcom AGENT/SYSTEM_ADMIN. */
+export async function listHardwareReturnAssignees(
+  organizationId: string,
+): Promise<HardwareReturnAssigneeCandidate[]> {
+  const users = await getDocsDirect('users', []);
+  const out: HardwareReturnAssigneeCandidate[] = [];
+  const seen = new Set<string>();
+
+  for (const u of users) {
+    const id = String(u.id || '');
+    if (!id || seen.has(id)) continue;
+    if (u.isDeactivated === true) continue;
+    const role = String(u.role || '');
+    const name = String(u.name || u.email || '').trim();
+    const email = String(u.email || '').trim();
+    if (!name && !email) continue;
+
+    const orgId = userOrgIdFromDoc(u as any);
+    const isOrgAssignee =
+      orgId === organizationId &&
+      (role === 'CLIENT_ADMIN' || role === 'CLIENT_SUPPORTER');
+    const isHubcomAssignee =
+      role === 'SYSTEM_ADMIN' || role === 'AGENT' || role === 'agent';
+
+    if (!isOrgAssignee && !isHubcomAssignee) continue;
+
+    seen.add(id);
+    out.push({
+      id,
+      name: name || email,
+      email,
+      role,
+      source: isOrgAssignee ? 'org' : 'hubcom',
+    });
+  }
+
+  return out.sort((a, b) => {
+    if (a.source !== b.source) return a.source === 'org' ? -1 : 1;
+    return a.name.localeCompare(b.name, 'de');
+  });
+}
+
 /** Pure gate used by tests — org A enabled, org B disabled. */
 export function evaluateHardwareModuleAccess(params: {
   orgEnabled: boolean;
@@ -995,6 +1417,25 @@ export function evaluateHardwareModuleAccess(params: {
     if (params.role === 'CLIENT_USER') return { ok: false, status: 403 };
     return { ok: false, status: 403 };
   }
+  return { ok: true };
+}
+
+/**
+ * Catalogs / settings write gate: CLIENT_ADMIN (own org) or SYSTEM_ADMIN.
+ * Disabled module and CLIENT_USER → 403 (per Part-1 catalogs contract).
+ */
+export function evaluateHardwareCatalogsWriteAccess(params: {
+  orgEnabled: boolean;
+  sessionOrgId: string | null;
+  targetOrgId: string | null;
+  role: string;
+}): { ok: true } | { ok: false; status: 403 } {
+  if (!params.orgEnabled) return { ok: false, status: 403 };
+  if (params.role === 'CLIENT_USER') return { ok: false, status: 403 };
+  if (params.role === 'SYSTEM_ADMIN') return { ok: true };
+  if (params.role !== 'CLIENT_ADMIN') return { ok: false, status: 403 };
+  if (!params.sessionOrgId || !params.targetOrgId) return { ok: false, status: 403 };
+  if (params.sessionOrgId !== params.targetOrgId) return { ok: false, status: 403 };
   return { ok: true };
 }
 

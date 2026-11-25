@@ -81,7 +81,8 @@ export async function createHardwareReturnFromWorkbench(params: {
   actorId: string;
   actorName?: string | null;
   actorEmail?: string | null;
-  subject: string;
+  /** Betreff — optional/nullable. */
+  subject?: string | null;
   description?: string | null;
   requesterId?: string | null;
   customerName?: string | null;
@@ -97,18 +98,21 @@ export async function createHardwareReturnFromWorkbench(params: {
   if (!org?.hardware_returns_enabled) {
     throw Object.assign(new Error('Hardware-Rücklieferungen nicht aktiv.'), { status: 404 });
   }
-  const subject = String(params.subject || 'Hardware').trim() || 'Hardware';
+  const subjectRaw = params.subject == null ? null : String(params.subject).trim();
+  const subject = subjectRaw ? subjectRaw.slice(0, 500) : null;
   const description =
     String(params.description || '').trim() ||
     String(params.hardwareReturn.device_details || '').trim() ||
     null;
   const hardwareReturn = await insertStandaloneHardwareReturn({
     organizationId: params.organizationId,
+    actorId: params.actorId || null,
     actorName: params.actorName || params.actorEmail || null,
     mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
     input: {
       return_required: true,
       auto_reminder_enabled: true,
+      sla: 'Normal',
       ...params.hardwareReturn,
       subject,
       description,
@@ -122,8 +126,11 @@ export async function createHardwareReturnFromWorkbench(params: {
         params.customerEmail ??
         params.actorEmail ??
         null,
-      assignee_name: params.hardwareReturn.assignee_name ?? 'Support',
-      status: 'open',
+      // Bearbeiter defaults to creator when not explicitly chosen.
+      assignee_name:
+        params.hardwareReturn.assignee_name ?? params.actorName ?? params.actorEmail ?? null,
+      assignee_user_id: params.hardwareReturn.assignee_user_id ?? params.actorId ?? null,
+      status: params.hardwareReturn.status || 'Neu',
       ticket_id: null,
     },
   });

@@ -87,11 +87,18 @@ import {
 import type { OrganizationRecord } from '../src/lib/client-portal/organizations.js';
 import {
   defaultHardwareReturnsConfig,
+  DEFAULT_HARDWARE_RETURNS_CATALOGS,
+  deriveIdPrefixFromOrgName,
+  evaluateHardwareCatalogsWriteAccess,
   evaluateHardwareModuleAccess,
   extractHardwareContactsFromUser,
+  formatReturnNumber,
+  formatReturnNumberDisplay,
   isHardwareReturnsEnabled,
   mapHardwareRow,
+  needsReturnNumberBackfill,
   normalizeHardwareReturnInput,
+  normalizeHardwareReturnStatus,
   normalizeHardwareReturnsConfig,
   type TicketHardwareReturnRecord,
 } from '../src/lib/client-portal/hardware-returns.js';
@@ -1667,11 +1674,14 @@ function baseHw(partial: Partial<TicketHardwareReturnRecord> = {}): TicketHardwa
     employee_name: 'Max Mustermann',
     employee_email: 'emp@dpg.test',
     assignee_name: 'Support',
+    assignee_user_id: null,
+    directory_user_id: null,
     status: 'open',
     description: null,
     activity_log: [],
     external_ref_id: null,
     service_level: null,
+    sla: 'Normal',
     time_sl1_minutes: 0,
     time_sl2_minutes: 0,
     time_sl3_minutes: 0,
@@ -1679,6 +1689,10 @@ function baseHw(partial: Partial<TicketHardwareReturnRecord> = {}): TicketHardwa
     exported_at: null,
     request_type: null,
     device_details: 'Laptop ALT SN1 / NEU SN2',
+    device_old_type: null,
+    device_old_serial: null,
+    device_new_type: null,
+    device_new_serial: null,
     employee_phone: null,
     employee_mobile: null,
     project_manager_name: 'PM',
@@ -1694,6 +1708,9 @@ function baseHw(partial: Partial<TicketHardwareReturnRecord> = {}): TicketHardwa
     delivery_date: '2026-10-01',
     return_due_date: '2026-10-15',
     auto_reminder_enabled: true,
+    mail1_scheduled_date: null,
+    mail2_scheduled_date: null,
+    mail3_scheduled_date: null,
     mail1_sent_at: null,
     mail1_sent_recipients: null,
     mail2_sent_at: null,
@@ -2108,6 +2125,214 @@ function testHardwareReturnsDateSerializationAndMarkReturned(): void {
       layoutSrc.includes("location.pathname === '/portal/tickets/new'") &&
       layoutSrc.includes("'/portal/tickets'"),
     'create route still works; only sidebar nav entry removed',
+  );
+}
+
+/**
+ * Part 1/4 backend: sequential #DPG-N, extended fields, catalogs RBAC, returned_at stamp.
+ */
+function testHardwareReturnsSchemaCatalogsPart1(): void {
+  console.log('\n--- Hardware returns Part-1 schema/catalogs/sequential IDs ---');
+
+  assert(deriveIdPrefixFromOrgName('DPG') === 'DPG', 'org name DPG → prefix DPG');
+  assert(formatReturnNumber('DPG', 1) === 'DPG-1', 'formatReturnNumber DPG-1');
+  assert(formatReturnNumber('DPG', 2) === 'DPG-2', 'formatReturnNumber DPG-2');
+  assert(formatReturnNumberDisplay('DPG-1') === '#DPG-1', 'display form #DPG-1');
+  assert(needsReturnNumberBackfill(null) === true, 'null return_number needs backfill');
+  assert(needsReturnNumberBackfill('c6175496') === true, 'UUID slice needs backfill');
+  assert(needsReturnNumberBackfill('RL-LEGACY-c6175496') === true, 'RL-LEGACY needs backfill');
+  assert(needsReturnNumberBackfill('DPG-3') === false, 'DPG-3 does not need backfill');
+
+  const defaults = normalizeHardwareReturnsConfig({});
+  assert(defaults.id_prefix === 'DPG', 'default id_prefix DPG');
+  assert(
+    JSON.stringify(defaults.catalogs.statuses) ===
+      JSON.stringify(DEFAULT_HARDWARE_RETURNS_CATALOGS.statuses),
+    'default statuses catalog',
+  );
+  assert(
+    defaults.catalogs.device_types.includes('VL2E Adapter') &&
+      defaults.catalogs.service_levels.includes('1') &&
+      defaults.catalogs.slas.includes('Normal') &&
+      defaults.catalogs.shipping_methods.includes('E-9 Express'),
+    'default device/service/sla/shipping catalogs',
+  );
+  const patched = normalizeHardwareReturnsConfig({
+    catalogs: { statuses: ['Neu', 'Custom'], service_levels: ['1', '2', '3', 'VIP'] },
+    id_prefix: 'acme!',
+  });
+  assert(
+    patched.catalogs.statuses.includes('Custom') &&
+      patched.catalogs.service_levels.includes('VIP') &&
+      patched.id_prefix === 'ACME',
+    'CLIENT_ADMIN can extend catalogs; id_prefix sanitized',
+  );
+
+  // Simulate creating 2 returns for DPG without subject — sequential numbers + field persistence.
+  const creatorName = 'Ada Admin';
+  const creatorId = 'user-ada';
+  const created1 = normalizeHardwareReturnInput({
+    subject: null,
+    assignee_name: creatorName,
+    assignee_user_id: creatorId,
+    device_old_type: 'VL2E Adapter',
+    device_old_serial: 'ALT-001',
+    device_new_type: 'Secutest Pro',
+    device_new_serial: 'NEU-002',
+    sla: 'Hoch',
+    service_level: '2',
+    shipping_method: 'E-9 Express',
+    status: 'Neu',
+    return_number: formatReturnNumber('DPG', 1),
+  });
+  const created2 = normalizeHardwareReturnInput({
+    subject: undefined,
+    assignee_name: creatorName,
+    assignee_user_id: creatorId,
+    device_old_type: 'BT Adapter',
+    device_old_serial: 'ALT-009',
+    device_new_type: 'PRCD Adapter',
+    device_new_serial: 'NEU-010',
+    sla: 'Normal',
+    service_level: '3',
+    shipping_method: 'Standard',
+    status: 'Neu',
+    return_number: formatReturnNumber('DPG', 2),
+  });
+  assert(
+    created1.return_number === 'DPG-1' &&
+      created2.return_number === 'DPG-2' &&
+      (created1.subject == null || created1.subject === '') &&
+      created1.assignee_name === creatorName &&
+      created1.device_old_type === 'VL2E Adapter' &&
+      created1.device_old_serial === 'ALT-001' &&
+      created1.device_new_type === 'Secutest Pro' &&
+      created1.device_new_serial === 'NEU-002' &&
+      created1.sla === 'Hoch' &&
+      created1.service_level === '2' &&
+      created1.shipping_method === 'E-9 Express',
+    '2 DPG returns: DPG-1/DPG-2, no required subject, assignee=creator, device/sla/SL/shipping saved',
+  );
+  assert(normalizeHardwareReturnStatus('') === 'Neu', 'empty status defaults to Neu');
+  assert(normalizeHardwareReturnStatus('In Bearbeitung') === 'In Bearbeitung', 'custom status passthrough');
+
+  // Mark returned stamps returned_at; uncheck clears it — no date syntax errors.
+  const stamped = normalizeHardwareReturnInput(
+    { returned: true },
+    { existing: baseHw({ returned: false, returned_at: null, delivery_date: '2026-11-20' }) },
+  );
+  assert(
+    stamped.returned === true &&
+      typeof stamped.returned_at === 'string' &&
+      !Number.isNaN(new Date(String(stamped.returned_at)).getTime()) &&
+      stamped.delivery_date === '2026-11-20',
+    'mark returned stamps ISO returned_at without touching delivery_date',
+  );
+  const berlin = new Intl.DateTimeFormat('de-DE', {
+    timeZone: 'Europe/Berlin',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(String(stamped.returned_at)));
+  assert(
+    /^\d{2}\.\d{2}\.\d{4}/.test(berlin),
+    `returned_at renders Europe/Berlin DD.MM.YYYY, HH:mm (${berlin})`,
+  );
+  const unchecked = normalizeHardwareReturnInput(
+    { returned: false },
+    { existing: baseHw({ returned: true, returned_at: stamped.returned_at as string }) },
+  );
+  assert(
+    unchecked.returned === false && unchecked.returned_at == null,
+    'uncheck returned clears returned_at',
+  );
+
+  // Catalogs write RBAC: CLIENT_ADMIN own org OK; CLIENT_USER + disabled → 403.
+  assert(
+    evaluateHardwareCatalogsWriteAccess({
+      orgEnabled: true,
+      sessionOrgId: ORG_B,
+      targetOrgId: ORG_B,
+      role: 'CLIENT_ADMIN',
+    }).ok === true,
+    'DPG CLIENT_ADMIN can update catalogs for own org',
+  );
+  assert(
+    evaluateHardwareCatalogsWriteAccess({
+      orgEnabled: true,
+      sessionOrgId: ORG_B,
+      targetOrgId: ORG_B,
+      role: 'CLIENT_USER',
+    }).ok === false &&
+      (
+        evaluateHardwareCatalogsWriteAccess({
+          orgEnabled: true,
+          sessionOrgId: ORG_B,
+          targetOrgId: ORG_B,
+          role: 'CLIENT_USER',
+        }) as any
+      ).status === 403,
+    'CLIENT_USER gets 403 on catalogs',
+  );
+  assert(
+    evaluateHardwareCatalogsWriteAccess({
+      orgEnabled: false,
+      sessionOrgId: ORG_A,
+      targetOrgId: ORG_A,
+      role: 'CLIENT_ADMIN',
+    }).ok === false &&
+      (
+        evaluateHardwareCatalogsWriteAccess({
+          orgEnabled: false,
+          sessionOrgId: ORG_A,
+          targetOrgId: ORG_A,
+          role: 'CLIENT_ADMIN',
+        }) as any
+      ).status === 403,
+    'disabled org gets 403 on catalogs',
+  );
+
+  const hwSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns.ts'),
+    'utf8',
+  );
+  const routesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/hardwareReturnsRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    hwSrc.includes('hardware_returns_seq = hardware_returns_seq + 1') &&
+      hwSrc.includes('RETURNING hardware_returns_seq') &&
+      hwSrc.includes('withPgTransaction'),
+    'create path atomically increments hardware_returns_seq in a transaction',
+  );
+  assert(
+    hwSrc.includes('device_old_type') &&
+      hwSrc.includes('device_new_serial') &&
+      hwSrc.includes('mail1_scheduled_date') &&
+      hwSrc.includes('assignee_user_id'),
+    'extended columns wired in hardware-returns module',
+  );
+  assert(
+    routesSrc.includes("/assignees") &&
+      routesSrc.includes('listHardwareReturnAssignees') &&
+      routesSrc.includes('catalogs') &&
+      routesSrc.includes('evaluateHardwareCatalogsWriteAccess'),
+    'settings catalogs + /assignees endpoints exposed on staff+portal routers',
+  );
+  assert(
+    fs
+      .readFileSync(
+        path.join(
+          process.cwd(),
+          'prisma/migrations/20261125180000_hardware_returns_seq_catalogs/migration.sql',
+        ),
+        'utf8',
+      )
+      .includes('hardware_returns_seq'),
+    'idempotent migration adds hardware_returns_seq',
   );
 }
 
@@ -2862,6 +3087,7 @@ async function main(): Promise<void> {
   testHardwareReturnsStandaloneBackend();
   testHardwareReturnsDateSerializationAndMarkReturned();
   testHardwareReturnsWorkbenchDrawerContract();
+  testHardwareReturnsSchemaCatalogsPart1();
   testDefaultTicketCreateExcludesRmaFields();
   testPortalReturnsPageNavigationGate();
   testPortalUserDeleteAccess();
