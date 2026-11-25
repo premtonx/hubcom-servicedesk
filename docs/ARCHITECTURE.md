@@ -27,6 +27,7 @@ Data durability:
 | Organizations | `src/lib/client-portal/organizations.ts`, `src/routes/organizationAdminRoutes.ts` |
 | Portal APIs | `src/routes/clientPortalRoutes.ts`, `clientPortalTeamRoutes`, `clientPortalEmailRoutes`, `clientPortalKbRoutes`, `clientPortalExchangeRoutes`, `clientPortalVaultRoutes` — mounted under `/api/portal/*` in `server.ts` |
 | Tickets + org stamp | `src/routes/ticketRoutes.ts`, `src/lib/client-portal/stamp-ticket-organization.ts`, `ticket-visibility.ts` |
+| Hardware-Rücklieferungen (org-gated) | `organizations.hardware_returns_enabled` + `ticket_hardware_returns`; `src/lib/client-portal/hardware-returns.ts`; staff/portal ticket APIs only when enabled |
 | Graph / email | `src/lib/email-ingestion/*` (drivers, scheduler, channel-store), `src/routes/*email*` |
 | Vault crypto | `src/lib/crypto.ts` (`VAULT_ENCRYPTION_KEY`), org Tresor `src/lib/client-portal/organization-vault.ts` |
 | Secure Exchange | `src/routes/vaultRoutes.ts`, `src/routes/clientPortalExchangeRoutes.ts` |
