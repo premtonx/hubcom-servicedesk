@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import {
   AlertTriangle,
@@ -29,10 +30,6 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { cn } from '../../lib/utils';
-import {
-  ReturnCreateEditDrawer,
-  type ReturnMemberOption,
-} from './ReturnCreateEditDrawer';
 import {
   formatDateDeOnly,
   toIsoDateOnly,
@@ -308,71 +305,14 @@ export function ReturnsWorkbench({
     saveOverride: boolean;
   } | null>(null);
   const [sending, setSending] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editItem, setEditItem] = useState<{
-    returnId: string;
-    subject?: string | null;
-    customerName?: string | null;
-    customerEmail?: string | null;
-    hardwareReturn: Record<string, unknown>;
-  } | null>(null);
-  const [members, setMembers] = useState<ReturnMemberOption[]>([]);
-
-  useEffect(() => {
-    if (!organizationId) return;
-    let active = true;
-    void (async () => {
-      try {
-        if (mode === 'portal') {
-          const res = await axios.get('/api/portal/members', { withCredentials: true });
-          const rows = (res.data?.members || res.data?.users || []) as Array<Record<string, any>>;
-          if (!active) return;
-          setMembers(
-            rows.map((u) => ({
-              id: String(u.id),
-              name: String(u.name || u.email || ''),
-              email: String(u.email || ''),
-              phone_office: u.phone_office || u.phoneOffice || null,
-              phone_mobile: u.phone_mobile || u.phoneMobile || null,
-              project_manager_name: u.project_manager_name || null,
-              project_manager_email: u.project_manager_email || null,
-              manager_name: u.manager_name || null,
-              manager_email: u.manager_email || null,
-            })),
-          );
-        } else {
-          const res = await axios.get(
-            `/api/admin/organizations/${encodeURIComponent(organizationId)}/users`,
-            { withCredentials: true },
-          );
-          const rows = (res.data?.users || []) as Array<Record<string, any>>;
-          if (!active) return;
-          setMembers(
-            rows.map((u) => ({
-              id: String(u.id),
-              name: String(u.name || u.email || ''),
-              email: String(u.email || ''),
-              phone_office: u.phone_office || u.phoneOffice || null,
-              phone_mobile: u.phone_mobile || u.phoneMobile || null,
-              project_manager_name: u.project_manager_name || null,
-              project_manager_email: u.project_manager_email || null,
-              manager_name: u.manager_name || null,
-              manager_email: u.manager_email || null,
-            })),
-          );
-        }
-      } catch {
-        if (active) setMembers([]);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [organizationId, mode]);
+  const navigate = useNavigate();
 
   const openCreate = () => {
-    setEditItem(null);
-    setDrawerOpen(true);
+    if (mode === 'portal') {
+      navigate('/portal/returns/new');
+      return;
+    }
+    navigate(`/tickets/kunden/${encodeURIComponent(organizationId)}/returns/new`);
   };
 
   const openEdit = (it: ListItem) => {
@@ -381,14 +321,13 @@ export function ReturnsWorkbench({
       toast.error('Rücklieferung ohne ID — bitte neu laden.');
       return;
     }
-    setEditItem({
-      returnId: id,
-      subject: it.hardwareReturn.subject || it.ticket.subject,
-      customerName: it.hardwareReturn.employee_name || it.ticket.customerName,
-      customerEmail: it.hardwareReturn.employee_email || it.ticket.customerEmail,
-      hardwareReturn: it.hardwareReturn,
-    });
-    setDrawerOpen(true);
+    if (mode === 'portal') {
+      navigate(`/portal/returns/${encodeURIComponent(id)}`);
+      return;
+    }
+    navigate(
+      `/tickets/kunden/${encodeURIComponent(organizationId)}/returns/${encodeURIComponent(id)}`,
+    );
   };
 
   const load = useCallback(async () => {
@@ -1056,19 +995,6 @@ export function ReturnsWorkbench({
         />
       ) : null}
 
-      <ReturnCreateEditDrawer
-        open={drawerOpen}
-        mode={mode}
-        organizationId={organizationId}
-        editItem={editItem}
-        members={members}
-        orgCeoEmail={settings?.ceo_email || null}
-        onClose={() => {
-          setDrawerOpen(false);
-          setEditItem(null);
-        }}
-        onSaved={() => void load()}
-      />
     </div>
   );
 }

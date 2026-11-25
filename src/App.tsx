@@ -86,7 +86,11 @@ const ClientVaultPage = lazy(() => import('./components/pages/client-portal/Clie
 const ClientReturnsPage = lazy(
   () => import('./components/pages/client-portal/ClientReturnsPage'),
 );
+const ClientReturnEditorPage = lazy(
+  () => import('./components/pages/client-portal/ClientReturnEditorPage'),
+);
 const StaffReturnsPage = lazy(() => import('./components/pages/StaffReturnsPage'));
+const StaffReturnEditorPage = lazy(() => import('./components/pages/StaffReturnEditorPage'));
 
 function RouteFallback() {
   return (
@@ -501,6 +505,30 @@ function AppRoutes() {
                           </ClientOrgWideRoute>
                         }
                       />
+                      <Route
+                        path="returns/new"
+                        element={
+                          <ClientOrgWideRoute>
+                            <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Rücklieferung" />}>
+                              <LazyPage>
+                                <ClientReturnEditorPage />
+                              </LazyPage>
+                            </ErrorBoundary>
+                          </ClientOrgWideRoute>
+                        }
+                      />
+                      <Route
+                        path="returns/:id"
+                        element={
+                          <ClientOrgWideRoute>
+                            <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Rücklieferung" />}>
+                              <LazyPage>
+                                <ClientReturnEditorPage />
+                              </LazyPage>
+                            </ErrorBoundary>
+                          </ClientOrgWideRoute>
+                        }
+                      />
                       <Route path="*" element={<Navigate to="dashboard" replace />} />
                     </Route>
 
@@ -517,6 +545,26 @@ function AppRoutes() {
                     <Route index element={<Navigate to="/dashboard" replace />} />
                     <Route path="dashboard" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Dashboard" />}><LazyPage><DashboardPage /></LazyPage></ErrorBoundary>} />
                     <Route path="tickets" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Tickets" />}><LazyPage><TicketsPage /></LazyPage></ErrorBoundary>} />
+                    <Route
+                      path="tickets/kunden/:orgId/returns/new"
+                      element={
+                        <ErrorBoundary fallback={<ModuleCrashFallback module="Rücklieferung" />}>
+                          <LazyPage>
+                            <StaffReturnEditorPage />
+                          </LazyPage>
+                        </ErrorBoundary>
+                      }
+                    />
+                    <Route
+                      path="tickets/kunden/:orgId/returns/:returnId"
+                      element={
+                        <ErrorBoundary fallback={<ModuleCrashFallback module="Rücklieferung" />}>
+                          <LazyPage>
+                            <StaffReturnEditorPage />
+                          </LazyPage>
+                        </ErrorBoundary>
+                      }
+                    />
                     <Route path="tickets/:ticketId" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Tickets" />}><LazyPage><TicketsPage /></LazyPage></ErrorBoundary>} />
                     <Route path="returns" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Rücklieferungen" />}><LazyPage><StaffReturnsPage /></LazyPage></ErrorBoundary>} />
                     <Route path="customers" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Customers" />}><LazyPage><CustomersPage /></LazyPage></ErrorBoundary>} />

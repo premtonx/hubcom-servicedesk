@@ -7,13 +7,23 @@ import { cn } from '../../lib/utils';
 import { toIsoDateOnly } from '../../lib/client-portal/hardware-returns-dates';
 
 export interface HardwareReturnFormState {
-  /** Ticket subject — defaults to "Hardware" in the workbench drawer. */
+  /** Betreff — unused in Part-3 UI (kept for legacy payload compat). */
   subject: string;
   request_type: string;
   device_details: string;
+  device_old_type: string;
+  device_old_serial: string;
+  device_new_type: string;
+  device_new_serial: string;
   employee_phone: string;
   employee_mobile: string;
-  service_level: '' | '1' | '2' | '3';
+  /** Free-form service level from org catalogs. */
+  service_level: string;
+  sla: string;
+  status: string;
+  assignee_user_id: string;
+  assignee_name: string;
+  directory_user_id: string;
   time_sl1_minutes: number;
   time_sl2_minutes: number;
   time_sl3_minutes: number;
@@ -24,6 +34,9 @@ export interface HardwareReturnFormState {
   return_required: boolean;
   delivery_date: string;
   return_due_date: string;
+  mail1_scheduled_date: string;
+  mail2_scheduled_date: string;
+  mail3_scheduled_date: string;
   project_manager_name: string;
   project_manager_email: string;
   manager_name: string;
@@ -47,12 +60,21 @@ export interface HardwareReturnFormState {
 
 export function emptyHardwareReturnForm(): HardwareReturnFormState {
   return {
-    subject: 'Hardware',
+    subject: '',
     request_type: '',
     device_details: '',
+    device_old_type: '',
+    device_old_serial: '',
+    device_new_type: '',
+    device_new_serial: '',
     employee_phone: '',
     employee_mobile: '',
     service_level: '',
+    sla: 'Normal',
+    status: 'Neu',
+    assignee_user_id: '',
+    assignee_name: '',
+    directory_user_id: '',
     time_sl1_minutes: 0,
     time_sl2_minutes: 0,
     time_sl3_minutes: 0,
@@ -63,6 +85,9 @@ export function emptyHardwareReturnForm(): HardwareReturnFormState {
     return_required: true,
     delivery_date: '',
     return_due_date: '',
+    mail1_scheduled_date: '',
+    mail2_scheduled_date: '',
+    mail3_scheduled_date: '',
     project_manager_name: '',
     project_manager_email: '',
     manager_name: '',
@@ -80,14 +105,27 @@ export function hardwareFormFromRecord(raw: Record<string, unknown> | null | und
   if (!raw) return base;
   const sl = Number(raw.service_level);
   const override = (raw.stage_recipients_override || {}) as Record<string, { to?: string[]; cc?: string[] }>;
+  const slRaw =
+    raw.service_level == null || String(raw.service_level).trim() === ''
+      ? ''
+      : String(raw.service_level).trim();
   return {
     ...base,
-    subject: String(raw.subject || base.subject),
+    subject: String(raw.subject || ''),
     request_type: String(raw.request_type || ''),
     device_details: String(raw.device_details || ''),
+    device_old_type: String(raw.device_old_type || ''),
+    device_old_serial: String(raw.device_old_serial || ''),
+    device_new_type: String(raw.device_new_type || ''),
+    device_new_serial: String(raw.device_new_serial || ''),
     employee_phone: String(raw.employee_phone || ''),
     employee_mobile: String(raw.employee_mobile || ''),
-    service_level: sl === 1 || sl === 2 || sl === 3 ? (String(sl) as '1' | '2' | '3') : '',
+    service_level: slRaw || (sl === 1 || sl === 2 || sl === 3 ? String(sl) : ''),
+    sla: String(raw.sla || 'Normal'),
+    status: String(raw.status || 'Neu'),
+    assignee_user_id: String(raw.assignee_user_id || ''),
+    assignee_name: String(raw.assignee_name || ''),
+    directory_user_id: String(raw.directory_user_id || ''),
     time_sl1_minutes: Number(raw.time_sl1_minutes) || 0,
     time_sl2_minutes: Number(raw.time_sl2_minutes) || 0,
     time_sl3_minutes: Number(raw.time_sl3_minutes) || 0,
@@ -98,6 +136,9 @@ export function hardwareFormFromRecord(raw: Record<string, unknown> | null | und
     return_required: raw.return_required !== false && raw.return_required !== 'f',
     delivery_date: toIsoDateOnly(raw.delivery_date) || '',
     return_due_date: toIsoDateOnly(raw.return_due_date) || '',
+    mail1_scheduled_date: toIsoDateOnly(raw.mail1_scheduled_date) || '',
+    mail2_scheduled_date: toIsoDateOnly(raw.mail2_scheduled_date) || '',
+    mail3_scheduled_date: toIsoDateOnly(raw.mail3_scheduled_date) || '',
     project_manager_name: String(raw.project_manager_name || ''),
     project_manager_email: String(raw.project_manager_email || ''),
     manager_name: String(raw.manager_name || ''),
@@ -105,7 +146,7 @@ export function hardwareFormFromRecord(raw: Record<string, unknown> | null | und
     ceo_email_override: String(raw.ceo_email_override || ''),
     auto_reminder_enabled: raw.auto_reminder_enabled !== false,
     returned: Boolean(raw.returned),
-    returned_at: raw.returned_at ? String(raw.returned_at).slice(0, 16) : '',
+    returned_at: raw.returned_at ? String(raw.returned_at) : '',
     stage_recipients_override: {
       mail1: {
         to: (override.mail1?.to || []).join(', '),
@@ -148,9 +189,18 @@ export function hardwareFormToPayload(form: HardwareReturnFormState): Record<str
   return {
     request_type: form.request_type || null,
     device_details: form.device_details || null,
+    device_old_type: form.device_old_type || null,
+    device_old_serial: form.device_old_serial || null,
+    device_new_type: form.device_new_type || null,
+    device_new_serial: form.device_new_serial || null,
     employee_phone: form.employee_phone || null,
     employee_mobile: form.employee_mobile || null,
-    service_level: form.service_level ? Number(form.service_level) : null,
+    service_level: form.service_level || null,
+    sla: form.sla || 'Normal',
+    status: form.status || 'Neu',
+    assignee_user_id: form.assignee_user_id || null,
+    assignee_name: form.assignee_name || null,
+    directory_user_id: form.directory_user_id || null,
     time_sl1_minutes: form.time_sl1_minutes || 0,
     time_sl2_minutes: form.time_sl2_minutes || 0,
     time_sl3_minutes: form.time_sl3_minutes || 0,
@@ -161,6 +211,9 @@ export function hardwareFormToPayload(form: HardwareReturnFormState): Record<str
     return_required: form.return_required,
     delivery_date: toIsoDateOnly(form.delivery_date),
     return_due_date: toIsoDateOnly(form.return_due_date),
+    mail1_scheduled_date: toIsoDateOnly(form.mail1_scheduled_date),
+    mail2_scheduled_date: toIsoDateOnly(form.mail2_scheduled_date),
+    mail3_scheduled_date: toIsoDateOnly(form.mail3_scheduled_date),
     project_manager_name: form.project_manager_name || null,
     project_manager_email: form.project_manager_email || null,
     manager_name: form.manager_name || null,

@@ -2593,18 +2593,19 @@ async function testOrganizationDirectorySyncPart2(): Promise<void> {
   );
 }
 
-/** Workbench create/edit drawer contract — dedicated action + module gate. */
+/** Workbench create/edit → full-page ReturnEditorPage contract (Part 3). */
 function testHardwareReturnsWorkbenchDrawerContract(): void {
-  console.log('\n--- Hardware returns workbench create/edit drawer ---');
+  console.log('\n--- Hardware returns workbench full-page editor ---');
 
   const workbenchSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
     'utf8',
   );
-  const drawerSrc = fs.readFileSync(
-    path.join(process.cwd(), 'src/components/returns/ReturnCreateEditDrawer.tsx'),
+  const editorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnEditorPage.tsx'),
     'utf8',
   );
+  const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
   const ticketDetailSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/components/tickets/TicketDetailView.tsx'),
     'utf8',
@@ -2636,9 +2637,15 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
     !workbenchSrc.includes("'/api/tickets") &&
       !workbenchSrc.includes('"/api/tickets') &&
       !workbenchSrc.includes('/api/portal/tickets') &&
-      !workbenchSrc.includes('/tickets/') &&
       !workbenchSrc.includes('/portal/tickets/'),
-    'ReturnsWorkbench never navigates to or POSTs normal ticket routes',
+    'ReturnsWorkbench never navigates to or POSTs normal ticket API/list routes',
+  );
+  assert(
+    workbenchSrc.includes('/portal/returns/new') &&
+      workbenchSrc.includes('/tickets/kunden/') &&
+      workbenchSrc.includes('/returns/new') &&
+      !workbenchSrc.includes('ReturnCreateEditDrawer'),
+    'workbench create/edit navigates to full-page editor routes (no slide-over drawer)',
   );
   assert(
     workbenchSrc.includes('formatReturnNumber') && workbenchSrc.includes('return_number'),
@@ -2650,42 +2657,94 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
   );
 
   assert(
-    drawerSrc.includes("'/api/portal/returns'") && drawerSrc.includes("'/api/returns'"),
-    'drawer posts to standalone returns APIs',
-  );
-  const drawerApiLiterals = Array.from(
-    drawerSrc.matchAll(/(['"`])(\/api\/(?:portal\/)?tickets(?:\/[^'"`]*)?)\1/g),
-  ).map((m) => m[2]);
-  assert(
-    drawerSrc.includes('axios.post') &&
-      drawerSrc.includes('${base}') &&
-      drawerApiLiterals.length === 0,
-    'drawer create never calls POST /api/tickets or /api/portal/tickets',
-    drawerApiLiterals.join(', '),
-  );
-  assert(
-    (drawerSrc.includes('Verlauf & E-Mail-Protokoll') ||
-      drawerSrc.includes('Verlauf &amp; E-Mail-Protokoll')) &&
-      drawerSrc.includes('ActivityLogTimeline') &&
-      drawerSrc.includes('activity_log'),
-    'edit drawer renders Verlauf & E-Mail-Protokoll from activity_log',
+    appSrc.includes('returns/new') &&
+      appSrc.includes('returns/:id') &&
+      appSrc.includes('tickets/kunden/:orgId/returns/new') &&
+      appSrc.includes('tickets/kunden/:orgId/returns/:returnId') &&
+      appSrc.includes('ClientReturnEditorPage') &&
+      appSrc.includes('StaffReturnEditorPage'),
+    'App registers portal + staff full-page return editor routes',
   );
 
-  // Drawer layout contract (3 cards + Verlauf on edit).
   assert(
-    drawerSrc.includes('1. Mitarbeiter & Kontakte') ||
-      drawerSrc.includes('1. Mitarbeiter &amp; Kontakte'),
-    'card 1 Mitarbeiter & Kontakte',
+    editorSrc.includes("'/api/portal/returns'") && editorSrc.includes("'/api/returns'"),
+    'ReturnEditorPage posts to standalone returns APIs',
+  );
+  const editorApiLiterals = Array.from(
+    editorSrc.matchAll(/(['"`])(\/api\/(?:portal\/)?tickets(?:\/[^'"`]*)?)\1/g),
+  ).map((m) => m[2]);
+  assert(
+    editorSrc.includes('axios.post') &&
+      editorSrc.includes('${base}') &&
+      editorApiLiterals.length === 0,
+    'editor create never calls POST /api/tickets or /api/portal/tickets',
+    editorApiLiterals.join(', '),
   );
   assert(
-    drawerSrc.includes('2. Hardware & Service-Level') ||
-      drawerSrc.includes('2. Hardware &amp; Service-Level') ||
-      drawerSrc.includes('SL1–SL3'),
-    'card 2 Hardware & SL',
+    !editorSrc.includes('Betreff') &&
+      !editorSrc.includes('label="Betreff"') &&
+      !editorSrc.includes('>Betreff<'),
+    'editor UI has no Betreff field',
   );
   assert(
-    drawerSrc.includes('3. Rücklieferung') && drawerSrc.includes('Mahnstufen'),
-    'card 3 Rücklieferung & Mahnstufen',
+    editorSrc.includes('directory-users') &&
+      editorSrc.includes('Mitarbeiter') &&
+      editorSrc.includes('M365'),
+    'editor has live Mitarbeiter directory autocomplete with M365 badge',
+  );
+  assert(
+    editorSrc.includes('assignee_user_id') &&
+      editorSrc.includes('Bearbeiter') &&
+      editorSrc.includes('user?.uid'),
+    'Bearbeiter defaults from logged-in user',
+  );
+  assert(
+    editorSrc.includes('— Keine Auswahl —') &&
+      editorSrc.includes('device_types') &&
+      editorSrc.includes('Rücklieferung erfolgt'),
+    'device type empty default + returned toggle present',
+  );
+  assert(
+    editorSrc.includes('Erweiterte Mahntermine') &&
+      editorSrc.includes('advancedOpen') &&
+      editorSrc.includes('Standard-Mahnplan aktiv'),
+    'mail 1/2/3 overrides collapsed by default with summary',
+  );
+  assert(
+    (editorSrc.includes('Verlauf & E-Mail-Protokoll') ||
+      editorSrc.includes('Verlauf &amp; E-Mail-Protokoll')) &&
+      editorSrc.includes('activity_log') &&
+      editorSrc.includes('Mahnverlauf') &&
+      editorSrc.includes('Mail senden'),
+    'edit mode renders Mahnverlauf + Verlauf & E-Mail-Protokoll',
+  );
+
+  // Full-page layout contract (cards + sticky sidebar).
+  assert(
+    editorSrc.includes('Mitarbeiter & Kontakt') ||
+      editorSrc.includes('Mitarbeiter &amp; Kontakt'),
+    'card 1 Mitarbeiter & Kontakt',
+  );
+  assert(
+    editorSrc.includes('Geräte & Seriennummern') ||
+      editorSrc.includes('Geräte &amp; Seriennummern'),
+    'card 2 Geräte & Seriennummern',
+  );
+  assert(
+    editorSrc.includes('Versand & Rücklieferung') ||
+      editorSrc.includes('Versand &amp; Rücklieferung'),
+    'card 3 Versand & Rücklieferung',
+  );
+  assert(
+    editorSrc.includes('Bearbeitung & Steuerung') ||
+      editorSrc.includes('Bearbeitung &amp; Steuerung'),
+    'sticky sidebar Bearbeitung & Steuerung',
+  );
+  assert(
+    editorSrc.includes('mode="staff"') === false &&
+      editorSrc.includes("mode === 'portal'") &&
+      editorSrc.includes("mode === 'staff'"),
+    'one shared ReturnEditorPage switches staff|portal APIs',
   );
 
   assert(
