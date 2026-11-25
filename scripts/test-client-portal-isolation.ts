@@ -120,6 +120,15 @@ import {
   authStatusWhenUserMissing,
   evaluatePortalUserDeleteAccess,
 } from '../src/lib/client-portal/portal-user-delete.js';
+import {
+  buildDirectoryUsersGraphUrl,
+  evaluateDirectorySearchAccess,
+  fetchAllDirectoryUsersFromGraph,
+  mapGraphUserToDirectoryFields,
+  rankDirectorySearchResults,
+  type DirectoryUserSearchResult,
+  type GraphDirectoryUserRaw,
+} from '../src/lib/client-portal/organization-directory-sync.js';
 
 process.env.EMAIL_CHANNEL_SECRET_KEY =
   process.env.EMAIL_CHANNEL_SECRET_KEY ||
@@ -2336,6 +2345,254 @@ function testHardwareReturnsSchemaCatalogsPart1(): void {
   );
 }
 
+/**
+ * Part 2/4: M365 directory sync (mocked Graph) + prefix-first search + tenant isolation.
+ */
+async function testOrganizationDirectorySyncPart2(): Promise<void> {
+  console.log('\n--- Hardware returns Part-2 M365 directory sync & autocomplete ---');
+
+  const ORG_DPG = ORG_B;
+  const ORG_CITADELLE = ORG_A;
+
+  assert(
+    evaluateDirectorySearchAccess({
+      sessionOrgId: ORG_DPG,
+      targetOrgId: ORG_DPG,
+      role: 'CLIENT_ADMIN',
+      orgEnabled: true,
+    }).ok === true,
+    'DPG CLIENT_ADMIN can search own-org directory',
+  );
+  assert(
+    evaluateDirectorySearchAccess({
+      sessionOrgId: ORG_DPG,
+      targetOrgId: ORG_CITADELLE,
+      role: 'CLIENT_ADMIN',
+      orgEnabled: true,
+    }).ok === false,
+    'DPG cannot search Citadelle directory (cross-tenant)',
+  );
+  assert(
+    evaluateDirectorySearchAccess({
+      sessionOrgId: ORG_DPG,
+      targetOrgId: ORG_DPG,
+      role: 'CLIENT_USER',
+      orgEnabled: true,
+    }).ok === false,
+    'CLIENT_USER blocked from directory search',
+  );
+  assert(
+    evaluateDirectorySearchAccess({
+      sessionOrgId: ORG_CITADELLE,
+      targetOrgId: ORG_CITADELLE,
+      role: 'CLIENT_ADMIN',
+      orgEnabled: false,
+    }).ok === false,
+    'disabled org blocked from directory search',
+  );
+
+  const candidates: DirectoryUserSearchResult[] = [
+    {
+      id: '1',
+      displayName: 'Stefan Radke',
+      email: 'stefan.radke@dpg.test',
+      phoneOffice: null,
+      phoneMobile: null,
+      managerName: null,
+      managerEmail: null,
+      department: null,
+      source: 'm365',
+    },
+    {
+      id: '2',
+      displayName: 'Adam Weber',
+      email: 'adam.weber@dpg.test',
+      phoneOffice: null,
+      phoneMobile: null,
+      managerName: null,
+      managerEmail: null,
+      department: null,
+      source: 'm365',
+    },
+    {
+      id: '3',
+      displayName: 'Eva Adler',
+      email: 'eva@dpg.test',
+      phoneOffice: null,
+      phoneMobile: null,
+      managerName: null,
+      managerEmail: null,
+      department: null,
+      source: 'portal',
+    },
+  ];
+  const ranked = rankDirectorySearchResults('ad', candidates);
+  assert(
+    ranked[0]?.displayName === 'Adam Weber' &&
+      ranked.some((r) => r.displayName === 'Stefan Radke') &&
+      ranked.indexOf(ranked.find((r) => r.displayName === 'Adam Weber')!) <
+        ranked.indexOf(ranked.find((r) => r.displayName === 'Stefan Radke')!),
+    'q=ad ranks Adam Weber (starts-with) above Stefan Radke (contains)',
+  );
+
+  const mapped = mapGraphUserToDirectoryFields({
+    id: 'entra-1',
+    displayName: 'Ada Lovelace',
+    mail: null,
+    userPrincipalName: 'ada@dpg.test',
+    businessPhones: ['+49 30 111'],
+    mobilePhone: '+49 170 222',
+    department: 'IT',
+    jobTitle: 'Engineer',
+    accountEnabled: true,
+    manager: { displayName: 'Chef', mail: 'chef@dpg.test' },
+  });
+  assert(
+    mapped?.email === 'ada@dpg.test' &&
+      mapped.phone_office === '+49 30 111' &&
+      mapped.phone_mobile === '+49 170 222' &&
+      mapped.manager_name === 'Chef' &&
+      mapped.manager_email === 'chef@dpg.test',
+    'Graph user maps email/UPN/phones/manager fields',
+  );
+
+  const groupUrl = buildDirectoryUsersGraphUrl({
+    entraGroupId: 'group-abc',
+    includeManagerExpand: true,
+  });
+  assert(
+    groupUrl.includes('/groups/group-abc/transitiveMembers/microsoft.graph.user') &&
+      groupUrl.includes('$expand=manager'),
+    'group sync URL uses transitiveMembers + manager expand',
+  );
+  const usersUrl = buildDirectoryUsersGraphUrl({ includeManagerExpand: false });
+  assert(
+    usersUrl.includes('/users?') &&
+      usersUrl.includes('accountEnabled') &&
+      !usersUrl.includes('$expand=manager'),
+    'tenant-wide URL filters Member users without manager expand',
+  );
+
+  // Mock Graph: group members + pagination + missing-manager fallback.
+  const pages: Record<string, { value: GraphDirectoryUserRaw[]; nextLink: string | null }> = {
+    'page-1-expand': {
+      value: [
+        {
+          id: 'u1',
+          displayName: 'User One',
+          mail: 'one@dpg.test',
+          accountEnabled: true,
+          manager: { displayName: 'Mgr', mail: 'mgr@dpg.test' },
+        },
+      ],
+      nextLink: 'page-2-expand',
+    },
+    'page-2-expand': {
+      value: [{ id: 'u2', displayName: 'User Two', mail: 'two@dpg.test', accountEnabled: true }],
+      nextLink: null,
+    },
+    'page-1-plain': {
+      value: [
+        { id: 'u1', displayName: 'User One', mail: 'one@dpg.test', accountEnabled: true },
+        { id: 'u2', displayName: 'User Two', mail: 'two@dpg.test', accountEnabled: true },
+      ],
+      nextLink: null,
+    },
+  };
+
+  const paged = await fetchAllDirectoryUsersFromGraph({
+    creds: { tenantId: 't', clientId: 'c', clientSecret: 's' },
+    entraGroupId: 'g1',
+    acquireToken: async () => 'tok',
+    fetchPage: async (url) => {
+      if (url.includes('page-2')) return pages['page-2-expand'];
+      return pages['page-1-expand'];
+    },
+  });
+  assert(
+    paged.length === 2 && paged[0].id === 'u1' && paged[1].id === 'u2',
+    'Graph pagination collects all members',
+  );
+
+  let expandCalls = 0;
+  const fallback = await fetchAllDirectoryUsersFromGraph({
+    creds: { tenantId: 't', clientId: 'c', clientSecret: 's' },
+    acquireToken: async () => 'tok',
+    fetchPage: async () => {
+      expandCalls += 1;
+      if (expandCalls === 1) {
+        throw Object.assign(new Error('Expand manager not supported'), {
+          status: 400,
+          graphBody: { error: { message: 'Could not find a property named manager' } },
+        });
+      }
+      return pages['page-1-plain'];
+    },
+  });
+  assert(
+    fallback.length === 2 && expandCalls >= 2,
+    'missing manager expand falls back gracefully without breaking sync',
+  );
+
+  const cfg = normalizeHardwareReturnsConfig({
+    m365_directory_sync: { enabled: true, entra_group_id: 'grp-1' },
+  });
+  assert(
+    cfg.m365_directory_sync.enabled === true &&
+      cfg.m365_directory_sync.entra_group_id === 'grp-1' &&
+      cfg.m365_directory_sync.client_secret_set === false,
+    'm365_directory_sync config normalizes with defaults',
+  );
+
+  const routesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/hardwareReturnsRoutes.ts'),
+    'utf8',
+  );
+  const syncSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/organization-directory-sync.ts'),
+    'utf8',
+  );
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const moduleCardSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/HardwareReturnsModuleCard.tsx'),
+    'utf8',
+  );
+  assert(
+    routesSrc.includes("/directory-users") &&
+      routesSrc.includes('/directory-sync') &&
+      routesSrc.includes('searchOrganizationDirectoryUsers'),
+    'staff+portal expose directory-users + directory-sync endpoints',
+  );
+  assert(
+    syncSrc.includes('organization_directory_users') &&
+      !syncSrc.includes("addDocDirect('users'") &&
+      !syncSrc.includes('collection = \'users\''),
+    'sync upserts organization_directory_users only (never portal login users writes)',
+  );
+  assert(
+    workbenchSrc.includes('M365 Mitarbeiter-Sync') &&
+      workbenchSrc.includes('Jetzt synchronisieren') &&
+      moduleCardSrc.includes('M365 Mitarbeiter-Sync') &&
+      moduleCardSrc.includes('Entra ID Gruppen-ID'),
+    'Einstellungen + Admin-Hub Module card expose M365 sync controls',
+  );
+  assert(
+    fs
+      .readFileSync(
+        path.join(
+          process.cwd(),
+          'prisma/migrations/20261125190000_organization_directory_users/migration.sql',
+        ),
+        'utf8',
+      )
+      .includes('organization_directory_users'),
+    'idempotent migration creates organization_directory_users',
+  );
+}
+
 /** Workbench create/edit drawer contract — dedicated action + module gate. */
 function testHardwareReturnsWorkbenchDrawerContract(): void {
   console.log('\n--- Hardware returns workbench create/edit drawer ---');
@@ -3088,6 +3345,7 @@ async function main(): Promise<void> {
   testHardwareReturnsDateSerializationAndMarkReturned();
   testHardwareReturnsWorkbenchDrawerContract();
   testHardwareReturnsSchemaCatalogsPart1();
+  await testOrganizationDirectorySyncPart2();
   testDefaultTicketCreateExcludesRmaFields();
   testPortalReturnsPageNavigationGate();
   testPortalUserDeleteAccess();

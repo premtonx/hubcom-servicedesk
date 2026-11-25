@@ -2522,6 +2522,17 @@ Example output format:
     safeLog('warn', '[hardware-returns] Scheduler fehlgeschlagen:', hwErr?.message || String(hwErr));
   }
 
+  // M365 / Entra Mitarbeiter-Verzeichnis — tägliche Sync (org-gated).
+  try {
+    const { startOrganizationDirectoryScheduler } = await import(
+      './src/lib/client-portal/organization-directory-scheduler.js'
+    );
+    startOrganizationDirectoryScheduler(24 * 60 * 60 * 1000);
+    safeLog('info', '[directory-sync] Täglicher M365-Verzeichnis-Scheduler gestartet.');
+  } catch (dirErr: any) {
+    safeLog('warn', '[directory-sync] Scheduler fehlgeschlagen:', dirErr?.message || String(dirErr));
+  }
+
   app.listen(PORT, "0.0.0.0", () => {
     const publicBase =
       process.env.PUBLIC_APP_URL ||

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Package, Settings2 } from 'lucide-react';
+import { Loader2, Package, Plug, Settings2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
 import { Button } from '../ui/button';
@@ -24,6 +24,7 @@ export function HardwareReturnsModuleCard({
   config,
   onSaved,
 }: HardwareReturnsModuleCardProps) {
+  const syncCfg = (config?.m365_directory_sync as Record<string, unknown> | undefined) || {};
   const [active, setActive] = useState(Boolean(enabled));
   const [ceoName, setCeoName] = useState(String(config?.ceo_name || ''));
   const [ceoEmail, setCeoEmail] = useState(String(config?.ceo_email || ''));
@@ -31,15 +32,31 @@ export function HardwareReturnsModuleCard({
     String(config?.fallback_manager_email || ''),
   );
   const [mail1Days, setMail1Days] = useState(Number(config?.mail1_days_after_delivery ?? 14));
+  const [dirSyncEnabled, setDirSyncEnabled] = useState(Boolean(syncCfg.enabled));
+  const [entraGroupId, setEntraGroupId] = useState(String(syncCfg.entra_group_id || ''));
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(
+    syncCfg.last_synced_at ? String(syncCfg.last_synced_at) : null,
+  );
+  const [lastSyncCount, setLastSyncCount] = useState(Number(syncCfg.last_sync_count || 0));
+  const [lastSyncError, setLastSyncError] = useState<string | null>(
+    syncCfg.last_sync_error ? String(syncCfg.last_sync_error) : null,
+  );
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
+    const nextSync = (config?.m365_directory_sync as Record<string, unknown> | undefined) || {};
     setActive(Boolean(enabled));
     setCeoName(String(config?.ceo_name || ''));
     setCeoEmail(String(config?.ceo_email || ''));
     setFallbackManager(String(config?.fallback_manager_email || ''));
     setMail1Days(Number(config?.mail1_days_after_delivery ?? 14));
+    setDirSyncEnabled(Boolean(nextSync.enabled));
+    setEntraGroupId(String(nextSync.entra_group_id || ''));
+    setLastSyncedAt(nextSync.last_synced_at ? String(nextSync.last_synced_at) : null);
+    setLastSyncCount(Number(nextSync.last_sync_count || 0));
+    setLastSyncError(nextSync.last_sync_error ? String(nextSync.last_sync_error) : null);
   }, [enabled, config, organizationId]);
 
   const save = async () => {
@@ -56,6 +73,11 @@ export function HardwareReturnsModuleCard({
             fallback_manager_email: fallbackManager.trim() || null,
             mail1_days_after_delivery: mail1Days,
             auto_send_enabled: false,
+            m365_directory_sync: {
+              ...((config?.m365_directory_sync as Record<string, unknown>) || {}),
+              enabled: dirSyncEnabled,
+              entra_group_id: entraGroupId.trim() || null,
+            },
           },
         },
         { withCredentials: true },
@@ -74,6 +96,30 @@ export function HardwareReturnsModuleCard({
       toast.error(err?.response?.data?.error || 'Speichern fehlgeschlagen');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const runDirectorySync = async () => {
+    setSyncing(true);
+    try {
+      const res = await axios.post(
+        '/api/returns/directory-sync',
+        { organizationId },
+        {
+          withCredentials: true,
+          params: { organizationId },
+        },
+      );
+      setLastSyncedAt(res.data?.lastSyncedAt || new Date().toISOString());
+      setLastSyncCount(Number(res.data?.syncedCount || 0));
+      setLastSyncError(null);
+      toast.success(`${res.data?.syncedCount || 0} Mitarbeiter synchronisiert`);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || 'Synchronisation fehlgeschlagen';
+      setLastSyncError(msg);
+      toast.error(msg);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -152,6 +198,71 @@ export function HardwareReturnsModuleCard({
         </div>
       ) : null}
 
+      {active ? (
+        <div className="rounded-xl border border-sky-100 bg-sky-50/50 p-4 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-black text-slate-900 flex items-center gap-2">
+                <Plug className="w-4 h-4 text-sky-700" />
+                M365 Mitarbeiter-Sync (Entra ID)
+              </p>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Verzeichnis für Autovervollständigung — getrennt von Portal-Login-Benutzern.
+                Nutzt die M365 Tenant &amp; Send-As App-Registrierung.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Label htmlFor="hw-dir-sync" className="text-xs font-semibold text-slate-600">
+                {dirSyncEnabled ? 'An' : 'Aus'}
+              </Label>
+              <Switch
+                id="hw-dir-sync"
+                checked={dirSyncEnabled}
+                onCheckedChange={setDirSyncEnabled}
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+              Entra ID Gruppen-ID (optional)
+            </Label>
+            <Input
+              value={entraGroupId}
+              onChange={(e) => setEntraGroupId(e.target.value)}
+              placeholder="Leer = alle aktiven Member-Benutzer"
+            />
+          </div>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <p className="text-[11px] text-slate-600">
+              {lastSyncedAt
+                ? `Zuletzt synchronisiert: ${new Date(lastSyncedAt).toLocaleString('de-DE', {
+                    timeZone: 'Europe/Berlin',
+                  })} (${lastSyncCount} Mitarbeiter)`
+                : 'Noch nicht synchronisiert'}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-8 text-xs font-bold"
+              disabled={syncing || !active}
+              onClick={() => void runDirectorySync()}
+            >
+              {syncing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+              ) : (
+                <Zap className="w-3.5 h-3.5 mr-1.5" />
+              )}
+              Jetzt synchronisieren
+            </Button>
+          </div>
+          {lastSyncError ? (
+            <p className="text-[11px] text-rose-700 bg-rose-50 border border-rose-100 rounded-md px-2 py-1.5">
+              {lastSyncError}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between gap-3 pt-1">
         <button
           type="button"
@@ -179,7 +290,7 @@ export function HardwareReturnsModuleCard({
             <strong>Mail 3:</strong> An Mitarbeiter · CC Projektmanager, Vorgesetzter, Geschäftsführung
           </p>
           <p className="text-slate-400 pt-1">
-            Auto-Versand bleibt deaktiviert, bis in Teil 2 freigeschaltet. Vorlagen sind serverseitig hinterlegt.
+            Verzeichnis-Sync speichert nur in <code>organization_directory_users</code> — nie in Portal-Login-Benutzern.
           </p>
         </div>
       ) : null}

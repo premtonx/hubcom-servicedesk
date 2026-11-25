@@ -16,7 +16,10 @@ import {
   updateOrganizationBranding,
   updateOrganizationHardwareModule,
 } from '../lib/client-portal/organizations.js';
-import { normalizeHardwareReturnsConfig } from '../lib/client-portal/hardware-returns.js';
+import {
+  normalizeHardwareReturnsConfig,
+  sanitizeHardwareReturnsConfigForClient,
+} from '../lib/client-portal/hardware-returns.js';
 import {
   ensureCompanyForOrganization,
   ensureContactForPortalUser,
@@ -319,6 +322,9 @@ router.put(
       return res.json({
         organization: {
           ...organization,
+          hardware_returns_config: sanitizeHardwareReturnsConfigForClient(
+            organization.hardware_returns_config,
+          ),
           enabledModules: organizationEnabledModules(organization),
         },
       });

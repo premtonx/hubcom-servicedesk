@@ -4,6 +4,10 @@
  */
 
 import { randomUUID } from 'crypto';
+import {
+  encryptEmailChannelSecret,
+  isEncryptedEmailSecret,
+} from '../email-ingestion/channel-secret-crypto.js';
 import { getDocsDirect, queryDb, withPgTransaction } from '../postgres-backend.js';
 import { getOrganization } from './organizations.js';
 import { isClientPortalRole } from './roles.js';
@@ -56,6 +60,21 @@ export const DEFAULT_HARDWARE_RETURNS_CATALOGS: HardwareReturnsCatalogs = {
   ],
 };
 
+export interface M365DirectorySyncConfig {
+  enabled: boolean;
+  /** Optional Entra Security/M365 Group Object ID — sync only that group's members. */
+  entra_group_id: string | null;
+  /** Optional credential overrides (else org M365 Send-As / Graph channel). */
+  tenant_id: string | null;
+  client_id: string | null;
+  /** Encrypted at rest with EMAIL_CHANNEL_SECRET_KEY; redacted in API responses. */
+  client_secret: string | null;
+  client_secret_set: boolean;
+  last_synced_at: string | null;
+  last_sync_count: number;
+  last_sync_error: string | null;
+}
+
 export interface HardwareReturnsConfig {
   auto_send_enabled: boolean;
   mail1_days_after_delivery: number;
@@ -67,6 +86,7 @@ export interface HardwareReturnsConfig {
   /** Org-scoped display prefix for return numbers (e.g. DPG → #DPG-1). */
   id_prefix: string;
   catalogs: HardwareReturnsCatalogs;
+  m365_directory_sync: M365DirectorySyncConfig;
   stage_recipients: {
     mail1: HardwareStageRecipients;
     mail2: HardwareStageRecipients;
@@ -272,6 +292,20 @@ function defaultStage(to: HardwareRoleToken[], cc: HardwareRoleToken[]): Hardwar
   return { to_roles: to, cc_roles: cc, extra_to: [], extra_cc: [] };
 }
 
+export function defaultM365DirectorySyncConfig(): M365DirectorySyncConfig {
+  return {
+    enabled: false,
+    entra_group_id: null,
+    tenant_id: null,
+    client_id: null,
+    client_secret: null,
+    client_secret_set: false,
+    last_synced_at: null,
+    last_sync_count: 0,
+    last_sync_error: null,
+  };
+}
+
 export function defaultHardwareReturnsConfig(): HardwareReturnsConfig {
   return {
     auto_send_enabled: false,
@@ -283,6 +317,7 @@ export function defaultHardwareReturnsConfig(): HardwareReturnsConfig {
     fallback_manager_email: null,
     id_prefix: 'DPG',
     catalogs: mergeCatalogs(undefined),
+    m365_directory_sync: defaultM365DirectorySyncConfig(),
     stage_recipients: {
       mail1: defaultStage(['employee'], []),
       mail2: defaultStage(['employee'], ['project_manager']),
@@ -383,6 +418,10 @@ export function normalizeHardwareReturnsConfig(raw: unknown): HardwareReturnsCon
           .replace(/[^a-zA-Z0-9]/g, '')
           .toUpperCase()
           .slice(0, 12) || defaults.id_prefix;
+  const syncSrc =
+    src.m365_directory_sync && typeof src.m365_directory_sync === 'object'
+      ? (src.m365_directory_sync as Partial<M365DirectorySyncConfig> & Record<string, unknown>)
+      : undefined;
 
   return {
     auto_send_enabled: src.auto_send_enabled === true,
@@ -412,6 +451,7 @@ export function normalizeHardwareReturnsConfig(raw: unknown): HardwareReturnsCon
         : String(src.fallback_manager_email).trim().toLowerCase().slice(0, 320),
     id_prefix: rawPrefix,
     catalogs: mergeCatalogs(catalogSrc),
+    m365_directory_sync: mergeM365DirectorySync(defaults.m365_directory_sync, syncSrc),
     stage_recipients: {
       mail1: mergeStage(defaults.stage_recipients.mail1, stageSrc.mail1),
       mail2: mergeStage(defaults.stage_recipients.mail2, stageSrc.mail2),
@@ -421,6 +461,87 @@ export function normalizeHardwareReturnsConfig(raw: unknown): HardwareReturnsCon
       mail1: mergeTemplate(defaults.templates.mail1, templateSrc.mail1),
       mail2: mergeTemplate(defaults.templates.mail2, templateSrc.mail2),
       mail3: mergeTemplate(defaults.templates.mail3, templateSrc.mail3),
+    },
+  };
+}
+
+function mergeM365DirectorySync(
+  base: M365DirectorySyncConfig,
+  patch: (Partial<M365DirectorySyncConfig> & Record<string, unknown>) | undefined,
+): M365DirectorySyncConfig {
+  if (!patch || typeof patch !== 'object') return { ...base };
+  const rawSecret =
+    patch.client_secret !== undefined ? String(patch.client_secret ?? '').trim() : undefined;
+  let clientSecret = base.client_secret;
+  let secretSet = Boolean(base.client_secret) || base.client_secret_set;
+  if (rawSecret !== undefined) {
+    if (!rawSecret || rawSecret === '••••••••') {
+      // Keep existing encrypted secret when masked/empty patch.
+      clientSecret = base.client_secret;
+      secretSet = Boolean(base.client_secret) || base.client_secret_set;
+    } else if (isEncryptedEmailSecret(rawSecret)) {
+      clientSecret = rawSecret;
+      secretSet = true;
+    } else {
+      clientSecret = encryptEmailChannelSecret(rawSecret);
+      secretSet = true;
+    }
+  }
+  return {
+    enabled: patch.enabled !== undefined ? Boolean(patch.enabled) : base.enabled,
+    entra_group_id:
+      patch.entra_group_id !== undefined
+        ? patch.entra_group_id == null || String(patch.entra_group_id).trim() === ''
+          ? null
+          : String(patch.entra_group_id).trim().slice(0, 80)
+        : base.entra_group_id,
+    tenant_id:
+      patch.tenant_id !== undefined
+        ? patch.tenant_id == null || String(patch.tenant_id).trim() === ''
+          ? null
+          : String(patch.tenant_id).trim().slice(0, 80)
+        : base.tenant_id,
+    client_id:
+      patch.client_id !== undefined
+        ? patch.client_id == null || String(patch.client_id).trim() === ''
+          ? null
+          : String(patch.client_id).trim().slice(0, 80)
+        : base.client_id,
+    client_secret: clientSecret,
+    client_secret_set: secretSet,
+    last_synced_at:
+      patch.last_synced_at !== undefined
+        ? (() => {
+            if (!patch.last_synced_at) return null;
+            const d = new Date(String(patch.last_synced_at));
+            return Number.isNaN(d.getTime()) ? null : d.toISOString();
+          })()
+        : base.last_synced_at,
+    last_sync_count:
+      patch.last_sync_count !== undefined
+        ? Math.max(0, Math.floor(Number(patch.last_sync_count) || 0))
+        : base.last_sync_count,
+    last_sync_error:
+      patch.last_sync_error !== undefined
+        ? patch.last_sync_error == null || String(patch.last_sync_error).trim() === ''
+          ? null
+          : String(patch.last_sync_error).trim().slice(0, 2000)
+        : base.last_sync_error,
+  };
+}
+
+/** Redact secrets before returning hardware_returns_config to clients. */
+export function sanitizeHardwareReturnsConfigForClient(
+  config: HardwareReturnsConfig | null | undefined,
+): HardwareReturnsConfig | null {
+  if (!config) return null;
+  const sync = config.m365_directory_sync || defaultM365DirectorySyncConfig();
+  return {
+    ...config,
+    m365_directory_sync: {
+      ...sync,
+      client_secret: sync.client_secret || sync.client_secret_set ? '••••••••' : null,
+      client_secret_set: Boolean(sync.client_secret) || sync.client_secret_set,
     },
   };
 }

@@ -50,6 +50,11 @@ import {
   type TicketHardwareReturnRecord,
 } from '../src/lib/client-portal/hardware-returns.js';
 import {
+  evaluateDirectorySearchAccess,
+  fetchAllDirectoryUsersFromGraph,
+  rankDirectorySearchResults,
+} from '../src/lib/client-portal/organization-directory-sync.js';
+import {
   formatDateDeOnly,
   toIsoDateOnly,
 } from '../src/lib/client-portal/hardware-returns-dates.js';
@@ -658,6 +663,82 @@ function testHardwareReturnsSchemaCatalogsLifecycle(): void {
   );
 }
 
+async function testOrganizationDirectorySyncLifecycle(): Promise<void> {
+  console.log('\n[17c] M365 directory sync — Graph mock, prefix search, tenant isolation');
+
+  const ranked = rankDirectorySearchResults('ad', [
+    {
+      id: '1',
+      displayName: 'Stefan Radke',
+      email: 's.radke@dpg.test',
+      phoneOffice: null,
+      phoneMobile: null,
+      managerName: null,
+      managerEmail: null,
+      department: null,
+      source: 'm365',
+    },
+    {
+      id: '2',
+      displayName: 'Adam Weber',
+      email: 'adam@dpg.test',
+      phoneOffice: null,
+      phoneMobile: null,
+      managerName: null,
+      managerEmail: null,
+      department: null,
+      source: 'm365',
+    },
+  ]);
+  assert(
+    ranked[0]?.displayName === 'Adam Weber',
+    'prefix-first: Adam Weber before Stefan Radke for q=ad',
+  );
+
+  assert(
+    evaluateDirectorySearchAccess({
+      sessionOrgId: 'org-dpg',
+      targetOrgId: 'org-citadelle',
+      role: 'CLIENT_ADMIN',
+      orgEnabled: true,
+    }).ok === false,
+    'cross-tenant directory search denied',
+  );
+
+  let calls = 0;
+  const users = await fetchAllDirectoryUsersFromGraph({
+    creds: { tenantId: 't', clientId: 'c', clientSecret: 's' },
+    entraGroupId: 'g',
+    acquireToken: async () => 'tok',
+    fetchPage: async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw Object.assign(new Error('manager expand failed'), {
+          status: 400,
+          graphBody: { error: { message: 'expand manager invalid' } },
+        });
+      }
+      return {
+        value: [
+          { id: 'a', displayName: 'A', mail: 'a@x.test', accountEnabled: true },
+          { id: 'b', displayName: 'B', mail: 'b@x.test', accountEnabled: true },
+        ],
+        nextLink: null,
+      };
+    },
+  });
+  assert(users.length === 2 && calls >= 2, 'Graph group sync falls back when manager expand fails');
+
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/organization-directory-sync.ts'),
+    'utf8',
+  );
+  assert(
+    src.includes('organization_directory_users') && src.includes('User.Read.All'),
+    'directory sync module + permission hint present',
+  );
+}
+
 function testPortalUserDeleteLifecycle(): void {
   console.log('\n[18] Portal user delete — RBAC lifecycle + email free + JWT 401');
 
@@ -779,6 +860,7 @@ async function main(): Promise<void> {
   testPortalReturnsNavLifecycle();
   testHardwareReturnsStandaloneLifecycle();
   testHardwareReturnsSchemaCatalogsLifecycle();
+  await testOrganizationDirectorySyncLifecycle();
   testPortalUserDeleteLifecycle();
 
   console.log('\n' + '='.repeat(50));

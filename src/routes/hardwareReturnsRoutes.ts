@@ -15,7 +15,10 @@ import {
   organizationEnabledModules,
   updateOrganizationHardwareModule,
 } from '../lib/client-portal/organizations.js';
-import { normalizeHardwareReturnsConfig } from '../lib/client-portal/hardware-returns.js';
+import {
+  normalizeHardwareReturnsConfig,
+  sanitizeHardwareReturnsConfigForClient,
+} from '../lib/client-portal/hardware-returns.js';
 import {
   bulkHardwareReturnsAction,
   createHardwareReturnFromWorkbench,
@@ -34,6 +37,11 @@ import {
   resolveHardwareReturnByParam,
   updateHardwareReturnById,
 } from '../lib/client-portal/hardware-returns.js';
+import {
+  evaluateDirectorySearchAccess,
+  searchOrganizationDirectoryUsers,
+  syncOrganizationDirectoryFromGraph,
+} from '../lib/client-portal/organization-directory-sync.js';
 import { isClientPortalRole, isHubcomStaffRole } from '../lib/client-portal/roles.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage } from '../lib/safe-log.js';
@@ -122,12 +130,13 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         offset: Number(req.query.offset) || 0,
       });
       const org = await getOrganization(ctx.organizationId);
+      const settings = sanitizeHardwareReturnsConfigForClient(org?.hardware_returns_config);
       return res.json({
         ...result,
         organizationId: ctx.organizationId,
         enabledModules: organizationEnabledModules(org),
-        settings: org?.hardware_returns_config || null,
-        autoSendEnabled: Boolean(org?.hardware_returns_config?.auto_send_enabled),
+        settings,
+        autoSendEnabled: Boolean(settings?.auto_send_enabled),
       });
     } catch (err: any) {
       const status = err?.status || 500;
@@ -284,15 +293,94 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         // SUPPORTER may read settings (for matrix visibility) but not write.
       }
       const org = await getOrganization(ctx.organizationId);
+      const config = sanitizeHardwareReturnsConfigForClient(org?.hardware_returns_config);
       return res.json({
         hardware_returns_enabled: Boolean(org?.hardware_returns_enabled),
-        hardware_returns_config: org?.hardware_returns_config,
-        catalogs: org?.hardware_returns_config?.catalogs || null,
-        id_prefix: org?.hardware_returns_config?.id_prefix || null,
+        hardware_returns_config: config,
+        catalogs: config?.catalogs || null,
+        id_prefix: config?.id_prefix || null,
+        m365_directory_sync: config?.m365_directory_sync || null,
         enabledModules: organizationEnabledModules(org),
       });
     } catch (err: any) {
       return res.status(500).json({ error: safeErrorMessage(err, 'Settings laden fehlgeschlagen') });
+    }
+  });
+
+  /** GET /directory-users — M365 + portal employee autocomplete (org-scoped). */
+  router.get('/directory-users', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      const gate = evaluateDirectorySearchAccess({
+        sessionOrgId: isClientPortalRole(ctx.role) ? ctx.organizationId : ctx.organizationId,
+        targetOrgId: ctx.organizationId,
+        role: ctx.role,
+        orgEnabled: true,
+      });
+      if (gate.ok === false) {
+        return res.status(gate.status).json({ error: 'Forbidden.' });
+      }
+      const users = await searchOrganizationDirectoryUsers({
+        organizationId: ctx.organizationId,
+        query: String(req.query.q || req.query.query || ''),
+        limit: Number(req.query.limit) || 15,
+      });
+      return res.json({ organizationId: ctx.organizationId, users });
+    } catch (err: any) {
+      return res
+        .status(err?.status || 500)
+        .json({ error: safeErrorMessage(err, 'Verzeichnissuche fehlgeschlagen') });
+    }
+  });
+
+  /** POST /directory-sync — trigger immediate M365 sync. */
+  router.post('/directory-sync', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const role = String(req.user?.role || '');
+      let organizationId: string | null = null;
+      if (mode === 'portal') {
+        if (role !== 'CLIENT_ADMIN') {
+          return res.status(403).json({ error: 'Forbidden: CLIENT_ADMIN required.' });
+        }
+        organizationId = resolveOrganizationIdFromUser(req.user!);
+      } else {
+        if (role !== 'SYSTEM_ADMIN') {
+          return res.status(403).json({ error: 'Forbidden: SYSTEM_ADMIN required.' });
+        }
+        organizationId = String(
+          req.body?.organizationId || req.query.organizationId || '',
+        ).trim();
+      }
+      if (!organizationId) {
+        return res.status(400).json({ error: 'organizationId ist erforderlich.' });
+      }
+      const org = await getOrganization(organizationId);
+      if (!org?.hardware_returns_enabled) {
+        return res.status(403).json({
+          error: 'Forbidden: Hardware-Rücklieferungen nicht aktiv.',
+        });
+      }
+      if (mode === 'portal') {
+        const sessionOrg = resolveOrganizationIdFromUser(req.user!);
+        if (sessionOrg !== organizationId) {
+          return res.status(403).json({ error: 'Forbidden.' });
+        }
+      }
+      const result = await syncOrganizationDirectoryFromGraph(organizationId);
+      return res.json({
+        success: true,
+        syncedCount: result.syncedCount,
+        lastSyncedAt: result.lastSyncedAt,
+      });
+    } catch (err: any) {
+      return res.status(err?.status || 502).json({
+        error: safeErrorMessage(err, 'Verzeichnissynchronisation fehlgeschlagen'),
+      });
     }
   });
 
@@ -327,6 +415,15 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         service_levels: z.array(z.string()).optional(),
         slas: z.array(z.string()).optional(),
         shipping_methods: z.array(z.string()).optional(),
+      })
+      .optional(),
+    m365_directory_sync: z
+      .object({
+        enabled: z.boolean().optional(),
+        entra_group_id: z.string().trim().max(80).nullable().optional(),
+        tenant_id: z.string().trim().max(80).nullable().optional(),
+        client_id: z.string().trim().max(80).nullable().optional(),
+        client_secret: z.string().max(4000).nullable().optional(),
       })
       .optional(),
     id_prefix: z.string().trim().max(12).optional(),
@@ -398,6 +495,14 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
               },
             }
           : {}),
+        ...(parsed.data.m365_directory_sync
+          ? {
+              m365_directory_sync: {
+                ...org.hardware_returns_config.m365_directory_sync,
+                ...parsed.data.m365_directory_sync,
+              },
+            }
+          : {}),
         ...(parsed.data.id_prefix !== undefined ? { id_prefix: parsed.data.id_prefix } : {}),
         ...(parsed.data.auto_send_enabled !== undefined
           ? { auto_send_enabled: parsed.data.auto_send_enabled }
@@ -406,11 +511,13 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
       const updated = await updateOrganizationHardwareModule(organizationId, {
         hardware_returns_config: nextConfig,
       });
+      const config = sanitizeHardwareReturnsConfigForClient(updated?.hardware_returns_config);
       return res.json({
         hardware_returns_enabled: Boolean(updated?.hardware_returns_enabled),
-        hardware_returns_config: updated?.hardware_returns_config,
-        catalogs: updated?.hardware_returns_config?.catalogs || null,
-        id_prefix: updated?.hardware_returns_config?.id_prefix || null,
+        hardware_returns_config: config,
+        catalogs: config?.catalogs || null,
+        id_prefix: config?.id_prefix || null,
+        m365_directory_sync: config?.m365_directory_sync || null,
         enabledModules: organizationEnabledModules(updated),
       });
     } catch (err: any) {

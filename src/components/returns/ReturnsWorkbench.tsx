@@ -1044,8 +1044,15 @@ export function ReturnsWorkbench({
       {settingsOpen && settings ? (
         <SettingsDrawer
           settings={settings}
+          organizationId={organizationId}
+          apiBase={base}
+          mode={mode}
           onClose={() => setSettingsOpen(false)}
           onSave={saveSettings}
+          onSettingsRefresh={(next) => {
+            setSettings(next);
+            setAutoSendEnabled(Boolean(next?.auto_send_enabled));
+          }}
         />
       ) : null}
 
@@ -1131,9 +1138,14 @@ function EmailChips(props: {
 
 function SettingsDrawer(props: {
   settings: Record<string, any>;
+  organizationId: string;
+  apiBase: string;
+  mode: WorkbenchMode;
   onClose: () => void;
   onSave: (patch: Record<string, unknown>) => Promise<void>;
+  onSettingsRefresh?: (next: Record<string, any>) => void;
 }) {
+  const syncCfg = props.settings.m365_directory_sync || {};
   const [auto, setAuto] = useState(Boolean(props.settings.auto_send_enabled));
   const [mail1, setMail1] = useState(Number(props.settings.mail1_days_after_delivery ?? 14));
   const [mail2, setMail2] = useState(Number(props.settings.mail2_days_after_mail1 ?? 7));
@@ -1142,7 +1154,50 @@ function SettingsDrawer(props: {
   const [fallback, setFallback] = useState(String(props.settings.fallback_manager_email || ''));
   const [stageRecipients, setStageRecipients] = useState(props.settings.stage_recipients);
   const [templates, setTemplates] = useState(props.settings.templates);
+  const [dirSyncEnabled, setDirSyncEnabled] = useState(Boolean(syncCfg.enabled));
+  const [entraGroupId, setEntraGroupId] = useState(String(syncCfg.entra_group_id || ''));
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(syncCfg.last_synced_at || null);
+  const [lastSyncCount, setLastSyncCount] = useState(Number(syncCfg.last_sync_count || 0));
+  const [lastSyncError, setLastSyncError] = useState<string | null>(syncCfg.last_sync_error || null);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  const runDirectorySync = async () => {
+    setSyncing(true);
+    try {
+      const res = await axios.post(
+        `${props.apiBase}/directory-sync`,
+        props.mode === 'staff' ? { organizationId: props.organizationId } : {},
+        {
+          withCredentials: true,
+          params: props.mode === 'staff' ? { organizationId: props.organizationId } : undefined,
+        },
+      );
+      setLastSyncedAt(res.data?.lastSyncedAt || new Date().toISOString());
+      setLastSyncCount(Number(res.data?.syncedCount || 0));
+      setLastSyncError(null);
+      toast.success(`${res.data?.syncedCount || 0} Mitarbeiter synchronisiert`);
+      try {
+        const settingsRes = await axios.get(
+          `${props.apiBase}/settings${
+            props.mode === 'staff' ? `?organizationId=${encodeURIComponent(props.organizationId)}` : ''
+          }`,
+          { withCredentials: true },
+        );
+        if (settingsRes.data?.hardware_returns_config) {
+          props.onSettingsRefresh?.(settingsRes.data.hardware_returns_config);
+        }
+      } catch {
+        /* ignore refresh failure */
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || 'Synchronisation fehlgeschlagen';
+      setLastSyncError(msg);
+      toast.error(msg);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const toggleRole = (
     stage: 'mail1' | 'mail2' | 'mail3',
@@ -1174,6 +1229,73 @@ function SettingsDrawer(props: {
           </button>
         </div>
         <div className="p-5 space-y-5">
+          <div className="rounded-xl border border-sky-100 bg-sky-50/40 p-4 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-black text-slate-900 flex items-center gap-2">
+                  <Plug className="w-4 h-4 text-sky-700" />
+                  M365 Mitarbeiter-Sync (Entra ID)
+                </p>
+                <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                  Synchronisiert Mitarbeitende aus Microsoft Entra für die Autovervollständigung.
+                  Nutzt die vorhandenen M365 Tenant &amp; Send-As Zugangsdaten (Application Permissions{' '}
+                  <code className="text-[10px]">User.Read.All</code>
+                  {entraGroupId ? (
+                    <>
+                      {' '}
+                      / <code className="text-[10px]">GroupMember.Read.All</code>
+                    </>
+                  ) : null}
+                  ).
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-xs font-semibold shrink-0">
+                Aktiv
+                <input
+                  type="checkbox"
+                  checked={dirSyncEnabled}
+                  onChange={(e) => setDirSyncEnabled(e.target.checked)}
+                />
+              </label>
+            </div>
+            <div>
+              <Label>Entra ID Gruppen-ID (optional)</Label>
+              <Input
+                value={entraGroupId}
+                onChange={(e) => setEntraGroupId(e.target.value)}
+                placeholder="Leer = alle aktiven Member-Benutzer"
+              />
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-[11px] text-slate-600">
+              <span>
+                {lastSyncedAt
+                  ? `Zuletzt synchronisiert: ${new Date(lastSyncedAt).toLocaleString('de-DE', {
+                      timeZone: 'Europe/Berlin',
+                    })} (${lastSyncCount} Mitarbeiter)`
+                  : 'Noch nicht synchronisiert'}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 text-xs font-bold"
+                disabled={syncing}
+                onClick={() => void runDirectorySync()}
+              >
+                {syncing ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                ) : (
+                  <Zap className="w-3.5 h-3.5 mr-1.5" />
+                )}
+                Jetzt synchronisieren
+              </Button>
+            </div>
+            {lastSyncError ? (
+              <p className="text-[11px] text-rose-700 bg-rose-50 border border-rose-100 rounded-md px-2 py-1.5">
+                {lastSyncError}
+              </p>
+            ) : null}
+          </div>
+
           <label className="flex items-center justify-between gap-3 text-sm font-semibold">
             Automatischer Versand aktiv
             <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
@@ -1292,6 +1414,11 @@ function SettingsDrawer(props: {
                   fallback_manager_email: fallback.trim() || null,
                   stage_recipients: stageRecipients,
                   templates,
+                  m365_directory_sync: {
+                    ...(props.settings.m365_directory_sync || {}),
+                    enabled: dirSyncEnabled,
+                    entra_group_id: entraGroupId.trim() || null,
+                  },
                 });
               } finally {
                 setSaving(false);
