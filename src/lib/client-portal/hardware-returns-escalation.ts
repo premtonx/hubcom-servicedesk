@@ -413,6 +413,10 @@ export interface HardwareReturnsListFilters {
   dueFrom?: string;
   dueTo?: string;
   shippingMethod?: string;
+  /** Exact status label from org catalogs (e.g. Neu). */
+  status?: string;
+  /** Match assignee_user_id or assignee_name (case-insensitive). */
+  assignee?: string;
   exportStatus?: 'all' | 'exported' | 'not_exported';
   sort?: 'due_asc' | 'newest' | 'employee' | 'ticket';
   limit?: number;
@@ -506,6 +510,15 @@ export async function listHardwareReturnsWorkbench(
     if (filters.exportStatus === 'exported' && !hw.exported) return false;
     if (filters.exportStatus === 'not_exported' && hw.exported) return false;
     if (filters.shippingMethod && hw.shipping_method !== filters.shippingMethod) return false;
+    if (filters.status && String(hw.status || '').trim() !== String(filters.status).trim()) {
+      return false;
+    }
+    if (filters.assignee) {
+      const want = String(filters.assignee).trim().toLowerCase();
+      const id = String(hw.assignee_user_id || '').trim().toLowerCase();
+      const name = String(hw.assignee_name || '').trim().toLowerCase();
+      if (want !== id && want !== name) return false;
+    }
     if (filters.overdueBucket && filters.overdueBucket !== 'all') {
       const d = it.overdueDays;
       if (filters.overdueBucket === 'not_due' && d > 0) return false;
@@ -534,6 +547,13 @@ export async function listHardwareReturnsWorkbench(
         hw.subject,
         hw.employee_name,
         hw.employee_email,
+        hw.assignee_name,
+        hw.assignee_user_id,
+        hw.status,
+        hw.device_old_type,
+        hw.device_old_serial,
+        hw.device_new_type,
+        hw.device_new_serial,
         it.ticket.customerName,
         it.ticket.customerEmail,
         hw.project_manager_name,
@@ -541,6 +561,7 @@ export async function listHardwareReturnsWorkbench(
         hw.manager_name,
         hw.manager_email,
         hw.device_details,
+        hw.shipping_method,
       ]
         .filter(Boolean)
         .join(' ')

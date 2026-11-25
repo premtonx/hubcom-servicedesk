@@ -2652,6 +2652,55 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
     'workbench displays return_number (#RL-…)',
   );
   assert(
+    workbenchSrc.includes('isLegacyOrUuidReturnNumber') &&
+      workbenchSrc.includes("return '#—'") &&
+      workbenchSrc.includes('text-blue-800'),
+    'ID column never shows UUID slices; uses navy/blue #DPG-N monospace',
+  );
+  assert(
+    workbenchSrc.includes('Bearbeiter') &&
+      workbenchSrc.includes('assignee_name') &&
+      workbenchSrc.includes('initialsFromName') &&
+      workbenchSrc.includes('statusFilter') &&
+      workbenchSrc.includes('assigneeFilter') &&
+      workbenchSrc.includes('Versandart: Alle'),
+    'table has Bearbeiter column + Status/Bearbeiter/Versandart filters',
+  );
+  assert(
+    workbenchSrc.includes("kind === 'alt'") &&
+      workbenchSrc.includes("kind=\"neu\"") &&
+      workbenchSrc.includes('device_old_type') &&
+      workbenchSrc.includes('device_new_type') &&
+      workbenchSrc.includes('Zurück am'),
+    'Gerät ALT/NEU badges + Status/Rückgabe column',
+  );
+  assert(
+    workbenchSrc.includes('Einstellungen & Listen') ||
+      workbenchSrc.includes('Einstellungen &amp; Listen'),
+    'settings button renamed to Einstellungen & Listen',
+  );
+  assert(
+    workbenchSrc.includes('Listen & Dropdowns') ||
+      workbenchSrc.includes('Listen &amp; Dropdowns'),
+    'settings tab Listen & Dropdowns',
+  );
+  assert(
+    workbenchSrc.includes('Mahnwesen & Empfänger') ||
+      workbenchSrc.includes('Mahnwesen &amp; Empfänger'),
+    'settings tab Mahnwesen & Empfänger',
+  );
+  assert(
+    workbenchSrc.includes('CatalogTagList') &&
+      workbenchSrc.includes('ID-Präfix') &&
+      workbenchSrc.includes('Status-Optionen') &&
+      workbenchSrc.includes('Gerätetypen') &&
+      workbenchSrc.includes('Service Levels') &&
+      workbenchSrc.includes('SLA-Stufen') &&
+      workbenchSrc.includes('Versandarten') &&
+      workbenchSrc.includes('Hinzufügen'),
+    'catalog tag managers for prefix/status/device/SL/SLA/shipping',
+  );
+  assert(
     workbenchSrc.includes('returnRowId') && workbenchSrc.includes('returnId'),
     'workbench selection + send modal keyed by standalone return.id',
   );

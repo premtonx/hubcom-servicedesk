@@ -124,6 +124,8 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         dueFrom: String(req.query.dueFrom || '') || undefined,
         dueTo: String(req.query.dueTo || '') || undefined,
         shippingMethod: String(req.query.shippingMethod || '') || undefined,
+        status: String(req.query.status || '') || undefined,
+        assignee: String(req.query.assignee || '') || undefined,
         exportStatus: (req.query.exportStatus as any) || 'all',
         sort: (req.query.sort as any) || 'due_asc',
         limit: Number(req.query.limit) || 100,
