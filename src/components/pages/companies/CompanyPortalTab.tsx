@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '../../ui/select';
 import { OrgPortalBrandingCard } from '../../client-portal/OrgPortalBrandingCard';
+import { HardwareReturnsModuleCard } from '../../client-portal/HardwareReturnsModuleCard';
 import { useTranslation } from '../../../lib/context/I18nContext';
 
 interface PortalUserRow {
@@ -65,6 +66,8 @@ export default function CompanyPortalTab({
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [portalTitle, setPortalTitle] = useState<string | null>(null);
   const [bannerUrl, setBannerUrl] = useState<string | null>(null);
+  const [hardwareEnabled, setHardwareEnabled] = useState(false);
+  const [hardwareConfig, setHardwareConfig] = useState<Record<string, unknown> | null>(null);
   const [emailSummary, setEmailSummary] = useState<{
     mailbox: string | null;
     enabled: boolean;
@@ -103,6 +106,8 @@ export default function CompanyPortalTab({
       setLogoUrl(org?.logo_url || null);
       setPortalTitle(org?.portal_title || null);
       setBannerUrl(org?.portal_banner_url || null);
+      setHardwareEnabled(Boolean(org?.hardware_returns_enabled));
+      setHardwareConfig(org?.hardware_returns_config || null);
       setUsers(usersRes.data?.users || []);
       setEmailSummary({
         mailbox: usersRes.data?.emailChannel?.mailbox || null,
@@ -332,6 +337,16 @@ export default function CompanyPortalTab({
           }}
         />
       </section>
+
+      <HardwareReturnsModuleCard
+        organizationId={organizationId}
+        enabled={hardwareEnabled}
+        config={hardwareConfig}
+        onSaved={(next) => {
+          setHardwareEnabled(next.hardware_returns_enabled);
+          setHardwareConfig(next.hardware_returns_config);
+        }}
+      />
 
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">

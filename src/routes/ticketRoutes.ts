@@ -15,6 +15,13 @@ import {
 } from '../lib/client-portal/ticket-visibility.js';
 import { normalizeAssigneePatchForWrite } from '../lib/ticketAssignee.js';
 import { stampStaffTicketOrganizationFields } from '../lib/client-portal/stamp-ticket-organization.js';
+import {
+  getHardwareReturnByTicketId,
+  sanitizeHardwareReturnForClient,
+  upsertHardwareReturn,
+} from '../lib/client-portal/hardware-returns.js';
+import { getOrganization } from '../lib/client-portal/organizations.js';
+import { ticketOrganizationId } from '../lib/client-portal/ticket-visibility.js';
 
 const router = Router();
 
@@ -61,6 +68,13 @@ router.patch('/:id', authenticate, attachClientOrganizationContext, async (req: 
       ? stripClientSpoofFields((req.body || {}) as Record<string, unknown>)
       : (req.body || {})
   ) as Record<string, unknown>;
+  const hardwareReturnInput =
+    body.hardwareReturn !== undefined && body.hardwareReturn !== null
+      ? (body.hardwareReturn as Record<string, unknown>)
+      : body.hardwareReturn === null
+        ? null
+        : undefined;
+  delete body.hardwareReturn;
 
   // Canonical assignee patch: null / '' / sentinels clear all five fields;
   // never invent a pseudo-user or touch status here.
@@ -179,12 +193,143 @@ router.patch('/:id', authenticate, attachClientOrganizationContext, async (req: 
     const ticketPayload = isClientPortalRole(req.user?.role)
       ? sanitizeTicketForClient({ id: ticketId, ...updated })
       : { id: ticketId, ...updated };
-    return res.status(200).json({ success: true, ticket: ticketPayload });
+
+    let hardwareReturn = undefined as any;
+    if (hardwareReturnInput !== undefined) {
+      const orgId =
+        ticketOrganizationId({ ...(updated || existing), id: ticketId } as any) ||
+        ticketOrganizationId(existing as any);
+      if (!orgId) {
+        return res.status(404).json({ error: 'Hardware-Rücklieferungen nicht verfügbar.' });
+      }
+      const org = await getOrganization(orgId);
+      if (!org?.hardware_returns_enabled) {
+        return res.status(404).json({ error: 'Hardware-Rücklieferungen nicht aktiv.' });
+      }
+      if (isClientPortalRole(req.user?.role) && String(req.user!.role) === 'CLIENT_USER') {
+        return res.status(403).json({
+          error: 'Forbidden: CLIENT_USER cannot update hardware-return fields.',
+        });
+      }
+      hardwareReturn = sanitizeHardwareReturnForClient(
+        await upsertHardwareReturn({
+          ticketId,
+          organizationId: orgId,
+          input: (hardwareReturnInput || {}) as any,
+          mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
+        }),
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      ticket: ticketPayload,
+      ...(hardwareReturn !== undefined ? { hardwareReturn } : {}),
+    });
   } catch (e: any) {
     safeLog('error', '[tickets] PATCH /api/tickets/:id failed', e?.message || e);
     return res.status(500).json({ error: 'Failed to update ticket.' });
   }
 });
+
+/**
+ * GET /api/tickets/:id/hardware-return
+ * Staff or portal — only when the ticket's organization has the module enabled.
+ */
+router.get(
+  '/:id/hardware-return',
+  authenticate,
+  attachClientOrganizationContext,
+  async (req: Request, res: Response): Promise<any> => {
+    const ticketId = routeParam(req.params.id);
+    try {
+      const ticket = await getDocDirect('tickets', ticketId);
+      if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+      const orgId = ticketOrganizationId(ticket as any);
+      if (!orgId) return res.status(404).json({ error: 'Hardware-Rücklieferungen nicht verfügbar.' });
+      const org = await getOrganization(orgId);
+      if (!org?.hardware_returns_enabled) {
+        return res.status(404).json({ error: 'Hardware-Rücklieferungen nicht aktiv.' });
+      }
+      if (isClientPortalRole(req.user?.role)) {
+        const sessionOrg = resolveOrganizationIdFromUser(req.user!);
+        if (!sessionOrg || sessionOrg !== orgId) {
+          return res.status(404).json({ error: 'Ticket not found.' });
+        }
+      }
+      const hw = await getHardwareReturnByTicketId(ticketId);
+      return res.json({
+        hardwareReturn: hw ? sanitizeHardwareReturnForClient(hw) : null,
+        enabledModules: { hardwareReturns: true },
+        config: org.hardware_returns_config,
+      });
+    } catch (e: any) {
+      safeLog('error', '[tickets] GET hardware-return failed', e?.message || e);
+      return res.status(500).json({ error: 'Failed to load hardware return.' });
+    }
+  },
+);
+
+/**
+ * PUT /api/tickets/:id/hardware-return
+ * Upsert module fields when org flag is enabled.
+ */
+router.put(
+  '/:id/hardware-return',
+  authenticate,
+  attachClientOrganizationContext,
+  async (req: Request, res: Response): Promise<any> => {
+    const ticketId = routeParam(req.params.id);
+    try {
+      const ticket = await getDocDirect('tickets', ticketId);
+      if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+      const orgId = ticketOrganizationId(ticket as any);
+      if (!orgId) return res.status(404).json({ error: 'Hardware-Rücklieferungen nicht verfügbar.' });
+      const org = await getOrganization(orgId);
+      if (!org?.hardware_returns_enabled) {
+        return res.status(404).json({ error: 'Hardware-Rücklieferungen nicht aktiv.' });
+      }
+
+      if (isClientPortalRole(req.user?.role)) {
+        const sessionOrg = resolveOrganizationIdFromUser(req.user!);
+        if (!sessionOrg || sessionOrg !== orgId) {
+          return res.status(404).json({ error: 'Ticket not found.' });
+        }
+        const role = String(req.user!.role);
+        if (role === 'CLIENT_USER') {
+          return res.status(403).json({
+            error: 'Forbidden: CLIENT_USER cannot update hardware-return fields.',
+          });
+        }
+        const canMutate = await clientCanMutateTicket(
+          {
+            id: String(req.user!.id),
+            role,
+            organizationId: sessionOrg,
+          },
+          { ...ticket, id: ticketId },
+        );
+        if (!canMutate) return res.status(404).json({ error: 'Ticket not found.' });
+      }
+
+      const hardwareReturn = sanitizeHardwareReturnForClient(
+        await upsertHardwareReturn({
+          ticketId,
+          organizationId: orgId,
+          input: (req.body || {}) as any,
+          mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
+        }),
+      );
+      return res.json({ success: true, hardwareReturn });
+    } catch (e: any) {
+      if (e?.status === 403) {
+        return res.status(403).json({ error: e.message });
+      }
+      safeLog('error', '[tickets] PUT hardware-return failed', e?.message || e);
+      return res.status(500).json({ error: 'Failed to save hardware return.' });
+    }
+  },
+);
 
 const bulkUpdateSchema = z.object({
   ids: z.array(z.string().min(1).max(200)).min(1).max(500),

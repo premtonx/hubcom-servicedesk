@@ -48,6 +48,13 @@ import {
 import { cn } from '../lib/utils';
 import { customerService } from '../services/customerService';
 import { groupService } from '../services/groupService';
+import {
+  emptyHardwareReturnForm,
+  hardwareFormToPayload,
+  HardwareReturnSections,
+  type HardwareReturnFormState,
+} from './tickets/HardwareReturnSections';
+import axios from 'axios';
 import { userService } from '../services/userService';
 import { Company, Contact, Group, User } from '../types';
 import { useTranslation } from '../lib/context/I18nContext';
@@ -207,6 +214,10 @@ export function CreateTicketDialog({
   const [portalContacts, setPortalContacts] = useState<ContactOption[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [formData, setFormData] = useState<FormState>(EMPTY_FORM);
+  const [hardwareEnabled, setHardwareEnabled] = useState(false);
+  const [hardwareForm, setHardwareForm] = useState<HardwareReturnFormState>(() =>
+    emptyHardwareReturnForm(),
+  );
   const [baselineJson, setBaselineJson] = useState(() => JSON.stringify(EMPTY_FORM));
   const defaultsAppliedRef = useRef(false);
   const submitLockRef = useRef(false);
@@ -418,34 +429,42 @@ export function CreateTicketDialog({
 
     if (!orgId) {
       setPortalContacts([]);
+      setHardwareEnabled(false);
       return;
     }
 
     let cancelled = false;
-    void import('axios').then(({ default: axios }) =>
-      axios
-        .get(`/api/admin/organizations/${encodeURIComponent(orgId)}/users`, {
-          withCredentials: true,
-        })
-        .then((res) => {
-          if (cancelled) return;
-          const rows = (res.data?.users || []) as Array<Record<string, unknown>>;
-          setPortalContacts(
-            rows
-              .map((u) => ({
-                id: `portal:${String(u.id || '')}`,
-                name: String(u.name || u.email || ''),
-                email: String(u.email || '').trim(),
-                source: 'portal' as const,
-                userId: String(u.id || ''),
-              }))
-              .filter((u) => u.userId && u.email),
-          );
-        })
-        .catch(() => {
-          if (!cancelled) setPortalContacts([]);
-        }),
-    );
+    void axios
+      .get(`/api/admin/organizations/${encodeURIComponent(orgId)}`, { withCredentials: true })
+      .then((orgRes) => {
+        if (cancelled) return;
+        setHardwareEnabled(Boolean(orgRes.data?.organization?.hardware_returns_enabled));
+      })
+      .catch(() => {
+        if (!cancelled) setHardwareEnabled(false);
+      });
+    void axios
+      .get(`/api/admin/organizations/${encodeURIComponent(orgId)}/users`, {
+        withCredentials: true,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        const rows = (res.data?.users || []) as Array<Record<string, unknown>>;
+        setPortalContacts(
+          rows
+            .map((u) => ({
+              id: `portal:${String(u.id || '')}`,
+              name: String(u.name || u.email || ''),
+              email: String(u.email || '').trim(),
+              source: 'portal' as const,
+              userId: String(u.id || ''),
+            }))
+            .filter((u) => u.userId && u.email),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setPortalContacts([]);
+      });
     return () => {
       cancelled = true;
     };
@@ -719,7 +738,7 @@ export function CreateTicketDialog({
       const customerEmail = formData.customerEmail.trim() || undefined;
       const requesterId = formData.requesterId.trim() || undefined;
 
-      await ticketService.createTicket({
+      const createdId = await ticketService.createTicket({
         ...restForm,
         ...assigneeFields,
         groupId: groupId || undefined,
@@ -760,6 +779,18 @@ export function CreateTicketDialog({
         createdAt: new Date(),
         updatedAt: new Date(),
       } as any);
+
+      if (hardwareEnabled && createdId && organizationId) {
+        try {
+          await axios.put(
+            `/api/tickets/${encodeURIComponent(String(createdId))}/hardware-return`,
+            hardwareFormToPayload(hardwareForm),
+            { withCredentials: true },
+          );
+        } catch {
+          /* non-fatal — ticket already exists */
+        }
+      }
 
       logAudit({
         module: 'tickets',
@@ -1046,6 +1077,10 @@ export function CreateTicketDialog({
               </div>
             </div>
           </div>
+
+          {hardwareEnabled ? (
+            <HardwareReturnSections value={hardwareForm} onChange={setHardwareForm} />
+          ) : null}
 
           <div className="bg-white border border-slate-200/60 rounded-2xl p-5 sm:p-6 shadow-sm">
             <div className="flex items-center gap-3 mb-5">

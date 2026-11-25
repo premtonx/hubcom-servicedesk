@@ -238,6 +238,8 @@ export const clientPortalApi = {
       created_at: string;
     }>;
     attachments: PortalTicketAttachment[];
+    hardwareReturn?: Record<string, unknown> | null;
+    enabledModules?: { hardwareReturns?: boolean };
   }> {
     const path = `/api/portal/tickets/${encodeURIComponent(id)}`;
     assertNeverDb(path);
@@ -247,6 +249,8 @@ export const clientPortalApi = {
       messages: Array.isArray(res.data?.messages) ? res.data.messages : [],
       participants: Array.isArray(res.data?.participants) ? res.data.participants : [],
       attachments: Array.isArray(res.data?.attachments) ? res.data.attachments : [],
+      hardwareReturn: res.data?.hardwareReturn ?? null,
+      enabledModules: res.data?.enabledModules,
     };
   },
 
@@ -261,6 +265,7 @@ export const clientPortalApi = {
     attachments?: PortalTicketAttachment[];
     customerName?: string;
     customerEmail?: string;
+    hardwareReturn?: Record<string, unknown> | null;
   }): Promise<string> {
     const path = '/api/portal/tickets';
     assertNeverDb(path);
@@ -276,12 +281,24 @@ export const clientPortalApi = {
         attachments: payload.attachments || [],
         customerName: payload.customerName || '',
         customerEmail: payload.customerEmail || '',
+        hardwareReturn: payload.hardwareReturn || undefined,
       },
       { withCredentials: true },
     );
     const ticketId = res.data?.ticket?.id as string | undefined;
     if (!ticketId) throw new Error('Ticket create failed — missing id.');
     return ticketId;
+  },
+
+  async updateHardwareReturn(ticketId: string, hardwareReturn: Record<string, unknown>) {
+    const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}`;
+    assertNeverDb(path);
+    const res = await axios.patch(
+      path,
+      { hardwareReturn },
+      { withCredentials: true },
+    );
+    return res.data?.hardwareReturn || null;
   },
 
   /** @deprecated Prefer getTicket() which already returns public messages. */

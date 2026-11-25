@@ -11,9 +11,12 @@ import {
   createOrganization,
   getOrganization,
   listOrganizations,
+  organizationEnabledModules,
   updateOrganization,
   updateOrganizationBranding,
+  updateOrganizationHardwareModule,
 } from '../lib/client-portal/organizations.js';
+import { normalizeHardwareReturnsConfig } from '../lib/client-portal/hardware-returns.js';
 import {
   ensureCompanyForOrganization,
   ensureContactForPortalUser,
@@ -86,6 +89,13 @@ const orgSchema = z.object({
   crm_company_id: z.string().max(120).optional().nullable(),
   logo_url: z.string().max(400_000).optional().nullable(),
   portal_banner_url: z.string().max(3_000_000).optional().nullable(),
+  hardware_returns_enabled: z.boolean().optional(),
+  hardware_returns_config: z.record(z.string(), z.unknown()).optional().nullable(),
+});
+
+const hardwareModuleSchema = z.object({
+  hardware_returns_enabled: z.boolean().optional(),
+  hardware_returns_config: z.record(z.string(), z.unknown()).optional().nullable(),
 });
 
 const invitePortalUserSchema = z.object({
@@ -226,7 +236,7 @@ router.get('/:id/users', requireHubcomStaff, async (req: Request, res: Response)
   }
 });
 
-/** GET /api/admin/organizations/:id */
+/** GET /api/admin/organizations/:id (also /api/organizations/:id) */
 router.get('/:id', requireHubcomStaff, async (req: Request, res: Response): Promise<any> => {
   const id = routeParam(req.params.id);
   try {
@@ -236,6 +246,7 @@ router.get('/:id', requireHubcomStaff, async (req: Request, res: Response): Prom
       organization: {
         ...organization,
         resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
+        enabledModules: organizationEnabledModules(organization),
       },
     });
   } catch (err: any) {
@@ -254,9 +265,20 @@ router.put('/:id', requireRole(['SYSTEM_ADMIN']), async (req: Request, res: Resp
     });
   }
   try {
-    const organization = await updateOrganization(id, parsed.data);
+    const payload = { ...parsed.data } as any;
+    if (payload.hardware_returns_config) {
+      payload.hardware_returns_config = normalizeHardwareReturnsConfig(
+        payload.hardware_returns_config,
+      );
+    }
+    const organization = await updateOrganization(id, payload);
     if (!organization) return res.status(404).json({ error: 'Organization not found.' });
-    return res.json({ organization });
+    return res.json({
+      organization: {
+        ...organization,
+        enabledModules: organizationEnabledModules(organization),
+      },
+    });
   } catch (err: any) {
     const message = String(err?.message || '');
     if (/unique|duplicate/i.test(message)) {
@@ -265,6 +287,44 @@ router.put('/:id', requireRole(['SYSTEM_ADMIN']), async (req: Request, res: Resp
     return res.status(500).json({ error: safeErrorMessage(err, 'Failed to update organization') });
   }
 });
+
+/**
+ * PUT /api/admin/organizations/:id/hardware-returns
+ * SYSTEM_ADMIN — enable/disable module + edit recipient defaults.
+ */
+router.put(
+  '/:id/hardware-returns',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const id = routeParam(req.params.id);
+    const parsed = hardwareModuleSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Invalid hardware-returns payload',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    try {
+      const organization = await updateOrganizationHardwareModule(id, {
+        hardware_returns_enabled: parsed.data.hardware_returns_enabled,
+        hardware_returns_config: parsed.data.hardware_returns_config
+          ? normalizeHardwareReturnsConfig(parsed.data.hardware_returns_config)
+          : undefined,
+      });
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({
+        organization: {
+          ...organization,
+          enabledModules: organizationEnabledModules(organization),
+        },
+      });
+    } catch (err: any) {
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'Hardware-Modul konnte nicht gespeichert werden') });
+    }
+  },
+);
 
 /**
  * PUT /api/admin/organizations/:id/branding

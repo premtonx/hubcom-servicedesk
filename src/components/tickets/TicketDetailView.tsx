@@ -20,6 +20,7 @@ import { ConversationTimeline } from '../ticket-details/ConversationTimeline';
 import { EmailComposer } from '../ticket-details/EmailComposer';
 import { TicketKindFieldsCard } from '../ticket-details/TicketKindFieldsCard';
 import { SmartContextPanel } from '../ticket-details/SmartContextPanel';
+import { StaffHardwareReturnPanel } from './StaffHardwareReturnPanel';
 import { CustomerTabContent } from '../ticket-details/CustomerTabContent';
 import { TimelineTabContent } from '../ticket-details/TimelineTabContent';
 import { AiInsightsTabContent } from '../ticket-details/AiInsightsTabContent';
@@ -758,6 +759,16 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                             <TicketKindFieldsCard
                               ticket={selectedTicket}
                               onUpdate={(data) => handleInlineUpdate(selectedTicket.id, data)}
+                            />
+                            <StaffHardwareReturnPanel
+                              ticketId={selectedTicket.id}
+                              organizationId={
+                                (selectedTicket as any).organizationId ||
+                                (selectedTicket as any).organization_id ||
+                                (ticketCompany as any)?.organizationId ||
+                                (ticketCompany as any)?.organization_id ||
+                                null
+                              }
                             />
                             <SmartContextPanel 
                               ticket={selectedTicket}

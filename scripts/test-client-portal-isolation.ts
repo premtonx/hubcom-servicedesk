@@ -77,6 +77,14 @@ import {
   matchOrganizationByName,
 } from '../src/lib/client-portal/stamp-ticket-organization.js';
 import type { OrganizationRecord } from '../src/lib/client-portal/organizations.js';
+import {
+  defaultHardwareReturnsConfig,
+  evaluateHardwareModuleAccess,
+  extractHardwareContactsFromUser,
+  isHardwareReturnsEnabled,
+  normalizeHardwareReturnInput,
+  normalizeHardwareReturnsConfig,
+} from '../src/lib/client-portal/hardware-returns.js';
 
 process.env.EMAIL_CHANNEL_SECRET_KEY =
   process.env.EMAIL_CHANNEL_SECRET_KEY ||
@@ -1412,6 +1420,146 @@ async function testStaffTicketOrgStampAndPortalVisibility(): Promise<void> {
   );
 }
 
+function testHardwareReturnsModuleGate(): void {
+  console.log('\n--- Hardware-Rücklieferungen module gate ---');
+
+  const CITADELLE = ORG_A;
+  const DPG = ORG_B;
+
+  const defaults = defaultHardwareReturnsConfig();
+  assert(defaults.auto_send_enabled === false, 'auto_send_enabled defaults to false');
+  assert(defaults.mail1_days_after_delivery === 14, 'mail1 default 14 days after delivery');
+  assert(defaults.mail2_days_after_mail1 === 7, 'mail2 default 7 days after mail1');
+  assert(defaults.mail3_days_after_mail2 === 7, 'mail3 default 7 days after mail2');
+  assert(
+    JSON.stringify(defaults.stage_recipients.mail1.to_roles) === JSON.stringify(['employee']),
+    'mail1 to_roles defaults to employee',
+  );
+  assert(
+    JSON.stringify(defaults.stage_recipients.mail2.cc_roles) ===
+      JSON.stringify(['project_manager']),
+    'mail2 cc includes project_manager',
+  );
+  assert(
+    JSON.stringify(defaults.stage_recipients.mail3.cc_roles) ===
+      JSON.stringify(['project_manager', 'manager', 'ceo']),
+    'mail3 cc includes project_manager, manager, ceo',
+  );
+
+  const normalized = normalizeHardwareReturnsConfig({
+    auto_send_enabled: true,
+    mail1_days_after_delivery: 21,
+    ceo_email: 'gf@dpg.test',
+    stage_recipients: {
+      mail1: { to_roles: ['employee'], extra_to: ['extra@dpg.test'] },
+    },
+  });
+  assert(normalized.auto_send_enabled === true, 'normalize preserves auto_send_enabled true');
+  assert(normalized.mail1_days_after_delivery === 21, 'normalize preserves mail1 days');
+  assert(normalized.ceo_email === 'gf@dpg.test', 'normalize ceo_email');
+  assert(
+    normalized.stage_recipients.mail1.extra_to.includes('extra@dpg.test'),
+    'normalize mail1 extra_to',
+  );
+  assert(
+    normalized.stage_recipients.mail3.cc_roles.includes('ceo'),
+    'normalize keeps mail3 ceo default when unset',
+  );
+
+  assert(
+    isHardwareReturnsEnabled({ hardware_returns_enabled: false }) === false,
+    'Citadelle-style org: module disabled',
+  );
+  assert(
+    isHardwareReturnsEnabled({ hardware_returns_enabled: true }) === true,
+    'DPG-style org: module enabled',
+  );
+
+  // Citadelle AG — module off → 404 semantics (never expose DPG fields).
+  const citadelleBlocked = evaluateHardwareModuleAccess({
+    orgEnabled: false,
+    sessionOrgId: CITADELLE,
+    ticketOrgId: CITADELLE,
+    role: 'CLIENT_ADMIN',
+  });
+  assert(
+    citadelleBlocked.ok === false && citadelleBlocked.status === 404,
+    'Citadelle hardware endpoints return 404 when module disabled',
+  );
+
+  // Cross-tenant: DPG admin must not touch Citadelle ticket even if somehow enabled.
+  const crossTenant = evaluateHardwareModuleAccess({
+    orgEnabled: true,
+    sessionOrgId: DPG,
+    ticketOrgId: CITADELLE,
+    role: 'CLIENT_ADMIN',
+  });
+  assert(
+    crossTenant.ok === false && crossTenant.status === 404,
+    'DPG cannot access Citadelle hardware-return ticket',
+  );
+
+  // DPG CLIENT_ADMIN / CLIENT_SUPPORTER can mutate own-org hardware returns.
+  const dpgAdmin = evaluateHardwareModuleAccess({
+    orgEnabled: true,
+    sessionOrgId: DPG,
+    ticketOrgId: DPG,
+    role: 'CLIENT_ADMIN',
+  });
+  assert(dpgAdmin.ok === true, 'DPG CLIENT_ADMIN can update hardware returns');
+  const dpgSupporter = evaluateHardwareModuleAccess({
+    orgEnabled: true,
+    sessionOrgId: DPG,
+    ticketOrgId: DPG,
+    role: 'CLIENT_SUPPORTER',
+  });
+  assert(dpgSupporter.ok === true, 'DPG CLIENT_SUPPORTER can update hardware returns');
+
+  // CLIENT_USER stays simplified — write blocked with 403.
+  const dpgUser = evaluateHardwareModuleAccess({
+    orgEnabled: true,
+    sessionOrgId: DPG,
+    ticketOrgId: DPG,
+    role: 'CLIENT_USER',
+  });
+  assert(
+    dpgUser.ok === false && dpgUser.status === 403,
+    'DPG CLIENT_USER cannot update hardware-return fields',
+  );
+
+  const due = normalizeHardwareReturnInput(
+    {
+      delivery_date: '2026-11-01',
+      project_manager_email: 'pm@dpg.test',
+      manager_email: 'chef@dpg.test',
+      stage_recipients_override: {
+        mail2: { to: ['emp@dpg.test'], cc: ['pm@dpg.test'] },
+      },
+    },
+    { mail1Days: 14 },
+  );
+  assert(due.return_due_date === '2026-11-15', 'return_due_date auto +14 days from delivery');
+  assert(due.project_manager_email === 'pm@dpg.test', 'project_manager_email accepted');
+  assert(due.manager_email === 'chef@dpg.test', 'manager_email accepted');
+  assert(
+    Array.isArray(due.stage_recipients_override?.mail2?.to) &&
+      due.stage_recipients_override!.mail2!.to.includes('emp@dpg.test'),
+    'stage_recipients_override mail2 preserved',
+  );
+
+  const contacts = extractHardwareContactsFromUser({
+    phone_office: '+49 30 111',
+    phone_mobile: '+49 170 222',
+    project_manager_name: 'PM Name',
+    project_manager_email: 'pm@dpg.test',
+    manager_name: 'Chef',
+    manager_email: 'chef@dpg.test',
+  });
+  assert(contacts.employee_phone === '+49 30 111', 'user phone_office → employee_phone');
+  assert(contacts.project_manager_email === 'pm@dpg.test', 'user project_manager_email mapped');
+  assert(contacts.manager_email === 'chef@dpg.test', 'user manager_email mapped');
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -1429,6 +1577,7 @@ async function main(): Promise<void> {
   testPortalKbIsolation();
   testPortalExchangeIsolation();
   testPortalTresorVaultIsolation();
+  testHardwareReturnsModuleGate();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

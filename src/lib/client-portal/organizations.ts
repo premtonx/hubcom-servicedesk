@@ -5,6 +5,11 @@
 
 import { randomUUID } from 'crypto';
 import { queryDb } from '../postgres-backend.js';
+import {
+  defaultHardwareReturnsConfig,
+  normalizeHardwareReturnsConfig,
+  type HardwareReturnsConfig,
+} from './hardware-returns.js';
 
 export interface OrganizationRecord {
   id: string;
@@ -37,6 +42,10 @@ export interface OrganizationRecord {
   is_demo: boolean;
   /** Linked CRM company document id (geistdesk_documents.companies). */
   crm_company_id: string | null;
+  /** Per-org Hardware-Rücklieferungen & SL module (default false). */
+  hardware_returns_enabled: boolean;
+  /** Module config (recipients, templates, delays). */
+  hardware_returns_config: HardwareReturnsConfig;
   created_at: string;
   updated_at: string;
 }
@@ -63,6 +72,8 @@ export interface OrganizationInput {
   contract_term?: string | null;
   is_demo?: boolean;
   crm_company_id?: string | null;
+  hardware_returns_enabled?: boolean;
+  hardware_returns_config?: Partial<HardwareReturnsConfig> | HardwareReturnsConfig | null;
 }
 
 function slugify(input: string): string {
@@ -147,6 +158,11 @@ function mapRow(row: any): OrganizationRecord {
       row.crm_company_id == null || row.crm_company_id === ''
         ? null
         : String(row.crm_company_id),
+    hardware_returns_enabled:
+      row.hardware_returns_enabled === true || row.hardware_returns_enabled === 't',
+    hardware_returns_config: normalizeHardwareReturnsConfig(
+      row.hardware_returns_config ?? defaultHardwareReturnsConfig(),
+    ),
     created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
     updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : '',
   };
@@ -269,15 +285,19 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
     input.crm_company_id == null || String(input.crm_company_id).trim() === ''
       ? null
       : String(input.crm_company_id).trim();
+  const hardwareReturnsEnabled = Boolean(input.hardware_returns_enabled);
+  const hardwareReturnsConfig = normalizeHardwareReturnsConfig(
+    input.hardware_returns_config ?? defaultHardwareReturnsConfig(),
+  );
 
   const res = await queryDb(
     `INSERT INTO organizations (
        id, name, slug, domain, is_active, settings, m365_tenant_id, sso_enabled,
        logo_url, portal_title, portal_banner_url, industry, website, tier, sla,
        contract_renewal, monthly_rate, contract_reference, contract_notes, contract_term,
-       is_demo, crm_company_id
+       is_demo, crm_company_id, hardware_returns_enabled, hardware_returns_config
      )
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24::jsonb)
      RETURNING *`,
     [
       id,
@@ -302,6 +322,8 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
       contractTerm,
       isDemo,
       crmCompanyId,
+      hardwareReturnsEnabled,
+      JSON.stringify(hardwareReturnsConfig),
     ],
   );
   return mapRow(res.rows[0]);
@@ -418,6 +440,17 @@ export async function updateOrganization(
         ? null
         : String(input.crm_company_id).trim()
       : existing.crm_company_id;
+  const hardwareReturnsEnabled =
+    input.hardware_returns_enabled !== undefined
+      ? Boolean(input.hardware_returns_enabled)
+      : existing.hardware_returns_enabled;
+  const hardwareReturnsConfig =
+    input.hardware_returns_config !== undefined
+      ? normalizeHardwareReturnsConfig({
+          ...existing.hardware_returns_config,
+          ...(input.hardware_returns_config || {}),
+        })
+      : existing.hardware_returns_config;
 
   const res = await queryDb(
     `UPDATE organizations
@@ -442,6 +475,8 @@ export async function updateOrganization(
             contract_term = $20,
             is_demo = $21,
             crm_company_id = $22,
+            hardware_returns_enabled = $23,
+            hardware_returns_config = $24::jsonb,
             updated_at = NOW()
       WHERE id = $1
       RETURNING *`,
@@ -468,6 +503,8 @@ export async function updateOrganization(
       contractTerm,
       isDemo,
       crmCompanyId,
+      hardwareReturnsEnabled,
+      JSON.stringify(hardwareReturnsConfig),
     ],
   );
   if (!res.rowCount) return null;
@@ -497,4 +534,26 @@ export async function updateOrganizationBranding(
     portal_title: input.portal_title,
     portal_banner_url: input.portal_banner_url,
   });
+}
+
+export async function updateOrganizationHardwareModule(
+  id: string,
+  input: {
+    hardware_returns_enabled?: boolean;
+    hardware_returns_config?: Partial<HardwareReturnsConfig> | null;
+  },
+): Promise<OrganizationRecord | null> {
+  return updateOrganization(id, {
+    hardware_returns_enabled: input.hardware_returns_enabled,
+    hardware_returns_config: input.hardware_returns_config ?? undefined,
+  });
+}
+
+/** Public module flags exposed on /api/portal/me and /api/organizations/:id. */
+export function organizationEnabledModules(org: OrganizationRecord | null | undefined): {
+  hardwareReturns: boolean;
+} {
+  return {
+    hardwareReturns: Boolean(org?.hardware_returns_enabled),
+  };
 }

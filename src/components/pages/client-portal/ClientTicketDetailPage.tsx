@@ -17,6 +17,13 @@ import { sanitizeTimelineHtml } from '../../../lib/sanitize-html';
 import { portalPriorityLabel, portalStatusLabel } from '../../../lib/portal/status';
 import { portalPriorityBadgeClass, portalStatusBadgeClass } from '../../portal/portalUi';
 import { formatRelativeTime } from '../../../lib/dashboard-format-utils';
+import {
+  emptyHardwareReturnForm,
+  hardwareFormFromRecord,
+  hardwareFormToPayload,
+  HardwareReturnSections,
+  type HardwareReturnFormState,
+} from '../../tickets/HardwareReturnSections';
 
 type TimelineItem = {
   id: string;
@@ -57,9 +64,16 @@ export default function ClientTicketDetailPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [addUserId, setAddUserId] = useState('');
+  const [hardwareEnabled, setHardwareEnabled] = useState(false);
+  const [hardwareForm, setHardwareForm] = useState<HardwareReturnFormState>(() =>
+    emptyHardwareReturnForm(),
+  );
+  const [hardwareDirty, setHardwareDirty] = useState(false);
+  const [savingHardware, setSavingHardware] = useState(false);
 
   const membersById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
   const canManageParticipants = isOrgWide;
+  const canEditHardware = isOrgWide && hardwareEnabled;
 
   const refresh = useCallback(async () => {
     if (!ticketId) return;
@@ -74,6 +88,10 @@ export default function ClientTicketDetailPage() {
       setMessages(detail.messages || []);
       setParticipants((detail.participants || []).map((p) => p.user_id));
       setMembers(mems || []);
+      const enabled = Boolean((detail as any).enabledModules?.hardwareReturns);
+      setHardwareEnabled(enabled);
+      setHardwareForm(hardwareFormFromRecord((detail as any).hardwareReturn || null));
+      setHardwareDirty(false);
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Ticket konnte nicht geladen werden');
       setTicket(null);
@@ -188,6 +206,21 @@ export default function ClientTicketDetailPage() {
       await refresh();
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Entfernen fehlgeschlagen');
+    }
+  };
+
+  const saveHardware = async () => {
+    if (!ticketId || !canEditHardware) return;
+    setSavingHardware(true);
+    try {
+      await clientPortalApi.updateHardwareReturn(ticketId, hardwareFormToPayload(hardwareForm));
+      setHardwareDirty(false);
+      toast.success('Hardware-Daten gespeichert.');
+      await refresh();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Hardware-Speichern fehlgeschlagen');
+    } finally {
+      setSavingHardware(false);
     }
   };
 
@@ -470,6 +503,31 @@ export default function ClientTicketDetailPage() {
                 </div>
               ) : null}
             </section>
+
+            {hardwareEnabled ? (
+              <section className="space-y-3 pt-1">
+                <HardwareReturnSections
+                  value={hardwareForm}
+                  readOnly={!canEditHardware}
+                  compact
+                  onChange={(next) => {
+                    setHardwareForm(next);
+                    setHardwareDirty(true);
+                  }}
+                />
+                {canEditHardware ? (
+                  <Button
+                    type="button"
+                    className="w-full font-bold"
+                    disabled={!hardwareDirty || savingHardware}
+                    onClick={() => void saveHardware()}
+                  >
+                    {savingHardware ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}
+                    Hardware-Daten speichern
+                  </Button>
+                ) : null}
+              </section>
+            ) : null}
 
             <section className="space-y-2 pt-1">
               <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import { Loader2, Paperclip, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../ui/button';
@@ -13,6 +14,12 @@ import {
   type PortalTicketAttachment,
 } from '../../../services/clientPortalApi';
 import type { TicketPriority } from '../../../types';
+import {
+  emptyHardwareReturnForm,
+  hardwareFormToPayload,
+  HardwareReturnSections,
+  type HardwareReturnFormState,
+} from '../../tickets/HardwareReturnSections';
 
 const PRIORITIES: { value: TicketPriority; label: string }[] = [
   { value: 'low', label: 'Niedrig' },
@@ -67,6 +74,10 @@ export default function ClientCreateTicketPage() {
   const [onBehalfOf, setOnBehalfOf] = useState('');
   const [participantIds, setParticipantIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [hardwareEnabled, setHardwareEnabled] = useState(false);
+  const [hardwareForm, setHardwareForm] = useState<HardwareReturnFormState>(() =>
+    emptyHardwareReturnForm(),
+  );
 
   useEffect(() => {
     if (!isOrgWide) return;
@@ -75,6 +86,22 @@ export default function ClientCreateTicketPage() {
       .then(setMembers)
       .catch(() => setMembers([]));
   }, [isOrgWide]);
+
+  useEffect(() => {
+    let active = true;
+    void axios
+      .get('/api/portal/me', { withCredentials: true })
+      .then((res) => {
+        if (!active) return;
+        setHardwareEnabled(Boolean(res.data?.enabledModules?.hardwareReturns));
+      })
+      .catch(() => {
+        if (active) setHardwareEnabled(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [session?.organizationId]);
 
   const onFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -109,6 +136,8 @@ export default function ClientCreateTicketPage() {
         attachments,
         customerName: requester?.name || session.name,
         customerEmail: requester?.email || session.email,
+        hardwareReturn:
+          hardwareEnabled && isOrgWide ? hardwareFormToPayload(hardwareForm) : undefined,
       });
       toast.success('Ticket erstellt.');
       navigate(`/portal/tickets/${ticketId}`, { replace: true });
@@ -209,6 +238,10 @@ export default function ClientCreateTicketPage() {
               <p className="text-[11px] text-slate-400">Strg/Cmd für Mehrfachauswahl</p>
             </div>
           </div>
+        ) : null}
+
+        {hardwareEnabled && isOrgWide ? (
+          <HardwareReturnSections value={hardwareForm} onChange={setHardwareForm} />
         ) : null}
 
         <div className="space-y-1.5">

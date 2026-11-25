@@ -37,6 +37,12 @@ import {
   type PortalTicketScope,
 } from '../lib/client-portal/portal-ticket-api.js';
 import { listTicketIdsForParticipant } from '../lib/client-portal/ticket-participants.js';
+import {
+  getHardwareReturnByTicketId,
+  sanitizeHardwareReturnForClient,
+  upsertHardwareReturn,
+} from '../lib/client-portal/hardware-returns.js';
+import { getOrganization } from '../lib/client-portal/organizations.js';
 import { ticketMatchesPortalStatusFilter } from '../lib/portal/status.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
@@ -187,12 +193,25 @@ router.get('/tickets/:id', async (req: Request, res: Response): Promise<any> => 
       participants,
     });
 
-    return res.json(payload);
+    const org = await getOrganization(session.organizationId);
+    let hardwareReturn = null;
+    if (org?.hardware_returns_enabled) {
+      const hw = await getHardwareReturnByTicketId(id);
+      hardwareReturn = hw ? sanitizeHardwareReturnForClient(hw) : null;
+    }
+
+    return res.json({
+      ...payload,
+      hardwareReturn,
+      enabledModules: { hardwareReturns: Boolean(org?.hardware_returns_enabled) },
+    });
   } catch (err: any) {
     safeLog('error', '[portal/tickets] get failed', err?.message || err);
     return res.status(500).json({ error: safeErrorMessage(err, 'Ticket konnte nicht geladen werden') });
   }
 });
+
+const hardwareReturnSchema = z.record(z.string(), z.unknown()).optional().nullable();
 
 const createSchema = z.object({
   subject: z.string().trim().min(3).max(500),
@@ -205,6 +224,7 @@ const createSchema = z.object({
   attachments: z.array(z.any()).max(MAX_ATTACHMENTS).optional(),
   customerName: z.string().trim().max(255).optional().nullable(),
   customerEmail: z.string().trim().max(255).optional().nullable(),
+  hardwareReturn: hardwareReturnSchema,
 });
 
 router.post('/tickets', async (req: Request, res: Response): Promise<any> => {
@@ -323,9 +343,29 @@ router.post('/tickets', async (req: Request, res: Response): Promise<any> => {
 
     safeLog('info', '[portal/tickets] created', created.id, session.id);
 
+    let hardwareReturn = null;
+    const org = await getOrganization(session.organizationId);
+    if (
+      org?.hardware_returns_enabled &&
+      isClientOrgWideTicketRole(session.role) &&
+      data.hardwareReturn &&
+      typeof data.hardwareReturn === 'object'
+    ) {
+      hardwareReturn = sanitizeHardwareReturnForClient(
+        await upsertHardwareReturn({
+          ticketId: created.id,
+          organizationId: session.organizationId,
+          input: data.hardwareReturn as any,
+          mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
+        }),
+      );
+    }
+
     return res.status(201).json({
       success: true,
       ticket: sanitizeTicketForClient({ id: created.id, ...ticketPayload }),
+      hardwareReturn,
+      enabledModules: { hardwareReturns: Boolean(org?.hardware_returns_enabled) },
     });
   } catch (err: any) {
     safeLog('error', '[portal/tickets] create failed', err?.message || err);
@@ -415,6 +455,7 @@ const patchSchema = z.object({
     .enum(['open', 'pending', 'in_progress', 'resolved', 'closed', 'waiting_customer', 'on_hold', 'paused'])
     .optional(),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
+  hardwareReturn: hardwareReturnSchema,
 });
 
 router.patch('/tickets/:id', async (req: Request, res: Response): Promise<any> => {
@@ -451,11 +492,38 @@ router.patch('/tickets/:id', async (req: Request, res: Response): Promise<any> =
       patch.resolvedAt = new Date().toISOString();
     }
 
-    await updateDocDirect('tickets', id, patch);
+    if (Object.keys(patch).length > 1) {
+      await updateDocDirect('tickets', id, patch);
+    }
+
+    let hardwareReturn = null;
+    const org = await getOrganization(session.organizationId);
+    if (parsed.data.hardwareReturn !== undefined) {
+      if (!org?.hardware_returns_enabled) {
+        return res.status(404).json({ error: 'Hardware-Rücklieferungen sind für diese Organisation nicht aktiv.' });
+      }
+      if (!isClientOrgWideTicketRole(session.role)) {
+        return res.status(403).json({ error: 'Forbidden: Nur Kunden-Admin/Supporter dürfen Hardware-Felder ändern.' });
+      }
+      hardwareReturn = sanitizeHardwareReturnForClient(
+        await upsertHardwareReturn({
+          ticketId: id,
+          organizationId: session.organizationId,
+          input: (parsed.data.hardwareReturn || {}) as any,
+          mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
+        }),
+      );
+    } else if (org?.hardware_returns_enabled) {
+      const hw = await getHardwareReturnByTicketId(id);
+      hardwareReturn = hw ? sanitizeHardwareReturnForClient(hw) : null;
+    }
+
     const updated = await getDocDirect('tickets', id);
     return res.json({
       success: true,
       ticket: sanitizeTicketForClient({ ...(updated || access.ticket), id, ...patch }),
+      hardwareReturn,
+      enabledModules: { hardwareReturns: Boolean(org?.hardware_returns_enabled) },
     });
   } catch (err: any) {
     safeLog('error', '[portal/tickets] patch failed', err?.message || err);

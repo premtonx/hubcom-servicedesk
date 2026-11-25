@@ -14,6 +14,7 @@ import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 import { resolveOrganizationIdFromUser } from '../lib/client-portal/ticket-visibility.js';
 import {
   getOrganization,
+  organizationEnabledModules,
   updateOrganizationBranding,
 } from '../lib/client-portal/organizations.js';
 import {
@@ -37,6 +38,8 @@ async function loadOrgBranding(organizationId: string | null | undefined) {
     portal_title: org.portal_title,
     portal_banner_url: org.portal_banner_url,
     resolved_portal_title: resolvePortalTitle(org.name, org.portal_title),
+    hardware_returns_enabled: Boolean(org.hardware_returns_enabled),
+    enabledModules: organizationEnabledModules(org),
   };
 }
 
@@ -53,6 +56,7 @@ router.get('/me', requireClientPortalRole(), async (req: Request, res: Response)
       organizationId,
     },
     organization,
+    enabledModules: organization?.enabledModules || { hardwareReturns: false },
   });
 });
 
