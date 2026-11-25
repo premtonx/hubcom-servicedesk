@@ -72,6 +72,13 @@ import {
   formatKbCsvImportSummary,
   planKbCsvImportArticles,
 } from '../src/lib/kb/kb-csv-import-service.js';
+import { parseSharePointReturnsCsv } from '../src/lib/client-portal/hardware-returns-csv-parser.js';
+import {
+  countUniqueEmployees,
+  diffNewCatalogItems,
+  mapParsedRowToHardwareInput,
+  planSharePointImportRows,
+} from '../src/lib/client-portal/hardware-returns-csv-import.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -2891,6 +2898,123 @@ async function testOrganizationDirectorySyncPart2(): Promise<void> {
   );
 }
 
+/** Part 2 — SharePoint Returns CSV import API (preview/commit, RBAC, no tickets). */
+function testSharePointReturnsCsvImportApiIsolation(): void {
+  console.log('\n--- SharePoint Returns CSV import API (Part 2) ---');
+
+  const csv =
+    '\uFEFFID;Erstellt;RuecklieferungDatum;Bearbeiter;Mitarbeiter;MitarbeiterEMail;Status;SLA;ServiceLevel;Versandart;Ruecklieferung;RuecklieferungErfolgt;Mail1Versendet;Mail1VersendetDatum;Mail3Versendet;Mail3VersendetDatum;Geraetetyp;Beschreibung;Betreff\n' +
+    '10;01.10.2026;15.10.2026;Ada;Max;max@dpg.test;In Bearbeitung;Normal;2;Express;Ja;Nein;Wahr;;Falsch;01.01.2020;"ALT ZG1710\nNEU Mxtra IQ S/N: HA0478";OK;Profitest\n' +
+    '11;02.10.2026;16.10.2026;Test User;Y;y@dpg.test;Neu;Normal;1;Standard;Ja;Nein;Falsch;;Falsch;;"Test! Test!";test junk;TestABC\n';
+
+  const parsed = parseSharePointReturnsCsv(csv);
+  assert(parsed.rows.length === 2, 'CSV parses 2 return rows');
+
+  const planned = planSharePointImportRows({
+    rows: parsed.rows,
+    existingExternalRefIds: new Set(),
+    scope: 'all',
+    excludeTestRows: true,
+  });
+  assert(
+    planned.filter((r) => r.willImport).length === 1 &&
+      planned.some((r) => r.skipReason === 'test'),
+    'test rows excluded from import plan',
+  );
+
+  const dupPlan = planSharePointImportRows({
+    rows: parsed.rows,
+    existingExternalRefIds: new Set(['10', '11']),
+    scope: 'all',
+    excludeTestRows: false,
+  });
+  assert(
+    dupPlan.every((r) => r.skipReason === 'duplicate') &&
+      dupPlan.every((r) => !r.willImport),
+    're-import skips 100% of existing external_ref_ids',
+  );
+
+  const mapped = mapParsedRowToHardwareInput(parsed.rows[0], {
+    prefix: 'DPG',
+    enableAutoReminders: false,
+  });
+  assert(
+    mapped.ticket_id === null &&
+      mapped.return_number === 'DPG-10' &&
+      mapped.auto_reminder_enabled === false &&
+      mapped.device_new_type === 'Profitest MXtra IQ' &&
+      mapped.subject === null,
+    'import maps to existing HW fields only (ticket_id null, no Betreff)',
+    JSON.stringify({
+      ticket_id: mapped.ticket_id,
+      return_number: mapped.return_number,
+      device_new_type: mapped.device_new_type,
+    }),
+  );
+
+  const newCats = diffNewCatalogItems(parsed.discoveredCatalogs, {
+    ...DEFAULT_HARDWARE_RETURNS_CATALOGS,
+    device_types: [],
+    shipping_methods: ['Standard'],
+  });
+  assert(
+    newCats.device_types.includes('Profitest MXtra IQ') &&
+      newCats.shipping_methods.includes('Kein Versand') &&
+      !newCats.device_types.some((t) => /HA0478|ZG1710/i.test(t)),
+    'catalogs gain normalized types + Kein Versand; never raw serials',
+  );
+  assert(countUniqueEmployees(parsed.rows.filter((r) => !r.isLikelyTest)) >= 1, 'employees detected');
+
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: false,
+      sessionOrgId: ORG_B,
+      ticketOrgId: ORG_B,
+      role: 'CLIENT_ADMIN',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === false,
+    'hardware_returns_enabled=false → denied (403 path)',
+  );
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: true,
+      sessionOrgId: ORG_B,
+      ticketOrgId: ORG_B,
+      role: 'CLIENT_USER',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === false,
+    'CLIENT_USER → 403 on returns import',
+  );
+
+  const routesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/hardwareReturnsRoutes.ts'),
+    'utf8',
+  );
+  const importSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-csv-import.ts'),
+    'utf8',
+  );
+  assert(
+    routesSrc.includes('/import-csv/preview') &&
+      routesSrc.includes('commitSharePointReturnsImport') &&
+      routesSrc.includes("role === 'AGENT'") &&
+      routesSrc.includes("role === 'CLIENT_SUPPORTER'"),
+    'preview+commit routes gated for AGENT + CLIENT_SUPPORTER',
+  );
+  assert(
+    importSrc.includes('GREATEST(hardware_returns_seq') &&
+      importSrc.includes('csv:') &&
+      importSrc.includes("LIKE 'csv:%'") &&
+      importSrc.includes('ticket_id: null') &&
+      !/addDocDirect\(\s*['"]tickets['"]/.test(importSrc),
+    'commit updates seq, seeds csv: directory users, never creates tickets',
+  );
+  assert(
+    fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8').includes('limit: "5mb"'),
+    'JSON body limit raised to 5mb for CSV payloads',
+  );
+}
+
 /** Workbench create/edit → full-page ReturnEditorPage contract (Part 3). */
 function testHardwareReturnsWorkbenchDrawerContract(): void {
   console.log('\n--- Hardware returns workbench full-page editor ---');
@@ -3752,6 +3876,7 @@ async function main(): Promise<void> {
   testHardwareReturnsWorkbenchDrawerContract();
   testHardwareReturnsSchemaCatalogsPart1();
   await testOrganizationDirectorySyncPart2();
+  testSharePointReturnsCsvImportApiIsolation();
   testDefaultTicketCreateExcludesRmaFields();
   testPortalReturnsPageNavigationGate();
   testPortalUserDeleteAccess();

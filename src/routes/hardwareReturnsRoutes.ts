@@ -22,12 +22,15 @@ import {
 import {
   bulkHardwareReturnsAction,
   createHardwareReturnFromWorkbench,
-  importHardwareReturnsCsv,
   listHardwareReturnsWorkbench,
   markHardwareReturned,
   previewHardwareReminder,
   sendHardwareReminder,
 } from '../lib/client-portal/hardware-returns-escalation.js';
+import {
+  commitSharePointReturnsImport,
+  previewSharePointReturnsImport,
+} from '../lib/client-portal/hardware-returns-csv-import.js';
 import {
   appendHardwareReturnActivity,
   deleteHardwareReturn,
@@ -557,31 +560,96 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
     }
   });
 
-  const importSchema = z.object({
+  function canImportSharePointCsv(role: string): boolean {
+    if (isClientPortalRole(role)) {
+      return role === 'CLIENT_ADMIN' || role === 'CLIENT_SUPPORTER';
+    }
+    return (
+      role === 'SYSTEM_ADMIN' ||
+      role === 'admin' ||
+      role === 'AGENT' ||
+      role === 'agent'
+    );
+  }
+
+  const importPreviewSchema = z.object({
     organizationId: z.string().uuid().optional(),
-    csv: z.string().min(1).max(5_000_000),
+    csvText: z.string().min(1).max(5_000_000).optional(),
+    /** Legacy alias — prefer csvText. */
+    csv: z.string().min(1).max(5_000_000).optional(),
+    scope: z.enum(['all', 'open_only']).optional().default('all'),
+    excludeTestRows: z.boolean().optional().default(true),
+  }).refine((b) => Boolean((b.csvText || b.csv || '').trim()), {
+    message: 'csvText is required',
   });
 
-  router.post('/import-csv', async (req: Request, res: Response): Promise<any> => {
+  const importCommitSchema = z.object({
+    organizationId: z.string().uuid().optional(),
+    csvText: z.string().min(1).max(5_000_000).optional(),
+    csv: z.string().min(1).max(5_000_000).optional(),
+    scope: z.enum(['all', 'open_only']).optional().default('all'),
+    excludeTestRows: z.boolean().optional().default(true),
+    mergeCatalogs: z.boolean().optional().default(false),
+    seedDirectory: z.boolean().optional().default(false),
+    enableAutoReminders: z.boolean().optional().default(false),
+  }).refine((b) => Boolean((b.csvText || b.csv || '').trim()), {
+    message: 'csvText is required',
+  });
+
+  router.post('/import-csv/preview', async (req: Request, res: Response): Promise<any> => {
     try {
-      const parsed = importSchema.safeParse(req.body || {});
-      if (!parsed.success) return res.status(400).json({ error: 'Invalid import payload' });
+      const parsed = importPreviewSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'Invalid preview payload', details: parsed.error.flatten() });
+      }
       const ctx = await resolveOrgForReturns(
         req,
         res,
         mode === 'staff' ? parsed.data.organizationId || String(req.query.organizationId || '') : null,
       );
       if (!ctx) return;
-      if (mode === 'portal' && ctx.role !== 'CLIENT_ADMIN') {
-        return res.status(403).json({ error: 'Forbidden: CLIENT_ADMIN required for CSV import.' });
+      if (!canImportSharePointCsv(ctx.role)) {
+        return res.status(403).json({ error: 'Forbidden: CSV import not allowed for this role.' });
       }
-      if (mode === 'staff' && ctx.role !== 'SYSTEM_ADMIN') {
-        return res.status(403).json({ error: 'Forbidden: SYSTEM_ADMIN required for CSV import.' });
-      }
-      const result = await importHardwareReturnsCsv({
+      const result = await previewSharePointReturnsImport({
         organizationId: ctx.organizationId,
-        csv: parsed.data.csv,
+        csvText: parsed.data.csvText || parsed.data.csv || '',
+        scope: parsed.data.scope,
+        excludeTestRows: parsed.data.excludeTestRows,
+      });
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      return res
+        .status(err?.status || 500)
+        .json({ error: safeErrorMessage(err, 'CSV-Vorschau fehlgeschlagen') });
+    }
+  });
+
+  router.post('/import-csv', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const parsed = importCommitSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'Invalid import payload', details: parsed.error.flatten() });
+      }
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? parsed.data.organizationId || String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      if (!canImportSharePointCsv(ctx.role)) {
+        return res.status(403).json({ error: 'Forbidden: CSV import not allowed for this role.' });
+      }
+      const result = await commitSharePointReturnsImport({
+        organizationId: ctx.organizationId,
+        csvText: parsed.data.csvText || parsed.data.csv || '',
+        scope: parsed.data.scope,
+        excludeTestRows: parsed.data.excludeTestRows,
+        mergeCatalogs: parsed.data.mergeCatalogs,
+        seedDirectory: parsed.data.seedDirectory,
+        enableAutoReminders: parsed.data.enableAutoReminders,
         actorId: req.user?.id,
+        actorName: req.user?.name || req.user?.email || 'CSV-Import',
       });
       return res.json({ success: true, ...result });
     } catch (err: any) {

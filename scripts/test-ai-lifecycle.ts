@@ -73,6 +73,18 @@ import {
   parseSharePointCsvRows,
 } from '../src/lib/kb/sharepoint-csv-import.js';
 import { planKbCsvImportArticles } from '../src/lib/kb/kb-csv-import-service.js';
+import { parseSharePointReturnsCsv } from '../src/lib/client-portal/hardware-returns-csv-parser.js';
+import {
+  countUniqueEmployees,
+  diffNewCatalogItems,
+  mapParsedRowToHardwareInput,
+  mergeCatalogLists,
+  planSharePointImportRows,
+} from '../src/lib/client-portal/hardware-returns-csv-import.js';
+import {
+  DEFAULT_HARDWARE_RETURNS_CATALOGS,
+  evaluateHardwareModuleAccess,
+} from '../src/lib/client-portal/hardware-returns.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -468,9 +480,8 @@ function testHardwareReturnsStandaloneLifecycle(): void {
   );
   assert(
     escalationSrc.includes('appendHardwareReturnActivity') &&
-      escalationSrc.includes('importHardwareReturnsCsv') &&
       !escalationSrc.includes("addDocDirect('tickets'"),
-    'CSV import + mail/mark-returned use activity_log, not ticket messages',
+    'mail/mark-returned use activity_log, not ticket messages',
   );
   assert(
     escalationSrc.includes('SET returned = TRUE') &&
@@ -904,6 +915,142 @@ function testPortalKbCategoryLifecycle(): void {
   );
 }
 
+function testSharePointReturnsCsvImportApiLifecycle(): void {
+  console.log('\n[21] SharePoint Returns CSV import API (Part 2) — plan, map, RBAC');
+
+  const ORG = 'org-dpg-bbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const csv =
+    '\uFEFFID;Erstellt;RuecklieferungDatum;Bearbeiter;Mitarbeiter;MitarbeiterEMail;MitarbeiterTelefonBuero;MitarbeiterMobil;Status;SLA;ServiceLevel;Versandart;Versand;BenoetigteZeitSL1;Exportiert;Ruecklieferung;RuecklieferungErfolgt;RueckgeliefertWann;Mail1Versendet;Mail1VersendetDatum;Mail3Versendet;Mail3VersendetDatum;Geraetetyp;Beschreibung;Betreff\n' +
+    '10;01.10.2026;15.10.2026;Ada;Max Mustermann;max@dpg.test;+49 1;+49 2;In Bearbeitung;Normal;2;Express;DHL;1,50;Nein;Ja;Nein;;Wahr;;Falsch;01.01.2020;"ALT BC 559053 0026\nNEU Secutest S2 N+10 S/N: EA7101520016";OK;Secutest\n' +
+    '11;02.10.2026;16.10.2026;Test User;Y;y@dpg.test;;;;Neu;Normal;1;Standard;;0;Nein;Ja;Wahr;02.10.2026;Falsch;;Falsch;;"Test! Test!";test junk;TestABC\n' +
+    '12;03.10.2026;17.10.2026;Ada;Eva;eva@dpg.test;;;;Geschlossen;Hoch;3;Kein Versand;;0;Ja;Ja;Wahr;03.10.2026;Wahr;03.10.2026;Falsch;;"ALT ---\nNEU Secutest PRO S/N HL7578850006";OK;Secutest\n';
+
+  const parsed = parseSharePointReturnsCsv(csv);
+  assert(parsed.rows.length === 3, 'parser yields 3 SharePoint return rows');
+
+  const planned = planSharePointImportRows({
+    rows: parsed.rows,
+    existingExternalRefIds: new Set(),
+    scope: 'all',
+    excludeTestRows: true,
+  });
+  assert(
+    planned.filter((r) => r.willImport).length === 2 &&
+      planned.some((r) => r.skipReason === 'test'),
+    'excludeTestRows skips TestABC row; 2 remain',
+  );
+
+  const openOnly = planSharePointImportRows({
+    rows: parsed.rows,
+    existingExternalRefIds: new Set(),
+    scope: 'open_only',
+    excludeTestRows: true,
+  });
+  assert(
+    openOnly.filter((r) => r.willImport).every((r) => !r.returned) &&
+      openOnly.some((r) => r.skipReason === 'completed_out_of_scope'),
+    'open_only excludes returned/completed rows',
+  );
+
+  const reimport = planSharePointImportRows({
+    rows: parsed.rows,
+    existingExternalRefIds: new Set(['10', '11', '12']),
+    scope: 'all',
+    excludeTestRows: true,
+  });
+  assert(
+    reimport.every((r) => !r.willImport) &&
+      reimport.filter((r) => r.skipReason === 'duplicate').length >= 2,
+    're-import skips 100% when all external_ref_ids exist',
+  );
+
+  const mapped = mapParsedRowToHardwareInput(parsed.rows[0], {
+    prefix: 'DPG',
+    enableAutoReminders: false,
+    actorName: 'importer',
+  });
+  assert(
+    mapped.ticket_id === null &&
+      mapped.external_ref_id === '10' &&
+      mapped.return_number === 'DPG-10' &&
+      mapped.auto_reminder_enabled === false &&
+      mapped.subject === null &&
+      Array.isArray(mapped.activity_log) &&
+      String(mapped.activity_log?.[0]?.message || '').includes('SharePoint CSV'),
+    'mapped input: ticket_id null, #DPG-10, no Betreff, auto_reminder false',
+    JSON.stringify(mapped),
+  );
+
+  const catalogs = diffNewCatalogItems(parsed.discoveredCatalogs, {
+    ...DEFAULT_HARDWARE_RETURNS_CATALOGS,
+    device_types: ['VL2E Adapter'],
+    shipping_methods: ['Standard'],
+  });
+  assert(
+    catalogs.device_types.includes('Secutest S2 N+10') &&
+      catalogs.shipping_methods.includes('Kein Versand') &&
+      !catalogs.device_types.some((t) => /EA7101520016|BC5590530026/i.test(t)),
+    'newCatalogItems merges normalized devices + Kein Versand; zero serials',
+  );
+  assert(
+    mergeCatalogLists(['Express'], ['Express', 'Samstag']).added.includes('Samstag'),
+    'mergeCatalogLists preserves existing and adds new',
+  );
+  assert(countUniqueEmployees(parsed.rows.filter((r) => !r.isLikelyTest)) >= 2, 'employees detected');
+
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: false,
+      sessionOrgId: ORG,
+      ticketOrgId: ORG,
+      role: 'CLIENT_ADMIN',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === false,
+    'org without hardware_returns_enabled denied',
+  );
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: true,
+      sessionOrgId: ORG,
+      ticketOrgId: ORG,
+      role: 'CLIENT_USER',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === false,
+    'CLIENT_USER denied on returns import gate',
+  );
+
+  const routesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/hardwareReturnsRoutes.ts'),
+    'utf8',
+  );
+  const importSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-csv-import.ts'),
+    'utf8',
+  );
+  assert(
+    routesSrc.includes('/import-csv/preview') &&
+      routesSrc.includes('previewSharePointReturnsImport') &&
+      routesSrc.includes('commitSharePointReturnsImport') &&
+      routesSrc.includes('SYSTEM_ADMIN') &&
+      routesSrc.includes('AGENT') &&
+      routesSrc.includes('CLIENT_SUPPORTER'),
+    'routes expose preview+commit with staff AGENT + portal SUPPORTER RBAC',
+  );
+  assert(
+    importSrc.includes('ticket_id: null') &&
+      importSrc.includes('GREATEST(hardware_returns_seq') &&
+      importSrc.includes("csv:") &&
+      importSrc.includes("LIKE 'csv:%'") &&
+      importSrc.includes('Aus SharePoint CSV importiert') &&
+      !/addDocDirect\(\s*['"]tickets['"]/.test(importSrc),
+    'commit bumps seq, seeds csv: directory, never creates tickets',
+  );
+  assert(
+    fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8').includes('limit: "5mb"'),
+    'express.json body limit ≥ 5mb for CSV import',
+  );
+}
+
 function testPortalKbSharePointCsvImportLifecycle(): void {
   console.log('\n[20] Portal KB SharePoint CSV import lifecycle');
 
@@ -1004,6 +1151,7 @@ async function main(): Promise<void> {
   testPortalUserDeleteLifecycle();
   testPortalKbCategoryLifecycle();
   testPortalKbSharePointCsvImportLifecycle();
+  testSharePointReturnsCsvImportApiLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);

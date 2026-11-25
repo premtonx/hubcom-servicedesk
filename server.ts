@@ -297,7 +297,8 @@ async function startServer() {
       : false,
   }));
   app.use(cookieParser());
-  app.use(express.json({ limit: "1mb" }));
+  // 5mb: SharePoint Returns / KB CSV import payloads (Ticketsystem_DPG*.csv).
+  app.use(express.json({ limit: "5mb" }));
 
   // Health check
   app.get("/api/health", (req, res) => {
