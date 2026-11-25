@@ -2142,7 +2142,8 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
     'primary action is Neue Rücklieferung erstellen (never Neues Ticket erstellen)',
   );
   assert(
-    workbenchSrc.includes('Details öffnen') && !workbenchSrc.includes('Ticket öffnen'),
+    (workbenchSrc.includes('Details öffnen') || workbenchSrc.includes('>Details<') || workbenchSrc.includes('title="Details öffnen"')) &&
+      !workbenchSrc.includes('Ticket öffnen'),
     'row action is Details öffnen (never Ticket öffnen)',
   );
   assert(

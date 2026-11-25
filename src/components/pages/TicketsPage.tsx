@@ -2060,7 +2060,7 @@ export default function TicketsPage() {
         ) : null}
         {showReturnsWorkbench && selectedOrganizationId ? (
           <div className="flex-1 min-w-0 min-h-0 overflow-y-auto">
-            <div className="p-4 md:p-6 max-w-7xl mx-auto">
+            <div className="w-full px-6 py-5">
               <ReturnsWorkbench
                 mode="staff"
                 organizationId={selectedOrganizationId}

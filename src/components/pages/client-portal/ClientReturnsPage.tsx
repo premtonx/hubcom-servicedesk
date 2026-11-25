@@ -69,7 +69,7 @@ export default function ClientReturnsPage() {
   }
 
   return (
-    <div className="p-6 lg:p-10 max-w-7xl mx-auto">
+    <div className="w-full min-h-0 flex-1 overflow-y-auto px-6 py-5">
       <ReturnsWorkbench
         mode="portal"
         organizationId={session.organizationId}

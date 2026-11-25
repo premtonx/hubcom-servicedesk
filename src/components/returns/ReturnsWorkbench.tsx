@@ -2,17 +2,27 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   Clock,
   Download,
   Loader2,
   Mail,
+  MailWarning,
   Package,
+  PackageOpen,
+  PanelRight,
+  Plug,
+  PlugZap,
   Plus,
   Search,
   Settings2,
+  ShieldAlert,
+  Tablet,
   Upload,
   X,
+  Zap,
+  type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
@@ -23,7 +33,10 @@ import {
   ReturnCreateEditDrawer,
   type ReturnMemberOption,
 } from './ReturnCreateEditDrawer';
-import { formatDateDeOnly } from '../../lib/client-portal/hardware-returns-dates';
+import {
+  formatDateDeOnly,
+  toIsoDateOnly,
+} from '../../lib/client-portal/hardware-returns-dates';
 
 type WorkbenchMode = 'portal' | 'staff';
 
@@ -72,7 +85,189 @@ function formatReturnNumber(hw: Record<string, any>): string {
   const n = String(hw.return_number || '').trim();
   if (n) return n.startsWith('#') ? n : `#${n}`;
   const id = String(hw.id || '').trim();
+  // Prefer short RL-style fallback over raw UUID when return_number is missing.
+  if (/^[0-9a-f-]{36}$/i.test(id)) return `#RL-${id.slice(0, 4).toUpperCase()}`;
   return id ? `#${id.slice(0, 8).toUpperCase()}` : '#RL-—';
+}
+
+function daysUntilDue(dueRaw: unknown, overdueDays: number): number | null {
+  if (overdueDays > 0) return -overdueDays;
+  const iso = toIsoDateOnly(dueRaw);
+  if (!iso) return null;
+  const due = new Date(`${iso}T00:00:00.000Z`);
+  if (Number.isNaN(due.getTime())) return null;
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const dueUtc = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
+  return Math.round((dueUtc - today) / (24 * 60 * 60 * 1000));
+}
+
+function DueCountdownPill({
+  overdueDays,
+  dueDate,
+  returned,
+}: {
+  overdueDays: number;
+  dueDate: unknown;
+  returned: boolean;
+}) {
+  if (returned) return null;
+  const remaining = daysUntilDue(dueDate, overdueDays);
+  if (remaining == null) return null;
+  if (remaining < 0) {
+    return (
+      <span className="inline-flex mt-1.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100 px-2 py-0.5 text-[10px] font-bold">
+        +{Math.abs(remaining)} Tage überfällig
+      </span>
+    );
+  }
+  if (remaining === 0) {
+    return (
+      <span className="inline-flex mt-1.5 rounded-full bg-amber-50 text-amber-800 border border-amber-100 px-2 py-0.5 text-[10px] font-bold">
+        Heute fällig
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex mt-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 text-[10px] font-bold">
+      Noch {remaining} Tage
+    </span>
+  );
+}
+
+type DeviceVisual = {
+  Icon: LucideIcon;
+  iconClass: string;
+  wrapClass: string;
+};
+
+function resolveDeviceVisual(deviceDetails: string): DeviceVisual {
+  const t = deviceDetails.toLowerCase();
+  if (/secutest|prüfgerät|pruefgeraet|mxtra|gossen|messgerät|messgeraet/.test(t)) {
+    return {
+      Icon: Zap,
+      iconClass: 'text-sky-700',
+      wrapClass: 'bg-sky-50 border-sky-100',
+    };
+  }
+  if (/adapter|prcd|vl2e|\bbt\b|kabel|leitung/.test(t)) {
+    return {
+      Icon: Plug,
+      iconClass: 'text-indigo-700',
+      wrapClass: 'bg-indigo-50 border-indigo-100',
+    };
+  }
+  if (/tablet|dock|tastatur|laptop|getac|notebook/.test(t)) {
+    return {
+      Icon: Tablet,
+      iconClass: 'text-slate-600',
+      wrapClass: 'bg-slate-100 border-slate-200',
+    };
+  }
+  return {
+    Icon: Package,
+    iconClass: 'text-slate-500',
+    wrapClass: 'bg-slate-50 border-slate-200',
+  };
+}
+
+function renderDeviceDetails(raw: string | null | undefined) {
+  const text = String(raw || '').trim();
+  if (!text) return <span className="text-slate-400">—</span>;
+  const visual = resolveDeviceVisual(text);
+  const Icon = visual.Icon;
+  // Highlight ALT / NEU serial snippets as monospace badges.
+  const parts = text.split(/(\b(?:ALT|NEU)\s*[:#]?\s*[A-Za-z0-9\-_/]+)/gi);
+  return (
+    <div className="flex items-start gap-2.5 max-w-[260px]">
+      <span
+        className={cn(
+          'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border',
+          visual.wrapClass,
+        )}
+      >
+        <Icon className={cn('w-4 h-4', visual.iconClass)} />
+      </span>
+      <div className="min-w-0 text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
+        {parts.map((part, idx) => {
+          if (/^\s*(ALT|NEU)\b/i.test(part)) {
+            return (
+              <span
+                key={idx}
+                className="inline-flex mx-0.5 rounded-md bg-slate-100 border border-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-700 align-middle"
+              >
+                {part.trim()}
+              </span>
+            );
+          }
+          return <span key={idx}>{part}</span>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MailStageStepper({
+  hw,
+  returnId,
+  nextDueStage,
+  onOpenSend,
+}: {
+  hw: Record<string, any>;
+  returnId: string;
+  nextDueStage: 1 | 2 | 3 | null;
+  onOpenSend: (returnId: string, stage: 1 | 2 | 3) => void;
+}) {
+  const stamps = [hw.mail1_sent_at, hw.mail2_sent_at, hw.mail3_sent_at] as const;
+  const recipientStamps = [
+    hw.mail1_sent_recipients,
+    hw.mail2_sent_recipients,
+    hw.mail3_sent_recipients,
+  ] as const;
+
+  return (
+    <div className="flex items-center gap-0 min-w-[168px]">
+      {([1, 2, 3] as const).map((stage, idx) => {
+        const sentAt = stamps[idx];
+        const recipients = recipientStamps[idx];
+        const done = Boolean(sentAt);
+        const prevDone = idx === 0 ? false : Boolean(stamps[idx - 1]);
+        const isNext = !done && nextDueStage === stage && !hw.returned;
+        const tip = sentAt
+          ? `${new Date(sentAt).toLocaleString('de-DE')}\nAn: ${(recipients?.to || []).join(', ') || '—'}\nCC: ${(recipients?.cc || []).join(', ') || '—'}`
+          : isNext
+            ? 'Nächste fällige Stufe — klicken zum Senden'
+            : 'Noch nicht gesendet — klicken zum Senden';
+        return (
+          <div key={stage} className="flex items-center">
+            {idx > 0 ? (
+              <div
+                className={cn('h-0.5 w-3 sm:w-4', prevDone ? 'bg-emerald-300' : 'bg-slate-200')}
+              />
+            ) : null}
+            <button
+              type="button"
+              title={tip}
+              disabled={Boolean(hw.returned)}
+              onClick={() => onOpenSend(returnId, stage)}
+              className={cn(
+                'relative flex h-8 min-w-[2.75rem] items-center justify-center gap-0.5 rounded-full border px-2 text-[10px] font-bold transition',
+                done
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : isNext
+                    ? 'bg-amber-50 text-amber-800 border-amber-300 ring-2 ring-amber-100'
+                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400',
+                hw.returned && 'opacity-60 cursor-not-allowed',
+              )}
+            >
+              {done ? <Check className="w-3 h-3 shrink-0" /> : null}
+              <span>{stage}.</span>
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function ReturnsWorkbench({
@@ -341,32 +536,52 @@ export function ReturnsWorkbench({
 
   const kpiCards = useMemo(
     () => [
-      { key: 'open', label: 'Offene Rücklieferungen', value: kpis.open, className: 'border-slate-200' },
+      {
+        key: 'open',
+        label: 'Offene Rücklieferungen',
+        value: kpis.open,
+        accent: 'border-t-sky-500',
+        Icon: PackageOpen,
+        iconWrap: 'bg-sky-50 text-sky-700 border-sky-100',
+        onClick: () => setView('open'),
+      },
       {
         key: 'overdue',
         label: 'Überfällig',
         value: kpis.overdue,
-        className: 'border-rose-200 bg-rose-50/40',
+        accent: 'border-t-rose-500',
+        Icon: AlertTriangle,
+        iconWrap: 'bg-rose-50 text-rose-700 border-rose-100',
         onClick: () => setView('overdue'),
       },
       {
         key: 'next',
         label: 'Nächste Mail fällig',
         value: kpis.nextMailDue,
-        className: 'border-amber-200 bg-amber-50/40',
+        accent: 'border-t-amber-500',
+        Icon: MailWarning,
+        iconWrap: 'bg-amber-50 text-amber-800 border-amber-100',
         onClick: () => setView('next_mail'),
       },
       {
         key: 's3',
         label: 'Stufe 3 eskaliert',
         value: kpis.stage3,
-        className: 'border-slate-200',
+        accent: 'border-t-violet-500',
+        Icon: ShieldAlert,
+        iconWrap: 'bg-violet-50 text-violet-700 border-violet-100',
+        onClick: () => {
+          setView('open');
+          setMailStatus('mail3');
+        },
       },
       {
         key: 'done',
         label: 'Zurückgeliefert (30 Tage)',
         value: kpis.returnedLast30,
-        className: 'border-emerald-200 bg-emerald-50/40',
+        accent: 'border-t-emerald-500',
+        Icon: CheckCircle2,
+        iconWrap: 'bg-emerald-50 text-emerald-700 border-emerald-100',
         onClick: () => setView('done'),
       },
     ],
@@ -374,18 +589,22 @@ export function ReturnsWorkbench({
   );
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
-            <Package className="w-5 h-5 text-emerald-600" />
-            Rücklieferungen
-          </h2>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Hardware-Rückgaben, Mahnstufen und Empfängersteuerung
-          </p>
+    <div className="w-full space-y-5">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-sky-100 bg-gradient-to-br from-sky-50 to-slate-50 text-sky-700 shadow-sm">
+            <PlugZap className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-xl font-black tracking-tight text-slate-900">
+              Rücklieferungen
+            </h2>
+            <p className="text-sm text-slate-500 mt-0.5">
+              Hardware-Rückgaben, Mahnstufen und Empfängersteuerung
+            </p>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 xl:justify-end">
           <span
             className={cn(
               'inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold border',
@@ -431,20 +650,35 @@ export function ReturnsWorkbench({
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        {kpiCards.map((c) => (
-          <button
-            key={c.key}
-            type="button"
-            onClick={c.onClick}
-            className={cn(
-              'rounded-2xl border bg-white p-4 text-left shadow-sm transition hover:shadow',
-              c.className,
-            )}
-          >
-            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
-            <p className="text-2xl font-black mt-1 tabular-nums">{c.value}</p>
-          </button>
-        ))}
+        {kpiCards.map((c) => {
+          const Icon = c.Icon;
+          return (
+            <button
+              key={c.key}
+              type="button"
+              onClick={c.onClick}
+              className={cn(
+                'rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:shadow border-t-2',
+                c.accent,
+              )}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 leading-snug">
+                  {c.label}
+                </p>
+                <span
+                  className={cn(
+                    'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border',
+                    c.iconWrap,
+                  )}
+                >
+                  <Icon className="w-4 h-4" />
+                </span>
+              </div>
+              <p className="text-2xl font-black mt-2 tabular-nums text-slate-900">{c.value}</p>
+            </button>
+          );
+        })}
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -576,20 +810,20 @@ export function ReturnsWorkbench({
                         />
                       </td>
                       <td className="p-3">
-                        <span className="font-mono text-xs font-bold text-slate-800">
-                          {formatReturnNumber(hw)}
-                        </span>
-                        {hw.external_ref_id &&
-                        String(hw.external_ref_id) !== String(hw.return_number || '') ? (
-                          <span className="ml-1 inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
-                            PA {hw.external_ref_id}
+                        <div className="flex flex-col items-start gap-1">
+                          <span className="font-mono text-xs font-bold text-slate-800">
+                            {formatReturnNumber(hw)}
                           </span>
-                        ) : null}
+                          {hw.external_ref_id &&
+                          String(hw.external_ref_id) !== String(hw.return_number || '') ? (
+                            <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600 border border-slate-200">
+                              PA {hw.external_ref_id}
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="p-3">
-                        <p className="font-semibold text-slate-900">
-                          {employeeName}
-                        </p>
+                        <p className="font-semibold text-slate-900">{employeeName}</p>
                         <p className="text-xs text-slate-500">{employeeEmail}</p>
                         <div className="mt-1 flex flex-wrap gap-1">
                           {hw.project_manager_email ? (
@@ -609,90 +843,84 @@ export function ReturnsWorkbench({
                           ) : null}
                         </div>
                       </td>
-                      <td className="p-3 text-xs text-slate-700 whitespace-pre-wrap max-w-[220px]">
-                        {hw.device_details || '—'}
-                      </td>
+                      <td className="p-3">{renderDeviceDetails(hw.device_details)}</td>
                       <td className="p-3 text-xs">
-                        <p>Lieferung: {formatDateDeOnly(hw.delivery_date)}</p>
-                        <p>Fällig: {formatDateDeOnly(hw.return_due_date)}</p>
-                        {it.overdueDays > 0 && !hw.returned ? (
-                          <span className="inline-flex mt-1 rounded-full bg-rose-50 text-rose-700 border border-rose-100 px-2 py-0.5 text-[10px] font-bold">
-                            +{it.overdueDays} Tage überfällig
-                          </span>
-                        ) : null}
+                        <p className="text-slate-700">
+                          <span className="text-slate-400 font-medium">Lieferung:</span>{' '}
+                          {formatDateDeOnly(hw.delivery_date)}
+                        </p>
+                        <p className="text-slate-800 font-semibold mt-0.5">
+                          Fällig: {formatDateDeOnly(hw.return_due_date)}
+                        </p>
+                        <DueCountdownPill
+                          overdueDays={it.overdueDays}
+                          dueDate={hw.return_due_date || hw.delivery_date}
+                          returned={Boolean(hw.returned)}
+                        />
                       </td>
                       <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center gap-1">
-                          {([1, 2, 3] as const).map((stage) => {
-                            const sentAt =
-                              stage === 1
-                                ? hw.mail1_sent_at
-                                : stage === 2
-                                  ? hw.mail2_sent_at
-                                  : hw.mail3_sent_at;
-                            const recipients =
-                              stage === 1
-                                ? hw.mail1_sent_recipients
-                                : stage === 2
-                                  ? hw.mail2_sent_recipients
-                                  : hw.mail3_sent_recipients;
-                            const tip = sentAt
-                              ? `${new Date(sentAt).toLocaleString('de-DE')}\nAn: ${(recipients?.to || []).join(', ') || '—'}\nCC: ${(recipients?.cc || []).join(', ') || '—'}`
-                              : 'Noch nicht gesendet — klicken zum Senden';
-                            return (
-                              <button
-                                key={stage}
-                                type="button"
-                                title={tip}
-                                disabled={Boolean(hw.returned)}
-                                onClick={() => void openSend(id, stage)}
-                                className={cn(
-                                  'rounded-full px-2 py-1 text-[10px] font-bold border',
-                                  sentAt
-                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                                    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400',
-                                )}
-                              >
-                                {stage}. Mail{sentAt ? ' ✓' : ''}
-                              </button>
-                            );
-                          })}
-                        </div>
+                        <MailStageStepper
+                          hw={hw}
+                          returnId={id}
+                          nextDueStage={it.nextDueStage}
+                          onOpenSend={(rid, stage) => void openSend(rid, stage)}
+                        />
                       </td>
                       <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex flex-col gap-1.5 items-start">
+                        <div className="flex flex-row flex-wrap items-center gap-1.5">
                           <Button
                             type="button"
                             size="sm"
                             variant="outline"
+                            className="h-8"
                             onClick={() => openEdit(it)}
+                            title="Details öffnen"
                           >
-                            Details öffnen
+                            <PanelRight className="w-3.5 h-3.5 mr-1" />
+                            Details
                           </Button>
                           {!hw.returned ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={async () => {
-                                try {
-                                  await axios.post(
-                                    `${base}/${encodeURIComponent(id)}/mark-returned`,
-                                    mode === 'staff' ? { organizationId } : {},
-                                    { withCredentials: true },
-                                  );
-                                  toast.success('Als zurückgeliefert markiert');
-                                  void load();
-                                } catch (err: any) {
-                                  toast.error(err?.response?.data?.error || 'Fehler');
-                                }
-                              }}
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                              Zurück
-                            </Button>
+                            <>
+                              {it.nextDueStage ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 border-amber-200 text-amber-800 hover:bg-amber-50"
+                                  onClick={() => void openSend(id, it.nextDueStage!)}
+                                  title={`${it.nextDueStage}. Mail senden`}
+                                >
+                                  <Mail className="w-3.5 h-3.5 mr-1" />
+                                  {it.nextDueStage}. Mail
+                                </Button>
+                              ) : null}
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
+                                onClick={async () => {
+                                  try {
+                                    await axios.post(
+                                      `${base}/${encodeURIComponent(id)}/mark-returned`,
+                                      mode === 'staff' ? { organizationId } : {},
+                                      { withCredentials: true },
+                                    );
+                                    toast.success('Als zurückgeliefert markiert');
+                                    void load();
+                                  } catch (err: any) {
+                                    toast.error(err?.response?.data?.error || 'Fehler');
+                                  }
+                                }}
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                                Zurück
+                              </Button>
+                            </>
                           ) : (
-                            <span className="text-xs font-bold text-emerald-700">Erledigt</span>
+                            <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 px-2">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Erledigt
+                            </span>
                           )}
                         </div>
                       </td>

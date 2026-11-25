@@ -60,7 +60,7 @@ export default function StaffReturnsPage() {
   }
 
   return (
-    <div className="p-6 lg:p-8 max-w-7xl mx-auto space-y-4">
+    <div className="w-full px-6 py-5 space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-sm font-bold text-slate-600">Organisation</label>
         <select
