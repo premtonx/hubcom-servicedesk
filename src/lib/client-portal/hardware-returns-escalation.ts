@@ -26,7 +26,6 @@ import {
   overdueDays,
   resolveStageRecipients,
   shouldSkipAutoSend,
-  stageKey,
   type ReminderStage,
   type ResolveStageTicketContext,
 } from './hardware-returns-recipients.js';
@@ -155,24 +154,54 @@ export async function stampMailStageSent(params: {
   returnId: string;
   stage: ReminderStage;
   recipients: { to: string[]; cc: string[] };
+  subject?: string;
+  sentBy?: string;
 }): Promise<TicketHardwareReturnRecord | null> {
-  const colAt =
-    params.stage === 1 ? 'mail1_sent_at' : params.stage === 2 ? 'mail2_sent_at' : 'mail3_sent_at';
-  const colRec =
-    params.stage === 1
-      ? 'mail1_sent_recipients'
-      : params.stage === 2
-        ? 'mail2_sent_recipients'
-        : 'mail3_sent_recipients';
-  const res = await queryDb(
-    `UPDATE ticket_hardware_returns
-     SET ${colAt} = NOW(),
-         ${colRec} = $2::jsonb,
-         updated_at = NOW()
-     WHERE id = $1::uuid
-     RETURNING *`,
-    [params.returnId, JSON.stringify(params.recipients)],
+  const existing = await getHardwareReturnById(params.returnId);
+  if (!existing) return null;
+
+  const {
+    upsertReminderStageSent,
+    reminderCountFromStages,
+    legacyMailKey,
+  } = await import('./hardware-returns-stages.js');
+  const sentAt = new Date().toISOString();
+  const nextStages = upsertReminderStageSent(existing.reminder_stages || [], {
+    stage: params.stage,
+    sentAt,
+    scheduledDate: null,
+    recipientsTo: params.recipients.to,
+    recipientsCc: params.recipients.cc,
+    subject: params.subject,
+    sentBy: params.sentBy,
+  });
+  const reminderCount = Math.max(
+    existing.reminder_count || 0,
+    reminderCountFromStages(nextStages),
+    params.stage,
   );
+
+  const legacy = legacyMailKey(params.stage);
+  const recipientsJson = JSON.stringify(params.recipients);
+
+  let sql = `UPDATE ticket_hardware_returns
+     SET reminder_stages = $2::jsonb,
+         reminder_count = $3::int,
+         updated_at = NOW()`;
+  const args: unknown[] = [params.returnId, JSON.stringify(nextStages), reminderCount];
+  if (legacy === 'mail1') {
+    sql += `, mail1_sent_at = $4::timestamptz, mail1_sent_recipients = $5::jsonb`;
+    args.push(sentAt, recipientsJson);
+  } else if (legacy === 'mail2') {
+    sql += `, mail2_sent_at = $4::timestamptz, mail2_sent_recipients = $5::jsonb`;
+    args.push(sentAt, recipientsJson);
+  } else if (legacy === 'mail3') {
+    sql += `, mail3_sent_at = $4::timestamptz, mail3_sent_recipients = $5::jsonb`;
+    args.push(sentAt, recipientsJson);
+  }
+  sql += ` WHERE id = $1::uuid RETURNING *`;
+
+  const res = await queryDb(sql, args);
   if (!res.rowCount) return null;
   return mapHardwareRow(res.rows[0]);
 }
@@ -185,8 +214,8 @@ export async function appendHardwareReminderTimeline(params: {
   auto: boolean;
   actorName?: string;
 }): Promise<void> {
-  const stageLabel =
-    params.stage === 1 ? '1. Mail' : params.stage === 2 ? '2. Mail' : '3. Mail';
+  const { reminderStageLabel } = await import('./hardware-returns-stages.js');
+  const stageLabel = reminderStageLabel(params.stage);
   const mode = params.auto ? 'automatisch' : 'manuell';
   await appendHardwareReturnActivity(params.returnId, {
     at: new Date().toISOString(),
@@ -230,10 +259,11 @@ export async function previewHardwareReminder(params: {
     overrideCc: params.overrideCc,
   });
   const vars = buildReminderTemplateVars({ ticket: ctx, hardwareReturn: hw, orgConfig: config });
-  const template = config.templates[stageKey(params.stage)];
+  const { resolveConfiguredStage } = await import('./hardware-returns-stages.js');
+  const { configured } = resolveConfiguredStage(config, params.stage);
   const { subject, html } = buildReminderHtmlEmail({
-    subject: template.subject,
-    bodyTextOrHtml: template.body,
+    subject: configured.subjectTemplate,
+    bodyTextOrHtml: configured.bodyTemplate,
     vars,
     stage: params.stage,
   });
@@ -249,7 +279,7 @@ export async function previewHardwareReminder(params: {
     skipReason: skip
       ? resolved.to.length === 0
         ? 'Empfänger fehlt (An ist leer).'
-        : 'Eskalationskontakte fehlen (Stufe 3).'
+        : 'Eskalationskontakte fehlen (Stufe ≥ 3).'
       : null,
   };
 }
@@ -294,8 +324,13 @@ export async function sendHardwareReminder(params: {
     throw Object.assign(new Error('Empfänger fehlt — An (To) ist leer.'), { status: 400 });
   }
 
+  const { resolveConfiguredStage, stageOverrideKey } = await import(
+    './hardware-returns-stages.js'
+  );
+  const { configured } = resolveConfiguredStage(config, params.stage);
+
   if (params.saveAsTicketOverride) {
-    const key = stageKey(params.stage);
+    const key = stageOverrideKey(params.stage);
     const override = {
       ...(hw.stage_recipients_override || {}),
       [key]: { to: resolved.to, cc: resolved.cc },
@@ -309,10 +344,9 @@ export async function sendHardwareReminder(params: {
   }
 
   const vars = buildReminderTemplateVars({ ticket: ctx, hardwareReturn: hw, orgConfig: config });
-  const template = config.templates[stageKey(params.stage)];
   const { subject, html } = buildReminderHtmlEmail({
-    subject: template.subject,
-    bodyTextOrHtml: template.body,
+    subject: configured.subjectTemplate,
+    bodyTextOrHtml: configured.bodyTemplate,
     vars,
     stage: params.stage,
   });
@@ -337,6 +371,8 @@ export async function sendHardwareReminder(params: {
     returnId: hw.id,
     stage: params.stage,
     recipients: { to: resolved.to, cc: resolved.cc },
+    subject,
+    sentBy: params.actorName || (params.auto ? 'System' : undefined),
   });
   await appendHardwareReminderTimeline({
     returnId: hw.id,

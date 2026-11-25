@@ -297,6 +297,8 @@ check('all 3 reminder stages render Outlook-safe branded HTML', () => {
       mail2_sent_recipients: null,
       mail3_sent_at: null,
       mail3_sent_recipients: null,
+      reminder_stages: [],
+      reminder_count: 0,
       returned: false,
       returned_at: null,
       created_at: '',
@@ -306,11 +308,11 @@ check('all 3 reminder stages render Outlook-safe branded HTML', () => {
     now: new Date('2026-10-20T12:00:00.000Z'),
   });
 
-  for (const stage of [1, 2, 3] as const) {
-    const key = stage === 1 ? 'mail1' : stage === 2 ? 'mail2' : 'mail3';
+  for (const stage of [1, 2, 3, 4] as const) {
+    const configured = config.stages[stage - 1]!;
     const built = buildReminderHtmlEmail({
-      subject: config.templates[key].subject,
-      bodyTextOrHtml: config.templates[key].body,
+      subject: configured.subjectTemplate,
+      bodyTextOrHtml: configured.bodyTemplate,
       vars,
       stage,
     });

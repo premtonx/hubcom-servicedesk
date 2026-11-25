@@ -10,8 +10,21 @@ import type {
   TicketHardwareReturnRecord,
 } from './hardware-returns.js';
 import { toIsoDateOnly } from './hardware-returns-dates.js';
+import {
+  defaultConfiguredReminderStages,
+  getStageScheduledDate,
+  getStageSentAt,
+  isStageSent,
+  isValidReminderStage,
+  legacyMailKey,
+  reminderStageLabel,
+  resolveConfiguredStage,
+  stageOverrideKey,
+  type ReminderStage,
+} from './hardware-returns-stages.js';
 
-export type ReminderStage = 1 | 2 | 3;
+export type { ReminderStage };
+export { isValidReminderStage, reminderStageLabel };
 
 export interface ResolveStageTicketContext {
   customer_email?: string | null;
@@ -27,8 +40,9 @@ export interface ResolveStageRecipientsResult {
   missingRoles: HardwareRoleToken[];
 }
 
+/** @deprecated Prefer resolveConfiguredStage — kept for stages 1–3 legacy keys. */
 function stageKey(stage: ReminderStage): 'mail1' | 'mail2' | 'mail3' {
-  return stage === 1 ? 'mail1' : stage === 2 ? 'mail2' : 'mail3';
+  return legacyMailKey(stage) || 'mail3';
 }
 
 function isValidEmail(raw: string | null | undefined): raw is string {
@@ -96,12 +110,17 @@ export function resolveStageRecipients(
     overrideCc?: string[] | null;
   },
 ): ResolveStageRecipientsResult {
-  const key = stageKey(stage);
-  const ticketOverride = hardwareReturn?.stage_recipients_override?.[key];
+  const overrideKey = stageOverrideKey(stage);
+  const legacyKey = legacyMailKey(stage);
+  const ticketOverride =
+    hardwareReturn?.stage_recipients_override?.[overrideKey] ||
+    (legacyKey ? hardwareReturn?.stage_recipients_override?.[legacyKey] : undefined);
   const hasManual =
     (opts?.overrideTo != null && Array.isArray(opts.overrideTo)) ||
     (opts?.overrideCc != null && Array.isArray(opts.overrideCc));
-  const hasTicketOverride = Boolean(ticketOverride && (ticketOverride.to?.length || ticketOverride.cc?.length));
+  const hasTicketOverride = Boolean(
+    ticketOverride && (ticketOverride.to?.length || ticketOverride.cc?.length),
+  );
 
   if (hasManual || hasTicketOverride) {
     const source: HardwareStageOverride = hasManual
@@ -119,23 +138,23 @@ export function resolveStageRecipients(
     return { to, cc, missingRoles: [] };
   }
 
-  const stageCfg = orgConfig.stage_recipients[key];
+  const { configured } = resolveConfiguredStage(orgConfig, stage);
   const missingRoles: HardwareRoleToken[] = [];
   const toRaw: string[] = [];
   const ccRaw: string[] = [];
 
-  for (const role of stageCfg.to_roles) {
+  for (const role of configured.toRoles) {
     const email = roleEmail(role, ticket, hardwareReturn, orgConfig);
     if (email) toRaw.push(email);
     else missingRoles.push(role);
   }
-  for (const role of stageCfg.cc_roles) {
+  for (const role of configured.ccRoles) {
     const email = roleEmail(role, ticket, hardwareReturn, orgConfig);
     if (email) ccRaw.push(email);
     else if (!missingRoles.includes(role)) missingRoles.push(role);
   }
-  toRaw.push(...(stageCfg.extra_to || []));
-  ccRaw.push(...(stageCfg.extra_cc || []));
+  toRaw.push(...(configured.extraTo || []));
+  ccRaw.push(...(configured.extraCc || []));
 
   const to = uniqueEmails(toRaw);
   const toSet = new Set(to);
@@ -143,7 +162,7 @@ export function resolveStageRecipients(
   return { to, cc, missingRoles };
 }
 
-/** Stage-3 escalation contacts that must be reachable for safe auto-send. */
+/** Escalation contacts that must be reachable for late-stage auto-send (stage ≥ 3). */
 export function stage3EscalationRolesMissing(
   missingRoles: HardwareRoleToken[],
 ): boolean {
@@ -160,7 +179,8 @@ export function shouldSkipAutoSend(params: {
   missingRoles: HardwareRoleToken[];
 }): boolean {
   if (!params.to.length) return true;
-  if (params.stage === 3 && stage3EscalationRolesMissing(params.missingRoles)) return true;
+  // Stage 3+ escalations require PM/manager/ceo when those roles are in the matrix.
+  if (params.stage >= 3 && stage3EscalationRolesMissing(params.missingRoles)) return true;
   return false;
 }
 
@@ -185,7 +205,8 @@ function daysBetweenUtc(from: Date, to: Date): number {
 
 /**
  * Which reminder stage (if any) is due for auto-send right now.
- * Idempotent: never returns a stage that was already stamped.
+ * Iterates configured stages 1..N (default 4). Idempotent: never returns a
+ * stage that was already stamped (via reminder_stages or legacy mail1/2/3).
  */
 export function evaluateDueReminderStage(
   row: TicketHardwareReturnRecord,
@@ -198,41 +219,38 @@ export function evaluateDueReminderStage(
   const today = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
   );
+  const plan =
+    orgConfig.stages?.length > 0
+      ? orgConfig.stages
+      : defaultConfiguredReminderStages();
 
-  if (!row.mail1_sent_at) {
-    const due =
-      parseDateOnly(row.mail1_scheduled_date) ||
-      parseDateOnly(row.return_due_date) ||
-      (parseDateOnly(row.delivery_date)
-        ? addDays(parseDateOnly(row.delivery_date)!, orgConfig.mail1_days_after_delivery)
-        : null);
-    if (due && today.getTime() >= due.getTime()) return 1;
-    return null;
-  }
+  for (const configured of plan) {
+    const stage = configured.stage;
+    if (isStageSent(row, stage)) continue;
 
-  if (!row.mail2_sent_at) {
-    const override = parseDateOnly(row.mail2_scheduled_date);
-    if (override) {
-      if (today.getTime() >= override.getTime()) return 2;
+    if (stage === 1) {
+      const due =
+        parseDateOnly(getStageScheduledDate(row, 1)) ||
+        parseDateOnly(row.return_due_date) ||
+        (parseDateOnly(row.delivery_date)
+          ? addDays(parseDateOnly(row.delivery_date)!, configured.delayDays)
+          : null);
+      if (due && today.getTime() >= due.getTime()) return 1;
       return null;
     }
-    const mail1 = new Date(row.mail1_sent_at);
-    if (Number.isNaN(mail1.getTime())) return null;
-    const threshold = addDays(mail1, orgConfig.mail2_days_after_mail1);
-    if (now.getTime() >= threshold.getTime()) return 2;
-    return null;
-  }
 
-  if (!row.mail3_sent_at) {
-    const override = parseDateOnly(row.mail3_scheduled_date);
+    const override = parseDateOnly(getStageScheduledDate(row, stage));
     if (override) {
-      if (today.getTime() >= override.getTime()) return 3;
+      if (today.getTime() >= override.getTime()) return stage;
       return null;
     }
-    const mail2 = new Date(row.mail2_sent_at);
-    if (Number.isNaN(mail2.getTime())) return null;
-    const threshold = addDays(mail2, orgConfig.mail3_days_after_mail2);
-    if (now.getTime() >= threshold.getTime()) return 3;
+
+    const prevSent = getStageSentAt(row, stage - 1);
+    if (!prevSent) return null;
+    const prev = new Date(prevSent);
+    if (Number.isNaN(prev.getTime())) return null;
+    const threshold = addDays(prev, configured.delayDays);
+    if (now.getTime() >= threshold.getTime()) return stage;
     return null;
   }
 
@@ -376,8 +394,7 @@ export function buildReminderHtmlEmail(params: {
         )
         .join('');
 
-  const stageLabel =
-    params.stage === 1 ? '1. Erinnerung' : params.stage === 2 ? '2. Erinnerung' : '3. Mahnung';
+  const stageLabel = reminderStageLabel(params.stage);
 
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:Segoe UI,Arial,sans-serif;">

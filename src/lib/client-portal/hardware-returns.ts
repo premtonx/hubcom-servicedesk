@@ -12,8 +12,19 @@ import { getDocsDirect, queryDb, withPgTransaction } from '../postgres-backend.j
 import { getOrganization } from './organizations.js';
 import { isClientPortalRole } from './roles.js';
 import { toIsoDateOnly } from './hardware-returns-dates.js';
+import {
+  buildReminderStagesFromLegacy,
+  defaultConfiguredReminderStages,
+  legacyFieldsFromConfiguredStages,
+  normalizeConfiguredReminderStages,
+  parseReminderStages,
+  reminderCountFromStages,
+  type ConfiguredReminderStage,
+  type ReminderStageEvent,
+} from './hardware-returns-stages.js';
 
 export { toIsoDateOnly, formatDateDeOnly } from './hardware-returns-dates.js';
+export type { ConfiguredReminderStage, ReminderStageEvent };
 
 export type HardwareRoleToken = 'employee' | 'project_manager' | 'manager' | 'ceo';
 
@@ -87,6 +98,11 @@ export interface HardwareReturnsConfig {
   id_prefix: string;
   catalogs: HardwareReturnsCatalogs;
   m365_directory_sync: M365DirectorySyncConfig;
+  /**
+   * Dynamic reminder plan (default 4 stages). Admins may configure 4, 5, or more.
+   * Legacy mail1/2/3 fields stay mirrored from stages[0..2] for older UIs.
+   */
+  stages: ConfiguredReminderStage[];
   stage_recipients: {
     mail1: HardwareStageRecipients;
     mail2: HardwareStageRecipients;
@@ -114,7 +130,8 @@ export interface HardwareReturnActivityEntry {
   message?: string | null;
   to?: string[];
   cc?: string[];
-  stage?: 1 | 2 | 3;
+  /** Reminder stage number (1..N). */
+  stage?: number;
   meta?: Record<string, unknown>;
 }
 
@@ -159,11 +176,7 @@ export interface TicketHardwareReturnRecord {
   manager_name: string | null;
   manager_email: string | null;
   ceo_email_override: string | null;
-  stage_recipients_override: {
-    mail1?: HardwareStageOverride;
-    mail2?: HardwareStageOverride;
-    mail3?: HardwareStageOverride;
-  } | null;
+  stage_recipients_override: Record<string, HardwareStageOverride> | null;
   solution_summary: string | null;
   shipping_method: string | null;
   shipping_reference: string | null;
@@ -181,6 +194,10 @@ export interface TicketHardwareReturnRecord {
   mail2_sent_recipients: HardwareStageOverride | null;
   mail3_sent_at: string | null;
   mail3_sent_recipients: HardwareStageOverride | null;
+  /** Dynamic reminder history (1..N). Mirrored to mail1/2/3 for stages ≤3. */
+  reminder_stages: ReminderStageEvent[];
+  /** Highest sent stage number (0 if none). */
+  reminder_count: number;
   returned: boolean;
   returned_at: string | null;
   created_at: string;
@@ -307,39 +324,18 @@ export function defaultM365DirectorySyncConfig(): M365DirectorySyncConfig {
 }
 
 export function defaultHardwareReturnsConfig(): HardwareReturnsConfig {
+  const stages = defaultConfiguredReminderStages();
+  const legacy = legacyFieldsFromConfiguredStages(stages);
   return {
     auto_send_enabled: false,
-    mail1_days_after_delivery: 14,
-    mail2_days_after_mail1: 7,
-    mail3_days_after_mail2: 7,
+    ...legacy,
     ceo_name: null,
     ceo_email: null,
     fallback_manager_email: null,
     id_prefix: 'DPG',
     catalogs: mergeCatalogs(undefined),
     m365_directory_sync: defaultM365DirectorySyncConfig(),
-    stage_recipients: {
-      mail1: defaultStage(['employee'], []),
-      mail2: defaultStage(['employee'], ['project_manager']),
-      mail3: defaultStage(['employee'], ['project_manager', 'manager', 'ceo']),
-    },
-    templates: {
-      mail1: {
-        subject: 'Erinnerung: Hardware-Rücklieferung fällig',
-        body:
-          'Sehr geehrte/r {{employee_name}},\n\nbitte denken Sie an die Rücklieferung der bereitgestellten Hardware.\nFällig am: {{return_due_date}}\n\nMit freundlichen Grüßen\nHubcom ServiceDesk',
-      },
-      mail2: {
-        subject: '2. Erinnerung: Hardware-Rücklieferung überfällig',
-        body:
-          'Sehr geehrte/r {{employee_name}},\n\ndie Rücklieferung ist überfällig (Fällig am {{return_due_date}}).\nBitte veranlassen Sie die Rückgabe umgehend.\n\nMit freundlichen Grüßen\nHubcom ServiceDesk',
-      },
-      mail3: {
-        subject: 'Letzte Mahnung: Hardware-Rücklieferung',
-        body:
-          'Sehr geehrte/r {{employee_name}},\n\ndies ist die letzte Mahnung zur Hardware-Rücklieferung (Fällig am {{return_due_date}}).\nDer/die Vorgesetzte und die Geschäftsführung wurden in CC gesetzt.\n\nMit freundlichen Grüßen\nHubcom ServiceDesk',
-      },
-    },
+    stages,
   };
 }
 
@@ -423,20 +419,52 @@ export function normalizeHardwareReturnsConfig(raw: unknown): HardwareReturnsCon
       ? (src.m365_directory_sync as Partial<M365DirectorySyncConfig> & Record<string, unknown>)
       : undefined;
 
+  const mail1Days =
+    Number.isFinite(Number(src.mail1_days_after_delivery)) && Number(src.mail1_days_after_delivery) >= 0
+      ? Math.min(365, Math.floor(Number(src.mail1_days_after_delivery)))
+      : defaults.mail1_days_after_delivery;
+  const mail2Days =
+    Number.isFinite(Number(src.mail2_days_after_mail1)) && Number(src.mail2_days_after_mail1) >= 0
+      ? Math.min(365, Math.floor(Number(src.mail2_days_after_mail1)))
+      : defaults.mail2_days_after_mail1;
+  const mail3Days =
+    Number.isFinite(Number(src.mail3_days_after_mail2)) && Number(src.mail3_days_after_mail2) >= 0
+      ? Math.min(365, Math.floor(Number(src.mail3_days_after_mail2)))
+      : defaults.mail3_days_after_mail2;
+
+  const stage_recipients = {
+    mail1: mergeStage(defaults.stage_recipients.mail1, stageSrc.mail1),
+    mail2: mergeStage(defaults.stage_recipients.mail2, stageSrc.mail2),
+    mail3: mergeStage(defaults.stage_recipients.mail3, stageSrc.mail3),
+  };
+  const templates = {
+    mail1: mergeTemplate(defaults.templates.mail1, templateSrc.mail1),
+    mail2: mergeTemplate(defaults.templates.mail2, templateSrc.mail2),
+    mail3: mergeTemplate(defaults.templates.mail3, templateSrc.mail3),
+  };
+
+  const stages = normalizeConfiguredReminderStages(
+    src.stages ?? src.reminder_stages_config,
+    {
+      mail1_days_after_delivery: mail1Days,
+      mail2_days_after_mail1: mail2Days,
+      mail3_days_after_mail2: mail3Days,
+      stage_recipients,
+      templates,
+    },
+  );
+  // Keep legacy mail1/2/3 mirrored from stages[0..2] (or explicit patch wins for days).
+  const mirrored = legacyFieldsFromConfiguredStages(stages);
+  // If caller only patched legacy days/recipients without stages[], prefer those for 1–3.
+  const hasExplicitStages = Array.isArray(src.stages) || Array.isArray(src.reminder_stages_config);
+
   return {
     auto_send_enabled: src.auto_send_enabled === true,
-    mail1_days_after_delivery:
-      Number.isFinite(Number(src.mail1_days_after_delivery)) && Number(src.mail1_days_after_delivery) >= 0
-        ? Math.min(365, Math.floor(Number(src.mail1_days_after_delivery)))
-        : defaults.mail1_days_after_delivery,
-    mail2_days_after_mail1:
-      Number.isFinite(Number(src.mail2_days_after_mail1)) && Number(src.mail2_days_after_mail1) >= 0
-        ? Math.min(365, Math.floor(Number(src.mail2_days_after_mail1)))
-        : defaults.mail2_days_after_mail1,
-    mail3_days_after_mail2:
-      Number.isFinite(Number(src.mail3_days_after_mail2)) && Number(src.mail3_days_after_mail2) >= 0
-        ? Math.min(365, Math.floor(Number(src.mail3_days_after_mail2)))
-        : defaults.mail3_days_after_mail2,
+    mail1_days_after_delivery: hasExplicitStages
+      ? mirrored.mail1_days_after_delivery
+      : mail1Days,
+    mail2_days_after_mail1: hasExplicitStages ? mirrored.mail2_days_after_mail1 : mail2Days,
+    mail3_days_after_mail2: hasExplicitStages ? mirrored.mail3_days_after_mail2 : mail3Days,
     ceo_name:
       src.ceo_name == null || String(src.ceo_name).trim() === ''
         ? null
@@ -452,16 +480,9 @@ export function normalizeHardwareReturnsConfig(raw: unknown): HardwareReturnsCon
     id_prefix: rawPrefix,
     catalogs: mergeCatalogs(catalogSrc),
     m365_directory_sync: mergeM365DirectorySync(defaults.m365_directory_sync, syncSrc),
-    stage_recipients: {
-      mail1: mergeStage(defaults.stage_recipients.mail1, stageSrc.mail1),
-      mail2: mergeStage(defaults.stage_recipients.mail2, stageSrc.mail2),
-      mail3: mergeStage(defaults.stage_recipients.mail3, stageSrc.mail3),
-    },
-    templates: {
-      mail1: mergeTemplate(defaults.templates.mail1, templateSrc.mail1),
-      mail2: mergeTemplate(defaults.templates.mail2, templateSrc.mail2),
-      mail3: mergeTemplate(defaults.templates.mail3, templateSrc.mail3),
-    },
+    stages,
+    stage_recipients: hasExplicitStages ? mirrored.stage_recipients : stage_recipients,
+    templates: hasExplicitStages ? mirrored.templates : templates,
   };
 }
 
@@ -597,9 +618,9 @@ function parseStageOverride(raw: unknown): TicketHardwareReturnRecord['stage_rec
       : (raw as Record<string, unknown>);
   if (!src || typeof src !== 'object') return null;
   const out: NonNullable<TicketHardwareReturnRecord['stage_recipients_override']> = {};
-  for (const key of ['mail1', 'mail2', 'mail3'] as const) {
-    const stage = src[key];
+  for (const [key, stage] of Object.entries(src)) {
     if (!stage || typeof stage !== 'object') continue;
+    if (!/^(mail[123]|stage\d+)$/.test(key)) continue;
     out[key] = {
       to: asEmailList((stage as any).to),
       cc: asEmailList((stage as any).cc),
@@ -700,6 +721,31 @@ export function mapHardwareRow(row: any): TicketHardwareReturnRecord {
     mail2_sent_recipients: parseSentRecipients(row.mail2_sent_recipients),
     mail3_sent_at: row.mail3_sent_at ? new Date(row.mail3_sent_at).toISOString() : null,
     mail3_sent_recipients: parseSentRecipients(row.mail3_sent_recipients),
+    reminder_stages: (() => {
+      const parsed = parseReminderStages(row.reminder_stages);
+      if (parsed.length) return parsed;
+      return buildReminderStagesFromLegacy({
+        mail1_sent_at: row.mail1_sent_at,
+        mail2_sent_at: row.mail2_sent_at,
+        mail3_sent_at: row.mail3_sent_at,
+        mail1_scheduled_date: row.mail1_scheduled_date,
+        mail2_scheduled_date: row.mail2_scheduled_date,
+        mail3_scheduled_date: row.mail3_scheduled_date,
+        mail1_sent_recipients: parseSentRecipients(row.mail1_sent_recipients),
+        mail2_sent_recipients: parseSentRecipients(row.mail2_sent_recipients),
+        mail3_sent_recipients: parseSentRecipients(row.mail3_sent_recipients),
+      });
+    })(),
+    reminder_count: (() => {
+      const n = Number(row.reminder_count);
+      if (Number.isFinite(n) && n > 0) return Math.floor(n);
+      const parsed = parseReminderStages(row.reminder_stages);
+      if (parsed.length) return reminderCountFromStages(parsed);
+      if (row.mail3_sent_at) return 3;
+      if (row.mail2_sent_at) return 2;
+      if (row.mail1_sent_at) return 1;
+      return 0;
+    })(),
     returned,
     returned_at: row.returned_at ? new Date(row.returned_at).toISOString() : null,
     created_at: row.created_at ? new Date(row.created_at).toISOString() : '',

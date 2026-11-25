@@ -141,9 +141,17 @@ import {
 import {
   buildReminderTemplateVars,
   evaluateDueReminderStage,
+  isValidReminderStage,
   resolveStageRecipients,
   shouldSkipAutoSend,
 } from '../src/lib/client-portal/hardware-returns-recipients.js';
+import {
+  buildReminderStagesFromLegacy,
+  reminderCountFromStages,
+  reminderStageLabel,
+  resolveConfiguredStage,
+  upsertReminderStageSent,
+} from '../src/lib/client-portal/hardware-returns-stages.js';
 import {
   authStatusWhenUserMissing,
   evaluatePortalUserDeleteAccess,
@@ -1999,8 +2007,14 @@ function testHardwareReturnsModuleGate(): void {
   );
   assert(
     JSON.stringify(defaults.stage_recipients.mail3.cc_roles) ===
-      JSON.stringify(['project_manager', 'manager', 'ceo']),
-    'mail3 cc includes project_manager, manager, ceo',
+      JSON.stringify(['project_manager', 'manager']),
+    'mail3 (stage 3) cc includes project_manager, manager',
+  );
+  assert(
+    defaults.stages.length === 4 &&
+      defaults.stages[3]!.label === '4. Erinnerung' &&
+      defaults.stages[3]!.ccRoles.includes('ceo'),
+    'new orgs default to 4 reminder stages; stage 4 CCs ceo',
   );
 
   const normalized = normalizeHardwareReturnsConfig({
@@ -2019,8 +2033,9 @@ function testHardwareReturnsModuleGate(): void {
     'normalize mail1 extra_to',
   );
   assert(
-    normalized.stage_recipients.mail3.cc_roles.includes('ceo'),
-    'normalize keeps mail3 ceo default when unset',
+    normalized.stages.length === 4 &&
+      normalized.stages[3]!.ccRoles.includes('ceo'),
+    'normalize rebuilds 4 stages; stage 4 keeps ceo',
   );
 
   assert(
@@ -2170,6 +2185,8 @@ function baseHw(partial: Partial<TicketHardwareReturnRecord> = {}): TicketHardwa
     mail2_sent_recipients: null,
     mail3_sent_at: null,
     mail3_sent_recipients: null,
+    reminder_stages: [],
+    reminder_count: 0,
     returned: false,
     returned_at: null,
     created_at: '2026-10-01T00:00:00.000Z',
@@ -2186,7 +2203,8 @@ function testHardwareReturnsEscalationEngine(): void {
   const config = defaultHardwareReturnsConfig();
   config.auto_send_enabled = true;
   config.ceo_email = 'ceo@dpg.test';
-  config.stage_recipients.mail3.extra_cc = ['legal@dpg.test'];
+  config.stages[2]!.extraCc = ['legal@dpg.test'];
+  config.stages[3]!.extraCc = ['legal@dpg.test'];
 
   const ticket = {
     id: 'tkt-1',
@@ -2205,8 +2223,12 @@ function testHardwareReturnsEscalationEngine(): void {
   assert(mail3.to.includes('emp@dpg.test'), 'Mail 3 To includes employee');
   assert(mail3.cc.includes('pm@dpg.test'), 'Mail 3 CC includes project_manager');
   assert(mail3.cc.includes('chef@dpg.test'), 'Mail 3 CC includes manager');
-  assert(mail3.cc.includes('ceo@dpg.test'), 'Mail 3 CC includes ceo');
+  assert(!mail3.cc.includes('ceo@dpg.test'), 'Mail 3 CC does not include ceo (moved to stage 4)');
   assert(mail3.cc.includes('legal@dpg.test'), 'Mail 3 CC includes extra static email');
+
+  const mail4 = resolveStageRecipients(4, {}, hw, config);
+  assert(mail4.cc.includes('ceo@dpg.test'), 'Mail 4 CC includes ceo');
+  assert(mail4.cc.includes('legal@dpg.test'), 'Mail 4 CC includes extra static email');
 
   const overridden = resolveStageRecipients(2, {}, hw, config, {
     overrideTo: ['custom-to@dpg.test', 'CUSTOM-TO@dpg.test', ''],
@@ -2299,9 +2321,28 @@ function testHardwareReturnsEscalationEngine(): void {
         mail3_sent_at: '2026-10-15T10:00:00.000Z',
       }),
       config,
+      new Date('2026-10-22T11:00:00.000Z'),
+    ) === 4,
+    'scheduler processes Stage 4 after Stage 3 + delay',
+  );
+  assert(
+    evaluateDueReminderStage(
+      baseHw({
+        mail1_sent_at: '2026-10-01T10:00:00.000Z',
+        mail2_sent_at: '2026-10-08T10:00:00.000Z',
+        mail3_sent_at: '2026-10-15T10:00:00.000Z',
+        reminder_stages: [
+          { stage: 1, sentAt: '2026-10-01T10:00:00.000Z', scheduledDate: null, recipientsTo: [], recipientsCc: [] },
+          { stage: 2, sentAt: '2026-10-08T10:00:00.000Z', scheduledDate: null, recipientsTo: [], recipientsCc: [] },
+          { stage: 3, sentAt: '2026-10-15T10:00:00.000Z', scheduledDate: null, recipientsTo: [], recipientsCc: [] },
+          { stage: 4, sentAt: '2026-10-22T10:00:00.000Z', scheduledDate: null, recipientsTo: [], recipientsCc: [] },
+        ],
+        reminder_count: 4,
+      }),
+      config,
       new Date('2026-11-01T00:00:00.000Z'),
     ) === null,
-    'idempotent: never double-sends after mail3 stamped',
+    'idempotent: never double-sends after stage 4 stamped',
   );
 
   // Portal /api/portal/returns/* isolation semantics
@@ -4181,6 +4222,81 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
   );
 }
 
+/** Dynamic 1..N reminder stages (Part 1 backend — no FE). */
+function testHardwareReturnsDynamicReminderStages(): void {
+  console.log('\n--- Hardware returns dynamic reminder stages (1..N) ---');
+
+  const defaults = defaultHardwareReturnsConfig();
+  assert(defaults.stages.length === 4, 'default config has 4 stages');
+  assert(
+    defaults.stages.map((s) => s.label).join('|') ===
+      '1. Erinnerung|2. Erinnerung|3. Erinnerung|4. Erinnerung',
+    'default labels 1.–4. Erinnerung',
+  );
+  assert(isValidReminderStage(1) && isValidReminderStage(6), 'stage >= 1 accepted');
+  assert(!isValidReminderStage(0) && !isValidReminderStage(1.5), 'invalid stages rejected');
+
+  const stage5 = resolveConfiguredStage(defaults, 5);
+  assert(stage5.usedFallback === true, 'stage 5 falls back to last configured template');
+  assert(
+    stage5.configured.label === '5. Erinnerung' &&
+      /5\.\s*Erinnerung/i.test(stage5.configured.subjectTemplate),
+    'stage 5 subject/heading formatted as 5. Erinnerung',
+  );
+  const stage6 = resolveConfiguredStage(defaults, 6);
+  assert(stage6.configured.label === '6. Erinnerung', 'stage 6 label');
+
+  // Simulate send of stages 5 and 6 recording into reminder_stages + count.
+  let stages = buildReminderStagesFromLegacy({
+    mail1_sent_at: '2026-10-01T10:00:00.000Z',
+    mail2_sent_at: '2026-10-08T10:00:00.000Z',
+    mail3_sent_at: '2026-10-15T10:00:00.000Z',
+  });
+  stages = upsertReminderStageSent(stages, {
+    stage: 5,
+    sentAt: '2026-10-29T10:00:00.000Z',
+    scheduledDate: null,
+    recipientsTo: ['ada@dpg.test'],
+    recipientsCc: [],
+    subject: '5. Erinnerung',
+    sentBy: 'Tester',
+  });
+  stages = upsertReminderStageSent(stages, {
+    stage: 6,
+    sentAt: '2026-11-05T10:00:00.000Z',
+    scheduledDate: null,
+    recipientsTo: ['ada@dpg.test'],
+    recipientsCc: ['pm@dpg.test'],
+    subject: '6. Erinnerung',
+  });
+  assert(
+    stages.some((s) => s.stage === 5 && s.sentAt) &&
+      stages.some((s) => s.stage === 6 && s.sentAt),
+    'preview/send stage 5 and 6 record sentAt in reminder_stages',
+  );
+  assert(reminderCountFromStages(stages) === 6, 'reminder_count increments to 6');
+  assert(reminderStageLabel(6) === '6. Erinnerung', 'activity label 6. Erinnerung');
+
+  // Legacy mail1/2/3 compatibility still mirrored.
+  assert(
+    defaults.mail1_days_after_delivery === 14 &&
+      defaults.stage_recipients.mail1.to_roles.includes('employee'),
+    'mail1/2/3 legacy fields remain in sync with stages 1–3',
+  );
+
+  // Tenant/role isolation unchanged for CLIENT_USER.
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: true,
+      sessionOrgId: ORG_B,
+      ticketOrgId: ORG_B,
+      role: 'CLIENT_USER',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === false,
+    'CLIENT_USER → 403 on returns (isolation intact)',
+  );
+}
+
 /** Liste | Kanban | Karten on shared ReturnsWorkbench (portal + staff). */
 function testHardwareReturnsListeKanbanKarten(): void {
   console.log('\n--- Hardware returns Liste | Kanban | Karten ---');
@@ -4386,6 +4502,7 @@ async function main(): Promise<void> {
   testHardwareReturnsWorkbenchDrawerContract();
   testHardwareReturnsSchemaCatalogsPart1();
   testHardwareReturnsPaginationErinnerungAndDashboard();
+  testHardwareReturnsDynamicReminderStages();
   testHardwareReturnsListeKanbanKarten();
   testHardwareReturnsInlineListEditors();
   await testOrganizationDirectorySyncPart2();

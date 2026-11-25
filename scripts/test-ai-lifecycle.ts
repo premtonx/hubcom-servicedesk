@@ -63,6 +63,12 @@ import {
   resolveReturnsStatusColumn,
 } from '../src/lib/client-portal/hardware-returns-layout.js';
 import {
+  defaultConfiguredReminderStages,
+  reminderCountFromStages,
+  resolveConfiguredStage,
+  upsertReminderStageSent,
+} from '../src/lib/client-portal/hardware-returns-stages.js';
+import {
   evaluatePortalKbCategoryWriteAccess,
   portalCategoryId,
 } from '../src/lib/kb/kb-categories.js';
@@ -571,6 +577,8 @@ function testHardwareReturnsStandaloneLifecycle(): void {
     mail2_sent_recipients: null,
     mail3_sent_at: null,
     mail3_sent_recipients: null,
+    reminder_stages: [],
+    reminder_count: 0,
     returned: false,
     returned_at: null,
     created_at: '2026-10-01T00:00:00.000Z',
@@ -1181,6 +1189,57 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
   );
 }
 
+function testReturnsDynamicReminderStagesLifecycle(): void {
+  console.log('\n[19f] Returns dynamic reminder stages 1..N (backend)');
+
+  const cfg = defaultHardwareReturnsConfig();
+  assert(cfg.stages.length === 4, 'default 4 stages');
+  assert(
+    defaultConfiguredReminderStages().length === 4 &&
+      cfg.stages[3]!.ccRoles.includes('ceo'),
+    'stage 4 includes ceo CC',
+  );
+
+  cfg.auto_send_enabled = true;
+  const after3 = {
+    ...({
+      return_required: true,
+      returned: false,
+      auto_reminder_enabled: true,
+      mail1_sent_at: '2026-10-01T10:00:00.000Z',
+      mail2_sent_at: '2026-10-08T10:00:00.000Z',
+      mail3_sent_at: '2026-10-15T10:00:00.000Z',
+      reminder_stages: [],
+      reminder_count: 3,
+      delivery_date: '2026-10-01',
+      return_due_date: '2026-10-15',
+    } as any),
+  };
+  assert(
+    evaluateDueReminderStage(after3, cfg, new Date('2026-10-22T12:00:00.000Z')) === 4,
+    'scheduler due stage 4 after stage 3 + delay',
+  );
+
+  const s5 = resolveConfiguredStage(cfg, 5);
+  const s6 = resolveConfiguredStage(cfg, 6);
+  assert(s5.usedFallback && s6.usedFallback, 'stage 5/6 fallback to last template');
+  let stages = upsertReminderStageSent([], {
+    stage: 5,
+    sentAt: '2026-11-01T00:00:00.000Z',
+    scheduledDate: null,
+    recipientsTo: ['a@b.c'],
+    recipientsCc: [],
+  });
+  stages = upsertReminderStageSent(stages, {
+    stage: 6,
+    sentAt: '2026-11-08T00:00:00.000Z',
+    scheduledDate: null,
+    recipientsTo: ['a@b.c'],
+    recipientsCc: [],
+  });
+  assert(reminderCountFromStages(stages) === 6, 'reminder_count → 6 after stage 5+6');
+}
+
 function testReturnsInlineListEditorsLifecycle(): void {
   console.log('\n[19e] Returns inline Status / Geräte / Eingang bestätigen');
 
@@ -1413,6 +1472,7 @@ async function main(): Promise<void> {
   testReturnsPaginationErinnerungDashboardLifecycle();
   testReturnsListeKanbanKartenLifecycle();
   testReturnsInlineListEditorsLifecycle();
+  testReturnsDynamicReminderStagesLifecycle();
   testPortalKbSharePointCsvImportLifecycle();
   testSharePointReturnsCsvImportApiLifecycle();
   testSharePointReturnsCsvImportUiLifecycle();

@@ -48,11 +48,13 @@ import {
 import { isClientPortalRole, isHubcomStaffRole } from '../lib/client-portal/roles.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage } from '../lib/safe-log.js';
-import type { ReminderStage } from '../lib/client-portal/hardware-returns-recipients.js';
+import {
+  isValidReminderStage,
+  type ReminderStage,
+} from '../lib/client-portal/hardware-returns-recipients.js';
 
 function stageFromQuery(raw: unknown): ReminderStage | null {
-  const n = Number(raw);
-  return n === 1 || n === 2 || n === 3 ? n : null;
+  return isValidReminderStage(raw) ? Number(raw) : null;
 }
 
 async function resolveOrgForReturns(
@@ -736,7 +738,7 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
     try {
       const ticketId = routeParam(req.params.ticketId);
       const stage = stageFromQuery(req.query.stage);
-      if (!stage) return res.status(400).json({ error: 'stage must be 1, 2, or 3' });
+      if (!stage) return res.status(400).json({ error: 'stage must be an integer >= 1' });
       const ctx = await resolveOrgForReturns(
         req,
         res,
@@ -757,7 +759,7 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
   });
 
   const sendSchema = z.object({
-    stage: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    stage: z.number().int().min(1).max(100),
     to: z.array(z.string()).optional(),
     cc: z.array(z.string()).optional(),
     saveAsTicketOverride: z.boolean().optional(),
