@@ -202,7 +202,7 @@ export function KBArticleEditorWorkspace({
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    {t('kb.editor.newCategoryInline', 'Neue Kategorie')}
+                    {t('kb.editor.newCategoryInline', '+ Neue Kategorie')}
                   </button>
                 ) : null}
               </div>

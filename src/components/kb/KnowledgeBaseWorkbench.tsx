@@ -1239,13 +1239,25 @@ export function KnowledgeBaseWorkbench({
     return (
       <KnowledgeBaseArticlePage
         article={viewingArticle}
+        mode={mode}
+        adapter={adapter}
+        capabilities={capabilities}
+        categories={categories}
         isAiSearchReady={isAiSearchReady}
         aiAdapter={aiAdapter as any}
         onBack={dismissArticleDetail}
         onCopyLink={handleCopyArticleLink}
+        onCreateCategory={
+          capabilities.categoryAdmin ? () => setIsCategoryCreateOpen(true) : undefined
+        }
         onArticleUpdated={(articleId, patch) => {
           setArticles((prev) => prev.map((a) => (a.id === articleId ? { ...a, ...patch } : a)));
-          setViewingArticle((prev) => (prev && prev.id === articleId ? { ...prev, ...patch } : prev));
+          setViewingArticle((prev) =>
+            prev && prev.id === articleId ? { ...prev, ...patch } : prev,
+          );
+          setFirestoreArticles((prev) =>
+            prev.map((a) => (a.id === articleId ? { ...a, ...patch } : a)),
+          );
         }}
       />
     );

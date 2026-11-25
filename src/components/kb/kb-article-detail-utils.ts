@@ -60,19 +60,31 @@ export interface ArticleBadge {
   className: string;
 }
 
-export function deriveArticleBadges(article: {
-  status?: string;
-  visibility?: string;
-  category?: string;
-  subCategory?: string;
-  tags?: string[];
-  approvalStatus?: string;
-}): ArticleBadge[] {
+export function deriveArticleBadges(
+  article: {
+    status?: string;
+    visibility?: string;
+    category?: string;
+    subCategory?: string;
+    tags?: string[];
+    approvalStatus?: string;
+  },
+  options?: { locale?: 'en' | 'de' },
+): ArticleBadge[] {
   const badges: ArticleBadge[] = [];
   const base = 'text-[10px] font-semibold px-2 py-0.5 rounded-md border';
+  const de = options?.locale === 'de';
 
   if (article.status === 'Published') {
-    badges.push({ key: 'published', label: 'Published', className: `${base} bg-emerald-50 text-emerald-700 border-emerald-200` });
+    badges.push({
+      key: 'published',
+      label: de ? 'Veröffentlicht' : 'Published',
+      className: `${base} bg-emerald-50 text-emerald-700 border-emerald-200`,
+    });
+  }
+  if (de) {
+    // Portal reader: keep status badge only — no staff verification chrome.
+    return badges;
   }
   if (article.approvalStatus === 'Approved' || article.status === 'Published') {
     badges.push({ key: 'verified', label: 'Verified', className: `${base} bg-blue-50 text-blue-700 border-blue-200` });

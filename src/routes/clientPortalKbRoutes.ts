@@ -294,8 +294,15 @@ router.patch(
       const body = req.body as Record<string, unknown>;
       if (typeof body.title === 'string') updates.title = body.title.trim();
       if (typeof body.content === 'string') updates.content = body.content;
-      if (typeof body.category === 'string') {
-        const cat = body.category.trim();
+      // Accept `category` (preferred) or alias `category_id` from older clients.
+      const categoryRaw =
+        typeof body.category === 'string'
+          ? body.category
+          : typeof body.category_id === 'string'
+            ? body.category_id
+            : null;
+      if (typeof categoryRaw === 'string') {
+        const cat = categoryRaw.trim();
         updates.category =
           !cat || cat === 'All' || cat.toLowerCase() === 'allgemein' ? 'uncategorized' : cat;
       }

@@ -14,6 +14,7 @@ import {
 import { Button } from '../ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { cn } from '../../lib/utils';
+import type { KbWorkbenchMode } from '../../lib/kb/kb-workbench-adapter';
 
 export const KB_TRANSLATE_LANGUAGES = [
   'English',
@@ -29,6 +30,8 @@ export type KBTranslateLanguage = (typeof KB_TRANSLATE_LANGUAGES)[number];
 
 export interface KBArticleDetailToolbarProps {
   className?: string;
+  mode?: KbWorkbenchMode;
+  canEdit?: boolean;
   isEditing?: boolean;
   isSaving?: boolean;
   isTranslating?: boolean;
@@ -54,23 +57,10 @@ type ToolbarActionId =
   | 'export'
   | 'copy';
 
-const TOOLBAR_ACTIONS: Array<{
-  id: ToolbarActionId;
-  label: string;
-  icon: typeof PenLine;
-}> = [
-  { id: 'edit', label: 'Edit', icon: PenLine },
-  { id: 'share', label: 'Share', icon: Share2 },
-  { id: 'history', label: 'History', icon: History },
-  { id: 'compare', label: 'Compare', icon: Split },
-  { id: 'translate', label: 'Translate', icon: Languages },
-  { id: 'ai-explain', label: 'AI Explain', icon: Sparkles },
-  { id: 'export', label: 'Export PDF', icon: Download },
-  { id: 'copy', label: 'Copy Link', icon: Link2 },
-];
-
 export function KBArticleDetailToolbar({
   className,
+  mode = 'staff',
+  canEdit = true,
   isEditing = false,
   isSaving = false,
   isTranslating = false,
@@ -85,7 +75,25 @@ export function KBArticleDetailToolbar({
   onExportPdf,
   onCopyLink,
 }: KBArticleDetailToolbarProps) {
+  const isPortal = mode === 'portal';
   const [translateOpen, setTranslateOpen] = useState(false);
+
+  const actions: Array<{ id: ToolbarActionId; label: string; icon: typeof PenLine }> = isPortal
+    ? [
+        { id: 'edit', label: 'Bearbeiten', icon: PenLine },
+        { id: 'copy', label: 'Link kopieren', icon: Link2 },
+        { id: 'export', label: 'Als PDF exportieren', icon: Download },
+      ]
+    : [
+        { id: 'edit', label: 'Edit', icon: PenLine },
+        { id: 'share', label: 'Share', icon: Share2 },
+        { id: 'history', label: 'History', icon: History },
+        { id: 'compare', label: 'Compare', icon: Split },
+        { id: 'translate', label: 'Translate', icon: Languages },
+        { id: 'ai-explain', label: 'AI Explain', icon: Sparkles },
+        { id: 'export', label: 'Export PDF', icon: Download },
+        { id: 'copy', label: 'Copy Link', icon: Link2 },
+      ];
 
   const handlers: Record<Exclude<ToolbarActionId, 'edit' | 'translate'>, () => void> = {
     share: onShare,
@@ -106,8 +114,9 @@ export function KBArticleDetailToolbar({
       )}
     >
       <div className="flex flex-wrap items-center gap-1.5">
-        {TOOLBAR_ACTIONS.map((action) => {
+        {actions.map((action) => {
           if (action.id === 'edit') {
+            if (!canEdit) return null;
             if (isEditing) {
               return (
                 <Button
@@ -119,7 +128,7 @@ export function KBArticleDetailToolbar({
                   onClick={onSave}
                 >
                   <Save className="w-3.5 h-3.5" />
-                  Speichern / Save
+                  {isPortal ? 'Speichern' : 'Speichern / Save'}
                 </Button>
               );
             }
@@ -134,7 +143,7 @@ export function KBArticleDetailToolbar({
                 onClick={onEdit}
               >
                 <PenLine className="w-3.5 h-3.5 text-slate-500" />
-                Edit
+                {action.label}
               </Button>
             );
           }

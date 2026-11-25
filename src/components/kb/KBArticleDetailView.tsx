@@ -13,8 +13,11 @@ import { extractArticleHeadings, injectHeadingIds } from './kb-article-detail-ut
 import { buildKbArticleDeepLink, toEditableHtml, toRenderableHtml } from './kb-content-format';
 import type { KBArticleAlert, KBArticleHistoryEntry, KBArticleInfrastructureTrust } from '../../types';
 import type { KBRelationship } from '../../services/kbRelationshipService';
+import type { KbWorkbenchMode } from '../../lib/kb/kb-workbench-adapter';
+import type { KBCategoryRecord } from './kbCategoryUtils';
 
 export interface KBArticleDetailViewProps {
+  mode?: KbWorkbenchMode;
   article: any;
   title: string;
   htmlContent: string;
@@ -29,6 +32,9 @@ export interface KBArticleDetailViewProps {
   relationships: KBRelationship[];
   historyEntries?: KBArticleHistoryEntry[];
   isHistoryLoading?: boolean;
+  categories?: KBCategoryRecord[];
+  canEdit?: boolean;
+  canManageCategories?: boolean;
   onBack: () => void;
   onCopyLink: () => void;
   onTranslate: (language: KBTranslateLanguage) => Promise<void>;
@@ -36,6 +42,8 @@ export interface KBArticleDetailViewProps {
   onRegenerateSummary: (forceRefresh?: boolean) => Promise<void>;
   onLoadHistory: () => Promise<void>;
   onSaveContent: (content: string) => Promise<void>;
+  onCategoryChange?: (categoryId: string) => Promise<void> | void;
+  onCreateCategory?: () => void;
   onHelpful: () => Promise<void>;
   onUnhelpful: () => Promise<void>;
   indexInRag?: boolean;
@@ -43,6 +51,7 @@ export interface KBArticleDetailViewProps {
 }
 
 export function KBArticleDetailView({
+  mode = 'staff',
   article,
   title,
   htmlContent,
@@ -57,6 +66,9 @@ export function KBArticleDetailView({
   relationships,
   historyEntries = [],
   isHistoryLoading = false,
+  categories = [],
+  canEdit = true,
+  canManageCategories = false,
   onBack,
   onCopyLink,
   onTranslate,
@@ -64,11 +76,14 @@ export function KBArticleDetailView({
   onRegenerateSummary,
   onLoadHistory,
   onSaveContent,
+  onCategoryChange,
+  onCreateCategory,
   onHelpful,
   onUnhelpful,
   indexInRag,
   onToggleIndexInRag,
 }: KBArticleDetailViewProps) {
+  const isPortal = mode === 'portal';
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [editedContent, setEditedContent] = useState('');
@@ -108,14 +123,16 @@ export function KBArticleDetailView({
   }, [isEditing, viewSourceContent]);
 
   const handleToggleEdit = () => {
-    if (isEditing) return;
+    if (!canEdit || isEditing) return;
     setEditedContent(toEditableHtml(viewSourceContent));
     setIsEditing(true);
   };
 
   const handleSave = async () => {
     if (!editedContent.trim()) {
-      toast.error('Article content cannot be empty.');
+      toast.error(
+        isPortal ? 'Artikelinhalt darf nicht leer sein.' : 'Article content cannot be empty.',
+      );
       return;
     }
 
@@ -125,7 +142,11 @@ export function KBArticleDetailView({
       setIsEditing(false);
       toast.success('Artikel erfolgreich aktualisiert!');
     } catch {
-      toast.error('Failed to save article. Please try again.');
+      toast.error(
+        isPortal
+          ? 'Artikel konnte nicht gespeichert werden. Bitte später erneut versuchen.'
+          : 'Failed to save article. Please try again.',
+      );
     } finally {
       setIsSaving(false);
     }
@@ -136,6 +157,7 @@ export function KBArticleDetailView({
   }, []);
 
   const handleAiExplain = useCallback(async () => {
+    if (isPortal) return;
     setActivePanel('ai-explain');
     setAiExplainContent('');
     setIsAiExplainLoading(true);
@@ -149,28 +171,31 @@ export function KBArticleDetailView({
     } finally {
       setIsAiExplainLoading(false);
     }
-  }, [onAiExplain]);
+  }, [isPortal, onAiExplain]);
 
   const handleTranslate = useCallback(
     async (language: KBTranslateLanguage) => {
+      if (isPortal) return;
       try {
         await onTranslate(language);
       } catch {
         toast.error('Translation failed. Please try again.');
       }
     },
-    [onTranslate],
+    [isPortal, onTranslate],
   );
 
   const openHistoryPanel = useCallback(async () => {
+    if (isPortal) return;
     setActivePanel('history');
     await onLoadHistory();
-  }, [onLoadHistory]);
+  }, [isPortal, onLoadHistory]);
 
   const openComparePanel = useCallback(async () => {
+    if (isPortal) return;
     setActivePanel('compare');
     await onLoadHistory();
-  }, [onLoadHistory]);
+  }, [isPortal, onLoadHistory]);
 
   return (
     <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden bg-[#FAFBFC] print:block print:overflow-visible print:bg-white">
@@ -182,10 +207,12 @@ export function KBArticleDetailView({
           >
             <div className="kb-detail-no-print print:hidden">
               <KBArticleDetailHeader
+                mode={mode}
                 title={title}
                 category={article.category}
                 subCategory={article.subCategory}
                 article={article}
+                categories={categories}
                 onBack={onBack}
               />
             </div>
@@ -193,13 +220,15 @@ export function KBArticleDetailView({
             <div className="print:hidden">
               <KBArticleDetailToolbar
                 className="mt-4"
+                mode={mode}
+                canEdit={canEdit}
                 isEditing={isEditing}
                 isSaving={isSaving}
                 isTranslating={isTranslating}
                 activeLanguage={activeReadingLanguage}
                 onEdit={handleToggleEdit}
                 onSave={() => void handleSave()}
-                onShare={() => setActivePanel('share')}
+                onShare={isPortal ? () => setActivePanel('share') : () => setActivePanel('share')}
                 onHistory={() => void openHistoryPanel()}
                 onCompare={() => void openComparePanel()}
                 onTranslate={(lang) => void handleTranslate(lang)}
@@ -212,7 +241,7 @@ export function KBArticleDetailView({
             <div className="print-only-article-title hidden print:block mb-6">
               <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>
               <p className="text-sm text-slate-500 mt-1">
-                {article.category} · {article.subCategory || 'General'}
+                {article.category} · {article.subCategory || (isPortal ? 'Allgemein' : 'General')}
               </p>
             </div>
 
@@ -221,6 +250,7 @@ export function KBArticleDetailView({
                 <KBArticleTableOfContents
                   headings={headings}
                   scrollContainerRef={scrollContainerRef}
+                  locale={isPortal ? 'de' : 'en'}
                 />
               ) : null}
               <KBArticleDetailBody
@@ -232,38 +262,43 @@ export function KBArticleDetailView({
               />
             </div>
 
-            <div className="kb-detail-no-print print:hidden mt-8 rounded-xl border border-slate-200/80 bg-white p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div>
-                <h4 className="text-xs font-semibold text-slate-900">Was this documentation helpful?</h4>
-                <p className="text-[11px] text-slate-500 mt-0.5">Feedback updates the enterprise trust score model.</p>
+            {!isPortal ? (
+              <div className="kb-detail-no-print print:hidden mt-8 rounded-xl border border-slate-200/80 bg-white p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-900">Was this documentation helpful?</h4>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Feedback updates the enterprise trust score model.
+                  </p>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 rounded-xl text-[11px] font-semibold gap-1.5 border-slate-200"
+                    onClick={() => void onHelpful()}
+                  >
+                    <ThumbsUp className="w-3.5 h-3.5 text-emerald-600" />
+                    Yes ({article.helpfulCount || 0})
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 rounded-xl text-[11px] font-semibold gap-1.5 border-slate-200"
+                    onClick={() => void onUnhelpful()}
+                  >
+                    <ThumbsDown className="w-3.5 h-3.5 text-rose-500" />
+                    No ({article.unhelpfulCount || 0})
+                  </Button>
+                </div>
               </div>
-              <div className="flex gap-2 shrink-0">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 rounded-xl text-[11px] font-semibold gap-1.5 border-slate-200"
-                  onClick={() => void onHelpful()}
-                >
-                  <ThumbsUp className="w-3.5 h-3.5 text-emerald-600" />
-                  Yes ({article.helpfulCount || 0})
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 rounded-xl text-[11px] font-semibold gap-1.5 border-slate-200"
-                  onClick={() => void onUnhelpful()}
-                >
-                  <ThumbsDown className="w-3.5 h-3.5 text-rose-500" />
-                  No ({article.unhelpfulCount || 0})
-                </Button>
-              </div>
-            </div>
+            ) : null}
           </div>
         </ScrollArea>
       </div>
 
       <aside className="kb-detail-no-print print:hidden flex-[3] min-w-[280px] max-w-[400px] shrink-0 min-h-0 overflow-y-auto bg-white p-4 custom-scrollbar">
         <KBKnowledgeIntelligencePanel
+          mode={mode}
           article={article}
           infrastructureTrust={infrastructureTrust}
           aiSummary={aiSummary}
@@ -271,6 +306,11 @@ export function KBArticleDetailView({
           summaryFailed={summaryFailed}
           onRetrySummary={onRetrySummary}
           relationships={relationships}
+          categories={categories}
+          canEditCategory={canEdit}
+          canCreateCategory={canManageCategories}
+          onCategoryChange={onCategoryChange}
+          onCreateCategory={onCreateCategory}
           onAskAi={(forceRefresh) => void onRegenerateSummary(forceRefresh)}
           indexInRag={indexInRag}
           onToggleIndexInRag={onToggleIndexInRag}

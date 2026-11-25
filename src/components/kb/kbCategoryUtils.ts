@@ -60,7 +60,7 @@ export function getCategoryDisplayName(
     return t(categoryI18nKey(record.name), record.name);
   }
   if (id === UNCATEGORIZED_CATEGORY_ID) {
-    return t('kb.categories.uncategorized.name', 'Uncategorized');
+    return t('kb.categories.uncategorized.name', 'Unkategorisiert');
   }
   return t(categoryI18nKey(id), id);
 }

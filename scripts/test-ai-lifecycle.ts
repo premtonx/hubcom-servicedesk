@@ -915,6 +915,70 @@ function testPortalKbCategoryLifecycle(): void {
   );
 }
 
+function testPortalKbArticleEditLifecycle(): void {
+  console.log('\n[19b] Portal KB article edit — PATCH via adapter, zero /api/db');
+
+  const detailPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/KnowledgeBaseArticlePage.tsx'),
+    'utf8',
+  );
+  const adapterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/hooks/usePortalKbAdapter.ts'),
+    'utf8',
+  );
+  const routeSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalKbRoutes.ts'),
+    'utf8',
+  );
+  const panelSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KBKnowledgeIntelligencePanel.tsx'),
+    'utf8',
+  );
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KnowledgeBaseWorkbench.tsx'),
+    'utf8',
+  );
+
+  assert(
+    assertPortalKbWriteRole('CLIENT_ADMIN') === true &&
+      assertPortalKbWriteRole('CLIENT_SUPPORTER') === true &&
+      assertPortalKbWriteRole('CLIENT_USER') === false,
+    'DPG CLIENT_ADMIN/SUPPORTER may PATCH; CLIENT_USER denied',
+  );
+  assert(
+    routeSrc.includes('requireClientPortalRole') &&
+      routeSrc.includes('CLIENT_SUPPORTER') &&
+      routeSrc.includes('updatedAt') &&
+      routeSrc.includes('typeof body.category') &&
+      routeSrc.includes('sanitizeKbArticleForPortal') &&
+      routeSrc.includes("visibility: 'organization'"),
+    'PATCH /api/portal/kb/:id updates title/content/category with updatedAt + org lock',
+  );
+  assert(
+    detailPageSrc.includes('adapter.updateArticle') &&
+      detailPageSrc.includes('handleCategoryChange') &&
+      workbenchSrc.includes('adapter={adapter}') &&
+      workbenchSrc.includes('mode={mode}'),
+    'reader Edit/Save + Kategorie quick-assign go through adapter.updateArticle',
+  );
+  assert(
+    adapterSrc.includes('`${PORTAL_KB}/${encodeURIComponent(id)}`') &&
+      adapterSrc.includes('patch.category !== undefined') &&
+      !adapterSrc.includes('/api/db') &&
+      !adapterSrc.includes('kbService') &&
+      !adapterSrc.includes('kbArticleApi'),
+    'portal updateArticle hits only /api/portal/kb/:id (zero /api/db)',
+  );
+  assert(
+    panelSrc.includes('onCategoryChange') &&
+      panelSrc.includes('Artikel-Metadaten') &&
+      panelSrc.includes("mode === 'portal'") &&
+      panelSrc.includes('!isPortal') &&
+      panelSrc.includes('KI-Wissensspeicher (RAG)'),
+    'portal metadata supports Kategorie; staff RAG/summary/trust gated by !isPortal',
+  );
+}
+
 function testSharePointReturnsCsvImportApiLifecycle(): void {
   console.log('\n[21] SharePoint Returns CSV import API (Part 2) — plan, map, RBAC');
 
@@ -1209,6 +1273,7 @@ async function main(): Promise<void> {
   await testOrganizationDirectorySyncLifecycle();
   testPortalUserDeleteLifecycle();
   testPortalKbCategoryLifecycle();
+  testPortalKbArticleEditLifecycle();
   testPortalKbSharePointCsvImportLifecycle();
   testSharePointReturnsCsvImportApiLifecycle();
   testSharePointReturnsCsvImportUiLifecycle();

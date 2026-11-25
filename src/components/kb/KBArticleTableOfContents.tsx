@@ -7,6 +7,7 @@ interface KBArticleTableOfContentsProps {
   activeId?: string;
   className?: string;
   scrollContainerRef?: RefObject<HTMLElement | null>;
+  locale?: 'en' | 'de';
 }
 
 export function KBArticleTableOfContents({
@@ -14,8 +15,10 @@ export function KBArticleTableOfContents({
   activeId,
   className,
   scrollContainerRef,
+  locale = 'en',
 }: KBArticleTableOfContentsProps) {
   if (headings.length === 0) return null;
+  const tocLabel = locale === 'de' ? 'Auf dieser Seite' : 'On this page';
 
   const scrollTo = (id: string) => {
     const el = document.getElementById(id);
@@ -39,10 +42,10 @@ export function KBArticleTableOfContents({
         'hidden xl:block w-[180px] shrink-0 sticky top-24 self-start print:hidden',
         className,
       )}
-      aria-label="On this page"
+      aria-label={tocLabel}
     >
       <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">
-        On this page
+        {tocLabel}
       </p>
       <ul className="space-y-1 border-l border-slate-200 pl-3">
         {headings.map((heading) => (

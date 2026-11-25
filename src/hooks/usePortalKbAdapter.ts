@@ -99,18 +99,17 @@ export function usePortalKbAdapter(): KbWorkbenchAdapter {
       },
 
       async updateArticle(id, patch) {
-        await axios.patch(
-          `${PORTAL_KB}/${encodeURIComponent(id)}`,
-          {
-            title: patch.title,
-            content: patch.content,
-            category: patch.category,
-            tags: patch.tags,
-            status: patch.status,
-          },
-          { withCredentials: true },
-        );
+        const body: Record<string, unknown> = {};
+        if (patch.title !== undefined) body.title = patch.title;
+        if (patch.content !== undefined) body.content = patch.content;
+        if (patch.category !== undefined) body.category = patch.category;
+        if (patch.tags !== undefined) body.tags = patch.tags;
+        if (patch.status !== undefined) body.status = patch.status;
+        const res = await axios.patch(`${PORTAL_KB}/${encodeURIComponent(id)}`, body, {
+          withCredentials: true,
+        });
         await refresh();
+        return res.data?.article;
       },
 
       async deleteArticle(id) {

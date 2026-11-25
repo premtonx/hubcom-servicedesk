@@ -1165,7 +1165,141 @@ function testPortalKbIsolation(): void {
     'portal article create auto-stamps author; ignores client owner/reviewer; optional category',
   );
 
+  testPortalKbArticleEditAndPortalChrome();
   testPortalKbSharePointCsvImport();
+}
+
+/** Portal article Edit→Save via adapter + Kategorie quick-assign + portal chrome. */
+function testPortalKbArticleEditAndPortalChrome(): void {
+  console.log('\n[12d] Portal KB article edit / Kategorie / portal chrome');
+
+  const detailPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/KnowledgeBaseArticlePage.tsx'),
+    'utf8',
+  );
+  const detailViewSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KBArticleDetailView.tsx'),
+    'utf8',
+  );
+  const headerSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KBArticleDetailHeader.tsx'),
+    'utf8',
+  );
+  const toolbarSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KBArticleDetailToolbar.tsx'),
+    'utf8',
+  );
+  const panelSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KBKnowledgeIntelligencePanel.tsx'),
+    'utf8',
+  );
+  const adapterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/hooks/usePortalKbAdapter.ts'),
+    'utf8',
+  );
+  const routeSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalKbRoutes.ts'),
+    'utf8',
+  );
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KnowledgeBaseWorkbench.tsx'),
+    'utf8',
+  );
+  const editorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KBArticleEditorWorkspace.tsx'),
+    'utf8',
+  );
+
+  assert(
+    workbenchSrc.includes('mode={mode}') &&
+      workbenchSrc.includes('adapter={adapter}') &&
+      workbenchSrc.includes('categories={categories}') &&
+      detailPageSrc.includes('adapter.updateArticle') &&
+      detailPageSrc.includes('handleSaveContent') &&
+      detailPageSrc.includes('handleCategoryChange'),
+    'article reader receives mode/adapter/categories and saves via adapter.updateArticle',
+  );
+  const saveContentFn = detailPageSrc.slice(
+    detailPageSrc.indexOf('handleSaveContent'),
+    detailPageSrc.indexOf('handleCategoryChange'),
+  );
+  assert(
+    detailPageSrc.includes('if (isPortal || isSeedArticle') &&
+      saveContentFn.includes('adapter.updateArticle') &&
+      !saveContentFn.includes('kbService') &&
+      !saveContentFn.includes('kbArticleApi'),
+    'portal skips staff view-increment; content save never calls kbService / kbArticleApi',
+  );
+  assert(
+    adapterSrc.includes('patch.category !== undefined') &&
+      adapterSrc.includes('patch.content !== undefined') &&
+      adapterSrc.includes('`${PORTAL_KB}/${encodeURIComponent(id)}`') &&
+      !adapterSrc.includes('/api/db') &&
+      !adapterSrc.includes('kbService'),
+    'portal adapter PATCH sends only defined fields to /api/portal/kb/:id',
+  );
+  assert(
+    routeSrc.includes("'/:id'") &&
+      routeSrc.includes('updatedAt: new Date().toISOString()') &&
+      routeSrc.includes('typeof body.category') &&
+      routeSrc.includes('category_id') &&
+      routeSrc.includes('sanitizeKbArticleForPortal') &&
+      routeSrc.includes("visibility: 'organization'"),
+    'PATCH persists category (+ category_id alias), stamps updatedAt, returns article',
+  );
+  assert(
+    assertPortalKbWriteRole('CLIENT_ADMIN') === true &&
+      assertPortalKbWriteRole('CLIENT_SUPPORTER') === true &&
+      assertPortalKbWriteRole('CLIENT_USER') === false,
+    'CLIENT_ADMIN/SUPPORTER may PATCH; CLIENT_USER → 403',
+  );
+  assert(
+    editorSrc.includes('Kategorie') &&
+      editorSrc.includes('Ohne Kategorie') &&
+      editorSrc.includes('+ Neue Kategorie') &&
+      panelSrc.includes('Kategorie') &&
+      panelSrc.includes('Ohne Kategorie') &&
+      panelSrc.includes('onCategoryChange') &&
+      panelSrc.includes('canEditCategory'),
+    'edit form + Artikel-Metadaten expose Kategorie dropdown with Ohne Kategorie',
+  );
+  assert(
+    panelSrc.includes('Artikel-Metadaten') &&
+      panelSrc.includes('!isPortal') &&
+      panelSrc.includes('KI-Wissensspeicher (RAG)') &&
+      headerSrc.includes('Zurück zur Wissensdatenbank') &&
+      toolbarSrc.includes('Bearbeiten') &&
+      toolbarSrc.includes('Link kopieren') &&
+      toolbarSrc.includes('Als PDF exportieren') &&
+      toolbarSrc.includes('isPortal'),
+    'portal chrome uses German labels; staff RAG panels gated by !isPortal',
+  );
+  assert(
+    detailViewSrc.includes("mode === 'portal'") &&
+      headerSrc.includes('Review Due') &&
+      headerSrc.includes('!isPortal') &&
+      toolbarSrc.includes('Compare') &&
+      toolbarSrc.includes('isPortal'),
+    'OWNER/REVIEWER/TICKETS/Compare/Translate/AI Explain gated off in portal mode',
+  );
+  assert(
+    fs
+      .readFileSync(
+        path.join(process.cwd(), 'src/components/kb/kb-article-detail-utils.ts'),
+        'utf8',
+      )
+      .includes('Veröffentlicht'),
+    'Published badge translates to Veröffentlicht in portal locale',
+  );
+  assert(
+    fs
+      .readFileSync(
+        path.join(process.cwd(), 'src/components/kb/KBArticleTableOfContents.tsx'),
+        'utf8',
+      )
+      .includes('Auf dieser Seite'),
+    'TOC label Auf dieser Seite for portal',
+  );
 }
 
 function testPortalKbSharePointCsvImport(): void {
