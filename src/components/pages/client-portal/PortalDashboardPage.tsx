@@ -311,7 +311,7 @@ function PortalDashboardShell({
                   />
                   <SummaryRow label="Überfällig" value={data.returnsKpis.overdue} />
                   <SummaryRow
-                    label="3. Erinnerung gesendet"
+                    label="Letzte Stufe / Eskaliert (4.+ Erinnerung)"
                     value={data.returnsKpis.stage3}
                   />
                   <SummaryRow

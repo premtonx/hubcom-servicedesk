@@ -3448,7 +3448,7 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
       editorSrc.includes('Verlauf &amp; E-Mail-Protokoll')) &&
       editorSrc.includes('activity_log') &&
       editorSrc.includes('Erinnerungsverlauf') &&
-      editorSrc.includes('Mail senden'),
+      (editorSrc.includes('. senden') || editorSrc.includes('Mail senden')),
     'edit mode renders Erinnerungsverlauf + Verlauf & E-Mail-Protokoll',
   );
 
@@ -4173,7 +4173,7 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
   // KPI strip: no Nächste Mail; Erinnerung labels; 4 cards.
   assert(
     !workbenchSrc.includes('Nächste Mail fällig') &&
-      workbenchSrc.includes('3. Erinnerung gesendet') &&
+      workbenchSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
       workbenchSrc.includes('Erinnerungsverlauf') &&
       workbenchSrc.includes('Erinnerungsstufe') &&
       workbenchSrc.includes('lg:grid-cols-4') &&
@@ -4204,7 +4204,7 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       dashboardPageSrc.includes('hardwareReturnsEnabled') &&
       dashboardPageSrc.includes('/portal/returns') &&
       dashboardPageSrc.includes('Offene Rücklieferungen') &&
-      dashboardPageSrc.includes('3. Erinnerung gesendet') &&
+      dashboardPageSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
       !dashboardPageSrc.includes('/api/db'),
     'portal Übersicht shows returns card when hardwareReturnsEnabled',
   );
@@ -4219,6 +4219,56 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
     dashboardSvcSrc.includes('returnsKpis') &&
       dashboardSvcSrc.includes('hardwareReturnsEnabled'),
     'dashboard payload carries hardwareReturnsEnabled + returnsKpis',
+  );
+}
+
+/** Dynamic 1..N reminder stages FE (Part 2 — stepper, settings, editor). */
+function testHardwareReturnsDynamicReminderUiPart2(): void {
+  console.log('\n--- Hardware returns dynamic reminder UI (Part 2) ---');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const stepperSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsReminderStepper.tsx'),
+    'utf8',
+  );
+  const editorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnEditorPage.tsx'),
+    'utf8',
+  );
+  const sharedSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/returns-layout-shared.tsx'),
+    'utf8',
+  );
+
+  assert(
+    stepperSrc.includes('nextManualReminderStage') &&
+      stepperSrc.includes('visibleReminderStages') &&
+      stepperSrc.includes('Math.max(configuredCount, highestSent)') &&
+      workbenchSrc.includes('ReturnsReminderStepper') &&
+      sharedSrc.includes('ReturnsReminderStepper'),
+    'shared stepper with + next stage across list/cards',
+  );
+  assert(
+    workbenchSrc.includes('mail4plus') &&
+      workbenchSrc.includes('4.+ Erinnerung') &&
+      workbenchSrc.includes('Erinnerungsstufe hinzufügen') &&
+      workbenchSrc.includes('addReminderStage') &&
+      workbenchSrc.includes('removeReminderStage'),
+    'settings add/remove stages + 4.+ filter/KPI',
+  );
+  assert(
+    editorSrc.includes('configuredStages.map') &&
+      editorSrc.includes('stageOverrideKey') &&
+      editorSrc.includes('ReturnsReminderStepper') &&
+      editorSrc.includes('nextPlusStage'),
+    'editor advanced overrides + Verlauf are dynamic 1..N',
+  );
+  assert(
+    !workbenchSrc.includes('/api/db') && !editorSrc.includes('/api/db'),
+    'portal/staff returns UI never calls /api/db',
   );
 }
 
@@ -4343,7 +4393,7 @@ function testHardwareReturnsListeKanbanKarten(): void {
   assert(
     cardsSrc.includes('grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3') &&
       sharedSrc.includes('CompactDevicePills') &&
-      sharedSrc.includes('ReminderProgress') &&
+      sharedSrc.includes('ReturnsReminderStepper') &&
       sharedSrc.includes('Details') &&
       sharedSrc.includes('Eingang bestätigen'),
     'Karten grid renders device/reminder cards with Details/Eingang bestätigen',
@@ -4503,6 +4553,7 @@ async function main(): Promise<void> {
   testHardwareReturnsSchemaCatalogsPart1();
   testHardwareReturnsPaginationErinnerungAndDashboard();
   testHardwareReturnsDynamicReminderStages();
+  testHardwareReturnsDynamicReminderUiPart2();
   testHardwareReturnsListeKanbanKarten();
   testHardwareReturnsInlineListEditors();
   await testOrganizationDirectorySyncPart2();

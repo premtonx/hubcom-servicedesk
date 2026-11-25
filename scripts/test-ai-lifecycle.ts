@@ -1169,7 +1169,7 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
     workbenchSrc.includes('PAGE_SIZE_OPTIONS') &&
       workbenchSrc.includes('Erinnerungsverlauf') &&
       !workbenchSrc.includes('Nächste Mail fällig') &&
-      workbenchSrc.includes('3. Erinnerung gesendet'),
+      workbenchSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)'),
     'workbench pagination + Erinnerung KPI strip',
   );
   assert(

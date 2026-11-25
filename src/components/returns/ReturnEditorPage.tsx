@@ -16,6 +16,7 @@ import {
   Loader2,
   Mail,
   Package,
+  Plus,
   Save,
   Search,
   Truck,
@@ -40,6 +41,19 @@ import {
   formatDateDeOnly,
   toIsoDateOnly,
 } from '../../lib/client-portal/hardware-returns-dates';
+import {
+  defaultConfiguredReminderStages,
+  getStageSentAt,
+  normalizeConfiguredReminderStages,
+  reminderStageLabel,
+  stageOverrideKey,
+  type ConfiguredReminderStage,
+} from '../../lib/client-portal/hardware-returns-stages';
+import {
+  nextManualReminderStage,
+  ReturnsReminderStepper,
+  visibleReminderStages,
+} from './ReturnsReminderStepper';
 
 function formatReturnNumberDisplay(returnNumber: string | null | undefined): string {
   const raw = String(returnNumber || '').trim();
@@ -267,9 +281,9 @@ export function ReturnEditorPage({
   const [customerName, setCustomerName] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [catalogs, setCatalogs] = useState<Catalogs>(DEFAULT_CATALOGS);
-  const [mail1Days, setMail1Days] = useState(14);
-  const [mail2Days, setMail2Days] = useState(7);
-  const [mail3Days, setMail3Days] = useState(7);
+  const [configuredStages, setConfiguredStages] = useState<ConfiguredReminderStage[]>(
+    () => defaultConfiguredReminderStages(),
+  );
   const [returnNumber, setReturnNumber] = useState<string | null>(null);
   const [activityLog, setActivityLog] = useState<any[]>([]);
   const [assignees, setAssignees] = useState<Assignee[]>([]);
@@ -279,7 +293,7 @@ export function ReturnEditorPage({
   const [dirLoading, setDirLoading] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [timeOpen, setTimeOpen] = useState(false);
-  const [sendingStage, setSendingStage] = useState<1 | 2 | 3 | null>(null);
+  const [sendingStage, setSendingStage] = useState<number | null>(null);
   const dirBoxRef = useRef<HTMLDivElement>(null);
 
   const setField = <K extends keyof HardwareReturnFormState>(
@@ -289,7 +303,8 @@ export function ReturnEditorPage({
     setForm((prev) => {
       const next = { ...prev, [key]: value };
       if (key === 'delivery_date' && typeof value === 'string' && value) {
-        next.return_due_date = addDaysIso(value, mail1Days);
+        const delay = configuredStages[0]?.delayDays ?? 14;
+        next.return_due_date = addDaysIso(value, delay);
       }
       if (key === 'returned' && value === true && !prev.returned_at) {
         next.returned_at = new Date().toISOString();
@@ -325,9 +340,15 @@ export function ReturnEditorPage({
         ? cats.shipping_methods
         : DEFAULT_CATALOGS.shipping_methods,
     });
-    setMail1Days(Number(cfg.mail1_days_after_delivery ?? 14));
-    setMail2Days(Number(cfg.mail2_days_after_mail1 ?? 7));
-    setMail3Days(Number(cfg.mail3_days_after_mail2 ?? 7));
+    setConfiguredStages(
+      normalizeConfiguredReminderStages(cfg.stages, {
+        mail1_days_after_delivery: cfg.mail1_days_after_delivery,
+        mail2_days_after_mail1: cfg.mail2_days_after_mail1,
+        mail3_days_after_mail2: cfg.mail3_days_after_mail2,
+        stage_recipients: cfg.stage_recipients,
+        templates: cfg.templates,
+      }),
+    );
     setAssignees((assigneesRes.data?.assignees || []) as Assignee[]);
     return cfg;
   }, [base, mode, organizationId]);
@@ -533,7 +554,7 @@ export function ReturnEditorPage({
     }
   };
 
-  const sendReminder = async (stage: 1 | 2 | 3) => {
+  const sendReminder = async (stage: number) => {
     if (!returnId) return;
     setSendingStage(stage);
     try {
@@ -545,7 +566,7 @@ export function ReturnEditorPage({
         },
         { withCredentials: true },
       );
-      toast.success(`${stage}. Mail versendet`);
+      toast.success(`${reminderStageLabel(stage)} versendet`);
       const res = await axios.get(
         `${base}/${encodeURIComponent(returnId)}${
           mode === 'staff' ? `?organizationId=${encodeURIComponent(organizationId)}` : ''
@@ -566,7 +587,54 @@ export function ReturnEditorPage({
     ? `${formatReturnNumberDisplay(returnNumber) || 'Rücklieferung'} bearbeiten`
     : 'Neue Rücklieferung erstellen';
 
-  const mailSummary = `Standard-Erinnerungsplan aktiv: 1. Erinnerung nach ${mail1Days} Tagen · 2. Erinnerung +${mail2Days} Tage · 3. Erinnerung +${mail3Days} Tage`;
+  const mailSummary = `Standard-Erinnerungsplan aktiv: ${configuredStages
+    .map((s, i) =>
+      i === 0
+        ? `1. Erinnerung nach ${s.delayDays} Tagen`
+        : `${s.stage}. Erinnerung +${s.delayDays} Tage`,
+    )
+    .join(' · ')}`;
+
+  const getScheduledDate = (stage: number): string => {
+    if (stage === 1) return form.mail1_scheduled_date;
+    if (stage === 2) return form.mail2_scheduled_date;
+    if (stage === 3) return form.mail3_scheduled_date;
+    return form.stage_scheduled_overrides[`stage${stage}`] || '';
+  };
+
+  const setScheduledDate = (stage: number, value: string) => {
+    if (stage === 1) setField('mail1_scheduled_date', value);
+    else if (stage === 2) setField('mail2_scheduled_date', value);
+    else if (stage === 3) setField('mail3_scheduled_date', value);
+    else {
+      setForm((prev) => ({
+        ...prev,
+        stage_scheduled_overrides: {
+          ...prev.stage_scheduled_overrides,
+          [`stage${stage}`]: value,
+        },
+      }));
+    }
+  };
+
+  const overrideKeyFor = (stage: number) => stageOverrideKey(stage);
+
+  const verlaufStages = visibleReminderStages(configuredStages, {
+    returned: form.returned,
+    mail1_sent_at: form.mail1_sent_at,
+    mail2_sent_at: form.mail2_sent_at,
+    mail3_sent_at: form.mail3_sent_at,
+    reminder_stages: form.reminder_stages || [],
+    reminder_count: form.reminder_count || 0,
+  });
+  const nextPlusStage = nextManualReminderStage(configuredStages, {
+    returned: form.returned,
+    mail1_sent_at: form.mail1_sent_at,
+    mail2_sent_at: form.mail2_sent_at,
+    mail3_sent_at: form.mail3_sent_at,
+    reminder_stages: form.reminder_stages || [],
+    reminder_count: form.reminder_count || 0,
+  });
 
   if (loading) {
     return (
@@ -930,66 +998,69 @@ export function ReturnEditorPage({
                         onChange={(e) => setField('auto_reminder_enabled', e.target.checked)}
                       />
                     </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <Field label="1. Mail Datum">
-                        <Input
-                          type="date"
-                          value={form.mail1_scheduled_date}
-                          onChange={(e) => setField('mail1_scheduled_date', e.target.value)}
-                        />
-                      </Field>
-                      <Field label="2. Mail Datum">
-                        <Input
-                          type="date"
-                          value={form.mail2_scheduled_date}
-                          onChange={(e) => setField('mail2_scheduled_date', e.target.value)}
-                        />
-                      </Field>
-                      <Field label="3. Mail Datum">
-                        <Input
-                          type="date"
-                          value={form.mail3_scheduled_date}
-                          onChange={(e) => setField('mail3_scheduled_date', e.target.value)}
-                        />
-                      </Field>
+                    <div
+                      className={cn(
+                        'grid gap-3',
+                        configuredStages.length <= 3
+                          ? 'grid-cols-1 sm:grid-cols-3'
+                          : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4',
+                      )}
+                    >
+                      {configuredStages.map((s) => (
+                        <Field key={`date-${s.stage}`} label={`${s.stage}. Erinnerung Datum`}>
+                          <Input
+                            type="date"
+                            value={getScheduledDate(s.stage)}
+                            onChange={(e) => setScheduledDate(s.stage, e.target.value)}
+                          />
+                        </Field>
+                      ))}
                     </div>
-                    {(['mail1', 'mail2', 'mail3'] as const).map((stage, idx) => (
-                      <div key={stage} className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
-                        <p className="text-xs font-black text-slate-700">{idx + 1}. Mail Empfänger</p>
-                        <EmailChipInput
-                          label="An"
-                          value={form.stage_recipients_override[stage]?.to || ''}
-                          onChange={(v) =>
-                            setForm((prev) => ({
-                              ...prev,
-                              stage_recipients_override: {
-                                ...prev.stage_recipients_override,
-                                [stage]: {
-                                  to: v,
-                                  cc: prev.stage_recipients_override[stage]?.cc || '',
+                    {configuredStages.map((s) => {
+                      const key = overrideKeyFor(s.stage);
+                      return (
+                        <div
+                          key={`rcpt-${s.stage}`}
+                          className="rounded-xl border border-slate-200 bg-white p-3 space-y-2"
+                        >
+                          <p className="text-xs font-black text-slate-700">
+                            {s.stage}. Erinnerung Empfänger
+                          </p>
+                          <EmailChipInput
+                            label="An"
+                            value={form.stage_recipients_override[key]?.to || ''}
+                            onChange={(v) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                stage_recipients_override: {
+                                  ...prev.stage_recipients_override,
+                                  [key]: {
+                                    to: v,
+                                    cc: prev.stage_recipients_override[key]?.cc || '',
+                                  },
                                 },
-                              },
-                            }))
-                          }
-                        />
-                        <EmailChipInput
-                          label="CC"
-                          value={form.stage_recipients_override[stage]?.cc || ''}
-                          onChange={(v) =>
-                            setForm((prev) => ({
-                              ...prev,
-                              stage_recipients_override: {
-                                ...prev.stage_recipients_override,
-                                [stage]: {
-                                  to: prev.stage_recipients_override[stage]?.to || '',
-                                  cc: v,
+                              }))
+                            }
+                          />
+                          <EmailChipInput
+                            label="CC"
+                            value={form.stage_recipients_override[key]?.cc || ''}
+                            onChange={(v) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                stage_recipients_override: {
+                                  ...prev.stage_recipients_override,
+                                  [key]: {
+                                    to: prev.stage_recipients_override[key]?.to || '',
+                                    cc: v,
+                                  },
                                 },
-                              },
-                            }))
-                          }
-                        />
-                      </div>
-                    ))}
+                              }))
+                            }
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>
@@ -1135,21 +1206,41 @@ export function ReturnEditorPage({
                     <Mail className="w-4 h-4 text-sky-600" />
                     Erinnerungsverlauf
                   </h3>
+                  <ReturnsReminderStepper
+                    hw={{
+                      returned: form.returned,
+                      mail1_sent_at: form.mail1_sent_at,
+                      mail2_sent_at: form.mail2_sent_at,
+                      mail3_sent_at: form.mail3_sent_at,
+                      mail1_sent_recipients: form.mail1_sent_recipients,
+                      mail2_sent_recipients: form.mail2_sent_recipients,
+                      mail3_sent_recipients: form.mail3_sent_recipients,
+                      reminder_stages: form.reminder_stages || [],
+                      reminder_count: form.reminder_count || 0,
+                    }}
+                    configuredStages={configuredStages}
+                    onOpenSend={(stage) => void sendReminder(stage)}
+                  />
                   <div className="space-y-2">
-                    {([1, 2, 3] as const).map((stage) => {
-                      const sent =
-                        stage === 1
-                          ? form.mail1_sent_at
-                          : stage === 2
-                            ? form.mail2_sent_at
-                            : form.mail3_sent_at;
+                    {verlaufStages.map((stage) => {
+                      const sent = getStageSentAt(
+                        {
+                          reminder_stages: (form.reminder_stages || []) as any,
+                          mail1_sent_at: form.mail1_sent_at || null,
+                          mail2_sent_at: form.mail2_sent_at || null,
+                          mail3_sent_at: form.mail3_sent_at || null,
+                        },
+                        stage,
+                      );
                       return (
                         <div
                           key={stage}
                           className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2"
                         >
                           <div className="min-w-0">
-                            <p className="text-xs font-bold text-slate-800">{stage}. Mail</p>
+                            <p className="text-xs font-bold text-slate-800">
+                              {reminderStageLabel(stage)}
+                            </p>
                             <p className="text-[11px] text-slate-500">
                               {sent ? formatBerlinDateTime(sent) : 'Noch nicht gesendet'}
                             </p>
@@ -1158,18 +1249,34 @@ export function ReturnEditorPage({
                             type="button"
                             variant="outline"
                             className="h-8 text-[11px] font-bold"
-                            disabled={sendingStage === stage}
+                            disabled={sendingStage === stage || form.returned}
                             onClick={() => void sendReminder(stage)}
                           >
                             {sendingStage === stage ? (
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
-                              `${stage}. Mail senden`
+                              `${stage}. senden`
                             )}
                           </Button>
                         </div>
                       );
                     })}
+                    {!form.returned ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full h-9 text-[11px] font-bold border-dashed"
+                        disabled={sendingStage === nextPlusStage}
+                        onClick={() => void sendReminder(nextPlusStage)}
+                      >
+                        {sendingStage === nextPlusStage ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                        ) : (
+                          <Plus className="w-3.5 h-3.5 mr-1.5" />
+                        )}
+                        {reminderStageLabel(nextPlusStage)} hinzufügen
+                      </Button>
+                    ) : null}
                   </div>
                 </section>
 

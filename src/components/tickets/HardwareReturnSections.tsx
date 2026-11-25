@@ -37,6 +37,8 @@ export interface HardwareReturnFormState {
   mail1_scheduled_date: string;
   mail2_scheduled_date: string;
   mail3_scheduled_date: string;
+  /** Per-stage schedule overrides for stages ≥ 4 (`stage4`, `stage5`, …). */
+  stage_scheduled_overrides: Record<string, string>;
   project_manager_name: string;
   project_manager_email: string;
   manager_name: string;
@@ -45,17 +47,22 @@ export interface HardwareReturnFormState {
   auto_reminder_enabled: boolean;
   returned: boolean;
   returned_at: string;
-  stage_recipients_override: {
-    mail1?: { to: string; cc: string };
-    mail2?: { to: string; cc: string };
-    mail3?: { to: string; cc: string };
-  };
+  /** Keys: mail1/mail2/mail3 or stageN (N≥4). */
+  stage_recipients_override: Record<string, { to: string; cc: string }>;
   mail1_sent_at?: string | null;
   mail2_sent_at?: string | null;
   mail3_sent_at?: string | null;
   mail1_sent_recipients?: { to?: string[]; cc?: string[] } | null;
   mail2_sent_recipients?: { to?: string[]; cc?: string[] } | null;
   mail3_sent_recipients?: { to?: string[]; cc?: string[] } | null;
+  reminder_stages?: Array<{
+    stage: number;
+    sentAt: string | null;
+    scheduledDate: string | null;
+    recipientsTo: string[];
+    recipientsCc: string[];
+  }>;
+  reminder_count?: number;
 }
 
 export function emptyHardwareReturnForm(): HardwareReturnFormState {
@@ -88,6 +95,7 @@ export function emptyHardwareReturnForm(): HardwareReturnFormState {
     mail1_scheduled_date: '',
     mail2_scheduled_date: '',
     mail3_scheduled_date: '',
+    stage_scheduled_overrides: {},
     project_manager_name: '',
     project_manager_email: '',
     manager_name: '',
@@ -97,6 +105,8 @@ export function emptyHardwareReturnForm(): HardwareReturnFormState {
     returned: false,
     returned_at: '',
     stage_recipients_override: {},
+    reminder_stages: [],
+    reminder_count: 0,
   };
 }
 
@@ -139,6 +149,19 @@ export function hardwareFormFromRecord(raw: Record<string, unknown> | null | und
     mail1_scheduled_date: toIsoDateOnly(raw.mail1_scheduled_date) || '',
     mail2_scheduled_date: toIsoDateOnly(raw.mail2_scheduled_date) || '',
     mail3_scheduled_date: toIsoDateOnly(raw.mail3_scheduled_date) || '',
+    stage_scheduled_overrides: (() => {
+      const out: Record<string, string> = {};
+      const stages = Array.isArray(raw.reminder_stages)
+        ? (raw.reminder_stages as Array<{ stage?: number; scheduledDate?: string | null }>)
+        : [];
+      for (const ev of stages) {
+        const n = Number(ev.stage);
+        if (!Number.isInteger(n) || n < 4) continue;
+        const iso = toIsoDateOnly(ev.scheduledDate);
+        if (iso) out[`stage${n}`] = iso;
+      }
+      return out;
+    })(),
     project_manager_name: String(raw.project_manager_name || ''),
     project_manager_email: String(raw.project_manager_email || ''),
     manager_name: String(raw.manager_name || ''),
@@ -147,26 +170,27 @@ export function hardwareFormFromRecord(raw: Record<string, unknown> | null | und
     auto_reminder_enabled: raw.auto_reminder_enabled !== false,
     returned: Boolean(raw.returned),
     returned_at: raw.returned_at ? String(raw.returned_at) : '',
-    stage_recipients_override: {
-      mail1: {
-        to: (override.mail1?.to || []).join(', '),
-        cc: (override.mail1?.cc || []).join(', '),
-      },
-      mail2: {
-        to: (override.mail2?.to || []).join(', '),
-        cc: (override.mail2?.cc || []).join(', '),
-      },
-      mail3: {
-        to: (override.mail3?.to || []).join(', '),
-        cc: (override.mail3?.cc || []).join(', '),
-      },
-    },
+    stage_recipients_override: (() => {
+      const out: Record<string, { to: string; cc: string }> = {};
+      for (const [key, val] of Object.entries(override)) {
+        if (!val || typeof val !== 'object') continue;
+        out[key] = {
+          to: (val.to || []).join(', '),
+          cc: (val.cc || []).join(', '),
+        };
+      }
+      return out;
+    })(),
     mail1_sent_at: raw.mail1_sent_at ? String(raw.mail1_sent_at) : null,
     mail2_sent_at: raw.mail2_sent_at ? String(raw.mail2_sent_at) : null,
     mail3_sent_at: raw.mail3_sent_at ? String(raw.mail3_sent_at) : null,
     mail1_sent_recipients: (raw.mail1_sent_recipients as any) || null,
     mail2_sent_recipients: (raw.mail2_sent_recipients as any) || null,
     mail3_sent_recipients: (raw.mail3_sent_recipients as any) || null,
+    reminder_stages: Array.isArray(raw.reminder_stages)
+      ? (raw.reminder_stages as HardwareReturnFormState['reminder_stages'])
+      : [],
+    reminder_count: Number(raw.reminder_count) || 0,
   };
 }
 
@@ -179,9 +203,8 @@ function splitEmails(raw: string | undefined): string[] {
 
 export function hardwareFormToPayload(form: HardwareReturnFormState): Record<string, unknown> {
   const override: Record<string, { to: string[]; cc: string[] }> = {};
-  for (const key of ['mail1', 'mail2', 'mail3'] as const) {
-    const stage = form.stage_recipients_override[key];
-    if (!stage) continue;
+  for (const [key, stage] of Object.entries(form.stage_recipients_override || {})) {
+    if (!stage || !/^(mail[123]|stage\d+)$/.test(key)) continue;
     const to = splitEmails(stage.to);
     const cc = splitEmails(stage.cc);
     if (to.length || cc.length) override[key] = { to, cc };

@@ -4,6 +4,7 @@ import {
   buildReturnsStatusColumns,
   resolveReturnsStatusColumn,
 } from '../../lib/client-portal/hardware-returns-layout';
+import type { ConfiguredReminderStage } from '../../lib/client-portal/hardware-returns-stages';
 import {
   returnRowId,
   ReturnsItemCardBody,
@@ -14,19 +15,23 @@ import {
 interface ReturnsKanbanBoardProps {
   items: ReturnsListItem[];
   catalogStatuses: string[];
+  configuredStages?: ConfiguredReminderStage[] | null;
   onOpenDetails: (item: ReturnsListItem) => void;
   onMarkReturned: (item: ReturnsListItem) => void;
   onUnreturn?: (item: ReturnsListItem) => void;
   onStatusChange: (item: ReturnsListItem, status: string) => void;
+  onOpenSend?: (item: ReturnsListItem, stage: number) => void;
 }
 
 export function ReturnsKanbanBoard({
   items,
   catalogStatuses,
+  configuredStages,
   onOpenDetails,
   onMarkReturned,
   onUnreturn,
   onStatusChange,
+  onOpenSend,
 }: ReturnsKanbanBoardProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -122,12 +127,16 @@ export function ReturnsKanbanBoard({
                     <ReturnsItemCardBody
                       item={item}
                       statuses={columns}
+                      configuredStages={configuredStages}
                       compact
                       showStatusSelect
                       onOpenDetails={() => onOpenDetails(item)}
                       onMarkReturned={() => onMarkReturned(item)}
                       onUnreturn={onUnreturn ? () => onUnreturn(item) : undefined}
                       onStatusChange={(status) => onStatusChange(item, status)}
+                      onOpenSend={
+                        onOpenSend ? (stage) => onOpenSend(item, stage) : undefined
+                      }
                     />
                   </div>
                 );

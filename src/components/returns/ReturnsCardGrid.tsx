@@ -1,3 +1,4 @@
+import type { ConfiguredReminderStage } from '../../lib/client-portal/hardware-returns-stages';
 import {
   returnRowId,
   ReturnsItemCardBody,
@@ -7,19 +8,23 @@ import {
 interface ReturnsCardGridProps {
   items: ReturnsListItem[];
   catalogStatuses: string[];
+  configuredStages?: ConfiguredReminderStage[] | null;
   onOpenDetails: (item: ReturnsListItem) => void;
   onMarkReturned: (item: ReturnsListItem) => void;
   onUnreturn?: (item: ReturnsListItem) => void;
   onStatusChange: (item: ReturnsListItem, status: string) => void;
+  onOpenSend?: (item: ReturnsListItem, stage: number) => void;
 }
 
 export function ReturnsCardGrid({
   items,
   catalogStatuses,
+  configuredStages,
   onOpenDetails,
   onMarkReturned,
   onUnreturn,
   onStatusChange,
+  onOpenSend,
 }: ReturnsCardGridProps) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 p-4">
@@ -35,11 +40,13 @@ export function ReturnsCardGrid({
             <ReturnsItemCardBody
               item={item}
               statuses={catalogStatuses}
+              configuredStages={configuredStages}
               showStatusSelect
               onOpenDetails={() => onOpenDetails(item)}
               onMarkReturned={() => onMarkReturned(item)}
               onUnreturn={onUnreturn ? () => onUnreturn(item) : undefined}
               onStatusChange={(status) => onStatusChange(item, status)}
+              onOpenSend={onOpenSend ? (stage) => onOpenSend(item, stage) : undefined}
             />
           </button>
         );

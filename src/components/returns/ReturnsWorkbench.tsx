@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import {
   AlertTriangle,
-  Check,
   CheckCircle2,
   Clock,
   Download,
@@ -20,6 +19,7 @@ import {
   Settings2,
   ShieldAlert,
   Tablet,
+  Trash2,
   Undo2,
   Upload,
   X,
@@ -48,6 +48,16 @@ import {
   InlineStatusSelect,
   type DeviceFieldsPatch,
 } from './ReturnsInlineEditors';
+import {
+  hasEscalatedReminder,
+  ReturnsReminderStepper,
+} from './ReturnsReminderStepper';
+import {
+  defaultConfiguredReminderStages,
+  normalizeConfiguredReminderStages,
+  reminderStageLabel,
+  type ConfiguredReminderStage,
+} from '../../lib/client-portal/hardware-returns-stages';
 
 type WorkbenchMode = 'portal' | 'staff';
 
@@ -69,7 +79,7 @@ type ListItem = {
   overdueDays: number;
   mailStatus: string;
   missingRoles: string[];
-  nextDueStage: 1 | 2 | 3 | null;
+  nextDueStage: number | null;
 };
 
 const VIEWS = [
@@ -321,69 +331,6 @@ function renderDeviceColumn(hw: Record<string, any>) {
   );
 }
 
-function MailStageStepper({
-  hw,
-  returnId,
-  nextDueStage,
-  onOpenSend,
-}: {
-  hw: Record<string, any>;
-  returnId: string;
-  nextDueStage: 1 | 2 | 3 | null;
-  onOpenSend: (returnId: string, stage: 1 | 2 | 3) => void;
-}) {
-  const stamps = [hw.mail1_sent_at, hw.mail2_sent_at, hw.mail3_sent_at] as const;
-  const recipientStamps = [
-    hw.mail1_sent_recipients,
-    hw.mail2_sent_recipients,
-    hw.mail3_sent_recipients,
-  ] as const;
-
-  return (
-    <div className="flex items-center gap-0 min-w-[168px]">
-      {([1, 2, 3] as const).map((stage, idx) => {
-        const sentAt = stamps[idx];
-        const recipients = recipientStamps[idx];
-        const done = Boolean(sentAt);
-        const prevDone = idx === 0 ? false : Boolean(stamps[idx - 1]);
-        const isNext = !done && nextDueStage === stage && !hw.returned;
-        const tip = sentAt
-          ? `${new Date(sentAt).toLocaleString('de-DE')}\nAn: ${(recipients?.to || []).join(', ') || '—'}\nCC: ${(recipients?.cc || []).join(', ') || '—'}`
-          : isNext
-            ? 'Nächste fällige Stufe — klicken zum Senden'
-            : 'Noch nicht gesendet — klicken zum Senden';
-        return (
-          <div key={stage} className="flex items-center">
-            {idx > 0 ? (
-              <div
-                className={cn('h-0.5 w-3 sm:w-4', prevDone ? 'bg-emerald-300' : 'bg-slate-200')}
-              />
-            ) : null}
-            <button
-              type="button"
-              title={tip}
-              disabled={Boolean(hw.returned)}
-              onClick={() => onOpenSend(returnId, stage)}
-              className={cn(
-                'relative flex h-8 min-w-[2.75rem] items-center justify-center gap-0.5 rounded-full border px-2 text-[10px] font-bold transition',
-                done
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : isNext
-                    ? 'bg-amber-50 text-amber-800 border-amber-300 ring-2 ring-amber-100'
-                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400',
-                hw.returned && 'opacity-60 cursor-not-allowed',
-              )}
-            >
-              {done ? <Check className="w-3 h-3 shrink-0" /> : null}
-              <span>{stage}.</span>
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 const DEFAULT_CATALOG_LISTS = {
   statuses: ['Neu', 'Warten auf Third Level', 'In Bearbeitung', 'Geschlossen'],
   device_types: [
@@ -445,7 +392,7 @@ export function ReturnsWorkbench({
   const [csvImportOpen, setCsvImportOpen] = useState(false);
   const [sendModal, setSendModal] = useState<{
     returnId: string;
-    stage: 1 | 2 | 3;
+    stage: number;
     to: string[];
     cc: string[];
     subject: string;
@@ -487,23 +434,37 @@ export function ReturnsWorkbench({
     if (!organizationId) return;
     setLoading(true);
     try {
+      const apiMailStatus = mailStatus === 'mail4plus' ? 'all' : mailStatus;
       const params = new URLSearchParams({
         view,
         q,
-        mailStatus,
+        mailStatus: apiMailStatus,
         overdueBucket,
         exportStatus,
         sort,
-        limit: String(effectiveLimit),
-        offset: String(effectiveOffset),
+        limit: String(mailStatus === 'mail4plus' ? 2000 : effectiveLimit),
+        offset: String(mailStatus === 'mail4plus' ? 0 : effectiveOffset),
       });
       if (shippingMethod !== 'all') params.set('shippingMethod', shippingMethod);
       if (statusFilter !== 'all') params.set('status', statusFilter);
       if (assigneeFilter !== 'all') params.set('assignee', assigneeFilter);
       if (mode === 'staff') params.set('organizationId', organizationId);
       const res = await axios.get(`${base}?${params.toString()}`, { withCredentials: true });
-      setItems(res.data?.items || []);
-      setTotal(Number(res.data?.total || 0));
+      let nextItems = res.data?.items || [];
+      let nextTotal = Number(res.data?.total || 0);
+      if (mailStatus === 'mail4plus') {
+        nextItems = nextItems.filter((it: ListItem) =>
+          hasEscalatedReminder(it.hardwareReturn || {}),
+        );
+        nextTotal = nextItems.length;
+        if (!boardMode && pageSize !== 'all') {
+          const size = pageSize as number;
+          const start = (page - 1) * size;
+          nextItems = nextItems.slice(start, start + size);
+        }
+      }
+      setItems(nextItems);
+      setTotal(nextTotal);
       setKpis(res.data?.kpis || kpis);
       setAutoSendEnabled(Boolean(res.data?.autoSendEnabled));
       setSettings(res.data?.settings || null);
@@ -552,7 +513,12 @@ export function ReturnsWorkbench({
     layoutMode,
   ]);
 
-  const openSend = async (returnId: string, stage: 1 | 2 | 3) => {
+  const configuredStages: ConfiguredReminderStage[] =
+    settings?.stages?.length > 0
+      ? settings.stages
+      : defaultConfiguredReminderStages();
+
+  const openSend = async (returnId: string, stage: number) => {
     try {
       const qs = mode === 'staff' ? `?${orgQ}&stage=${stage}` : `?stage=${stage}`;
       const res = await axios.get(`${base}/${encodeURIComponent(returnId)}/preview-reminder${qs}`, {
@@ -784,14 +750,22 @@ export function ReturnsWorkbench({
       },
       {
         key: 's3',
-        label: '3. Erinnerung gesendet',
-        value: kpis.stage3,
+        label: 'Letzte Stufe / Eskaliert (4.+ Erinnerung)',
+        value: Math.max(
+          kpis.stage3,
+          items.filter(
+            (it) =>
+              !it.hardwareReturn.returned &&
+              it.hardwareReturn.return_required &&
+              hasEscalatedReminder(it.hardwareReturn),
+          ).length,
+        ),
         accent: 'border-t-violet-500',
         Icon: ShieldAlert,
         iconWrap: 'bg-violet-50 text-violet-700 border-violet-100',
         onClick: () => {
           setView('open');
-          setMailStatus('mail3');
+          setMailStatus('mail4plus');
         },
       },
       {
@@ -804,7 +778,7 @@ export function ReturnsWorkbench({
         onClick: () => setView('done'),
       },
     ],
-    [kpis],
+    [kpis, items],
   );
 
   const pageCount =
@@ -997,9 +971,10 @@ export function ReturnsWorkbench({
         >
           <option value="all">Erinnerungsstufe: Alle</option>
           <option value="none">Keine Erinnerung gesendet</option>
-          <option value="mail1">1. Erinnerung versendet</option>
-          <option value="mail2">2. Erinnerung versendet</option>
-          <option value="mail3">3. Erinnerung versendet</option>
+          <option value="mail1">1. Erinnerung</option>
+          <option value="mail2">2. Erinnerung</option>
+          <option value="mail3">3. Erinnerung</option>
+          <option value="mail4plus">4.+ Erinnerung</option>
           <option value="missing_recipients">Empfänger fehlt</option>
         </select>
         <select
@@ -1084,19 +1059,23 @@ export function ReturnsWorkbench({
           <ReturnsKanbanBoard
             items={items}
             catalogStatuses={catalogStatuses}
+            configuredStages={configuredStages}
             onOpenDetails={openEdit}
             onMarkReturned={(it) => void markReturnedItem(it)}
             onUnreturn={(it) => void unreturnItem(it)}
             onStatusChange={(it, status) => void patchReturnStatus(it, status)}
+            onOpenSend={(it, stage) => void openSend(returnRowId(it), stage)}
           />
         ) : layoutMode === 'cards' ? (
           <ReturnsCardGrid
             items={items}
             catalogStatuses={catalogStatuses}
+            configuredStages={configuredStages}
             onOpenDetails={openEdit}
             onMarkReturned={(it) => void markReturnedItem(it)}
             onUnreturn={(it) => void unreturnItem(it)}
             onStatusChange={(it, status) => void patchReturnStatus(it, status)}
+            onOpenSend={(it, stage) => void openSend(returnRowId(it), stage)}
           />
         ) : (
           <div className="overflow-x-auto">
@@ -1244,11 +1223,11 @@ export function ReturnsWorkbench({
                         />
                       </td>
                       <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                        <MailStageStepper
+                        <ReturnsReminderStepper
                           hw={hw}
-                          returnId={id}
+                          configuredStages={configuredStages}
                           nextDueStage={it.nextDueStage}
-                          onOpenSend={(rid, stage) => void openSend(rid, stage)}
+                          onOpenSend={(stage) => void openSend(id, stage)}
                         />
                       </td>
                       <td className="p-3" onClick={(e) => e.stopPropagation()}>
@@ -1631,13 +1610,17 @@ function SettingsDrawer(props: {
       : [...DEFAULT_CATALOG_LISTS.shipping_methods],
   );
   const [auto, setAuto] = useState(Boolean(props.settings.auto_send_enabled));
-  const [mail1, setMail1] = useState(Number(props.settings.mail1_days_after_delivery ?? 14));
-  const [mail2, setMail2] = useState(Number(props.settings.mail2_days_after_mail1 ?? 7));
-  const [mail3, setMail3] = useState(Number(props.settings.mail3_days_after_mail2 ?? 7));
+  const [stages, setStages] = useState<ConfiguredReminderStage[]>(() =>
+    normalizeConfiguredReminderStages(props.settings.stages, {
+      mail1_days_after_delivery: props.settings.mail1_days_after_delivery,
+      mail2_days_after_mail1: props.settings.mail2_days_after_mail1,
+      mail3_days_after_mail2: props.settings.mail3_days_after_mail2,
+      stage_recipients: props.settings.stage_recipients,
+      templates: props.settings.templates,
+    }),
+  );
   const [ceoEmail, setCeoEmail] = useState(String(props.settings.ceo_email || ''));
   const [fallback, setFallback] = useState(String(props.settings.fallback_manager_email || ''));
-  const [stageRecipients, setStageRecipients] = useState(props.settings.stage_recipients);
-  const [templates, setTemplates] = useState(props.settings.templates);
   const [dirSyncEnabled, setDirSyncEnabled] = useState(Boolean(syncCfg.enabled));
   const [entraGroupId, setEntraGroupId] = useState(String(syncCfg.entra_group_id || ''));
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(syncCfg.last_synced_at || null);
@@ -1683,21 +1666,52 @@ function SettingsDrawer(props: {
     }
   };
 
-  const toggleRole = (
-    stage: 'mail1' | 'mail2' | 'mail3',
-    bucket: 'to_roles' | 'cc_roles',
+  const toggleStageRole = (
+    stageNum: number,
+    bucket: 'toRoles' | 'ccRoles',
     role: string,
   ) => {
-    setStageRecipients((prev: any) => {
-      const cur = { ...(prev || {}) };
-      const stageCfg = { ...(cur[stage] || { to_roles: [], cc_roles: [], extra_to: [], extra_cc: [] }) };
-      const list: string[] = [...(stageCfg[bucket] || [])];
-      const idx = list.indexOf(role);
-      if (idx >= 0) list.splice(idx, 1);
-      else list.push(role);
-      stageCfg[bucket] = list;
-      cur[stage] = stageCfg;
-      return cur;
+    setStages((prev) =>
+      prev.map((s) => {
+        if (s.stage !== stageNum) return s;
+        const list = [...(s[bucket] || [])] as string[];
+        const idx = list.indexOf(role);
+        if (idx >= 0) list.splice(idx, 1);
+        else list.push(role);
+        return { ...s, [bucket]: list };
+      }),
+    );
+  };
+
+  const addReminderStage = () => {
+    setStages((prev) => {
+      const nextNum = (prev[prev.length - 1]?.stage || prev.length) + 1;
+      const last = prev[prev.length - 1] || defaultConfiguredReminderStages()[3]!;
+      return [
+        ...prev,
+        {
+          ...last,
+          stage: nextNum,
+          label: reminderStageLabel(nextNum),
+          delayDays: last.delayDays || 7,
+          subjectTemplate: `${reminderStageLabel(nextNum)}: Hardware-Rücklieferung`,
+          bodyTemplate: last.bodyTemplate.replace(/\d+\.\s*Erinnerung/g, reminderStageLabel(nextNum)),
+        },
+      ];
+    });
+  };
+
+  const removeReminderStage = (stageNum: number) => {
+    if (stageNum <= 1) return;
+    setStages((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev
+        .filter((s) => s.stage !== stageNum)
+        .map((s, i) => ({
+          ...s,
+          stage: i + 1,
+          label: reminderStageLabel(i + 1),
+        }));
     });
   };
 
@@ -1791,35 +1805,6 @@ function SettingsDrawer(props: {
                 Automatischer Versand aktiv
                 <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
               </label>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <Label>Mail 1 nach X Tagen</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={mail1}
-                    onChange={(e) => setMail1(Number(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <Label>Mail 2 nach X Tagen</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={mail2}
-                    onChange={(e) => setMail2(Number(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <Label>Mail 3 nach X Tagen</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={mail3}
-                    onChange={(e) => setMail3(Number(e.target.value))}
-                  />
-                </div>
-              </div>
               <div>
                 <Label>Geschäftsführung / CEO E-Mail</Label>
                 <Input value={ceoEmail} onChange={(e) => setCeoEmail(e.target.value)} />
@@ -1829,83 +1814,146 @@ function SettingsDrawer(props: {
                 <Input value={fallback} onChange={(e) => setFallback(e.target.value)} />
               </div>
 
-              {(['mail1', 'mail2', 'mail3'] as const).map((stage, idx) => (
-                <div key={stage} className="rounded-xl border border-slate-200 p-3 space-y-2">
-                  <p className="text-sm font-black">{idx + 1}. Mail — Empfänger-Matrix</p>
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div>
-                      <p className="font-bold text-slate-500 mb-1">An (To)</p>
-                      {Object.keys(ROLE_LABELS).map((role) => (
-                        <label key={role} className="flex items-center gap-2 py-0.5">
-                          <input
-                            type="checkbox"
-                            checked={(stageRecipients?.[stage]?.to_roles || []).includes(role)}
-                            onChange={() => toggleRole(stage, 'to_roles', role)}
-                          />
-                          {ROLE_LABELS[role]}
-                        </label>
-                      ))}
+              <div className="space-y-3">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                  Erinnerungsstufen (automatisch vor manuellen + Follow-ups)
+                </p>
+                {stages.map((stageCfg, idx) => (
+                  <div
+                    key={`stage-${stageCfg.stage}-${idx}`}
+                    className="rounded-xl border border-slate-200 p-3 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-black">
+                        {stageCfg.stage}. Erinnerung — Empfänger-Matrix
+                      </p>
+                      {stageCfg.stage > 1 ? (
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-600 hover:text-rose-800"
+                          onClick={() => removeReminderStage(stageCfg.stage)}
+                          title="Stufe entfernen"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Entfernen
+                        </button>
+                      ) : null}
                     </div>
                     <div>
-                      <p className="font-bold text-slate-500 mb-1">CC</p>
-                      {Object.keys(ROLE_LABELS).map((role) => (
-                        <label key={role} className="flex items-center gap-2 py-0.5">
-                          <input
-                            type="checkbox"
-                            checked={(stageRecipients?.[stage]?.cc_roles || []).includes(role)}
-                            onChange={() => toggleRole(stage, 'cc_roles', role)}
-                          />
-                          {ROLE_LABELS[role]}
-                        </label>
-                      ))}
+                      <Label>
+                        {stageCfg.stage === 1
+                          ? 'Tage nach Liefer-/Fälligkeitsdatum'
+                          : 'Tage nach vorheriger Stufe'}
+                      </Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={stageCfg.delayDays}
+                        onChange={(e) => {
+                          const days = Math.max(0, Number(e.target.value) || 0);
+                          setStages((prev) =>
+                            prev.map((s) =>
+                              s.stage === stageCfg.stage ? { ...s, delayDays: days } : s,
+                            ),
+                          );
+                        }}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <p className="font-bold text-slate-500 mb-1">An (To)</p>
+                        {Object.keys(ROLE_LABELS).map((role) => (
+                          <label key={role} className="flex items-center gap-2 py-0.5">
+                            <input
+                              type="checkbox"
+                              checked={(stageCfg.toRoles || []).includes(role as any)}
+                              onChange={() =>
+                                toggleStageRole(stageCfg.stage, 'toRoles', role)
+                              }
+                            />
+                            {ROLE_LABELS[role]}
+                          </label>
+                        ))}
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-500 mb-1">CC</p>
+                        {Object.keys(ROLE_LABELS).map((role) => (
+                          <label key={role} className="flex items-center gap-2 py-0.5">
+                            <input
+                              type="checkbox"
+                              checked={(stageCfg.ccRoles || []).includes(role as any)}
+                              onChange={() =>
+                                toggleStageRole(stageCfg.stage, 'ccRoles', role)
+                              }
+                            />
+                            {ROLE_LABELS[role]}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Zusätzliche An-Adressen (Komma)</Label>
+                      <Input
+                        value={(stageCfg.extraTo || []).join(', ')}
+                        onChange={(e) => {
+                          const emails = e.target.value
+                            .split(/[,;\s]+/)
+                            .map((x) => x.trim().toLowerCase())
+                            .filter((x) => x.includes('@'));
+                          setStages((prev) =>
+                            prev.map((s) =>
+                              s.stage === stageCfg.stage ? { ...s, extraTo: emails } : s,
+                            ),
+                          );
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <Label>Betreff</Label>
+                      <Input
+                        value={stageCfg.subjectTemplate || ''}
+                        onChange={(e) =>
+                          setStages((prev) =>
+                            prev.map((s) =>
+                              s.stage === stageCfg.stage
+                                ? { ...s, subjectTemplate: e.target.value }
+                                : s,
+                            ),
+                          )
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label>
+                        Text (Platzhalter: {'{{mitarbeiter}}'}, {'{{geraet}}'}, {'{{lieferdatum}}'},{' '}
+                        {'{{tage_ueberfaellig}}'}, {'{{ticket_id}}'})
+                      </Label>
+                      <textarea
+                        className="w-full min-h-[90px] rounded-md border border-slate-200 p-2 text-sm"
+                        value={stageCfg.bodyTemplate || ''}
+                        onChange={(e) =>
+                          setStages((prev) =>
+                            prev.map((s) =>
+                              s.stage === stageCfg.stage
+                                ? { ...s, bodyTemplate: e.target.value }
+                                : s,
+                            ),
+                          )
+                        }
+                      />
                     </div>
                   </div>
-                  <div>
-                    <Label>Zusätzliche An-Adressen (Komma)</Label>
-                    <Input
-                      value={(stageRecipients?.[stage]?.extra_to || []).join(', ')}
-                      onChange={(e) => {
-                        const emails = e.target.value
-                          .split(/[,;\s]+/)
-                          .map((x) => x.trim().toLowerCase())
-                          .filter((x) => x.includes('@'));
-                        setStageRecipients((prev: any) => ({
-                          ...prev,
-                          [stage]: { ...prev[stage], extra_to: emails },
-                        }));
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <Label>Betreff</Label>
-                    <Input
-                      value={templates?.[stage]?.subject || ''}
-                      onChange={(e) =>
-                        setTemplates((prev: any) => ({
-                          ...prev,
-                          [stage]: { ...prev[stage], subject: e.target.value },
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Label>
-                      Text (Platzhalter: {'{{mitarbeiter}}'}, {'{{geraet}}'}, {'{{lieferdatum}}'},{' '}
-                      {'{{tage_ueberfaellig}}'}, {'{{ticket_id}}'})
-                    </Label>
-                    <textarea
-                      className="w-full min-h-[90px] rounded-md border border-slate-200 p-2 text-sm"
-                      value={templates?.[stage]?.body || ''}
-                      onChange={(e) =>
-                        setTemplates((prev: any) => ({
-                          ...prev,
-                          [stage]: { ...prev[stage], body: e.target.value },
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-              ))}
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full h-10 text-sm font-bold border-dashed"
+                  onClick={addReminderStage}
+                >
+                  <Plus className="w-4 h-4 mr-1.5" />
+                  Erinnerungsstufe hinzufügen
+                </Button>
+              </div>
             </>
           ) : null}
 
@@ -1997,13 +2045,13 @@ function SettingsDrawer(props: {
                     shipping_methods: shippingMethods,
                   },
                   auto_send_enabled: auto,
-                  mail1_days_after_delivery: mail1,
-                  mail2_days_after_mail1: mail2,
-                  mail3_days_after_mail2: mail3,
+                  stages: stages.map((s, i) => ({
+                    ...s,
+                    stage: i + 1,
+                    label: reminderStageLabel(i + 1),
+                  })),
                   ceo_email: ceoEmail.trim() || null,
                   fallback_manager_email: fallback.trim() || null,
-                  stage_recipients: stageRecipients,
-                  templates,
                   m365_directory_sync: {
                     ...(props.settings.m365_directory_sync || {}),
                     enabled: dirSyncEnabled,

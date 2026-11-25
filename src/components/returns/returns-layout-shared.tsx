@@ -1,5 +1,4 @@
 import {
-  Check,
   Package,
   PackageCheck,
   PanelRight,
@@ -19,6 +18,8 @@ import {
   buildReturnsStatusColumns,
   DEFAULT_RETURN_STATUSES,
 } from '../../lib/client-portal/hardware-returns-layout';
+import type { ConfiguredReminderStage } from '../../lib/client-portal/hardware-returns-stages';
+import { ReturnsReminderStepper } from './ReturnsReminderStepper';
 
 export { buildReturnsStatusColumns, DEFAULT_RETURN_STATUSES };
 
@@ -33,7 +34,7 @@ export type ReturnsListItem = {
   overdueDays: number;
   mailStatus: string;
   missingRoles: string[];
-  nextDueStage: 1 | 2 | 3 | null;
+  nextDueStage: number | null;
 };
 
 export function returnRowId(it: ReturnsListItem): string {
@@ -204,48 +205,26 @@ export function CompactDevicePills({ hw }: { hw: Record<string, any> }) {
   );
 }
 
-/** Compact 1. / 2. / 3. Erinnerung progress (read-only for card surfaces). */
-export function ReminderProgress({ hw }: { hw: Record<string, any> }) {
-  const stamps = [hw.mail1_sent_at, hw.mail2_sent_at, hw.mail3_sent_at] as const;
-  return (
-    <div className="flex items-center gap-0.5" title="Erinnerungsverlauf">
-      {([1, 2, 3] as const).map((stage, idx) => {
-        const done = Boolean(stamps[idx]);
-        return (
-          <span
-            key={stage}
-            className={cn(
-              'inline-flex h-6 min-w-[1.75rem] items-center justify-center gap-0.5 rounded-full border px-1.5 text-[9px] font-bold',
-              done
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                : 'bg-white text-slate-400 border-slate-200',
-            )}
-          >
-            {done ? <Check className="w-2.5 h-2.5" /> : null}
-            {stage}.
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
 export function ReturnsItemCardBody({
   item,
   statuses,
+  configuredStages,
   onOpenDetails,
   onMarkReturned,
   onUnreturn,
   onStatusChange,
+  onOpenSend,
   showStatusSelect,
   compact,
 }: {
   item: ReturnsListItem;
   statuses: string[];
+  configuredStages?: ConfiguredReminderStage[] | null;
   onOpenDetails: () => void;
   onMarkReturned: () => void;
   onUnreturn?: () => void;
   onStatusChange?: (status: string) => void;
+  onOpenSend?: (stage: number) => void;
   showStatusSelect?: boolean;
   compact?: boolean;
 }) {
@@ -285,7 +264,26 @@ export function ReturnsItemCardBody({
           className="mt-0"
         />
       </div>
-      <ReminderProgress hw={hw} />
+      {onOpenSend ? (
+        <div onClick={(e) => e.stopPropagation()}>
+          <ReturnsReminderStepper
+            hw={hw}
+            configuredStages={configuredStages}
+            nextDueStage={item.nextDueStage}
+            onOpenSend={onOpenSend}
+            compact
+          />
+        </div>
+      ) : (
+        <ReturnsReminderStepper
+          hw={hw}
+          configuredStages={configuredStages}
+          nextDueStage={item.nextDueStage}
+          onOpenSend={() => undefined}
+          compact
+          showPlus={false}
+        />
+      )}
       {showStatusSelect && onStatusChange ? (
         <select
           className="h-7 w-full rounded-md border border-slate-200 bg-white px-1.5 text-[10px] font-semibold"
