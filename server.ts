@@ -872,6 +872,14 @@ async function startServer() {
     "./src/routes/clientPortalVaultRoutes.js"
   );
   app.use("/api/portal/vault", clientPortalVaultRoutes);
+  {
+    const {
+      createPortalHardwareReturnsRouter,
+      createStaffHardwareReturnsRouter,
+    } = await import("./src/routes/hardwareReturnsRoutes.js");
+    app.use("/api/portal/returns", createPortalHardwareReturnsRouter());
+    app.use("/api/returns", createStaffHardwareReturnsRouter());
+  }
   app.use("/api/portal", clientPortalRoutes);
   // CLIENT_* ticket REST (org-isolated). Non-CLIENT roles fall through via next('router')
   // so legacy role=customer handlers in portalRoutes remain reachable.
@@ -2501,6 +2509,17 @@ Example output format:
     safeLog('info', '[time-export] Zeiterfassungs-Scheduler gestartet.');
   } catch (timeErr: any) {
     safeLog('warn', '[time-export] Scheduler fehlgeschlagen:', timeErr?.message || String(timeErr));
+  }
+
+  // Hardware-Rücklieferungen — stündliche Auto-Erinnerungen (org-gated).
+  try {
+    const { startHardwareReturnsScheduler } = await import(
+      './src/lib/client-portal/hardware-returns-scheduler.js'
+    );
+    startHardwareReturnsScheduler(60 * 60 * 1000);
+    safeLog('info', '[hardware-returns] Auto-Erinnerungs-Scheduler gestartet.');
+  } catch (hwErr: any) {
+    safeLog('warn', '[hardware-returns] Scheduler fehlgeschlagen:', hwErr?.message || String(hwErr));
   }
 
   app.listen(PORT, "0.0.0.0", () => {

@@ -18,6 +18,11 @@ import {
   buildPortalInviteEmail,
   buildPortalPasswordResetEmail,
 } from '../src/lib/client-portal/portal-auth-emails.ts';
+import {
+  buildReminderHtmlEmail,
+  buildReminderTemplateVars,
+} from '../src/lib/client-portal/hardware-returns-recipients.ts';
+import { defaultHardwareReturnsConfig } from '../src/lib/client-portal/hardware-returns.ts';
 
 let passed = 0;
 let failed = 0;
@@ -229,6 +234,79 @@ check('portal auth emails are real HTML (no <pre>) and keep CTA href', () => {
   assert.equal(invite.html.includes('<pre'), false);
   assert.ok(looksLikeHtml(invite.html));
   assert.ok(looksLikeHtml(reset.html));
+});
+
+console.log('\n[5] Hardware-Rücklieferung reminder HTML (3 stages)');
+check('all 3 reminder stages render Outlook-safe branded HTML', () => {
+  const config = defaultHardwareReturnsConfig();
+  const vars = buildReminderTemplateVars({
+    ticket: {
+      id: 'TKT-HW-1',
+      customer_name: 'Max Mustermann',
+      customer_email: 'max@dpg.test',
+    },
+    hardwareReturn: {
+      id: 'hw',
+      organization_id: 'org',
+      ticket_id: 'TKT-HW-1',
+      external_ref_id: '929',
+      service_level: 2,
+      time_sl1_minutes: 0,
+      time_sl2_minutes: 0,
+      time_sl3_minutes: 0,
+      exported: false,
+      exported_at: null,
+      request_type: null,
+      device_details: 'Latitude 5540 ALT ABC / NEU DEF',
+      employee_phone: null,
+      employee_mobile: null,
+      project_manager_name: null,
+      project_manager_email: null,
+      manager_name: null,
+      manager_email: null,
+      ceo_email_override: null,
+      stage_recipients_override: null,
+      solution_summary: null,
+      shipping_method: null,
+      shipping_reference: null,
+      return_required: true,
+      delivery_date: '2026-10-01',
+      return_due_date: '2026-10-15',
+      auto_reminder_enabled: true,
+      mail1_sent_at: null,
+      mail1_sent_recipients: null,
+      mail2_sent_at: null,
+      mail2_sent_recipients: null,
+      mail3_sent_at: null,
+      mail3_sent_recipients: null,
+      returned: false,
+      returned_at: null,
+      created_at: '',
+      updated_at: '',
+    },
+    orgConfig: config,
+    now: new Date('2026-10-20T12:00:00.000Z'),
+  });
+
+  for (const stage of [1, 2, 3] as const) {
+    const key = stage === 1 ? 'mail1' : stage === 2 ? 'mail2' : 'mail3';
+    const built = buildReminderHtmlEmail({
+      subject: config.templates[key].subject,
+      bodyTextOrHtml: config.templates[key].body,
+      vars,
+      stage,
+    });
+    const prepared = prepareOutboundEmailHtml(built.html);
+    assert.ok(built.subject.length > 0, `stage ${stage} subject`);
+    assert.ok(/<table\b/i.test(built.html), `stage ${stage} table layout`);
+    assert.ok(!/<pre\b/i.test(built.html), `stage ${stage} no <pre>`);
+    assert.ok(built.html.includes('TKT-HW-1'), `stage ${stage} ticket id`);
+    assert.ok(built.html.includes('Max Mustermann'), `stage ${stage} employee`);
+    assert.ok(built.html.includes('Latitude 5540'), `stage ${stage} device`);
+    assert.ok(built.html.includes('2026-10-01') || built.html.includes('2026-10-15'), `stage ${stage} dates`);
+    assert.ok(looksLikeHtml(prepared), `stage ${stage} prepared HTML`);
+    assert.ok(!prepared.includes('&lt;table'), `stage ${stage} tags not escaped`);
+  }
 });
 
 console.log('\n================================');

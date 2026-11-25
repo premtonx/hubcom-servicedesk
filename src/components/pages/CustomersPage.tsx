@@ -27,7 +27,8 @@ import {
   Building,
   ArrowRight,
   Globe,
-  ChevronLeft
+  ChevronLeft,
+  Package,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { cn } from '../../lib/utils';
@@ -61,6 +62,7 @@ import CompanyKPI from './companies/CompanyKPI';
 import CompanyOverviewTab from './companies/CompanyOverviewTab';
 import CompanyOtherTabs from './companies/CompanyOtherTabs';
 import CompanyPortalTab from './companies/CompanyPortalTab';
+import CompanyReturnsTab from './companies/CompanyReturnsTab';
 import { hydrateCompany } from './companies/utils';
 import axios from 'axios';
 import CSVImporter from '../CSVImporter';
@@ -318,6 +320,9 @@ export default function CustomersPage() {
             contractNotes: org.contract_notes || '',
             contractTerm: org.contract_term || '',
             createdAtIso: org.created_at || '',
+            hardware_returns_enabled: Boolean(
+              org.hardware_returns_enabled || org.enabledModules?.hardwareReturns,
+            ),
             customerSince: org.created_at
               ? new Date(org.created_at).toLocaleDateString('de-DE', {
                   day: '2-digit',
@@ -620,6 +625,9 @@ export default function CustomersPage() {
 
   // Format active hydrated company details
   const hydratedCompany = hydrateCompany(selectedCompany, ticketHistory);
+  const hardwareReturnsEnabled = Boolean(
+    (hydratedCompany as any)?.hardware_returns_enabled,
+  );
   const companyKpis = buildCompanyKpiMetrics({
     contactsCount: employees.length,
     ticketHistory,
@@ -710,6 +718,15 @@ export default function CustomersPage() {
                       { value: 'assets', label: t('companies.assetOverview', 'Asset-Übersicht'), count: companyKpis.assetsCount ?? 0 },
                       { value: 'contracts', label: t('companies.supportContract', 'Support-Vertrag') },
                       { value: 'vault', label: t('nav.vault', 'Tresor'), count: companyKpis.vaultEntriesCount ?? 0 },
+                      ...(hardwareReturnsEnabled
+                        ? [
+                            {
+                              value: 'returns',
+                              label: t('companies.returnsTab', 'Rücklieferungen'),
+                              icon: Package,
+                            },
+                          ]
+                        : []),
                       { value: 'insights', label: t('companies.aiInsights', 'KI-Erkenntnisse'), icon: Sparkles },
                       { value: 'activity', label: t('companies.activityTimeline', 'Aktivitätschronik') },
                       { value: 'portal', label: t('companies.portalTab', 'Kunden-Portal & Branding'), icon: Globe },
@@ -755,6 +772,14 @@ export default function CustomersPage() {
                   companyName={hydratedCompany.name}
                   focusInvite={portalFocusInvite}
                   onOpenEmailConfig={() => navigate('/admin/email-channels')}
+                />
+              ) : activeSubTab === 'returns' && hardwareReturnsEnabled ? (
+                <CompanyReturnsTab
+                  organizationId={
+                    hydratedCompany.organizationId ||
+                    (hydratedCompany as any).organization_id ||
+                    null
+                  }
                 />
               ) : (
                 <CompanyOtherTabs 

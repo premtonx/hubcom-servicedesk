@@ -84,7 +84,13 @@ import {
   isHardwareReturnsEnabled,
   normalizeHardwareReturnInput,
   normalizeHardwareReturnsConfig,
+  type TicketHardwareReturnRecord,
 } from '../src/lib/client-portal/hardware-returns.js';
+import {
+  evaluateDueReminderStage,
+  resolveStageRecipients,
+  shouldSkipAutoSend,
+} from '../src/lib/client-portal/hardware-returns-recipients.js';
 
 process.env.EMAIL_CHANNEL_SECRET_KEY =
   process.env.EMAIL_CHANNEL_SECRET_KEY ||
@@ -1560,6 +1566,205 @@ function testHardwareReturnsModuleGate(): void {
   assert(contacts.manager_email === 'chef@dpg.test', 'user manager_email mapped');
 }
 
+function baseHw(partial: Partial<TicketHardwareReturnRecord> = {}): TicketHardwareReturnRecord {
+  return {
+    id: 'hw-1',
+    organization_id: ORG_B,
+    ticket_id: 'tkt-1',
+    external_ref_id: null,
+    service_level: null,
+    time_sl1_minutes: 0,
+    time_sl2_minutes: 0,
+    time_sl3_minutes: 0,
+    exported: false,
+    exported_at: null,
+    request_type: null,
+    device_details: 'Laptop ALT SN1 / NEU SN2',
+    employee_phone: null,
+    employee_mobile: null,
+    project_manager_name: 'PM',
+    project_manager_email: 'pm@dpg.test',
+    manager_name: 'Chef',
+    manager_email: 'chef@dpg.test',
+    ceo_email_override: null,
+    stage_recipients_override: null,
+    solution_summary: null,
+    shipping_method: null,
+    shipping_reference: null,
+    return_required: true,
+    delivery_date: '2026-10-01',
+    return_due_date: '2026-10-15',
+    auto_reminder_enabled: true,
+    mail1_sent_at: null,
+    mail1_sent_recipients: null,
+    mail2_sent_at: null,
+    mail2_sent_recipients: null,
+    mail3_sent_at: null,
+    mail3_sent_recipients: null,
+    returned: false,
+    returned_at: null,
+    created_at: '2026-10-01T00:00:00.000Z',
+    updated_at: '2026-10-01T00:00:00.000Z',
+    ...partial,
+  };
+}
+
+function testHardwareReturnsEscalationEngine(): void {
+  console.log('\n--- Hardware-Rücklieferungen recipient resolver & scheduler ---');
+
+  const CITADELLE = ORG_A;
+  const DPG = ORG_B;
+  const config = defaultHardwareReturnsConfig();
+  config.auto_send_enabled = true;
+  config.ceo_email = 'ceo@dpg.test';
+  config.stage_recipients.mail3.extra_cc = ['legal@dpg.test'];
+
+  const ticket = {
+    id: 'tkt-1',
+    customer_email: 'emp@dpg.test',
+    customer_name: 'Max Mustermann',
+  };
+  const hw = baseHw();
+
+  const mail2 = resolveStageRecipients(2, ticket, hw, config);
+  assert(mail2.to.includes('emp@dpg.test'), 'Mail 2 To includes employee');
+  assert(mail2.cc.includes('pm@dpg.test'), 'Mail 2 CC includes project_manager');
+  assert(!mail2.to.includes('pm@dpg.test'), 'dedupe: PM not in both To and CC');
+
+  const mail3 = resolveStageRecipients(3, ticket, hw, config);
+  assert(mail3.to.includes('emp@dpg.test'), 'Mail 3 To includes employee');
+  assert(mail3.cc.includes('pm@dpg.test'), 'Mail 3 CC includes project_manager');
+  assert(mail3.cc.includes('chef@dpg.test'), 'Mail 3 CC includes manager');
+  assert(mail3.cc.includes('ceo@dpg.test'), 'Mail 3 CC includes ceo');
+  assert(mail3.cc.includes('legal@dpg.test'), 'Mail 3 CC includes extra static email');
+
+  const overridden = resolveStageRecipients(2, ticket, hw, config, {
+    overrideTo: ['custom-to@dpg.test', 'CUSTOM-TO@dpg.test', ''],
+    overrideCc: ['custom-cc@dpg.test', 'custom-to@dpg.test'],
+  });
+  assert(
+    overridden.to.length === 1 && overridden.to[0] === 'custom-to@dpg.test',
+    'manual override dedupes case-insensitively',
+  );
+  assert(
+    overridden.cc.length === 1 && overridden.cc[0] === 'custom-cc@dpg.test',
+    'manual override strips To addresses from CC',
+  );
+
+  const ticketOverrideHw = baseHw({
+    stage_recipients_override: {
+      mail1: { to: ['override@dpg.test'], cc: ['cc@dpg.test'] },
+    },
+  });
+  const fromTicket = resolveStageRecipients(1, ticket, ticketOverrideHw, config);
+  assert(fromTicket.to[0] === 'override@dpg.test', 'per-ticket override precedes org roles');
+
+  const missingPm = resolveStageRecipients(
+    2,
+    ticket,
+    baseHw({ project_manager_email: null }),
+    config,
+  );
+  assert(missingPm.missingRoles.includes('project_manager'), 'missingRoles detects project_manager');
+
+  const emptyTo = resolveStageRecipients(
+    1,
+    { customer_email: null },
+    baseHw(),
+    config,
+  );
+  assert(shouldSkipAutoSend({ stage: 1, to: emptyTo.to, missingRoles: emptyTo.missingRoles }), 'skip when To empty');
+
+  const now = new Date('2026-10-20T12:00:00.000Z');
+  assert(
+    evaluateDueReminderStage(baseHw(), config, now) === 1,
+    'Mail 1 due after return_due_date (14-day path)',
+  );
+  assert(
+    evaluateDueReminderStage(baseHw({ returned: true }), config, now) === null,
+    'skipped when returned = true',
+  );
+  assert(
+    evaluateDueReminderStage(baseHw(), { ...config, auto_send_enabled: false }, now) === null,
+    'skipped when auto_send_enabled = false',
+  );
+
+  const afterMail1 = baseHw({
+    mail1_sent_at: '2026-10-15T10:00:00.000Z',
+  });
+  assert(
+    evaluateDueReminderStage(afterMail1, config, new Date('2026-10-20T10:00:00.000Z')) === null,
+    'Mail 2 not due before 7 days',
+  );
+  assert(
+    evaluateDueReminderStage(afterMail1, config, new Date('2026-10-22T11:00:00.000Z')) === 2,
+    'Mail 2 due after mail1 + 7 days',
+  );
+
+  const afterMail2 = baseHw({
+    mail1_sent_at: '2026-10-01T10:00:00.000Z',
+    mail2_sent_at: '2026-10-08T10:00:00.000Z',
+  });
+  assert(
+    evaluateDueReminderStage(afterMail2, config, new Date('2026-10-15T11:00:00.000Z')) === 3,
+    'Mail 3 due after mail2 + 7 days',
+  );
+  assert(
+    evaluateDueReminderStage(
+      baseHw({
+        mail1_sent_at: '2026-10-01T10:00:00.000Z',
+        mail2_sent_at: '2026-10-08T10:00:00.000Z',
+        mail3_sent_at: '2026-10-15T10:00:00.000Z',
+      }),
+      config,
+      new Date('2026-11-01T00:00:00.000Z'),
+    ) === null,
+    'idempotent: never double-sends after mail3 stamped',
+  );
+
+  // Portal /api/portal/returns/* isolation semantics
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: false,
+      sessionOrgId: CITADELLE,
+      ticketOrgId: CITADELLE,
+      role: 'CLIENT_ADMIN',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === false,
+    'Citadelle AG blocked on /api/portal/returns/* (module off)',
+  );
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: true,
+      sessionOrgId: DPG,
+      ticketOrgId: DPG,
+      role: 'CLIENT_USER',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === false,
+    'DPG CLIENT_USER gets 403 on /api/portal/returns/*',
+  );
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: true,
+      sessionOrgId: DPG,
+      ticketOrgId: CITADELLE,
+      role: 'CLIENT_ADMIN',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === false,
+    'DPG CLIENT_ADMIN cannot send reminders for another org',
+  );
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: true,
+      sessionOrgId: DPG,
+      ticketOrgId: DPG,
+      role: 'CLIENT_ADMIN',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === true,
+    'DPG CLIENT_ADMIN can access own-org returns API',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -1578,6 +1783,7 @@ async function main(): Promise<void> {
   testPortalExchangeIsolation();
   testPortalTresorVaultIsolation();
   testHardwareReturnsModuleGate();
+  testHardwareReturnsEscalationEngine();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

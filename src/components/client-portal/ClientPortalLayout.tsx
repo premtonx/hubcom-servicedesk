@@ -12,6 +12,7 @@ import {
   BookOpen,
   Shield,
   Lock,
+  Package,
 } from 'lucide-react';
 import axios from 'axios';
 import { cn } from '../../lib/utils';
@@ -31,6 +32,13 @@ const NAV_ALL = [
   { to: '/portal/exchange', label: 'Sicherer Austausch', icon: Shield, end: false },
 ] as const;
 
+const NAV_RETURNS = {
+  to: '/portal/returns',
+  label: 'Rücklieferungen',
+  icon: Package,
+  end: false,
+} as const;
+
 const NAV_ORG_WIDE = [
   { to: '/portal/vault', label: 'Tresor', icon: Lock, end: false },
 ] as const;
@@ -47,6 +55,8 @@ interface OrgBranding {
   logo_url: string | null;
   portal_title: string | null;
   resolved_portal_title?: string;
+  hardware_returns_enabled?: boolean;
+  enabledModules?: { hardwareReturns?: boolean };
 }
 
 export default function ClientPortalLayout() {
@@ -85,8 +95,15 @@ export default function ClientPortalLayout() {
     );
   }
 
+  const hardwareReturnsEnabled = Boolean(
+    org?.enabledModules?.hardwareReturns || org?.hardware_returns_enabled,
+  );
+  const showReturns = isOrgWide && hardwareReturnsEnabled;
+
   const navItems = [
-    ...NAV_ALL,
+    ...NAV_ALL.slice(0, 3),
+    ...(showReturns ? [NAV_RETURNS] : []),
+    ...NAV_ALL.slice(3),
     ...(isOrgWide ? NAV_ORG_WIDE : []),
     ...(isClientAdmin ? NAV_ADMIN_ONLY : []),
   ];

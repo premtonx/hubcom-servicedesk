@@ -125,6 +125,7 @@ export default function TicketsPage() {
   const isStaffUser = isHubcomStaffRole(roleName) && !isClientPortalRole(roleName);
 
   const [kundenOrgs, setKundenOrgs] = useState<KundenSidebarOrg[]>([]);
+  const [showHardwareReturnsLink, setShowHardwareReturnsLink] = useState(false);
   const selectedOrganizationId = searchParams.get('organizationId') || null;
   const urlViewParam = searchParams.get('view');
   const urlStatusParam = searchParams.get('status');
@@ -325,23 +326,38 @@ export default function TicketsPage() {
   useEffect(() => {
     if (!isStaffUser) {
       setKundenOrgs([]);
+      setShowHardwareReturnsLink(false);
       return;
     }
     let active = true;
     void (async () => {
       try {
         const res = await axios.get('/api/admin/organizations', { withCredentials: true });
-        const orgs = (res.data?.organizations || [])
-          .filter((o: any) => o.is_active !== false)
-          .map((o: any) => ({
+        const raw = (res.data?.organizations || []) as Array<Record<string, any>>;
+        const orgs = raw
+          .filter((o) => o.is_active !== false)
+          .map((o) => ({
             id: String(o.id),
             name: String(o.name || ''),
             logo_url: o.logo_url || null,
             openCount: 0,
           })) as KundenSidebarOrg[];
-        if (active) setKundenOrgs(orgs);
+        if (active) {
+          setKundenOrgs(orgs);
+          setShowHardwareReturnsLink(
+            raw.some(
+              (o) =>
+                o.is_active !== false &&
+                (o.hardware_returns_enabled === true ||
+                  o.enabledModules?.hardwareReturns === true),
+            ),
+          );
+        }
       } catch {
-        if (active) setKundenOrgs([]);
+        if (active) {
+          setKundenOrgs([]);
+          setShowHardwareReturnsLink(false);
+        }
       }
     })();
     return () => {
@@ -1917,6 +1933,7 @@ export default function TicketsPage() {
         selectedTicketId={selectedTicketId}
         isMobileSidebarOpen={isMobileSidebarOpen}
         kundenOrgs={isStaffUser ? kundenOrgsWithCounts : undefined}
+        showHardwareReturnsLink={isStaffUser && showHardwareReturnsLink}
         selectedOrganizationId={selectedOrganizationId}
         onSelectOrganization={isStaffUser ? setSelectedOrganizationId : undefined}
       />

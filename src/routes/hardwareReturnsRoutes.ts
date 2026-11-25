@@ -1,0 +1,384 @@
+/**
+ * Staff `/api/returns/*` and Portal `/api/portal/returns/*` — Hardware-Rücklieferungen workbench.
+ */
+
+import { Router, type Request, type Response } from 'express';
+import { z } from 'zod';
+import { authenticate } from '../middleware/authMiddleware.js';
+import {
+  requireClientPortalRole,
+  requireHubcomStaff,
+} from '../middleware/clientPortalMiddleware.js';
+import { resolveOrganizationIdFromUser } from '../lib/client-portal/ticket-visibility.js';
+import {
+  getOrganization,
+  organizationEnabledModules,
+  updateOrganizationHardwareModule,
+} from '../lib/client-portal/organizations.js';
+import { normalizeHardwareReturnsConfig } from '../lib/client-portal/hardware-returns.js';
+import {
+  bulkHardwareReturnsAction,
+  importHardwareReturnsCsv,
+  listHardwareReturnsWorkbench,
+  markHardwareReturned,
+  previewHardwareReminder,
+  sendHardwareReminder,
+} from '../lib/client-portal/hardware-returns-escalation.js';
+import { evaluateHardwareModuleAccess } from '../lib/client-portal/hardware-returns.js';
+import { isClientPortalRole, isHubcomStaffRole } from '../lib/client-portal/roles.js';
+import { routeParam } from '../lib/route-params.js';
+import { safeErrorMessage } from '../lib/safe-log.js';
+import type { ReminderStage } from '../lib/client-portal/hardware-returns-recipients.js';
+
+function stageFromQuery(raw: unknown): ReminderStage | null {
+  const n = Number(raw);
+  return n === 1 || n === 2 || n === 3 ? n : null;
+}
+
+async function resolveOrgForReturns(
+  req: Request,
+  res: Response,
+  preferredOrgId?: string | null,
+): Promise<{ organizationId: string; role: string } | null> {
+  const role = String(req.user?.role || '');
+  if (isClientPortalRole(role)) {
+    const organizationId = resolveOrganizationIdFromUser(req.user!);
+    if (!organizationId) {
+      res.status(403).json({ error: 'Forbidden: no organization.' });
+      return null;
+    }
+    if (role === 'CLIENT_USER') {
+      res.status(403).json({ error: 'Forbidden: CLIENT_USER cannot access Rücklieferungen.' });
+      return null;
+    }
+    const org = await getOrganization(organizationId);
+    if (!org?.hardware_returns_enabled) {
+      res.status(404).json({ error: 'Hardware-Rücklieferungen nicht aktiv.' });
+      return null;
+    }
+    const gate = evaluateHardwareModuleAccess({
+      orgEnabled: true,
+      sessionOrgId: organizationId,
+      ticketOrgId: organizationId,
+      role,
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    });
+    if (gate.ok === false) {
+      res.status(gate.status).json({ error: 'Forbidden.' });
+      return null;
+    }
+    return { organizationId, role };
+  }
+
+  if (!isHubcomStaffRole(role) && role !== 'SYSTEM_ADMIN') {
+    res.status(403).json({ error: 'Forbidden.' });
+    return null;
+  }
+  const organizationId = String(preferredOrgId || req.query.organizationId || '').trim();
+  if (!organizationId) {
+    res.status(400).json({ error: 'organizationId ist erforderlich.' });
+    return null;
+  }
+  const org = await getOrganization(organizationId);
+  if (!org?.hardware_returns_enabled) {
+    res.status(404).json({ error: 'Hardware-Rücklieferungen nicht aktiv.' });
+    return null;
+  }
+  return { organizationId, role };
+}
+
+function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
+  const listHandler = async (req: Request, res: Response): Promise<any> => {
+    try {
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      const result = await listHardwareReturnsWorkbench({
+        organizationId: ctx.organizationId,
+        view: (req.query.view as any) || 'open',
+        search: String(req.query.q || req.query.search || ''),
+        mailStatus: (req.query.mailStatus as any) || 'all',
+        overdueBucket: (req.query.overdueBucket as any) || 'all',
+        deliveryFrom: String(req.query.deliveryFrom || '') || undefined,
+        deliveryTo: String(req.query.deliveryTo || '') || undefined,
+        dueFrom: String(req.query.dueFrom || '') || undefined,
+        dueTo: String(req.query.dueTo || '') || undefined,
+        shippingMethod: String(req.query.shippingMethod || '') || undefined,
+        exportStatus: (req.query.exportStatus as any) || 'all',
+        sort: (req.query.sort as any) || 'due_asc',
+        limit: Number(req.query.limit) || 100,
+        offset: Number(req.query.offset) || 0,
+      });
+      const org = await getOrganization(ctx.organizationId);
+      return res.json({
+        ...result,
+        organizationId: ctx.organizationId,
+        enabledModules: organizationEnabledModules(org),
+        settings: org?.hardware_returns_config || null,
+        autoSendEnabled: Boolean(org?.hardware_returns_config?.auto_send_enabled),
+      });
+    } catch (err: any) {
+      const status = err?.status || 500;
+      return res.status(status).json({ error: safeErrorMessage(err, 'Liste fehlgeschlagen') });
+    }
+  };
+
+  router.get('/', listHandler);
+
+  router.get('/settings', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      if (mode === 'portal' && ctx.role !== 'CLIENT_ADMIN' && ctx.role !== 'SYSTEM_ADMIN') {
+        // SUPPORTER may read settings (for matrix visibility) but not write.
+      }
+      const org = await getOrganization(ctx.organizationId);
+      return res.json({
+        hardware_returns_enabled: Boolean(org?.hardware_returns_enabled),
+        hardware_returns_config: org?.hardware_returns_config,
+        enabledModules: organizationEnabledModules(org),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: safeErrorMessage(err, 'Settings laden fehlgeschlagen') });
+    }
+  });
+
+  const settingsSchema = z.object({
+    organizationId: z.string().uuid().optional(),
+    hardware_returns_config: z.record(z.string(), z.unknown()).optional(),
+    auto_send_enabled: z.boolean().optional(),
+  });
+
+  router.patch('/settings', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const parsed = settingsSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'Invalid settings payload' });
+      }
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff'
+          ? parsed.data.organizationId || String(req.query.organizationId || '')
+          : null,
+      );
+      if (!ctx) return;
+      const role = ctx.role;
+      if (mode === 'portal' && role !== 'CLIENT_ADMIN') {
+        return res.status(403).json({ error: 'Forbidden: CLIENT_ADMIN required.' });
+      }
+      if (mode === 'staff' && role !== 'SYSTEM_ADMIN' && !isHubcomStaffRole(role)) {
+        return res.status(403).json({ error: 'Forbidden.' });
+      }
+      // SYSTEM_ADMIN or CLIENT_ADMIN only for writes (staff AGENT can read but not write settings).
+      if (mode === 'staff' && role !== 'SYSTEM_ADMIN') {
+        return res.status(403).json({ error: 'Forbidden: SYSTEM_ADMIN required for settings.' });
+      }
+
+      const org = await getOrganization(ctx.organizationId);
+      if (!org) return res.status(404).json({ error: 'Organization not found.' });
+      const nextConfig = normalizeHardwareReturnsConfig({
+        ...org.hardware_returns_config,
+        ...(parsed.data.hardware_returns_config || {}),
+        ...(parsed.data.auto_send_enabled !== undefined
+          ? { auto_send_enabled: parsed.data.auto_send_enabled }
+          : {}),
+      });
+      const updated = await updateOrganizationHardwareModule(ctx.organizationId, {
+        hardware_returns_config: nextConfig,
+      });
+      return res.json({
+        hardware_returns_enabled: Boolean(updated?.hardware_returns_enabled),
+        hardware_returns_config: updated?.hardware_returns_config,
+        enabledModules: organizationEnabledModules(updated),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: safeErrorMessage(err, 'Settings speichern fehlgeschlagen') });
+    }
+  });
+
+  const bulkSchema = z.object({
+    organizationId: z.string().uuid().optional(),
+    ticketIds: z.array(z.string()).max(500).default([]),
+    action: z.enum(['mark_returned', 'mark_exported', 'csv_export']),
+  });
+
+  router.post('/bulk', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const parsed = bulkSchema.safeParse(req.body || {});
+      if (!parsed.success) return res.status(400).json({ error: 'Invalid bulk payload' });
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? parsed.data.organizationId || String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      const result = await bulkHardwareReturnsAction({
+        organizationId: ctx.organizationId,
+        ticketIds: parsed.data.ticketIds,
+        action: parsed.data.action,
+        actorName: req.user?.name || req.user?.email || 'Benutzer',
+      });
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      return res
+        .status(err?.status || 500)
+        .json({ error: safeErrorMessage(err, 'Bulk-Aktion fehlgeschlagen') });
+    }
+  });
+
+  const importSchema = z.object({
+    organizationId: z.string().uuid().optional(),
+    csv: z.string().min(1).max(5_000_000),
+  });
+
+  router.post('/import-csv', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const parsed = importSchema.safeParse(req.body || {});
+      if (!parsed.success) return res.status(400).json({ error: 'Invalid import payload' });
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? parsed.data.organizationId || String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      if (mode === 'portal' && ctx.role !== 'CLIENT_ADMIN') {
+        return res.status(403).json({ error: 'Forbidden: CLIENT_ADMIN required for CSV import.' });
+      }
+      if (mode === 'staff' && ctx.role !== 'SYSTEM_ADMIN') {
+        return res.status(403).json({ error: 'Forbidden: SYSTEM_ADMIN required for CSV import.' });
+      }
+      const result = await importHardwareReturnsCsv({
+        organizationId: ctx.organizationId,
+        csv: parsed.data.csv,
+        actorId: req.user?.id,
+      });
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      return res
+        .status(err?.status || 500)
+        .json({ error: safeErrorMessage(err, 'CSV-Import fehlgeschlagen') });
+    }
+  });
+
+  router.get('/:ticketId/preview-reminder', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const ticketId = routeParam(req.params.ticketId);
+      const stage = stageFromQuery(req.query.stage);
+      if (!stage) return res.status(400).json({ error: 'stage must be 1, 2, or 3' });
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      const preview = await previewHardwareReminder({
+        ticketId,
+        organizationId: ctx.organizationId,
+        stage,
+      });
+      return res.json(preview);
+    } catch (err: any) {
+      return res
+        .status(err?.status || 500)
+        .json({ error: safeErrorMessage(err, 'Vorschau fehlgeschlagen') });
+    }
+  });
+
+  const sendSchema = z.object({
+    stage: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    to: z.array(z.string()).optional(),
+    cc: z.array(z.string()).optional(),
+    saveAsTicketOverride: z.boolean().optional(),
+    organizationId: z.string().uuid().optional(),
+  });
+
+  router.post('/:ticketId/send-reminder', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const ticketId = routeParam(req.params.ticketId);
+      const parsed = sendSchema.safeParse(req.body || {});
+      if (!parsed.success) return res.status(400).json({ error: 'Invalid send payload' });
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? parsed.data.organizationId || String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      const result = await sendHardwareReminder({
+        ticketId,
+        organizationId: ctx.organizationId,
+        stage: parsed.data.stage,
+        to: parsed.data.to,
+        cc: parsed.data.cc,
+        saveAsTicketOverride: parsed.data.saveAsTicketOverride,
+        auto: false,
+        actorName: req.user?.name || req.user?.email || 'Benutzer',
+      });
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      return res
+        .status(err?.status || 500)
+        .json({ error: safeErrorMessage(err, 'Versand fehlgeschlagen') });
+    }
+  });
+
+  const markSchema = z.object({
+    returnedAt: z.string().optional().nullable(),
+    note: z.string().max(2000).optional().nullable(),
+    organizationId: z.string().uuid().optional(),
+  });
+
+  router.post('/:ticketId/mark-returned', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const ticketId = routeParam(req.params.ticketId);
+      const parsed = markSchema.safeParse(req.body || {});
+      if (!parsed.success) return res.status(400).json({ error: 'Invalid payload' });
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? parsed.data.organizationId || String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      const hardwareReturn = await markHardwareReturned({
+        ticketId,
+        organizationId: ctx.organizationId,
+        returnedAt: parsed.data.returnedAt,
+        note: parsed.data.note,
+        actorName: req.user?.name || req.user?.email || 'Benutzer',
+      });
+      return res.json({ success: true, hardwareReturn });
+    } catch (err: any) {
+      return res
+        .status(err?.status || 500)
+        .json({ error: safeErrorMessage(err, 'Markieren fehlgeschlagen') });
+    }
+  });
+
+}
+
+/** Staff router — mount at `/api/returns`. */
+export function createStaffHardwareReturnsRouter(): Router {
+  const router = Router();
+  router.use(authenticate, requireHubcomStaff);
+  mountReturnsRoutes(router, 'staff');
+  return router;
+}
+
+/** Portal router — mount at `/api/portal/returns`. */
+export function createPortalHardwareReturnsRouter(): Router {
+  const router = Router();
+  router.use(
+    authenticate,
+    requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
+  );
+  // CLIENT_USER is rejected inside resolveOrgForReturns with 403.
+  mountReturnsRoutes(router, 'portal');
+  return router;
+}

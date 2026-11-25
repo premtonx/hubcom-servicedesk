@@ -222,7 +222,8 @@ export class MicrosoftGraphDriver implements EmailIngestionDriver {
    * permissions (`Mail.Send`). Used by ticket agent replies (Send As).
    */
   async sendMail(params: {
-    to: string;
+    to: string | string[];
+    cc?: string | string[];
     subject: string;
     body: string;
     contentType?: 'HTML' | 'Text';
@@ -235,10 +236,16 @@ export class MicrosoftGraphDriver implements EmailIngestionDriver {
     attachments?: GraphInlineAttachment[];
   }): Promise<{ ok: true } | { ok: false; message: string }> {
     try {
-      const to = String(params.to || '').trim();
-      if (!to || !to.includes('@')) {
+      const toList = (Array.isArray(params.to) ? params.to : [params.to])
+        .map((e) => String(e || '').trim().toLowerCase())
+        .filter((e) => e.includes('@'));
+      if (!toList.length) {
         return { ok: false, message: 'Outbound recipient email is missing or invalid.' };
       }
+      const toSeen = new Set(toList);
+      const ccList = (Array.isArray(params.cc) ? params.cc : params.cc ? [params.cc] : [])
+        .map((e) => String(e || '').trim().toLowerCase())
+        .filter((e) => e.includes('@') && !toSeen.has(e));
       const token = await acquireGraphToken(this.channel);
       const mailbox = this.mailbox();
       if (!mailbox) {
@@ -267,8 +274,11 @@ export class MicrosoftGraphDriver implements EmailIngestionDriver {
       const message: Record<string, unknown> = {
         subject: String(params.subject || '(no subject)').slice(0, 998),
         body: { contentType, content },
-        toRecipients: [{ emailAddress: { address: to } }],
+        toRecipients: toList.map((address) => ({ emailAddress: { address } })),
       };
+      if (ccList.length) {
+        message.ccRecipients = ccList.map((address) => ({ emailAddress: { address } }));
+      }
       if (attachments.length > 0) {
         message.attachments = attachments.map((att) => ({
           '@odata.type': '#microsoft.graph.fileAttachment',

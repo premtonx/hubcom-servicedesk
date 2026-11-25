@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Archive,
   Building2,
@@ -6,6 +7,7 @@ import {
   ChevronRight,
   Hourglass,
   MoreHorizontal,
+  Package,
   Settings2,
   Star,
 } from 'lucide-react';
@@ -342,6 +344,8 @@ interface TicketsLeftSidebarProps {
   footer?: ReactNode;
   /** Hubcom staff only — collapsible Kunden client filter. */
   kundenOrgs?: KundenSidebarOrg[];
+  /** Show quick link to /returns when at least one org has the module enabled. */
+  showHardwareReturnsLink?: boolean;
   selectedOrganizationId?: string | null;
   onSelectOrganization?: (organizationId: string | null) => void;
 }
@@ -362,10 +366,12 @@ export function TicketsLeftSidebar({
   isMobileSidebarOpen,
   footer,
   kundenOrgs,
+  showHardwareReturnsLink,
   selectedOrganizationId,
   onSelectOrganization,
 }: TicketsLeftSidebarProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const favoriteAriaLabel = t('tickets.sidebar.toggleFavorite', 'Toggle favorite');
   const showKunden = Boolean(kundenOrgs && onSelectOrganization);
   const [kundenFilter, setKundenFilter] = useState('');
@@ -822,6 +828,19 @@ export function TicketsLeftSidebar({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+          </div>
+        )}
+
+        {showHardwareReturnsLink && !effectiveCollapsed && (
+          <div className="mt-2 pt-1 border-t border-slate-100 px-1">
+            <button
+              type="button"
+              onClick={() => navigate('/returns')}
+              className="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-left text-[12px] font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 transition-colors"
+            >
+              <Package className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              {t('tickets.sidebar.returns', 'Rücklieferungen')}
+            </button>
           </div>
         )}
 

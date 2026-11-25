@@ -83,7 +83,8 @@ async function resolveGraphChannelWithSecrets(
 
 async function trySendViaMicrosoftGraph(params: {
   ticketId: string;
-  to?: string | null;
+  to?: string | string[] | null;
+  cc?: string | string[] | null;
   subject?: string | null;
   body: string;
   agentName?: string | null;
@@ -104,8 +105,10 @@ async function trySendViaMicrosoftGraph(params: {
     };
   }
 
-  const to = String(params.to || '').trim();
-  if (!to) {
+  const toList = (Array.isArray(params.to) ? params.to : params.to ? [params.to] : [])
+    .map((e) => String(e || '').trim())
+    .filter((e) => e.includes('@'));
+  if (!toList.length) {
     return {
       delivered: false,
       reason: 'Ticket has no customer email — reply saved to database only.',
@@ -130,7 +133,8 @@ async function trySendViaMicrosoftGraph(params: {
   });
 
   const result = await driver.sendMail({
-    to,
+    to: toList,
+    cc: params.cc || undefined,
     subject: params.subject || `Re: Ticket ${params.ticketId}`,
     body: prepared.html,
     contentType: 'HTML',
@@ -360,7 +364,8 @@ async function trySendViaSmtp(params: {
  * as ticket replies. Does not invent a sender when no channel can send.
  */
 export async function trySendTransactionalEmail(params: {
-  to: string;
+  to: string | string[];
+  cc?: string | string[];
   subject: string;
   body: string;
   /** Prefer this org's Send-As Graph channel when healthy. */
@@ -368,10 +373,15 @@ export async function trySendTransactionalEmail(params: {
   /** Plain-text body is converted to simple HTML for Graph. */
   contentType?: 'HTML' | 'Text';
 }): Promise<OutboundMailResult> {
-  const to = String(params.to || '').trim().toLowerCase();
-  if (!to.includes('@')) {
+  const toList = (Array.isArray(params.to) ? params.to : [params.to])
+    .map((e) => String(e || '').trim().toLowerCase())
+    .filter((e) => e.includes('@'));
+  if (!toList.length) {
     return { delivered: false, reason: 'Recipient email is missing or invalid.', via: 'none' };
   }
+  const ccList = (Array.isArray(params.cc) ? params.cc : params.cc ? [params.cc] : [])
+    .map((e) => String(e || '').trim().toLowerCase())
+    .filter((e) => e.includes('@') && !toList.includes(e));
 
   const subject = String(params.subject || '').trim() || '(no subject)';
   const rawBody = String(params.body || '');
@@ -395,7 +405,8 @@ export async function trySendTransactionalEmail(params: {
     if (orgChannel && isHealthySendAsGraph(orgChannel)) {
       const orgResult = await trySendViaMicrosoftGraph({
         ticketId: `txn-invite-${Date.now()}`,
-        to,
+        to: toList,
+        cc: ccList,
         subject,
         body: htmlBody,
         channel: orgChannel,
@@ -426,7 +437,8 @@ export async function trySendTransactionalEmail(params: {
   for (const channel of graphCandidates) {
     const result = await trySendViaMicrosoftGraph({
       ticketId: `txn-invite-${Date.now()}`,
-      to,
+      to: toList,
+      cc: ccList,
       subject,
       body: htmlBody,
       channel,
@@ -450,7 +462,8 @@ export async function trySendTransactionalEmail(params: {
   if (smtpConfigured(smtpChannel)) {
     const smtpResult = await trySendViaSmtp({
       ticketId: `txn-invite-${Date.now()}`,
-      to,
+      to: toList[0],
+      cc: [...toList.slice(1), ...ccList],
       subject,
       body: htmlBody,
       channel: smtpChannel,
