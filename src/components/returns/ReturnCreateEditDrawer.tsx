@@ -26,6 +26,10 @@ import {
   type HardwareReturnFormState,
 } from '../tickets/HardwareReturnSections';
 import { extractHardwareContactsFromUser } from '../../lib/client-portal/hardware-returns-nav-contacts';
+import {
+  formatDateDeOnly,
+  toIsoDateOnly,
+} from '../../lib/client-portal/hardware-returns-dates';
 
 export type ReturnMemberOption = {
   id: string;
@@ -76,8 +80,12 @@ type ActivityLogEntry = {
 
 function formatDe(iso: string | null | undefined): string {
   if (!iso) return '—';
+  // Date-only values → DD.MM.YYYY; timestamps keep date+time.
+  if (toIsoDateOnly(iso) && !/[T\s]\d{2}:/.test(String(iso))) {
+    return formatDateDeOnly(iso);
+  }
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return String(iso);
+  if (Number.isNaN(d.getTime())) return formatDateDeOnly(iso);
   return d.toLocaleString('de-DE');
 }
 

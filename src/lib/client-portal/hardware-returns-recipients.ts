@@ -9,6 +9,7 @@ import type {
   HardwareStageOverride,
   TicketHardwareReturnRecord,
 } from './hardware-returns.js';
+import { toIsoDateOnly } from './hardware-returns-dates.js';
 
 export type ReminderStage = 1 | 2 | 3;
 
@@ -164,8 +165,8 @@ export function shouldSkipAutoSend(params: {
 }
 
 function parseDateOnly(iso: string | null | undefined): Date | null {
-  if (!iso) return null;
-  const s = String(iso).slice(0, 10);
+  const s = toIsoDateOnly(iso);
+  if (!s) return null;
   const d = new Date(`${s}T00:00:00.000Z`);
   return Number.isNaN(d.getTime()) ? null : d;
 }

@@ -6,6 +6,9 @@
 import { randomUUID } from 'crypto';
 import { queryDb } from '../postgres-backend.js';
 import { getOrganization } from './organizations.js';
+import { toIsoDateOnly } from './hardware-returns-dates.js';
+
+export { toIsoDateOnly, formatDateDeOnly } from './hardware-returns-dates.js';
 
 export type HardwareRoleToken = 'employee' | 'project_manager' | 'manager' | 'ceo';
 
@@ -404,12 +407,8 @@ export function mapHardwareRow(row: any): TicketHardwareReturnRecord {
     shipping_method: nullStr(row.shipping_method, 120),
     shipping_reference: nullStr(row.shipping_reference, 200),
     return_required: row.return_required === true || row.return_required === 't',
-    delivery_date: row.delivery_date
-      ? String(row.delivery_date).slice(0, 10)
-      : null,
-    return_due_date: row.return_due_date
-      ? String(row.return_due_date).slice(0, 10)
-      : null,
+    delivery_date: toIsoDateOnly(row.delivery_date),
+    return_due_date: toIsoDateOnly(row.return_due_date),
     auto_reminder_enabled:
       row.auto_reminder_enabled !== false && row.auto_reminder_enabled !== 'f',
     mail1_sent_at: row.mail1_sent_at ? new Date(row.mail1_sent_at).toISOString() : null,
@@ -450,7 +449,10 @@ export function normalizeHardwareReturnInput(
     }
   }
   if (input.delivery_date !== undefined) {
-    next.delivery_date = nullStr(input.delivery_date, 10);
+    next.delivery_date = toIsoDateOnly(input.delivery_date);
+  } else if (existing?.delivery_date !== undefined) {
+    // Re-normalize existing so a stale "Fri Nov 20" never reaches PG DATE columns.
+    next.delivery_date = toIsoDateOnly(existing.delivery_date);
   }
   // Auto-default return_due_date = delivery_date + N days when delivery set and due not explicitly provided.
   if (input.delivery_date !== undefined && input.return_due_date === undefined) {
@@ -458,7 +460,9 @@ export function normalizeHardwareReturnInput(
       next.return_due_date = addDaysIso(next.delivery_date, mail1Days);
     }
   } else if (input.return_due_date !== undefined) {
-    next.return_due_date = nullStr(input.return_due_date, 10);
+    next.return_due_date = toIsoDateOnly(input.return_due_date);
+  } else if (existing?.return_due_date !== undefined) {
+    next.return_due_date = toIsoDateOnly(existing.return_due_date);
   }
 
   if (input.stage_recipients_override !== undefined) {

@@ -23,6 +23,7 @@ import {
   ReturnCreateEditDrawer,
   type ReturnMemberOption,
 } from './ReturnCreateEditDrawer';
+import { formatDateDeOnly } from '../../lib/client-portal/hardware-returns-dates';
 
 type WorkbenchMode = 'portal' | 'staff';
 
@@ -612,8 +613,8 @@ export function ReturnsWorkbench({
                         {hw.device_details || '—'}
                       </td>
                       <td className="p-3 text-xs">
-                        <p>Lieferung: {hw.delivery_date || '—'}</p>
-                        <p>Fällig: {hw.return_due_date || '—'}</p>
+                        <p>Lieferung: {formatDateDeOnly(hw.delivery_date)}</p>
+                        <p>Fällig: {formatDateDeOnly(hw.return_due_date)}</p>
                         {it.overdueDays > 0 && !hw.returned ? (
                           <span className="inline-flex mt-1 rounded-full bg-rose-50 text-rose-700 border border-rose-100 px-2 py-0.5 text-[10px] font-bold">
                             +{it.overdueDays} Tage überfällig

@@ -40,8 +40,13 @@ import {
 } from '../src/lib/client-portal/hardware-returns-recipients.js';
 import {
   defaultHardwareReturnsConfig,
+  mapHardwareRow,
   type TicketHardwareReturnRecord,
 } from '../src/lib/client-portal/hardware-returns.js';
+import {
+  formatDateDeOnly,
+  toIsoDateOnly,
+} from '../src/lib/client-portal/hardware-returns-dates.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -440,6 +445,37 @@ function testHardwareReturnsStandaloneLifecycle(): void {
       escalationSrc.includes('importHardwareReturnsCsv') &&
       !escalationSrc.includes("addDocDirect('tickets'"),
     'CSV import + mail/mark-returned use activity_log, not ticket messages',
+  );
+  assert(
+    escalationSrc.includes('SET returned = TRUE') &&
+      !/markHardwareReturned[\s\S]*?updateHardwareReturnById/.test(
+        escalationSrc.slice(
+          escalationSrc.indexOf('export async function markHardwareReturned'),
+          escalationSrc.indexOf(
+            'export async function',
+            escalationSrc.indexOf('export async function markHardwareReturned') + 10,
+          ),
+        ),
+      ),
+    'mark-returned is a targeted UPDATE (no full-row rewrite of delivery_date)',
+  );
+
+  const pgDate = new Date(Date.UTC(2026, 10, 20));
+  assert(toIsoDateOnly(pgDate) === '2026-11-20', 'pg Date serializes to YYYY-MM-DD');
+  assert(toIsoDateOnly('Fri Nov 20') === null, 'locale date strings rejected');
+  assert(formatDateDeOnly('2026-11-20') === '20.11.2026', 'UI date format DD.MM.YYYY');
+  const mapped = mapHardwareRow({
+    id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    organization_id: 'org-dpg',
+    delivery_date: pgDate,
+    return_due_date: new Date(Date.UTC(2026, 11, 4)),
+    return_required: true,
+    returned: false,
+    status: 'open',
+  });
+  assert(
+    mapped.delivery_date === '2026-11-20' && mapped.return_due_date === '2026-12-04',
+    'mapHardwareRow DATE columns → YYYY-MM-DD (mark-returned safe)',
   );
 
   const hw: TicketHardwareReturnRecord = {

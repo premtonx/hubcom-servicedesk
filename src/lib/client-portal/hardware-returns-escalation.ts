@@ -364,15 +364,25 @@ export async function markHardwareReturned(params: {
   if (!org?.hardware_returns_enabled) {
     throw Object.assign(new Error('Hardware-Rücklieferungen nicht aktiv.'), { status: 404 });
   }
-  const returnedAt = params.returnedAt
-    ? new Date(params.returnedAt).toISOString()
-    : new Date().toISOString();
-  const updated = await updateHardwareReturnById({
-    id: hw.id,
-    organizationId: params.organizationId,
-    input: { returned: true, returned_at: returnedAt, status: 'returned' },
-    mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
-  });
+  const returnedAtRaw = params.returnedAt ? new Date(params.returnedAt) : new Date();
+  if (Number.isNaN(returnedAtRaw.getTime())) {
+    throw Object.assign(new Error('Ungültiger returned_at Zeitstempel.'), { status: 400 });
+  }
+  const returnedAt = returnedAtRaw.toISOString();
+  // Targeted update only — do not touch DATE columns (avoids locale-string round-trips).
+  const res = await queryDb(
+    `UPDATE ticket_hardware_returns
+     SET returned = TRUE,
+         returned_at = $2::timestamptz,
+         status = 'returned',
+         updated_at = NOW()
+     WHERE id = $1::uuid AND organization_id = $3
+     RETURNING *`,
+    [hw.id, returnedAt, params.organizationId],
+  );
+  if (!res.rowCount) {
+    throw Object.assign(new Error('Rücklieferung nicht gefunden.'), { status: 404 });
+  }
   await appendHardwareReturnActivity(hw.id, {
     at: new Date().toISOString(),
     type: 'returned',
@@ -382,7 +392,7 @@ export async function markHardwareReturned(params: {
       : 'Rücklieferung erfolgt',
     meta: { returnedAt },
   });
-  return (await getHardwareReturnById(hw.id)) || updated;
+  return (await getHardwareReturnById(hw.id)) || mapHardwareRow(res.rows[0]);
 }
 
 export interface HardwareReturnsListFilters {

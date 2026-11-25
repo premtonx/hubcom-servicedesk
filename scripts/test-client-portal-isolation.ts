@@ -90,10 +90,15 @@ import {
   evaluateHardwareModuleAccess,
   extractHardwareContactsFromUser,
   isHardwareReturnsEnabled,
+  mapHardwareRow,
   normalizeHardwareReturnInput,
   normalizeHardwareReturnsConfig,
   type TicketHardwareReturnRecord,
 } from '../src/lib/client-portal/hardware-returns.js';
+import {
+  formatDateDeOnly,
+  toIsoDateOnly,
+} from '../src/lib/client-portal/hardware-returns-dates.js';
 import {
   evaluatePortalReturnsPageAccess,
   resolveHardwareReturnsModuleFlag,
@@ -1998,6 +2003,114 @@ function testHardwareReturnsStandaloneBackend(): void {
   );
 }
 
+/**
+ * DATE serialization + mark-returned must never emit "Fri Nov 20" or rewrite
+ * delivery_date/return_due_date from display strings.
+ */
+function testHardwareReturnsDateSerializationAndMarkReturned(): void {
+  console.log('\n--- Hardware returns DATE serialization + mark-returned ---');
+
+  const pgDate = new Date(Date.UTC(2026, 10, 20)); // 2026-11-20
+  const dueDate = new Date(Date.UTC(2026, 11, 4)); // 2026-12-04
+
+  assert(toIsoDateOnly(pgDate) === '2026-11-20', 'Date → YYYY-MM-DD (UTC parts)');
+  assert(toIsoDateOnly(dueDate) === '2026-12-04', 'due Date → YYYY-MM-DD');
+  assert(toIsoDateOnly('2026-11-20') === '2026-11-20', 'ISO date string passthrough');
+  assert(
+    toIsoDateOnly('2026-11-20T15:30:00.000Z') === '2026-11-20',
+    'ISO datetime → date-only prefix',
+  );
+  assert(toIsoDateOnly('Fri Nov 20') === null, 'reject English locale "Fri Nov 20"');
+  assert(toIsoDateOnly('Thu Dec 03') === null, 'reject English locale "Thu Dec 03"');
+  assert(toIsoDateOnly('') === null && toIsoDateOnly(null) === null, 'empty → null');
+  assert(formatDateDeOnly(pgDate) === '20.11.2026', 'German display 20.11.2026');
+  assert(formatDateDeOnly('2026-12-04') === '04.12.2026', 'German display 04.12.2026');
+  assert(
+    !String(pgDate).slice(0, 10).match(/^\d{4}-\d{2}-\d{2}$/),
+    'String(Date).slice(0,10) is NOT YYYY-MM-DD (the bug we fixed)',
+  );
+
+  const mapped = mapHardwareRow({
+    id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    organization_id: ORG_B,
+    ticket_id: null,
+    return_number: 'RL-1001',
+    subject: 'Hardware',
+    employee_name: 'Ada',
+    employee_email: 'ada@dpg.test',
+    status: 'open',
+    delivery_date: pgDate,
+    return_due_date: dueDate,
+    return_required: true,
+    returned: false,
+    auto_reminder_enabled: true,
+    created_at: new Date(Date.UTC(2026, 10, 1)),
+    updated_at: new Date(Date.UTC(2026, 10, 1)),
+  });
+  assert(
+    mapped.delivery_date === '2026-11-20' && mapped.return_due_date === '2026-12-04',
+    'mapHardwareRow serializes pg Date columns to YYYY-MM-DD',
+  );
+
+  // normalize must refuse locale strings even if somehow present on existing.
+  const normalized = normalizeHardwareReturnInput(
+    { returned: true, returned_at: new Date().toISOString(), status: 'returned' },
+    {
+      existing: {
+        ...mapped,
+        delivery_date: 'Fri Nov 20' as any,
+        return_due_date: 'Thu Dec 03' as any,
+      },
+    },
+  );
+  assert(
+    normalized.delivery_date === null && normalized.return_due_date === null,
+    'normalize clears invalid locale date strings instead of writing them to PG',
+  );
+
+  const escalationSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-escalation.ts'),
+    'utf8',
+  );
+  const markStart = escalationSrc.indexOf('export async function markHardwareReturned');
+  const markEnd = escalationSrc.indexOf('export async function', markStart + 10);
+  const markFn = escalationSrc.slice(markStart, markEnd > markStart ? markEnd : undefined);
+  assert(
+    markFn.includes('SET returned = TRUE') &&
+      markFn.includes("status = 'returned'") &&
+      markFn.includes('returned_at = $2::timestamptz') &&
+      !markFn.includes('updateHardwareReturnById') &&
+      !/SET[\s\S]*delivery_date[\s\S]*WHERE/.test(markFn) &&
+      !/SET[\s\S]*return_due_date[\s\S]*WHERE/.test(markFn),
+    'mark-returned updates only returned/returned_at/status (+ activity_log) — never delivery/due dates',
+  );
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  assert(
+    workbenchSrc.includes('formatDateDeOnly') &&
+      !workbenchSrc.includes('Lieferung: {hw.delivery_date'),
+    'returns table formats dates via formatDateDeOnly (DD.MM.YYYY)',
+  );
+
+  const layoutSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/ClientPortalLayout.tsx'),
+    'utf8',
+  );
+  assert(
+    !layoutSrc.includes('Neues Ticket erstellen') && !layoutSrc.includes('PlusCircle'),
+    'portal sidebar has no + Neues Ticket erstellen nav item',
+  );
+  assert(
+    !/NAV_ALL\s*=\s*\[[^\]]*\/portal\/tickets\/new/.test(layoutSrc) &&
+      layoutSrc.includes("location.pathname === '/portal/tickets/new'") &&
+      layoutSrc.includes("'/portal/tickets'"),
+    'create route still works; only sidebar nav entry removed',
+  );
+}
+
 /** Workbench create/edit drawer contract — dedicated action + module gate. */
 function testHardwareReturnsWorkbenchDrawerContract(): void {
   console.log('\n--- Hardware returns workbench create/edit drawer ---');
@@ -2659,6 +2772,7 @@ async function main(): Promise<void> {
   testHardwareReturnsModuleGate();
   testHardwareReturnsEscalationEngine();
   testHardwareReturnsStandaloneBackend();
+  testHardwareReturnsDateSerializationAndMarkReturned();
   testHardwareReturnsWorkbenchDrawerContract();
   testDefaultTicketCreateExcludesRmaFields();
   testPortalReturnsPageNavigationGate();

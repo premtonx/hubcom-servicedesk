@@ -4,6 +4,7 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
 import { cn } from '../../lib/utils';
+import { toIsoDateOnly } from '../../lib/client-portal/hardware-returns-dates';
 
 export interface HardwareReturnFormState {
   /** Ticket subject — defaults to "Hardware" in the workbench drawer. */
@@ -95,8 +96,8 @@ export function hardwareFormFromRecord(raw: Record<string, unknown> | null | und
     solution_summary: String(raw.solution_summary || ''),
     exported: Boolean(raw.exported),
     return_required: raw.return_required !== false && raw.return_required !== 'f',
-    delivery_date: String(raw.delivery_date || '').slice(0, 10),
-    return_due_date: String(raw.return_due_date || '').slice(0, 10),
+    delivery_date: toIsoDateOnly(raw.delivery_date) || '',
+    return_due_date: toIsoDateOnly(raw.return_due_date) || '',
     project_manager_name: String(raw.project_manager_name || ''),
     project_manager_email: String(raw.project_manager_email || ''),
     manager_name: String(raw.manager_name || ''),
@@ -158,8 +159,8 @@ export function hardwareFormToPayload(form: HardwareReturnFormState): Record<str
     solution_summary: form.solution_summary || null,
     exported: form.exported,
     return_required: form.return_required,
-    delivery_date: form.delivery_date || null,
-    return_due_date: form.return_due_date || null,
+    delivery_date: toIsoDateOnly(form.delivery_date),
+    return_due_date: toIsoDateOnly(form.return_due_date),
     project_manager_name: form.project_manager_name || null,
     project_manager_email: form.project_manager_email || null,
     manager_name: form.manager_name || null,

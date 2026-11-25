@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Ticket,
-  PlusCircle,
   Users,
   Mail,
   LogOut,
@@ -25,10 +24,10 @@ import {
 } from '../../lib/client-portal/org-branding';
 import { resolveHardwareReturnsModuleFlag } from '../../lib/client-portal/hardware-returns-nav';
 
+/** Create lives inside /portal/tickets + dashboard — not as a sidebar nav item. */
 const NAV_ALL = [
   { to: '/portal/dashboard', label: 'Übersicht', icon: LayoutDashboard, end: true },
   { to: '/portal/tickets', label: 'Tickets', icon: Ticket, end: true },
-  { to: '/portal/tickets/new', label: 'Neues Ticket erstellen', icon: PlusCircle, end: true },
   { to: '/portal/kb', label: 'Wissensdatenbank', icon: BookOpen, end: false },
   { to: '/portal/exchange', label: 'Sicherer Austausch', icon: Shield, end: false },
 ] as const;
@@ -113,9 +112,9 @@ export default function ClientPortalLayout() {
   const showReturns = isOrgWide && hardwareReturnsEnabled === true;
 
   const navItems = [
-    ...NAV_ALL.slice(0, 3),
+    ...NAV_ALL.slice(0, 2),
     ...(showReturns ? [NAV_RETURNS] : []),
-    ...NAV_ALL.slice(3),
+    ...NAV_ALL.slice(2),
     ...(isOrgWide ? NAV_ORG_WIDE : []),
     ...(isClientAdmin ? NAV_ADMIN_ONLY : []),
   ];
