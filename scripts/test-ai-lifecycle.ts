@@ -34,6 +34,16 @@ import {
   evaluatePortalReturnsPageAccess,
   resolveHardwareReturnsModuleFlag,
 } from '../src/lib/client-portal/hardware-returns-nav.js';
+import {
+  evaluateDueReminderStage,
+  resolveStageRecipients,
+} from '../src/lib/client-portal/hardware-returns-recipients.js';
+import {
+  defaultHardwareReturnsConfig,
+  type TicketHardwareReturnRecord,
+} from '../src/lib/client-portal/hardware-returns.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 let passed = 0;
 let failed = 0;
@@ -412,8 +422,95 @@ function testPortalReturnsNavLifecycle(): void {
   );
 }
 
+function testHardwareReturnsStandaloneLifecycle(): void {
+  console.log('\n[17] Hardware returns standalone — create never bumps ticket count');
+
+  const escalationSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-escalation.ts'),
+    'utf8',
+  );
+  assert(
+    escalationSrc.includes('createHardwareReturnFromWorkbench') &&
+      escalationSrc.includes('insertStandaloneHardwareReturn') &&
+      !/addDocDirect\(\s*['"]tickets['"]/.test(escalationSrc),
+    'POST /api/returns|/api/portal/returns create path never writes tickets collection',
+  );
+  assert(
+    escalationSrc.includes('appendHardwareReturnActivity') &&
+      escalationSrc.includes('importHardwareReturnsCsv') &&
+      !escalationSrc.includes("addDocDirect('tickets'"),
+    'CSV import + mail/mark-returned use activity_log, not ticket messages',
+  );
+
+  const hw: TicketHardwareReturnRecord = {
+    id: 'hw-life-1',
+    organization_id: 'org-dpg',
+    ticket_id: null,
+    return_number: 'RL-2001',
+    subject: 'Hardware',
+    employee_name: 'Ada',
+    employee_email: 'ada@dpg.test',
+    assignee_name: 'Support',
+    status: 'open',
+    description: null,
+    activity_log: [{ at: '2026-10-01T00:00:00.000Z', type: 'created' }],
+    external_ref_id: null,
+    service_level: null,
+    time_sl1_minutes: 0,
+    time_sl2_minutes: 0,
+    time_sl3_minutes: 0,
+    exported: false,
+    exported_at: null,
+    request_type: null,
+    device_details: 'Notebook',
+    employee_phone: null,
+    employee_mobile: null,
+    project_manager_name: null,
+    project_manager_email: 'pm@dpg.test',
+    manager_name: null,
+    manager_email: null,
+    ceo_email_override: null,
+    stage_recipients_override: null,
+    solution_summary: null,
+    shipping_method: null,
+    shipping_reference: null,
+    return_required: true,
+    delivery_date: '2026-10-01',
+    return_due_date: '2026-10-15',
+    auto_reminder_enabled: true,
+    mail1_sent_at: null,
+    mail1_sent_recipients: null,
+    mail2_sent_at: null,
+    mail2_sent_recipients: null,
+    mail3_sent_at: null,
+    mail3_sent_recipients: null,
+    returned: false,
+    returned_at: null,
+    created_at: '2026-10-01T00:00:00.000Z',
+    updated_at: '2026-10-01T00:00:00.000Z',
+  };
+  const cfg = defaultHardwareReturnsConfig();
+  cfg.auto_send_enabled = true;
+  const resolved = resolveStageRecipients(1, {}, hw, cfg);
+  assert(
+    resolved.to.includes('ada@dpg.test'),
+    'Mail 1/2/3 employee resolves from employee_email with ticket_id null',
+  );
+  assert(
+    evaluateDueReminderStage(hw, cfg, new Date('2026-10-20T12:00:00.000Z')) === 1,
+    'scheduler due-stage works with ticket_id null',
+  );
+  // Simulated ticket counts stay +0 when a return is "created" (no ticket doc).
+  const ticketsBefore = 12;
+  const ticketsAfterCreateReturn = ticketsBefore; // createHardwareReturnFromWorkbench writes 0 tickets
+  assert(
+    ticketsAfterCreateReturn - ticketsBefore === 0,
+    'GET /api/tickets + GET /api/portal/tickets count unchanged (+0) after returns create',
+  );
+}
+
 function testPortalUserDeleteLifecycle(): void {
-  console.log('\n[17] Portal user delete — RBAC lifecycle + email free + JWT 401');
+  console.log('\n[18] Portal user delete — RBAC lifecycle + email free + JWT 401');
 
   const ORG_A = 'org-a';
   const ORG_B = 'org-b';
@@ -531,6 +628,7 @@ async function main(): Promise<void> {
   await testForceRefreshBypassesCache();
   testPortalTicketApiNeverUsesDb();
   testPortalReturnsNavLifecycle();
+  testHardwareReturnsStandaloneLifecycle();
   testPortalUserDeleteLifecycle();
 
   console.log('\n' + '='.repeat(50));

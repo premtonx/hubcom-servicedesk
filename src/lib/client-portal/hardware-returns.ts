@@ -46,10 +46,37 @@ export interface HardwareStageOverride {
   cc: string[];
 }
 
+export type HardwareReturnStatus =
+  | 'open'
+  | 'in_progress'
+  | 'waiting'
+  | 'returned'
+  | 'closed';
+
+export interface HardwareReturnActivityEntry {
+  at: string;
+  type: string;
+  actor?: string | null;
+  message?: string | null;
+  to?: string[];
+  cc?: string[];
+  stage?: 1 | 2 | 3;
+  meta?: Record<string, unknown>;
+}
+
 export interface TicketHardwareReturnRecord {
   id: string;
   organization_id: string;
-  ticket_id: string;
+  /** Legacy soft link — nullable; standalone returns keep this null. */
+  ticket_id: string | null;
+  return_number: string | null;
+  subject: string;
+  employee_name: string | null;
+  employee_email: string | null;
+  assignee_name: string | null;
+  status: HardwareReturnStatus;
+  description: string | null;
+  activity_log: HardwareReturnActivityEntry[];
   external_ref_id: string | null;
   service_level: 1 | 2 | 3 | null;
   time_sl1_minutes: number;
@@ -91,8 +118,28 @@ export interface TicketHardwareReturnRecord {
 }
 
 export type TicketHardwareReturnInput = Partial<
-  Omit<TicketHardwareReturnRecord, 'id' | 'organization_id' | 'ticket_id' | 'created_at' | 'updated_at'>
+  Omit<TicketHardwareReturnRecord, 'id' | 'organization_id' | 'created_at' | 'updated_at'>
 >;
+
+const STATUS_VALUES: HardwareReturnStatus[] = [
+  'open',
+  'in_progress',
+  'waiting',
+  'returned',
+  'closed',
+];
+
+export function normalizeHardwareReturnStatus(raw: unknown): HardwareReturnStatus {
+  const s = String(raw || '')
+    .toLowerCase()
+    .trim()
+    .replace(/-/g, '_');
+  if (s === 'pending') return 'in_progress';
+  if (s === 'on_hold' || s === 'waiting_customer') return 'waiting';
+  if (s === 'resolved') return 'closed';
+  if ((STATUS_VALUES as string[]).includes(s)) return s as HardwareReturnStatus;
+  return 'open';
+}
 
 const ROLE_TOKENS: HardwareRoleToken[] = ['employee', 'project_manager', 'manager', 'ceo'];
 
@@ -299,12 +346,43 @@ function parseSentRecipients(raw: unknown): HardwareStageOverride | null {
   };
 }
 
-function mapHardwareRow(row: any): TicketHardwareReturnRecord {
+function parseActivityLog(raw: unknown): HardwareReturnActivityEntry[] {
+  if (raw == null) return [];
+  const src =
+    typeof raw === 'string' ? (JSON.parse(raw || '[]') as unknown) : raw;
+  if (!Array.isArray(src)) return [];
+  return src
+    .filter((e) => e && typeof e === 'object')
+    .map((e: any) => ({
+      at: String(e.at || ''),
+      type: String(e.type || 'note'),
+      actor: e.actor != null ? String(e.actor) : null,
+      message: e.message != null ? String(e.message) : null,
+      to: Array.isArray(e.to) ? e.to.map((x: unknown) => String(x)) : undefined,
+      cc: Array.isArray(e.cc) ? e.cc.map((x: unknown) => String(x)) : undefined,
+      stage: e.stage === 1 || e.stage === 2 || e.stage === 3 ? e.stage : undefined,
+      meta: e.meta && typeof e.meta === 'object' ? e.meta : undefined,
+    }))
+    .slice(-500);
+}
+
+export function mapHardwareRow(row: any): TicketHardwareReturnRecord {
   const sl = row.service_level == null ? null : Number(row.service_level);
+  const returned = row.returned === true || row.returned === 't';
   return {
     id: String(row.id),
     organization_id: String(row.organization_id),
-    ticket_id: String(row.ticket_id),
+    ticket_id: row.ticket_id == null || row.ticket_id === '' ? null : String(row.ticket_id),
+    return_number: nullStr(row.return_number, 120),
+    subject: nullStr(row.subject, 500) || 'Hardware',
+    employee_name: nullStr(row.employee_name, 255),
+    employee_email: nullEmail(row.employee_email),
+    assignee_name: nullStr(row.assignee_name, 255),
+    status: returned
+      ? 'returned'
+      : normalizeHardwareReturnStatus(row.status),
+    description: nullStr(row.description, 100_000),
+    activity_log: parseActivityLog(row.activity_log),
     external_ref_id: nullStr(row.external_ref_id, 120),
     service_level: sl === 1 || sl === 2 || sl === 3 ? sl : null,
     time_sl1_minutes: Math.max(0, Number(row.time_sl1_minutes) || 0),
@@ -340,7 +418,7 @@ function mapHardwareRow(row: any): TicketHardwareReturnRecord {
     mail2_sent_recipients: parseSentRecipients(row.mail2_sent_recipients),
     mail3_sent_at: row.mail3_sent_at ? new Date(row.mail3_sent_at).toISOString() : null,
     mail3_sent_recipients: parseSentRecipients(row.mail3_sent_recipients),
-    returned: row.returned === true || row.returned === 't',
+    returned,
     returned_at: row.returned_at ? new Date(row.returned_at).toISOString() : null,
     created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
     updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : '',
@@ -385,6 +463,37 @@ export function normalizeHardwareReturnInput(
 
   if (input.stage_recipients_override !== undefined) {
     next.stage_recipients_override = parseStageOverride(input.stage_recipients_override);
+  }
+
+  if (input.subject !== undefined) {
+    next.subject = nullStr(input.subject, 500) || 'Hardware';
+  }
+  if (input.employee_name !== undefined) {
+    next.employee_name = nullStr(input.employee_name, 255);
+  }
+  if (input.employee_email !== undefined) {
+    next.employee_email = nullEmail(input.employee_email);
+  }
+  if (input.assignee_name !== undefined) {
+    next.assignee_name = nullStr(input.assignee_name, 255);
+  }
+  if (input.status !== undefined) {
+    next.status = normalizeHardwareReturnStatus(input.status);
+  }
+  if (input.description !== undefined) {
+    next.description = nullStr(input.description, 100_000);
+  }
+  if (input.return_number !== undefined) {
+    next.return_number = nullStr(input.return_number, 120);
+  }
+  if (input.ticket_id !== undefined) {
+    next.ticket_id =
+      input.ticket_id == null || String(input.ticket_id).trim() === ''
+        ? null
+        : String(input.ticket_id).trim().slice(0, 255);
+  }
+  if (input.activity_log !== undefined && Array.isArray(input.activity_log)) {
+    next.activity_log = input.activity_log;
   }
 
   next.external_ref_id =
@@ -439,12 +548,24 @@ export function normalizeHardwareReturnInput(
       next.returned_at = new Date().toISOString();
     }
     if (!next.returned) next.returned_at = null;
+    if (next.returned) next.status = 'returned';
   }
   if (input.returned_at !== undefined) {
     next.returned_at = input.returned_at ? new Date(String(input.returned_at)).toISOString() : null;
   }
 
   return next;
+}
+
+export async function getHardwareReturnById(
+  id: string,
+): Promise<TicketHardwareReturnRecord | null> {
+  const res = await queryDb(
+    `SELECT * FROM ticket_hardware_returns WHERE id = $1::uuid LIMIT 1`,
+    [id],
+  );
+  if (!res.rowCount) return null;
+  return mapHardwareRow(res.rows[0]);
 }
 
 export async function getHardwareReturnByTicketId(
@@ -458,113 +579,148 @@ export async function getHardwareReturnByTicketId(
   return mapHardwareRow(res.rows[0]);
 }
 
-export async function upsertHardwareReturn(params: {
-  ticketId: string;
+/**
+ * Resolve by hardware-return UUID first, then legacy ticket_id (transition).
+ */
+export async function resolveHardwareReturnByParam(
+  idOrTicketId: string,
+  organizationId?: string | null,
+): Promise<TicketHardwareReturnRecord | null> {
+  const raw = String(idOrTicketId || '').trim();
+  if (!raw) return null;
+  const uuidLike =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw);
+  let row: TicketHardwareReturnRecord | null = null;
+  if (uuidLike) {
+    row = await getHardwareReturnById(raw);
+  }
+  if (!row) {
+    row = await getHardwareReturnByTicketId(raw);
+  }
+  if (!row && organizationId) {
+    const byNumber = await queryDb(
+      `SELECT * FROM ticket_hardware_returns
+       WHERE organization_id = $1 AND (return_number = $2 OR external_ref_id = $2)
+       LIMIT 1`,
+      [organizationId, raw],
+    );
+    if (byNumber.rowCount) row = mapHardwareRow(byNumber.rows[0]);
+  }
+  if (row && organizationId && row.organization_id !== organizationId) return null;
+  return row;
+}
+
+export async function allocateReturnNumber(organizationId: string): Promise<string> {
+  const res = await queryDb(
+    `SELECT return_number FROM ticket_hardware_returns
+     WHERE organization_id = $1 AND return_number ~ '^RL-[0-9]+$'
+     ORDER BY NULLIF(regexp_replace(return_number, '\\D', '', 'g'), '')::int DESC NULLS LAST
+     LIMIT 1`,
+    [organizationId],
+  );
+  let next = 1001;
+  if (res.rowCount) {
+    const n = Number(String(res.rows[0].return_number).replace(/\D/g, ''));
+    if (Number.isFinite(n) && n >= 1000) next = n + 1;
+  }
+  return `RL-${next}`;
+}
+
+export async function appendHardwareReturnActivity(
+  id: string,
+  entry: HardwareReturnActivityEntry,
+): Promise<TicketHardwareReturnRecord | null> {
+  const res = await queryDb(
+    `UPDATE ticket_hardware_returns
+     SET activity_log = COALESCE(activity_log, '[]'::jsonb) || $2::jsonb,
+         updated_at = NOW()
+     WHERE id = $1::uuid
+     RETURNING *`,
+    [id, JSON.stringify([entry])],
+  );
+  if (!res.rowCount) return null;
+  return mapHardwareRow(res.rows[0]);
+}
+
+export async function deleteHardwareReturn(params: {
+  id: string;
+  organizationId: string;
+}): Promise<boolean> {
+  const res = await queryDb(
+    `DELETE FROM ticket_hardware_returns
+     WHERE id = $1::uuid AND organization_id = $2
+     RETURNING id`,
+    [params.id, params.organizationId],
+  );
+  return Boolean(res.rowCount);
+}
+
+/** Persist hardware-return fields by primary id (standalone). */
+export async function updateHardwareReturnById(params: {
+  id: string;
   organizationId: string;
   input: TicketHardwareReturnInput;
   mail1Days?: number;
 }): Promise<TicketHardwareReturnRecord> {
-  const existing = await getHardwareReturnByTicketId(params.ticketId);
-  if (existing && existing.organization_id !== params.organizationId) {
-    throw Object.assign(new Error('Hardware return belongs to another organization.'), {
-      status: 403,
-    });
+  const existing = await getHardwareReturnById(params.id);
+  if (!existing || existing.organization_id !== params.organizationId) {
+    throw Object.assign(new Error('Rücklieferung nicht gefunden.'), { status: 404 });
   }
   const normalized = normalizeHardwareReturnInput(params.input, {
     existing,
     mail1Days: params.mail1Days,
   });
-
-  if (existing) {
-    const res = await queryDb(
-      `UPDATE ticket_hardware_returns SET
-        external_ref_id = $2,
-        service_level = $3,
-        time_sl1_minutes = $4,
-        time_sl2_minutes = $5,
-        time_sl3_minutes = $6,
-        exported = $7,
-        exported_at = $8,
-        request_type = $9,
-        device_details = $10,
-        employee_phone = $11,
-        employee_mobile = $12,
-        project_manager_name = $13,
-        project_manager_email = $14,
-        manager_name = $15,
-        manager_email = $16,
-        ceo_email_override = $17,
-        stage_recipients_override = $18::jsonb,
-        solution_summary = $19,
-        shipping_method = $20,
-        shipping_reference = $21,
-        return_required = $22,
-        delivery_date = $23,
-        return_due_date = $24,
-        auto_reminder_enabled = $25,
-        returned = $26,
-        returned_at = $27,
-        updated_at = NOW()
-      WHERE ticket_id = $1
-      RETURNING *`,
-      [
-        params.ticketId,
-        normalized.external_ref_id ?? null,
-        normalized.service_level ?? null,
-        normalized.time_sl1_minutes ?? 0,
-        normalized.time_sl2_minutes ?? 0,
-        normalized.time_sl3_minutes ?? 0,
-        Boolean(normalized.exported),
-        normalized.exported_at ?? null,
-        normalized.request_type ?? null,
-        normalized.device_details ?? null,
-        normalized.employee_phone ?? null,
-        normalized.employee_mobile ?? null,
-        normalized.project_manager_name ?? null,
-        normalized.project_manager_email ?? null,
-        normalized.manager_name ?? null,
-        normalized.manager_email ?? null,
-        normalized.ceo_email_override ?? null,
-        normalized.stage_recipients_override
-          ? JSON.stringify(normalized.stage_recipients_override)
-          : null,
-        normalized.solution_summary ?? null,
-        normalized.shipping_method ?? null,
-        normalized.shipping_reference ?? null,
-        Boolean(normalized.return_required),
-        normalized.delivery_date ?? null,
-        normalized.return_due_date ?? null,
-        normalized.auto_reminder_enabled !== false,
-        Boolean(normalized.returned),
-        normalized.returned_at ?? null,
-      ],
-    );
-    return mapHardwareRow(res.rows[0]);
-  }
-
-  const id = randomUUID();
   const res = await queryDb(
-    `INSERT INTO ticket_hardware_returns (
-      id, organization_id, ticket_id,
-      external_ref_id, service_level, time_sl1_minutes, time_sl2_minutes, time_sl3_minutes,
-      exported, exported_at, request_type, device_details, employee_phone, employee_mobile,
-      project_manager_name, project_manager_email, manager_name, manager_email,
-      ceo_email_override, stage_recipients_override, solution_summary,
-      shipping_method, shipping_reference, return_required, delivery_date, return_due_date,
-      auto_reminder_enabled, returned, returned_at
-    ) VALUES (
-      $1,$2,$3,
-      $4,$5,$6,$7,$8,
-      $9,$10,$11,$12,$13,$14,
-      $15,$16,$17,$18,
-      $19,$20::jsonb,$21,
-      $22,$23,$24,$25,$26,
-      $27,$28,$29
-    ) RETURNING *`,
+    `UPDATE ticket_hardware_returns SET
+      ticket_id = $2,
+      return_number = $3,
+      subject = $4,
+      employee_name = $5,
+      employee_email = $6,
+      assignee_name = $7,
+      status = $8,
+      description = $9,
+      activity_log = COALESCE($10::jsonb, activity_log),
+      external_ref_id = $11,
+      service_level = $12,
+      time_sl1_minutes = $13,
+      time_sl2_minutes = $14,
+      time_sl3_minutes = $15,
+      exported = $16,
+      exported_at = $17,
+      request_type = $18,
+      device_details = $19,
+      employee_phone = $20,
+      employee_mobile = $21,
+      project_manager_name = $22,
+      project_manager_email = $23,
+      manager_name = $24,
+      manager_email = $25,
+      ceo_email_override = $26,
+      stage_recipients_override = $27::jsonb,
+      solution_summary = $28,
+      shipping_method = $29,
+      shipping_reference = $30,
+      return_required = $31,
+      delivery_date = $32,
+      return_due_date = $33,
+      auto_reminder_enabled = $34,
+      returned = $35,
+      returned_at = $36,
+      updated_at = NOW()
+    WHERE id = $1::uuid
+    RETURNING *`,
     [
-      id,
-      params.organizationId,
-      params.ticketId,
+      params.id,
+      normalized.ticket_id ?? null,
+      normalized.return_number ?? existing.return_number,
+      normalized.subject || existing.subject || 'Hardware',
+      normalized.employee_name ?? null,
+      normalized.employee_email ?? null,
+      normalized.assignee_name ?? null,
+      normalized.status || existing.status || 'open',
+      normalized.description ?? null,
+      normalized.activity_log ? JSON.stringify(normalized.activity_log) : null,
       normalized.external_ref_id ?? null,
       normalized.service_level ?? null,
       normalized.time_sl1_minutes ?? 0,
@@ -596,6 +752,226 @@ export async function upsertHardwareReturn(params: {
     ],
   );
   return mapHardwareRow(res.rows[0]);
+}
+
+/**
+ * Insert a standalone Rücklieferung (ticket_id always NULL).
+ * Never creates a normal support ticket.
+ */
+export async function insertStandaloneHardwareReturn(params: {
+  organizationId: string;
+  input: TicketHardwareReturnInput;
+  mail1Days?: number;
+  actorName?: string | null;
+}): Promise<TicketHardwareReturnRecord> {
+  const normalized = normalizeHardwareReturnInput(
+    {
+      return_required: true,
+      auto_reminder_enabled: true,
+      status: 'open',
+      subject: 'Hardware',
+      ...params.input,
+      ticket_id: null,
+    },
+    { mail1Days: params.mail1Days },
+  );
+  const returnNumber =
+    normalized.return_number ||
+    normalized.external_ref_id ||
+    (await allocateReturnNumber(params.organizationId));
+  const now = new Date().toISOString();
+  const activity: HardwareReturnActivityEntry[] = [
+    {
+      at: now,
+      type: 'created',
+      actor: params.actorName || null,
+      message: 'Rücklieferung erstellt',
+    },
+    ...(Array.isArray(normalized.activity_log) ? normalized.activity_log : []),
+  ];
+  const id = randomUUID();
+  const res = await queryDb(
+    `INSERT INTO ticket_hardware_returns (
+      id, organization_id, ticket_id,
+      return_number, subject, employee_name, employee_email, assignee_name, status, description, activity_log,
+      external_ref_id, service_level, time_sl1_minutes, time_sl2_minutes, time_sl3_minutes,
+      exported, exported_at, request_type, device_details, employee_phone, employee_mobile,
+      project_manager_name, project_manager_email, manager_name, manager_email,
+      ceo_email_override, stage_recipients_override, solution_summary,
+      shipping_method, shipping_reference, return_required, delivery_date, return_due_date,
+      auto_reminder_enabled, returned, returned_at
+    ) VALUES (
+      $1,$2,NULL,
+      $3,$4,$5,$6,$7,$8,$9,$10::jsonb,
+      $11,$12,$13,$14,$15,
+      $16,$17,$18,$19,$20,$21,
+      $22,$23,$24,$25,
+      $26,$27::jsonb,$28,
+      $29,$30,$31,$32,$33,
+      $34,$35,$36
+    ) RETURNING *`,
+    [
+      id,
+      params.organizationId,
+      returnNumber,
+      normalized.subject || 'Hardware',
+      normalized.employee_name ?? null,
+      normalized.employee_email ?? null,
+      normalized.assignee_name ?? 'Support',
+      normalized.status || 'open',
+      normalized.description ?? null,
+      JSON.stringify(activity),
+      normalized.external_ref_id ?? null,
+      normalized.service_level ?? null,
+      normalized.time_sl1_minutes ?? 0,
+      normalized.time_sl2_minutes ?? 0,
+      normalized.time_sl3_minutes ?? 0,
+      Boolean(normalized.exported),
+      normalized.exported_at ?? null,
+      normalized.request_type ?? null,
+      normalized.device_details ?? null,
+      normalized.employee_phone ?? null,
+      normalized.employee_mobile ?? null,
+      normalized.project_manager_name ?? null,
+      normalized.project_manager_email ?? null,
+      normalized.manager_name ?? null,
+      normalized.manager_email ?? null,
+      normalized.ceo_email_override ?? null,
+      normalized.stage_recipients_override
+        ? JSON.stringify(normalized.stage_recipients_override)
+        : null,
+      normalized.solution_summary ?? null,
+      normalized.shipping_method ?? null,
+      normalized.shipping_reference ?? null,
+      normalized.return_required !== false,
+      normalized.delivery_date ?? null,
+      normalized.return_due_date ?? null,
+      normalized.auto_reminder_enabled !== false,
+      Boolean(normalized.returned),
+      normalized.returned_at ?? null,
+    ],
+  );
+  return mapHardwareRow(res.rows[0]);
+}
+
+/**
+ * Legacy upsert keyed by ticket_id — kept for ticket-detail hardware panels.
+ * New workbench creates must use insertStandaloneHardwareReturn (ticket_id NULL).
+ */
+export async function upsertHardwareReturn(params: {
+  ticketId: string;
+  organizationId: string;
+  input: TicketHardwareReturnInput;
+  mail1Days?: number;
+}): Promise<TicketHardwareReturnRecord> {
+  const existing = await getHardwareReturnByTicketId(params.ticketId);
+  if (existing && existing.organization_id !== params.organizationId) {
+    throw Object.assign(new Error('Hardware return belongs to another organization.'), {
+      status: 403,
+    });
+  }
+  if (existing) {
+    return updateHardwareReturnById({
+      id: existing.id,
+      organizationId: params.organizationId,
+      input: { ...params.input, ticket_id: params.ticketId },
+      mail1Days: params.mail1Days,
+    });
+  }
+  // Legacy path still links ticket_id for ticket-detail panels; workbench uses insertStandalone.
+  const created = await insertStandaloneHardwareReturn({
+    organizationId: params.organizationId,
+    mail1Days: params.mail1Days,
+    input: { ...params.input, ticket_id: params.ticketId },
+  });
+  // insertStandalone forces ticket_id NULL — re-attach for legacy callers.
+  return updateHardwareReturnById({
+    id: created.id,
+    organizationId: params.organizationId,
+    input: { ticket_id: params.ticketId },
+    mail1Days: params.mail1Days,
+  });
+}
+
+/** Idempotent data migration: copy ticket fields → return row, null ticket_id, drop RMA stubs. */
+export async function backfillHardwareReturnsStandalone(): Promise<void> {
+  await queryDb(`
+    UPDATE ticket_hardware_returns thr
+    SET
+      subject = COALESCE(NULLIF(thr.subject, ''), NULLIF(doc.data->>'subject', ''), 'Hardware'),
+      employee_name = COALESCE(
+        thr.employee_name,
+        NULLIF(doc.data->>'customerName', ''),
+        NULLIF(doc.data->>'customer_name', '')
+      ),
+      employee_email = COALESCE(
+        thr.employee_email,
+        LOWER(NULLIF(doc.data->>'customerEmail', '')),
+        LOWER(NULLIF(doc.data->>'customer_email', ''))
+      ),
+      description = COALESCE(thr.description, NULLIF(doc.data->>'description', '')),
+      status = COALESCE(
+        NULLIF(thr.status, ''),
+        CASE
+          WHEN thr.returned = TRUE THEN 'returned'
+          WHEN LOWER(COALESCE(doc.data->>'status', '')) IN ('closed', 'resolved') THEN 'closed'
+          WHEN LOWER(COALESCE(doc.data->>'status', '')) IN ('in_progress', 'pending') THEN 'in_progress'
+          WHEN LOWER(COALESCE(doc.data->>'status', '')) IN ('waiting', 'waiting_customer', 'on_hold', 'on-hold') THEN 'waiting'
+          ELSE 'open'
+        END
+      ),
+      return_number = COALESCE(
+        thr.return_number,
+        thr.external_ref_id,
+        'RL-LEGACY-' || LEFT(REPLACE(thr.id::text, '-', ''), 8)
+      ),
+      updated_at = NOW()
+    FROM geistdesk_documents doc
+    WHERE thr.ticket_id IS NOT NULL
+      AND doc.collection = 'tickets'
+      AND doc.id = thr.ticket_id
+  `);
+
+  await queryDb(`
+    UPDATE ticket_hardware_returns
+    SET
+      return_number = COALESCE(return_number, external_ref_id, 'RL-LEGACY-' || LEFT(REPLACE(id::text, '-', ''), 8)),
+      subject = COALESCE(NULLIF(subject, ''), 'Hardware'),
+      status = COALESCE(NULLIF(status, ''), CASE WHEN returned THEN 'returned' ELSE 'open' END),
+      updated_at = NOW()
+    WHERE return_number IS NULL OR subject IS NULL OR status IS NULL OR subject = ''
+  `);
+
+  await queryDb(`DROP TABLE IF EXISTS _hw_rma_stub_tickets`);
+  await queryDb(`
+    CREATE TEMP TABLE _hw_rma_stub_tickets AS
+    SELECT thr.ticket_id AS id
+    FROM ticket_hardware_returns thr
+    JOIN geistdesk_documents doc
+      ON doc.collection = 'tickets' AND doc.id = thr.ticket_id
+    WHERE thr.ticket_id IS NOT NULL
+      AND (
+        doc.data->>'channel' = 'hardware_returns'
+        OR COALESCE(doc.data->'tags', '[]'::jsonb) ? 'hardware-returns'
+        OR COALESCE(doc.data->'tags', '[]'::jsonb) ? 'ruecklieferung'
+        OR LOWER(COALESCE(doc.data->>'subject', '')) LIKE 'hardware-rücklieferung%'
+        OR LOWER(COALESCE(doc.data->>'subject', '')) LIKE 'hardware-ruecklieferung%'
+      )
+  `);
+
+  await queryDb(`
+    UPDATE ticket_hardware_returns
+    SET ticket_id = NULL, updated_at = NOW()
+    WHERE ticket_id IS NOT NULL
+  `);
+
+  await queryDb(`
+    DELETE FROM geistdesk_documents
+    WHERE collection = 'tickets'
+      AND id IN (SELECT id FROM _hw_rma_stub_tickets)
+  `);
+
+  await queryDb(`DROP TABLE IF EXISTS _hw_rma_stub_tickets`);
 }
 
 /** Pure gate used by tests — org A enabled, org B disabled. */

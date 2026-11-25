@@ -61,7 +61,12 @@ function roleEmail(
   orgConfig: HardwareReturnsConfig,
 ): string | null {
   if (role === 'employee') {
-    const e = ticket.customer_email || ticket.customerEmail || null;
+    // Standalone returns prefer employee_email on the return row; ticket context is legacy fallback.
+    const e =
+      hardwareReturn?.employee_email ||
+      ticket.customer_email ||
+      ticket.customerEmail ||
+      null;
     return isValidEmail(e) ? normalizeEmail(e) : null;
   }
   if (role === 'project_manager') {
@@ -283,8 +288,9 @@ export function buildReminderTemplateVars(params: {
 }): ReminderTemplateVars {
   const { ticket, hardwareReturn, orgConfig } = params;
   const name =
+    String(hardwareReturn.employee_name || '').trim() ||
     String(ticket.customer_name || ticket.customerName || '').trim() ||
-    String(ticket.customer_email || ticket.customerEmail || 'Mitarbeiter');
+    String(hardwareReturn.employee_email || ticket.customer_email || ticket.customerEmail || 'Mitarbeiter');
   const due =
     hardwareReturn.return_due_date ||
     (hardwareReturn.delivery_date
@@ -296,7 +302,14 @@ export function buildReminderTemplateVars(params: {
           .slice(0, 10)
       : '');
   const days = overdueDays(hardwareReturn, orgConfig, params.now);
-  const ticketId = String(ticket.id || hardwareReturn.ticket_id || '');
+  const ticketId = String(
+    hardwareReturn.return_number ||
+      hardwareReturn.external_ref_id ||
+      ticket.id ||
+      hardwareReturn.ticket_id ||
+      hardwareReturn.id ||
+      '',
+  );
   return {
     mitarbeiter: name,
     geraet: String(hardwareReturn.device_details || '—'),

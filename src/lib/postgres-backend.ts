@@ -396,7 +396,15 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS ticket_hardware_returns (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      ticket_id VARCHAR(255) NOT NULL UNIQUE,
+      ticket_id VARCHAR(255) UNIQUE,
+      return_number TEXT,
+      subject TEXT NOT NULL DEFAULT 'Hardware',
+      employee_name TEXT,
+      employee_email TEXT,
+      assignee_name TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      description TEXT,
+      activity_log JSONB NOT NULL DEFAULT '[]'::jsonb,
       external_ref_id TEXT,
       service_level SMALLINT,
       time_sl1_minutes INT NOT NULL DEFAULT 0,
@@ -432,10 +440,25 @@ export async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    -- Upgrade path for DBs that already had the Part-1 NOT NULL ticket_id shape.
+    ALTER TABLE ticket_hardware_returns ALTER COLUMN ticket_id DROP NOT NULL;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS return_number TEXT;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS subject TEXT NOT NULL DEFAULT 'Hardware';
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS employee_name TEXT;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS employee_email TEXT;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS assignee_name TEXT;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open';
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS description TEXT;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS activity_log JSONB NOT NULL DEFAULT '[]'::jsonb;
     CREATE INDEX IF NOT EXISTS idx_ticket_hw_returns_org
       ON ticket_hardware_returns (organization_id);
     CREATE INDEX IF NOT EXISTS idx_ticket_hw_returns_ticket
       ON ticket_hardware_returns (ticket_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_hw_returns_org_return_number
+      ON ticket_hardware_returns (organization_id, return_number)
+      WHERE return_number IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_ticket_hw_returns_org_status
+      ON ticket_hardware_returns (organization_id, status);
     CREATE INDEX IF NOT EXISTS idx_organizations_active_name
       ON organizations (is_active, name);
     CREATE INDEX IF NOT EXISTS idx_organizations_crm_company
@@ -474,6 +497,19 @@ export async function initDb() {
     console.warn(
       '[initDb] org↔company sync skipped:',
       syncErr?.message || syncErr,
+    );
+  }
+
+  // Detach Hardware-Rücklieferungen from normal tickets (idempotent data backfill).
+  try {
+    const { backfillHardwareReturnsStandalone } = await import(
+      './client-portal/hardware-returns.js'
+    );
+    await backfillHardwareReturnsStandalone();
+  } catch (hwErr: any) {
+    console.warn(
+      '[initDb] hardware-returns standalone backfill skipped:',
+      hwErr?.message || hwErr,
     );
   }
 

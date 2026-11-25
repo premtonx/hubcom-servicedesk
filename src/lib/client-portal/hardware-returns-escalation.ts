@@ -2,13 +2,17 @@
  * Hardware-Rücklieferungen escalation: preview, send, stamp, timeline, workbench list.
  */
 
-import { addDocDirect, getDocDirect, queryDb, updateDocDirect } from '../postgres-backend.js';
+import { getDocDirect, queryDb } from '../postgres-backend.js';
 import { trySendTransactionalEmail } from '../outbound-mail.js';
 import { prepareOutboundEmailHtml } from '../email-html-prepare.js';
 import {
-  getHardwareReturnByTicketId,
+  appendHardwareReturnActivity,
+  getHardwareReturnById,
+  insertStandaloneHardwareReturn,
+  mapHardwareRow,
   normalizeHardwareReturnsConfig,
-  upsertHardwareReturn,
+  resolveHardwareReturnByParam,
+  updateHardwareReturnById,
   type HardwareReturnsConfig,
   type TicketHardwareReturnInput,
   type TicketHardwareReturnRecord,
@@ -27,6 +31,18 @@ import {
   type ResolveStageTicketContext,
 } from './hardware-returns-recipients.js';
 
+function ticketContextFromReturn(
+  hw: TicketHardwareReturnRecord,
+): ResolveStageTicketContext {
+  return {
+    id: hw.return_number || hw.id,
+    customer_email: hw.employee_email,
+    customerEmail: hw.employee_email,
+    customer_name: hw.employee_name,
+    customerName: hw.employee_name,
+  };
+}
+
 function ticketContext(ticket: Record<string, unknown> | null | undefined): ResolveStageTicketContext {
   if (!ticket) return {};
   return {
@@ -38,15 +54,27 @@ function ticketContext(ticket: Record<string, unknown> | null | undefined): Reso
   };
 }
 
-async function loadTicket(ticketId: string): Promise<Record<string, unknown> | null> {
+async function loadTicket(ticketId: string | null | undefined): Promise<Record<string, unknown> | null> {
+  if (!ticketId) return null;
   const doc = await getDocDirect('tickets', ticketId);
   if (!doc) return null;
   return { id: ticketId, ...doc };
 }
 
+function resolveContext(hw: TicketHardwareReturnRecord, ticket: Record<string, unknown> | null) {
+  const fromReturn = ticketContextFromReturn(hw);
+  const fromTicket = ticketContext(ticket);
+  return {
+    id: fromReturn.id || fromTicket.id,
+    customer_email: fromReturn.customer_email || fromTicket.customer_email,
+    customerEmail: fromReturn.customerEmail || fromTicket.customerEmail,
+    customer_name: fromReturn.customer_name || fromTicket.customer_name,
+    customerName: fromReturn.customerName || fromTicket.customerName,
+  };
+}
+
 /**
- * Create a new Hardware-Rücklieferung from the workbench drawer:
- * lightweight ticket + ticket_hardware_returns row (module must already be gated by the route).
+ * Create a standalone Hardware-Rücklieferung — NEVER writes a normal ticket.
  */
 export async function createHardwareReturnFromWorkbench(params: {
   organizationId: string;
@@ -59,60 +87,65 @@ export async function createHardwareReturnFromWorkbench(params: {
   customerName?: string | null;
   customerEmail?: string | null;
   hardwareReturn: TicketHardwareReturnInput;
-}): Promise<{ ticketId: string; hardwareReturn: TicketHardwareReturnRecord; ticket: Record<string, unknown> }> {
+}): Promise<{
+  id: string;
+  ticketId: string;
+  hardwareReturn: TicketHardwareReturnRecord;
+  ticket: Record<string, unknown>;
+}> {
   const org = await getOrganization(params.organizationId);
   if (!org?.hardware_returns_enabled) {
     throw Object.assign(new Error('Hardware-Rücklieferungen nicht aktiv.'), { status: 404 });
   }
   const subject = String(params.subject || 'Hardware').trim() || 'Hardware';
-  const now = new Date().toISOString();
-  const ticketPayload = {
-    subject,
-    description:
-      String(params.description || '').trim() ||
-      String(params.hardwareReturn.device_details || '').trim() ||
-      'Hardware-Rücklieferung',
-    status: 'open',
-    priority: 'medium',
-    team: 'support',
-    channel: 'hardware_returns',
-    categoryName: 'Hardware',
+  const description =
+    String(params.description || '').trim() ||
+    String(params.hardwareReturn.device_details || '').trim() ||
+    null;
+  const hardwareReturn = await insertStandaloneHardwareReturn({
     organizationId: params.organizationId,
-    organization_id: params.organizationId,
-    company: org.name,
-    customerName: params.customerName || params.actorName || null,
-    customerEmail: params.customerEmail || params.actorEmail || null,
-    customerId: params.customerEmail || params.actorEmail || null,
-    requesterId: params.requesterId || params.actorId,
-    requester_id: params.requesterId || params.actorId,
-    creatorId: params.actorId,
-    createdBy: params.actorId,
-    tags: ['hardware-returns', 'ruecklieferung'],
-    include_in_rag: false,
-    is_internal: false,
-    createdAt: now,
-    updatedAt: now,
-  };
-  const created = await addDocDirect('tickets', ticketPayload);
-  const hardwareReturn = await upsertHardwareReturn({
-    ticketId: String(created.id),
-    organizationId: params.organizationId,
+    actorName: params.actorName || params.actorEmail || null,
+    mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
     input: {
       return_required: true,
       auto_reminder_enabled: true,
       ...params.hardwareReturn,
+      subject,
+      description,
+      employee_name:
+        params.hardwareReturn.employee_name ??
+        params.customerName ??
+        params.actorName ??
+        null,
+      employee_email:
+        params.hardwareReturn.employee_email ??
+        params.customerEmail ??
+        params.actorEmail ??
+        null,
+      assignee_name: params.hardwareReturn.assignee_name ?? 'Support',
+      status: 'open',
+      ticket_id: null,
     },
-    mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
   });
+  // ticketId alias = return id so transitional clients can call /:ticketId routes.
   return {
-    ticketId: String(created.id),
+    id: hardwareReturn.id,
+    ticketId: hardwareReturn.id,
     hardwareReturn,
-    ticket: { id: created.id, ...ticketPayload },
+    ticket: {
+      id: hardwareReturn.id,
+      subject: hardwareReturn.subject,
+      description: hardwareReturn.description,
+      customerName: hardwareReturn.employee_name,
+      customerEmail: hardwareReturn.employee_email,
+      status: hardwareReturn.status,
+      organizationId: hardwareReturn.organization_id,
+    },
   };
 }
 
 export async function stampMailStageSent(params: {
-  ticketId: string;
+  returnId: string;
   stage: ReminderStage;
   recipients: { to: string[]; cc: string[] };
 }): Promise<TicketHardwareReturnRecord | null> {
@@ -129,54 +162,38 @@ export async function stampMailStageSent(params: {
      SET ${colAt} = NOW(),
          ${colRec} = $2::jsonb,
          updated_at = NOW()
-     WHERE ticket_id = $1
+     WHERE id = $1::uuid
      RETURNING *`,
-    [params.ticketId, JSON.stringify(params.recipients)],
+    [params.returnId, JSON.stringify(params.recipients)],
   );
   if (!res.rowCount) return null;
-  return (await getHardwareReturnByTicketId(params.ticketId))!;
+  return mapHardwareRow(res.rows[0]);
 }
 
 export async function appendHardwareReminderTimeline(params: {
-  ticketId: string;
+  returnId: string;
   stage: ReminderStage;
   to: string[];
   cc: string[];
   auto: boolean;
   actorName?: string;
 }): Promise<void> {
-  const now = new Date().toISOString();
   const stageLabel =
     params.stage === 1 ? '1. Mail' : params.stage === 2 ? '2. Mail' : '3. Mail';
   const mode = params.auto ? 'automatisch' : 'manuell';
-  const toLine = params.to.join(', ') || '—';
-  const ccLine = params.cc.join(', ') || '—';
-  const content = `<p><strong>Hardware-Rücklieferung — ${stageLabel} versendet (${mode})</strong></p>
-<p>An: ${toLine}<br/>CC: ${ccLine}</p>
-<p style="color:#64748b;font-size:12px;">Ausgelöst von ${params.actorName || 'System'}</p>`;
-
-  await addDocDirect(`tickets/${params.ticketId}/messages`, {
-    ticketId: params.ticketId,
-    senderId: 'system',
-    senderType: 'agent',
-    senderName: params.actorName || 'Hubcom ServiceDesk',
-    content,
-    toAddress: toLine,
-    cc: ccLine,
-    deliveryStatus: 'sent',
-    is_internal: false,
-    isInternal: false,
-    createdAt: now,
-    updatedAt: now,
-  });
-  await updateDocDirect('tickets', params.ticketId, {
-    updatedAt: now,
-    lastReplyAt: now,
-    lastReplyBy: 'agent',
+  await appendHardwareReturnActivity(params.returnId, {
+    at: new Date().toISOString(),
+    type: 'mail_sent',
+    stage: params.stage,
+    actor: params.actorName || 'System',
+    message: `Hardware-Rücklieferung — ${stageLabel} versendet (${mode})`,
+    to: params.to,
+    cc: params.cc,
   });
 }
 
 export async function previewHardwareReminder(params: {
+  /** Hardware-return id or legacy ticket_id. */
   ticketId: string;
   organizationId: string;
   stage: ReminderStage;
@@ -194,12 +211,12 @@ export async function previewHardwareReminder(params: {
   if (!org?.hardware_returns_enabled) {
     throw Object.assign(new Error('Hardware-Rücklieferungen nicht aktiv.'), { status: 404 });
   }
-  const hw = await getHardwareReturnByTicketId(params.ticketId);
+  const hw = await resolveHardwareReturnByParam(params.ticketId, params.organizationId);
   if (!hw || hw.organization_id !== params.organizationId) {
     throw Object.assign(new Error('Rücklieferung nicht gefunden.'), { status: 404 });
   }
-  const ticket = await loadTicket(params.ticketId);
-  const ctx = ticketContext(ticket);
+  const ticket = await loadTicket(hw.ticket_id);
+  const ctx = resolveContext(hw, ticket);
   const config = org.hardware_returns_config;
   const resolved = resolveStageRecipients(params.stage, ctx, hw, config, {
     overrideTo: params.overrideTo,
@@ -250,7 +267,7 @@ export async function sendHardwareReminder(params: {
   if (!org?.hardware_returns_enabled) {
     throw Object.assign(new Error('Hardware-Rücklieferungen nicht aktiv.'), { status: 404 });
   }
-  let hw = await getHardwareReturnByTicketId(params.ticketId);
+  let hw = await resolveHardwareReturnByParam(params.ticketId, params.organizationId);
   if (!hw || hw.organization_id !== params.organizationId) {
     throw Object.assign(new Error('Rücklieferung nicht gefunden.'), { status: 404 });
   }
@@ -258,8 +275,8 @@ export async function sendHardwareReminder(params: {
     throw Object.assign(new Error('Bereits zurückgeliefert — kein Versand.'), { status: 400 });
   }
 
-  const ticket = await loadTicket(params.ticketId);
-  const ctx = ticketContext(ticket);
+  const ticket = await loadTicket(hw.ticket_id);
+  const ctx = resolveContext(hw, ticket);
   const config = org.hardware_returns_config;
   const resolved = resolveStageRecipients(params.stage, ctx, hw, config, {
     overrideTo: params.to,
@@ -276,8 +293,8 @@ export async function sendHardwareReminder(params: {
       ...(hw.stage_recipients_override || {}),
       [key]: { to: resolved.to, cc: resolved.cc },
     };
-    hw = await upsertHardwareReturn({
-      ticketId: params.ticketId,
+    hw = await updateHardwareReturnById({
+      id: hw.id,
       organizationId: params.organizationId,
       input: { stage_recipients_override: override },
       mail1Days: config.mail1_days_after_delivery,
@@ -310,12 +327,12 @@ export async function sendHardwareReminder(params: {
   }
 
   const stamped = await stampMailStageSent({
-    ticketId: params.ticketId,
+    returnId: hw.id,
     stage: params.stage,
     recipients: { to: resolved.to, cc: resolved.cc },
   });
   await appendHardwareReminderTimeline({
-    ticketId: params.ticketId,
+    returnId: hw.id,
     stage: params.stage,
     to: resolved.to,
     cc: resolved.cc,
@@ -339,7 +356,7 @@ export async function markHardwareReturned(params: {
   note?: string | null;
   actorName?: string;
 }): Promise<TicketHardwareReturnRecord> {
-  const hw = await getHardwareReturnByTicketId(params.ticketId);
+  const hw = await resolveHardwareReturnByParam(params.ticketId, params.organizationId);
   if (!hw || hw.organization_id !== params.organizationId) {
     throw Object.assign(new Error('Rücklieferung nicht gefunden.'), { status: 404 });
   }
@@ -350,27 +367,22 @@ export async function markHardwareReturned(params: {
   const returnedAt = params.returnedAt
     ? new Date(params.returnedAt).toISOString()
     : new Date().toISOString();
-  const updated = await upsertHardwareReturn({
-    ticketId: params.ticketId,
+  const updated = await updateHardwareReturnById({
+    id: hw.id,
     organizationId: params.organizationId,
-    input: { returned: true, returned_at: returnedAt },
+    input: { returned: true, returned_at: returnedAt, status: 'returned' },
     mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
   });
-  const now = new Date().toISOString();
-  const note = params.note ? `<p>${String(params.note).slice(0, 2000)}</p>` : '';
-  await addDocDirect(`tickets/${params.ticketId}/messages`, {
-    ticketId: params.ticketId,
-    senderId: 'system',
-    senderType: 'agent',
-    senderName: params.actorName || 'Hubcom ServiceDesk',
-    content: `<p><strong>Hardware-Rücklieferung erfolgt</strong> (${new Date(returnedAt).toLocaleString('de-DE')})</p>${note}`,
-    is_internal: false,
-    isInternal: false,
-    createdAt: now,
-    updatedAt: now,
+  await appendHardwareReturnActivity(hw.id, {
+    at: new Date().toISOString(),
+    type: 'returned',
+    actor: params.actorName || 'Hubcom ServiceDesk',
+    message: params.note
+      ? `Rücklieferung erfolgt — ${String(params.note).slice(0, 2000)}`
+      : 'Rücklieferung erfolgt',
+    meta: { returnedAt },
   });
-  await updateDocDirect('tickets', params.ticketId, { updatedAt: now });
-  return updated;
+  return (await getHardwareReturnById(hw.id)) || updated;
 }
 
 export interface HardwareReturnsListFilters {
@@ -413,58 +425,7 @@ export interface HardwareReturnsKpis {
 }
 
 function mapHwRow(row: any): TicketHardwareReturnRecord {
-  // Re-use get path mapping by round-tripping through SELECT * shape
-  return {
-    id: String(row.id),
-    organization_id: String(row.organization_id),
-    ticket_id: String(row.ticket_id),
-    external_ref_id: row.external_ref_id || null,
-    service_level: row.service_level == null ? null : (Number(row.service_level) as 1 | 2 | 3),
-    time_sl1_minutes: Number(row.time_sl1_minutes) || 0,
-    time_sl2_minutes: Number(row.time_sl2_minutes) || 0,
-    time_sl3_minutes: Number(row.time_sl3_minutes) || 0,
-    exported: row.exported === true || row.exported === 't',
-    exported_at: row.exported_at ? new Date(row.exported_at).toISOString() : null,
-    request_type: row.request_type || null,
-    device_details: row.device_details || null,
-    employee_phone: row.employee_phone || null,
-    employee_mobile: row.employee_mobile || null,
-    project_manager_name: row.project_manager_name || null,
-    project_manager_email: row.project_manager_email || null,
-    manager_name: row.manager_name || null,
-    manager_email: row.manager_email || null,
-    ceo_email_override: row.ceo_email_override || null,
-    stage_recipients_override:
-      typeof row.stage_recipients_override === 'string'
-        ? JSON.parse(row.stage_recipients_override || 'null')
-        : row.stage_recipients_override || null,
-    solution_summary: row.solution_summary || null,
-    shipping_method: row.shipping_method || null,
-    shipping_reference: row.shipping_reference || null,
-    return_required: row.return_required === true || row.return_required === 't',
-    delivery_date: row.delivery_date ? String(row.delivery_date).slice(0, 10) : null,
-    return_due_date: row.return_due_date ? String(row.return_due_date).slice(0, 10) : null,
-    auto_reminder_enabled: row.auto_reminder_enabled !== false && row.auto_reminder_enabled !== 'f',
-    mail1_sent_at: row.mail1_sent_at ? new Date(row.mail1_sent_at).toISOString() : null,
-    mail1_sent_recipients:
-      typeof row.mail1_sent_recipients === 'string'
-        ? JSON.parse(row.mail1_sent_recipients || 'null')
-        : row.mail1_sent_recipients || null,
-    mail2_sent_at: row.mail2_sent_at ? new Date(row.mail2_sent_at).toISOString() : null,
-    mail2_sent_recipients:
-      typeof row.mail2_sent_recipients === 'string'
-        ? JSON.parse(row.mail2_sent_recipients || 'null')
-        : row.mail2_sent_recipients || null,
-    mail3_sent_at: row.mail3_sent_at ? new Date(row.mail3_sent_at).toISOString() : null,
-    mail3_sent_recipients:
-      typeof row.mail3_sent_recipients === 'string'
-        ? JSON.parse(row.mail3_sent_recipients || 'null')
-        : row.mail3_sent_recipients || null,
-    returned: row.returned === true || row.returned === 't',
-    returned_at: row.returned_at ? new Date(row.returned_at).toISOString() : null,
-    created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
-    updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : '',
-  };
+  return mapHardwareRow(row);
 }
 
 export async function listHardwareReturnsWorkbench(
@@ -488,7 +449,7 @@ export async function listHardwareReturnsWorkbench(
 
   for (const hw of rows) {
     const ticket = await loadTicket(hw.ticket_id);
-    const ctx = ticketContext(ticket);
+    const ctx = resolveContext(hw, ticket);
     const days = overdueDays(hw, config, now);
     const mailStatus = deriveMailStatus(hw, config, ctx);
     const stage1 = resolveStageRecipients(1, ctx, hw, config);
@@ -496,10 +457,15 @@ export async function listHardwareReturnsWorkbench(
     items.push({
       hardwareReturn: hw,
       ticket: {
-        id: hw.ticket_id,
-        subject: ticket ? String(ticket.subject || '') || null : null,
-        customerName: (ctx.customerName || ctx.customer_name || null) as string | null,
-        customerEmail: (ctx.customerEmail || ctx.customer_email || null) as string | null,
+        // Primary key for API routes is the return id (legacy clients still call it ticketId).
+        id: hw.id,
+        subject: hw.subject || (ticket ? String(ticket.subject || '') : null) || null,
+        customerName:
+          hw.employee_name ||
+          ((ctx.customerName || ctx.customer_name || null) as string | null),
+        customerEmail:
+          hw.employee_email ||
+          ((ctx.customerEmail || ctx.customer_email || null) as string | null),
       },
       overdueDays: days,
       mailStatus,
@@ -544,8 +510,13 @@ export async function listHardwareReturnsWorkbench(
     }
     if (q) {
       const hay = [
+        hw.id,
         hw.ticket_id,
+        hw.return_number,
         hw.external_ref_id,
+        hw.subject,
+        hw.employee_name,
+        hw.employee_email,
         it.ticket.customerName,
         it.ticket.customerEmail,
         hw.project_manager_name,
@@ -568,13 +539,15 @@ export async function listHardwareReturnsWorkbench(
       return String(b.hardwareReturn.created_at).localeCompare(String(a.hardwareReturn.created_at));
     }
     if (sort === 'employee') {
-      return String(a.ticket.customerName || '').localeCompare(
-        String(b.ticket.customerName || ''),
+      return String(a.hardwareReturn.employee_name || a.ticket.customerName || '').localeCompare(
+        String(b.hardwareReturn.employee_name || b.ticket.customerName || ''),
         'de',
       );
     }
     if (sort === 'ticket') {
-      return a.hardwareReturn.ticket_id.localeCompare(b.hardwareReturn.ticket_id);
+      return String(a.hardwareReturn.return_number || a.hardwareReturn.id).localeCompare(
+        String(b.hardwareReturn.return_number || b.hardwareReturn.id),
+      );
     }
     const ad = a.hardwareReturn.return_due_date || a.hardwareReturn.delivery_date || '';
     const bd = b.hardwareReturn.return_due_date || b.hardwareReturn.delivery_date || '';
@@ -619,10 +592,17 @@ export async function bulkHardwareReturnsAction(params: {
       limit: 2000,
     });
     const selected = ids.length
-      ? items.filter((i) => ids.includes(i.hardwareReturn.ticket_id))
+      ? items.filter(
+          (i) =>
+            ids.includes(i.hardwareReturn.id) ||
+            (i.hardwareReturn.ticket_id != null && ids.includes(i.hardwareReturn.ticket_id)) ||
+            (i.hardwareReturn.return_number != null &&
+              ids.includes(i.hardwareReturn.return_number)),
+        )
       : items;
     const header = [
-      'ticket_id',
+      'id',
+      'return_number',
       'external_ref_id',
       'mitarbeiter',
       'email',
@@ -642,10 +622,11 @@ export async function bulkHardwareReturnsAction(params: {
       const hw = it.hardwareReturn;
       lines.push(
         [
-          hw.ticket_id,
+          hw.id,
+          hw.return_number || '',
           hw.external_ref_id || '',
-          it.ticket.customerName || '',
-          it.ticket.customerEmail || '',
+          hw.employee_name || it.ticket.customerName || '',
+          hw.employee_email || it.ticket.customerEmail || '',
           hw.project_manager_email || '',
           hw.manager_email || '',
           (hw.device_details || '').replace(/[\n;]/g, ' '),
@@ -664,18 +645,18 @@ export async function bulkHardwareReturnsAction(params: {
 
   let updated = 0;
   for (const ticketId of ids) {
-    const hw = await getHardwareReturnByTicketId(ticketId);
+    const hw = await resolveHardwareReturnByParam(ticketId, params.organizationId);
     if (!hw || hw.organization_id !== params.organizationId) continue;
     if (params.action === 'mark_returned') {
       await markHardwareReturned({
-        ticketId,
+        ticketId: hw.id,
         organizationId: params.organizationId,
         actorName: params.actorName,
       });
       updated += 1;
     } else if (params.action === 'mark_exported') {
-      await upsertHardwareReturn({
-        ticketId,
+      await updateHardwareReturnById({
+        id: hw.id,
         organizationId: params.organizationId,
         input: { exported: true },
       });
@@ -685,7 +666,7 @@ export async function bulkHardwareReturnsAction(params: {
   return { updated };
 }
 
-/** Import PowerApps-style CSV without triggering auto-emails (no mail stamps unless provided). */
+/** Import PowerApps-style CSV without creating normal tickets or triggering auto-emails. */
 export async function importHardwareReturnsCsv(params: {
   organizationId: string;
   csv: string;
@@ -706,7 +687,7 @@ export async function importHardwareReturnsCsv(params: {
   const idx = (names: string[]) =>
     headers.findIndex((h) => names.some((n) => h === n || h.includes(n)));
 
-  const iId = idx(['id', 'external_ref', 'legacy', 'ticket']);
+  const iId = idx(['id', 'external_ref', 'legacy', 'ticket', 'return_number']);
   const iEmp = idx(['mitarbeiter', 'employee', 'name']);
   const iEmail = idx(['e-mail', 'email', 'mail']);
   const iPm = idx(['projektmanager', 'project_manager']);
@@ -731,75 +712,84 @@ export async function importHardwareReturnsCsv(params: {
       continue;
     }
     try {
-      // Find or create a lightweight ticket document for the import row.
-      let ticketId = '';
+      let existing: TicketHardwareReturnRecord | null = null;
       if (externalId) {
-        const found = await queryDb(
-          `SELECT ticket_id FROM ticket_hardware_returns
-           WHERE organization_id = $1 AND external_ref_id = $2 LIMIT 1`,
-          [params.organizationId, externalId],
-        );
-        if (found.rowCount) ticketId = String(found.rows[0].ticket_id);
-      }
-      if (!ticketId) {
-        const now = new Date().toISOString();
-        const created = await addDocDirect('tickets', {
-          subject: `Hardware-Rücklieferung Import ${externalId || empName || email}`,
-          description: 'Importiert aus PowerApps CSV (ohne Auto-Mails).',
-          status: 'open',
-          priority: 'medium',
-          customerName: empName || null,
-          customerEmail: email || null,
-          organizationId: params.organizationId,
-          organization_id: params.organizationId,
-          company: org.name,
-          createdAt: now,
-          updatedAt: now,
-          creatorId: params.actorId || 'import',
-        });
-        ticketId = String(created.id);
+        existing = await resolveHardwareReturnByParam(externalId, params.organizationId);
+        if (!existing) {
+          const found = await queryDb(
+            `SELECT * FROM ticket_hardware_returns
+             WHERE organization_id = $1
+               AND (external_ref_id = $2 OR return_number = $2)
+             LIMIT 1`,
+            [params.organizationId, externalId],
+          );
+          if (found.rowCount) existing = mapHardwareRow(found.rows[0]);
+        }
       }
 
       const returnedRaw = iReturnWhen >= 0 ? cols[iReturnWhen] : '';
       const returned = Boolean(returnedRaw && !/^nein|no|0|false$/i.test(returnedRaw));
-      await upsertHardwareReturn({
-        ticketId,
-        organizationId: params.organizationId,
-        input: {
-          external_ref_id: externalId || null,
-          device_details: iDevice >= 0 ? cols[iDevice] || null : null,
-          project_manager_email: iPm >= 0 ? cols[iPm] || null : null,
-          manager_email: iChef >= 0 ? cols[iChef] || null : null,
-          return_required: true,
-          returned,
-          returned_at: returned ? new Date().toISOString() : null,
-          auto_reminder_enabled: false, // never retroactively trigger
-          mail1_sent_at: iMail1 >= 0 && cols[iMail1] ? new Date(cols[iMail1]).toISOString() : null,
-          mail2_sent_at: iMail2 >= 0 && cols[iMail2] ? new Date(cols[iMail2]).toISOString() : null,
-          mail3_sent_at: iMail3 >= 0 && cols[iMail3] ? new Date(cols[iMail3]).toISOString() : null,
-        },
-        mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
-      });
-      // Stamp mail columns that upsert may not write:
+      const input: TicketHardwareReturnInput = {
+        external_ref_id: externalId || null,
+        return_number: externalId || undefined,
+        subject: `Hardware-Rücklieferung Import ${externalId || empName || email}`,
+        description: 'Importiert aus PowerApps CSV (ohne Auto-Mails).',
+        employee_name: empName || null,
+        employee_email: email || null,
+        device_details: iDevice >= 0 ? cols[iDevice] || null : null,
+        project_manager_email: iPm >= 0 ? cols[iPm] || null : null,
+        manager_email: iChef >= 0 ? cols[iChef] || null : null,
+        return_required: true,
+        returned,
+        returned_at: returned ? new Date().toISOString() : null,
+        status: returned ? 'returned' : 'open',
+        auto_reminder_enabled: false,
+        ticket_id: null,
+      };
+
+      let hw: TicketHardwareReturnRecord;
+      if (existing) {
+        hw = await updateHardwareReturnById({
+          id: existing.id,
+          organizationId: params.organizationId,
+          input,
+          mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
+        });
+      } else {
+        hw = await insertStandaloneHardwareReturn({
+          organizationId: params.organizationId,
+          actorName: params.actorId || 'import',
+          mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
+          input,
+        });
+      }
+
       if (iMail1 >= 0 && cols[iMail1]) {
         await queryDb(
           `UPDATE ticket_hardware_returns SET mail1_sent_at = $2::timestamptz, auto_reminder_enabled = FALSE
-           WHERE ticket_id = $1`,
-          [ticketId, new Date(cols[iMail1]).toISOString()],
+           WHERE id = $1::uuid`,
+          [hw.id, new Date(cols[iMail1]).toISOString()],
         );
       }
       if (iMail2 >= 0 && cols[iMail2]) {
         await queryDb(
-          `UPDATE ticket_hardware_returns SET mail2_sent_at = $2::timestamptz WHERE ticket_id = $1`,
-          [ticketId, new Date(cols[iMail2]).toISOString()],
+          `UPDATE ticket_hardware_returns SET mail2_sent_at = $2::timestamptz WHERE id = $1::uuid`,
+          [hw.id, new Date(cols[iMail2]).toISOString()],
         );
       }
       if (iMail3 >= 0 && cols[iMail3]) {
         await queryDb(
-          `UPDATE ticket_hardware_returns SET mail3_sent_at = $2::timestamptz WHERE ticket_id = $1`,
-          [ticketId, new Date(cols[iMail3]).toISOString()],
+          `UPDATE ticket_hardware_returns SET mail3_sent_at = $2::timestamptz WHERE id = $1::uuid`,
+          [hw.id, new Date(cols[iMail3]).toISOString()],
         );
       }
+      await appendHardwareReturnActivity(hw.id, {
+        at: new Date().toISOString(),
+        type: 'imported',
+        actor: params.actorId || 'import',
+        message: 'CSV-Import',
+        meta: { external_ref_id: externalId || null },
+      });
       imported += 1;
     } catch (err: any) {
       errors.push(`Zeile ${li + 1}: ${err?.message || err}`);
@@ -844,7 +834,7 @@ export async function runHardwareReturnsAutoSendPass(now: Date = new Date()): Pr
         continue;
       }
       const ticket = await loadTicket(hw.ticket_id);
-      const ctx = ticketContext(ticket);
+      const ctx = resolveContext(hw, ticket);
       const resolved = resolveStageRecipients(stage, ctx, hw, config);
       if (
         shouldSkipAutoSend({
@@ -858,7 +848,7 @@ export async function runHardwareReturnsAutoSendPass(now: Date = new Date()): Pr
       }
       try {
         await sendHardwareReminder({
-          ticketId: hw.ticket_id,
+          ticketId: hw.id,
           organizationId: org.id,
           stage,
           to: resolved.to,

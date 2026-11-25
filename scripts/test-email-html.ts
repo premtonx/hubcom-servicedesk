@@ -248,7 +248,15 @@ check('all 3 reminder stages render Outlook-safe branded HTML', () => {
     hardwareReturn: {
       id: 'hw',
       organization_id: 'org',
-      ticket_id: 'TKT-HW-1',
+      ticket_id: null,
+      return_number: 'RL-1001',
+      subject: 'Hardware',
+      employee_name: 'Max Mustermann',
+      employee_email: 'max@dpg.test',
+      assignee_name: 'Support',
+      status: 'open',
+      description: null,
+      activity_log: [],
       external_ref_id: '929',
       service_level: 2,
       time_sl1_minutes: 0,
@@ -300,7 +308,10 @@ check('all 3 reminder stages render Outlook-safe branded HTML', () => {
     assert.ok(built.subject.length > 0, `stage ${stage} subject`);
     assert.ok(/<table\b/i.test(built.html), `stage ${stage} table layout`);
     assert.ok(!/<pre\b/i.test(built.html), `stage ${stage} no <pre>`);
-    assert.ok(built.html.includes('TKT-HW-1'), `stage ${stage} ticket id`);
+    assert.ok(
+      built.html.includes('RL-1001') || built.html.includes('929'),
+      `stage ${stage} return number`,
+    );
     assert.ok(built.html.includes('Max Mustermann'), `stage ${stage} employee`);
     assert.ok(built.html.includes('Latitude 5540'), `stage ${stage} device`);
     assert.ok(built.html.includes('2026-10-01') || built.html.includes('2026-10-15'), `stage ${stage} dates`);

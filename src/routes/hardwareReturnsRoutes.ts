@@ -26,10 +26,12 @@ import {
   sendHardwareReminder,
 } from '../lib/client-portal/hardware-returns-escalation.js';
 import {
+  appendHardwareReturnActivity,
+  deleteHardwareReturn,
   evaluateHardwareModuleAccess,
-  upsertHardwareReturn,
+  resolveHardwareReturnByParam,
+  updateHardwareReturnById,
 } from '../lib/client-portal/hardware-returns.js';
-import { getDocDirect, updateDocDirect } from '../lib/postgres-backend.js';
 import { isClientPortalRole, isHubcomStaffRole } from '../lib/client-portal/roles.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage } from '../lib/safe-log.js';
@@ -143,7 +145,7 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
     hardwareReturn: z.record(z.string(), z.unknown()).default({}),
   });
 
-  /** POST / — create a new Rücklieferung (ticket + hardware row). */
+  /** POST / — create a standalone Rücklieferung (never creates a normal ticket). */
   router.post('/', async (req: Request, res: Response): Promise<any> => {
     try {
       const parsed = createSchema.safeParse(req.body || {});
@@ -175,6 +177,7 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
       });
       return res.status(201).json({
         success: true,
+        id: result.id,
         ticketId: result.ticketId,
         ticket: result.ticket,
         hardwareReturn: result.hardwareReturn,
@@ -189,15 +192,17 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
   const updateSchema = z.object({
     organizationId: z.string().uuid().optional(),
     subject: z.string().trim().min(1).max(500).optional(),
+    description: z.string().trim().max(100_000).optional().nullable(),
+    status: z.string().trim().max(64).optional(),
     customerName: z.string().trim().max(255).optional().nullable(),
     customerEmail: z.string().trim().max(255).optional().nullable(),
+    assigneeName: z.string().trim().max(255).optional().nullable(),
     hardwareReturn: z.record(z.string(), z.unknown()).default({}),
   });
 
-  /** PUT /:ticketId — update an existing Rücklieferung (+ optional ticket subject/customer). */
-  router.put('/:ticketId', async (req: Request, res: Response): Promise<any> => {
+  async function updateReturnHandler(req: Request, res: Response): Promise<any> {
     try {
-      const ticketId = routeParam(req.params.ticketId);
+      const idOrTicketId = routeParam(req.params.ticketId || req.params.id);
       const parsed = updateSchema.safeParse(req.body || {});
       if (!parsed.success) return res.status(400).json({ error: 'Ungültige Eingabe' });
       const ctx = await resolveOrgForReturns(
@@ -212,37 +217,57 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
       if (!org?.hardware_returns_enabled) {
         return res.status(404).json({ error: 'Hardware-Rücklieferungen nicht aktiv.' });
       }
-      const ticket = await getDocDirect('tickets', ticketId);
-      if (!ticket) return res.status(404).json({ error: 'Ticket nicht gefunden.' });
-      const ticketOrg = String(ticket.organizationId || ticket.organization_id || '');
-      if (ticketOrg !== ctx.organizationId) {
-        return res.status(404).json({ error: 'Ticket nicht gefunden.' });
-      }
-      const hardwareReturn = await upsertHardwareReturn({
-        ticketId,
+      const existing = await resolveHardwareReturnByParam(idOrTicketId, ctx.organizationId);
+      if (!existing) return res.status(404).json({ error: 'Rücklieferung nicht gefunden.' });
+
+      const hardwareReturn = await updateHardwareReturnById({
+        id: existing.id,
         organizationId: ctx.organizationId,
-        input: parsed.data.hardwareReturn as any,
+        input: {
+          ...(parsed.data.hardwareReturn as any),
+          ...(parsed.data.subject !== undefined ? { subject: parsed.data.subject } : {}),
+          ...(parsed.data.description !== undefined
+            ? { description: parsed.data.description }
+            : {}),
+          ...(parsed.data.status !== undefined ? { status: parsed.data.status as any } : {}),
+          ...(parsed.data.customerName !== undefined
+            ? { employee_name: parsed.data.customerName }
+            : {}),
+          ...(parsed.data.customerEmail !== undefined
+            ? { employee_email: parsed.data.customerEmail }
+            : {}),
+          ...(parsed.data.assigneeName !== undefined
+            ? { assignee_name: parsed.data.assigneeName }
+            : {}),
+          ticket_id: null,
+        },
         mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
       });
-      const ticketPatch: Record<string, unknown> = { updatedAt: new Date().toISOString() };
-      if (parsed.data.subject) ticketPatch.subject = parsed.data.subject;
-      if (parsed.data.customerName !== undefined) ticketPatch.customerName = parsed.data.customerName;
-      if (parsed.data.customerEmail !== undefined) {
-        ticketPatch.customerEmail = parsed.data.customerEmail;
-      }
-      await updateDocDirect('tickets', ticketId, ticketPatch);
+      await appendHardwareReturnActivity(existing.id, {
+        at: new Date().toISOString(),
+        type: 'updated',
+        actor: req.user?.name || req.user?.email || null,
+        message: 'Rücklieferung aktualisiert',
+      });
       return res.json({
         success: true,
-        ticketId,
+        id: hardwareReturn.id,
+        ticketId: hardwareReturn.id,
         hardwareReturn,
-        ticket: { ...ticket, ...ticketPatch, id: ticketId },
+        ticket: {
+          id: hardwareReturn.id,
+          subject: hardwareReturn.subject,
+          customerName: hardwareReturn.employee_name,
+          customerEmail: hardwareReturn.employee_email,
+          status: hardwareReturn.status,
+        },
       });
     } catch (err: any) {
       return res
         .status(err?.status || 500)
         .json({ error: safeErrorMessage(err, 'Speichern fehlgeschlagen') });
     }
-  });
+  }
 
   router.get('/settings', async (req: Request, res: Response): Promise<any> => {
     try {
@@ -381,6 +406,67 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
       return res
         .status(err?.status || 500)
         .json({ error: safeErrorMessage(err, 'CSV-Import fehlgeschlagen') });
+    }
+  });
+
+  /** Parametric routes AFTER /settings|/bulk|/import-csv so they are not shadowed. */
+  router.put('/:ticketId', updateReturnHandler);
+  router.patch('/:ticketId', updateReturnHandler);
+
+  router.get('/:ticketId', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const idOrTicketId = routeParam(req.params.ticketId);
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      const hardwareReturn = await resolveHardwareReturnByParam(idOrTicketId, ctx.organizationId);
+      if (!hardwareReturn) {
+        return res.status(404).json({ error: 'Rücklieferung nicht gefunden.' });
+      }
+      return res.json({
+        id: hardwareReturn.id,
+        ticketId: hardwareReturn.id,
+        hardwareReturn,
+        ticket: {
+          id: hardwareReturn.id,
+          subject: hardwareReturn.subject,
+          customerName: hardwareReturn.employee_name,
+          customerEmail: hardwareReturn.employee_email,
+          status: hardwareReturn.status,
+          description: hardwareReturn.description,
+        },
+      });
+    } catch (err: any) {
+      return res
+        .status(err?.status || 500)
+        .json({ error: safeErrorMessage(err, 'Laden fehlgeschlagen') });
+    }
+  });
+
+  router.delete('/:ticketId', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const idOrTicketId = routeParam(req.params.ticketId);
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? String(req.query.organizationId || req.body?.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      const existing = await resolveHardwareReturnByParam(idOrTicketId, ctx.organizationId);
+      if (!existing) return res.status(404).json({ error: 'Rücklieferung nicht gefunden.' });
+      const ok = await deleteHardwareReturn({
+        id: existing.id,
+        organizationId: ctx.organizationId,
+      });
+      if (!ok) return res.status(404).json({ error: 'Rücklieferung nicht gefunden.' });
+      return res.json({ success: true, id: existing.id });
+    } catch (err: any) {
+      return res
+        .status(err?.status || 500)
+        .json({ error: safeErrorMessage(err, 'Löschen fehlgeschlagen') });
     }
   });
 

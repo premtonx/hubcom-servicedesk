@@ -99,6 +99,7 @@ import {
   resolveHardwareReturnsModuleFlag,
 } from '../src/lib/client-portal/hardware-returns-nav.js';
 import {
+  buildReminderTemplateVars,
   evaluateDueReminderStage,
   resolveStageRecipients,
   shouldSkipAutoSend,
@@ -1655,7 +1656,15 @@ function baseHw(partial: Partial<TicketHardwareReturnRecord> = {}): TicketHardwa
   return {
     id: 'hw-1',
     organization_id: ORG_B,
-    ticket_id: 'tkt-1',
+    ticket_id: null,
+    return_number: 'RL-1001',
+    subject: 'Hardware',
+    employee_name: 'Max Mustermann',
+    employee_email: 'emp@dpg.test',
+    assignee_name: 'Support',
+    status: 'open',
+    description: null,
+    activity_log: [],
     external_ref_id: null,
     service_level: null,
     time_sl1_minutes: 0,
@@ -1706,24 +1715,25 @@ function testHardwareReturnsEscalationEngine(): void {
 
   const ticket = {
     id: 'tkt-1',
-    customer_email: 'emp@dpg.test',
-    customer_name: 'Max Mustermann',
+    customer_email: 'legacy@dpg.test',
+    customer_name: 'Legacy Name',
   };
   const hw = baseHw();
 
-  const mail2 = resolveStageRecipients(2, ticket, hw, config);
-  assert(mail2.to.includes('emp@dpg.test'), 'Mail 2 To includes employee');
+  // employee resolves from hardwareReturn.employee_email (standalone) — ticket not required
+  const mail2 = resolveStageRecipients(2, {}, hw, config);
+  assert(mail2.to.includes('emp@dpg.test'), 'Mail 2 To includes employee from return.employee_email');
   assert(mail2.cc.includes('pm@dpg.test'), 'Mail 2 CC includes project_manager');
   assert(!mail2.to.includes('pm@dpg.test'), 'dedupe: PM not in both To and CC');
 
-  const mail3 = resolveStageRecipients(3, ticket, hw, config);
+  const mail3 = resolveStageRecipients(3, {}, hw, config);
   assert(mail3.to.includes('emp@dpg.test'), 'Mail 3 To includes employee');
   assert(mail3.cc.includes('pm@dpg.test'), 'Mail 3 CC includes project_manager');
   assert(mail3.cc.includes('chef@dpg.test'), 'Mail 3 CC includes manager');
   assert(mail3.cc.includes('ceo@dpg.test'), 'Mail 3 CC includes ceo');
   assert(mail3.cc.includes('legal@dpg.test'), 'Mail 3 CC includes extra static email');
 
-  const overridden = resolveStageRecipients(2, ticket, hw, config, {
+  const overridden = resolveStageRecipients(2, {}, hw, config, {
     overrideTo: ['custom-to@dpg.test', 'CUSTOM-TO@dpg.test', ''],
     overrideCc: ['custom-cc@dpg.test', 'custom-to@dpg.test'],
   });
@@ -1746,7 +1756,7 @@ function testHardwareReturnsEscalationEngine(): void {
 
   const missingPm = resolveStageRecipients(
     2,
-    ticket,
+    {},
     baseHw({ project_manager_email: null }),
     config,
   );
@@ -1755,10 +1765,22 @@ function testHardwareReturnsEscalationEngine(): void {
   const emptyTo = resolveStageRecipients(
     1,
     { customer_email: null },
-    baseHw(),
+    baseHw({ employee_email: null }),
     config,
   );
   assert(shouldSkipAutoSend({ stage: 1, to: emptyTo.to, missingRoles: emptyTo.missingRoles }), 'skip when To empty');
+
+  // Legacy ticket customer_email still works when return.employee_email is null
+  const legacyEmp = resolveStageRecipients(
+    1,
+    ticket,
+    baseHw({ employee_email: null }),
+    config,
+  );
+  assert(
+    legacyEmp.to.includes('legacy@dpg.test'),
+    'legacy ticket customer_email fallback when employee_email null',
+  );
 
   const now = new Date('2026-10-20T12:00:00.000Z');
   assert(
@@ -1847,6 +1869,132 @@ function testHardwareReturnsEscalationEngine(): void {
       allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
     }).ok === true,
     'DPG CLIENT_ADMIN can access own-org returns API',
+  );
+}
+
+/** Standalone Rücklieferungen — zero normal-ticket writes; activity_log + null ticket_id. */
+function testHardwareReturnsStandaloneBackend(): void {
+  console.log('\n--- Hardware returns standalone (no normal tickets) ---');
+
+  const escalationSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-escalation.ts'),
+    'utf8',
+  );
+  const hwSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns.ts'),
+    'utf8',
+  );
+  const routesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/hardwareReturnsRoutes.ts'),
+    'utf8',
+  );
+  const recipientsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-recipients.ts'),
+    'utf8',
+  );
+  const migrateSrc = fs.readFileSync(
+    path.join(
+      process.cwd(),
+      'prisma/migrations/20261125140000_hardware_returns_standalone/migration.sql',
+    ),
+    'utf8',
+  );
+
+  assert(
+    escalationSrc.includes('insertStandaloneHardwareReturn') &&
+      !/addDocDirect\(\s*['"]tickets['"]/.test(escalationSrc),
+    'create/import/send paths never addDocDirect("tickets")',
+  );
+  assert(
+    hwSrc.includes('ticket_id: null') && hwSrc.includes('insertStandaloneHardwareReturn'),
+    'insertStandaloneHardwareReturn forces ticket_id = NULL',
+  );
+  assert(
+    hwSrc.includes('activity_log') && hwSrc.includes('appendHardwareReturnActivity'),
+    'activity_log + append helper exist',
+  );
+  assert(
+    migrateSrc.includes('ALTER COLUMN ticket_id DROP NOT NULL') &&
+      migrateSrc.includes('activity_log') &&
+      migrateSrc.includes('return_number') &&
+      migrateSrc.includes('employee_email'),
+    'idempotent migration makes ticket_id nullable + adds standalone columns',
+  );
+  assert(
+    recipientsSrc.includes('hardwareReturn?.employee_email'),
+    "resolveStageRecipients 'employee' uses hardwareReturn.employee_email",
+  );
+  assert(
+    routesSrc.includes('createHardwareReturnFromWorkbench') &&
+      routesSrc.includes('deleteHardwareReturn') &&
+      routesSrc.includes("router.patch('/:ticketId'") &&
+      routesSrc.includes("router.get('/:ticketId'"),
+    'staff+portal returns routes expose GET/PATCH/DELETE on return id',
+  );
+  assert(
+    !routesSrc.includes('updateDocDirect') && !routesSrc.includes('addDocDirect'),
+    'returns routes never write normal ticket documents',
+  );
+
+  // Pure: Mail 1/2/3 + mark-returned semantics with ticket_id = null
+  const standalone = baseHw({ ticket_id: null, employee_email: 'solo@dpg.test' });
+  assert(standalone.ticket_id === null, 'fixture ticket_id is null');
+  const cfg = defaultHardwareReturnsConfig();
+  cfg.auto_send_enabled = true;
+  const r1 = resolveStageRecipients(1, {}, standalone, cfg);
+  assert(r1.to.includes('solo@dpg.test'), 'Mail 1 resolves employee_email with ticket_id null');
+  assert(
+    evaluateDueReminderStage(standalone, cfg, new Date('2026-10-20T12:00:00.000Z')) === 1,
+    'scheduled Mail 1 due with ticket_id null',
+  );
+  const vars = buildReminderTemplateVars({
+    ticket: {},
+    hardwareReturn: standalone,
+    orgConfig: cfg,
+  });
+  assert(vars.employee_name === 'Max Mustermann', 'template uses employee_name from return row');
+  assert(
+    String(vars.ticket_id).includes('RL-1001'),
+    'template id uses return_number when ticket_id null',
+  );
+
+  // Activity log entry shape for mail + returned
+  const mailEntry = {
+    at: new Date().toISOString(),
+    type: 'mail_sent',
+    stage: 2 as const,
+    to: ['solo@dpg.test'],
+    cc: ['pm@dpg.test'],
+    message: '2. Mail versendet',
+  };
+  const returnedEntry = {
+    at: new Date().toISOString(),
+    type: 'returned',
+    message: 'Rücklieferung erfolgt',
+  };
+  assert(mailEntry.type === 'mail_sent' && mailEntry.to?.[0] === 'solo@dpg.test', 'mail activity shape');
+  assert(returnedEntry.type === 'returned', 'mark-returned activity shape');
+
+  // Isolation still intact
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: false,
+      sessionOrgId: ORG_A,
+      ticketOrgId: ORG_A,
+      role: 'CLIENT_ADMIN',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === false,
+    'Citadelle AG still blocked on returns API',
+  );
+  assert(
+    evaluateHardwareModuleAccess({
+      orgEnabled: true,
+      sessionOrgId: ORG_B,
+      ticketOrgId: ORG_B,
+      role: 'CLIENT_USER',
+      allowRoles: ['CLIENT_ADMIN', 'CLIENT_SUPPORTER'],
+    }).ok === false,
+    'DPG CLIENT_USER still 403 on returns',
   );
 }
 
@@ -2400,6 +2548,7 @@ async function main(): Promise<void> {
   testPortalTresorVaultIsolation();
   testHardwareReturnsModuleGate();
   testHardwareReturnsEscalationEngine();
+  testHardwareReturnsStandaloneBackend();
   testHardwareReturnsWorkbenchDrawerContract();
   testDefaultTicketCreateExcludesRmaFields();
   testPortalReturnsPageNavigationGate();
