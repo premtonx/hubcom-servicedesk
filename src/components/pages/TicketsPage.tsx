@@ -83,6 +83,9 @@ import { STAFF_TICKETS_CAPABILITIES } from '../../lib/tickets/tickets-workbench-
 import { useStaffTicketsAdapter } from '../../hooks/useStaffTicketsAdapter';
 import { TicketDetailContextPane } from '../tickets/TicketDetailContextPane';
 import { TicketDetailView } from '../tickets/TicketDetailView';
+import { TicketDetailWorkbench } from '../tickets/TicketDetailWorkbench';
+import { useStaffTicketDetailAdapter } from '../../hooks/useStaffTicketDetailAdapter';
+import { STAFF_TICKET_DETAIL_CAPABILITIES } from '../../lib/tickets/ticket-detail-workbench-adapter';
 import { TicketDialogs } from '../tickets/TicketDialogs';
 import { TicketMergeDialog } from '../tickets/TicketMergeDialog';
 import { TICKETS_SIDEBAR_GROUPS } from '../tickets/ticketsSidebarConfig';
@@ -1340,6 +1343,10 @@ export default function TicketsPage() {
     onOpenCreateTicket: openCreateTicket,
   });
 
+  const staffTicketDetailAdapter = useStaffTicketDetailAdapter({
+    onBack: closeFullTicketView,
+  });
+
   const handleTicketSelect = (id: string) => {
     if (selectedTicketIds.length > 0) {
       toggleTicketSelection(id);
@@ -2076,83 +2083,90 @@ export default function TicketsPage() {
           /* Detail View */
           <div className="flex-1 min-w-0 min-h-0 h-full flex flex-col overflow-hidden relative">
             {selectedTicket ? (
-            <div className="flex-1 min-w-0 min-h-0 h-full flex flex-row overflow-hidden">
-              <TicketDetailView
-                selectedTicket={selectedTicket}
-                ticketContact={ticketContact}
-                ticketCompany={ticketCompany}
-                contactSchema={contactSchema}
-                messages={messages}
-                allTickets={allTickets}
-                activeDetailTab={activeDetailTab}
-                setActiveDetailTab={setActiveDetailTab}
-                isAiReady={isAiReady}
-                isAiDrafting={isAiDrafting}
-                isTranslating={isTranslating}
-                translatedTicket={translatedTicket}
-                aiSummary={aiSummary}
-                aiSources={aiSources}
-                suggestedNeuralLinks={suggestedNeuralLinks}
-                isFindingNeuralLinks={isFindingNeuralLinks}
-                linkInput={linkInput}
-                setLinkInput={setLinkInput}
-                isComposerExpanded={isComposerExpanded}
-                setIsComposerExpanded={setIsComposerExpanded}
-                replyText={replyText}
-                setReplyText={setReplyText}
-                newAgentComment={newAgentComment}
-                setNewAgentComment={setNewAgentComment}
-                areNotesExpanded={areNotesExpanded}
-                setAreNotesExpanded={setAreNotesExpanded}
-                user={user}
-                ticketService={ticketService}
-                setAllTickets={setAllTickets}
-                setSelectedTicketId={setSelectedTicketId}
-                updateSummary={updateSummary}
-                handleChecklistUpdated={handleChecklistUpdated}
-                handleInlineUpdate={handleInlineUpdate}
-                findNeuralLinks={findNeuralLinks}
-                linkTicket={linkTicket}
-                unlinkTicket={unlinkTicket}
-                generateAiReply={generateAiReply}
-                handleSendReply={handleSendReply}
-                acceptGhostDraft={acceptGhostDraft}
-                ghostDraft={ghostDraft}
-                isGhostDrafting={isGhostDrafting}
-                legalViolation={legalViolation}
-                setLegalViolation={setLegalViolation}
-                isValidatingLegal={isValidatingLegal}
-                aiDraftMeta={aiDraftMeta}
-                ai={ai}
-                translationMood={translationMood}
-                closeFullTicketView={closeFullTicketView}
-                isMobilePropertiesOpen={isMobilePropertiesOpen}
-                setIsMobilePropertiesOpen={setIsMobilePropertiesOpen}
-                onConvertToKB={handleConvertToKB}
-                isKbDrafting={isKbDrafting}
-                onOpenMerge={openDetailMergeDialog}
-              />
-            <TicketDetailContextPane
-              selectedTicket={selectedTicket}
-              ticketContact={ticketContact}
-              ticketCompany={ticketCompany}
-              isMobilePropertiesOpen={isMobilePropertiesOpen}
-              setIsMobilePropertiesOpen={setIsMobilePropertiesOpen}
-              isAiReady={isAiReady}
-              isAiDrafting={isAiDrafting}
-              generateAiReply={generateAiReply}
-              handleConvertToKB={handleConvertToKB}
-              suggestedNeuralLinks={suggestedNeuralLinks}
-              linkTicket={linkTicket}
-              unlinkTicket={unlinkTicket}
-              newTagInput={newTagInput}
-              setNewTagInput={setNewTagInput}
-              initiateHandoff={initiateHandoff}
-              suggestedTags={suggestedTags}
-              allTickets={allTickets}
-              handleInlineUpdate={handleInlineUpdate}
+            <TicketDetailWorkbench
+              mode="staff"
+              adapter={staffTicketDetailAdapter}
+              capabilities={STAFF_TICKET_DETAIL_CAPABILITIES}
+              staffDetailSlot={
+                <div className="flex-1 min-w-0 min-h-0 h-full flex flex-row overflow-hidden">
+                  <TicketDetailView
+                    selectedTicket={selectedTicket}
+                    ticketContact={ticketContact}
+                    ticketCompany={ticketCompany}
+                    contactSchema={contactSchema}
+                    messages={messages}
+                    allTickets={allTickets}
+                    activeDetailTab={activeDetailTab}
+                    setActiveDetailTab={setActiveDetailTab}
+                    isAiReady={isAiReady}
+                    isAiDrafting={isAiDrafting}
+                    isTranslating={isTranslating}
+                    translatedTicket={translatedTicket}
+                    aiSummary={aiSummary}
+                    aiSources={aiSources}
+                    suggestedNeuralLinks={suggestedNeuralLinks}
+                    isFindingNeuralLinks={isFindingNeuralLinks}
+                    linkInput={linkInput}
+                    setLinkInput={setLinkInput}
+                    isComposerExpanded={isComposerExpanded}
+                    setIsComposerExpanded={setIsComposerExpanded}
+                    replyText={replyText}
+                    setReplyText={setReplyText}
+                    newAgentComment={newAgentComment}
+                    setNewAgentComment={setNewAgentComment}
+                    areNotesExpanded={areNotesExpanded}
+                    setAreNotesExpanded={setAreNotesExpanded}
+                    user={user}
+                    ticketService={ticketService}
+                    setAllTickets={setAllTickets}
+                    setSelectedTicketId={setSelectedTicketId}
+                    updateSummary={updateSummary}
+                    handleChecklistUpdated={handleChecklistUpdated}
+                    handleInlineUpdate={handleInlineUpdate}
+                    findNeuralLinks={findNeuralLinks}
+                    linkTicket={linkTicket}
+                    unlinkTicket={unlinkTicket}
+                    generateAiReply={generateAiReply}
+                    handleSendReply={handleSendReply}
+                    acceptGhostDraft={acceptGhostDraft}
+                    ghostDraft={ghostDraft}
+                    isGhostDrafting={isGhostDrafting}
+                    legalViolation={legalViolation}
+                    setLegalViolation={setLegalViolation}
+                    isValidatingLegal={isValidatingLegal}
+                    aiDraftMeta={aiDraftMeta}
+                    ai={ai}
+                    translationMood={translationMood}
+                    closeFullTicketView={closeFullTicketView}
+                    isMobilePropertiesOpen={isMobilePropertiesOpen}
+                    setIsMobilePropertiesOpen={setIsMobilePropertiesOpen}
+                    onConvertToKB={handleConvertToKB}
+                    isKbDrafting={isKbDrafting}
+                    onOpenMerge={openDetailMergeDialog}
+                  />
+                  <TicketDetailContextPane
+                    selectedTicket={selectedTicket}
+                    ticketContact={ticketContact}
+                    ticketCompany={ticketCompany}
+                    isMobilePropertiesOpen={isMobilePropertiesOpen}
+                    setIsMobilePropertiesOpen={setIsMobilePropertiesOpen}
+                    isAiReady={isAiReady}
+                    isAiDrafting={isAiDrafting}
+                    generateAiReply={generateAiReply}
+                    handleConvertToKB={handleConvertToKB}
+                    suggestedNeuralLinks={suggestedNeuralLinks}
+                    linkTicket={linkTicket}
+                    unlinkTicket={unlinkTicket}
+                    newTagInput={newTagInput}
+                    setNewTagInput={setNewTagInput}
+                    initiateHandoff={initiateHandoff}
+                    suggestedTags={suggestedTags}
+                    allTickets={allTickets}
+                    handleInlineUpdate={handleInlineUpdate}
+                  />
+                </div>
+              }
             />
-          </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-white">
             <div className="w-20 h-20 bg-[#F1F3F4] rounded-full flex items-center justify-center mb-6">

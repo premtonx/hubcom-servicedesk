@@ -2664,6 +2664,93 @@ function testTicketsWorkbenchSharedUiIsolation(): void {
   );
 }
 
+function testTicketDetailWorkbenchSharedUiIsolation(): void {
+  console.log('\n[Ticket Detail Workbench] Shared UI adapter — staff shell, portal APIs only');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/TicketDetailWorkbench.tsx'),
+    'utf8',
+  );
+  const adapterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/tickets/ticket-detail-workbench-adapter.ts'),
+    'utf8',
+  );
+  const portalAdapterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/hooks/usePortalTicketDetailAdapter.ts'),
+    'utf8',
+  );
+  const staffPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/TicketsPage.tsx'),
+    'utf8',
+  );
+  const portalDetailSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientTicketDetailPage.tsx'),
+    'utf8',
+  );
+
+  assert(
+    workbenchSrc.includes('TicketDetailWorkbenchAdapter') &&
+      workbenchSrc.includes("mode === 'staff'") &&
+      workbenchSrc.includes('PortalTicketDetailBody'),
+    'TicketDetailWorkbench accepts mode + adapter with staff/portal branches',
+  );
+  assert(
+    !workbenchSrc.includes('/api/db') &&
+      !workbenchSrc.includes("from '../../services/ticketService'") &&
+      !workbenchSrc.includes("from '../services/ticketService'") &&
+      !workbenchSrc.includes("from 'axios'") &&
+      !workbenchSrc.includes('axios.get') &&
+      !workbenchSrc.includes('axios.post'),
+    'TicketDetailWorkbench has zero /api/db, ticketService import, or axios calls',
+  );
+  assert(
+    !workbenchSrc.includes('HardwareReturn') &&
+      !workbenchSrc.includes('hardwareReturn') &&
+      !workbenchSrc.includes('Service-Level') &&
+      !workbenchSrc.includes('SL1'),
+    'detail workbench has zero Hardware & Service-Level / RMA fields',
+  );
+  assert(
+    adapterSrc.includes('internalNotes: false') &&
+      adapterSrc.includes('tabAiInsights: false') &&
+      adapterSrc.includes('emailComposer: false') &&
+      adapterSrc.includes('staffContextPane: false') &&
+      adapterSrc.includes('portalPublicReply: true') &&
+      adapterSrc.includes('participantsPanel: true'),
+    'portal capabilities hide staff-only chrome and keep public reply + participants',
+  );
+  assert(
+    portalAdapterSrc.includes('clientPortalApi') &&
+      portalAdapterSrc.includes('getTicket') &&
+      !portalAdapterSrc.includes('/api/db') &&
+      !portalAdapterSrc.includes("from '../services/ticketService'"),
+    'usePortalTicketDetailAdapter uses clientPortalApi only (no /api/db or staff ticketService)',
+  );
+  assert(
+    staffPageSrc.includes('TicketDetailWorkbench') &&
+      staffPageSrc.includes('mode="staff"') &&
+      staffPageSrc.includes('staffDetailSlot') &&
+      staffPageSrc.includes('TicketDetailView'),
+    '/tickets mounts TicketDetailWorkbench staff mode with TicketDetailView slot',
+  );
+  assert(
+    portalDetailSrc.includes('TicketDetailWorkbench') &&
+      portalDetailSrc.includes('mode="portal"') &&
+      portalDetailSrc.includes('usePortalTicketDetailAdapter') &&
+      !portalDetailSrc.includes('/api/db') &&
+      !portalDetailSrc.includes('ticketService') &&
+      !portalDetailSrc.includes('HardwareReturn') &&
+      !portalDetailSrc.includes('hardwareReturn'),
+    'ClientTicketDetailPage is thin portal shell (no /api/db, no RMA)',
+  );
+  assert(
+    workbenchSrc.includes('ConversationTimeline') &&
+      workbenchSrc.includes('Eigenschaften') &&
+      workbenchSrc.includes('Beteiligte'),
+    'portal branch reuses staff conversation timeline + properties/participants rail',
+  );
+}
+
 function testKbWorkbenchSharedUiIsolation(): void {
   console.log('\n[KB Workbench] Shared UI adapter — no staff API clients in presentational shell');
 
@@ -2779,6 +2866,7 @@ async function main(): Promise<void> {
   testPortalUserDeleteAccess();
   testKbWorkbenchSharedUiIsolation();
   testTicketsWorkbenchSharedUiIsolation();
+  testTicketDetailWorkbenchSharedUiIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
