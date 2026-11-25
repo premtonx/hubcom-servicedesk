@@ -48,12 +48,6 @@ import {
 import { cn } from '../lib/utils';
 import { customerService } from '../services/customerService';
 import { groupService } from '../services/groupService';
-import {
-  emptyHardwareReturnForm,
-  hardwareFormToPayload,
-  HardwareReturnSections,
-  type HardwareReturnFormState,
-} from './tickets/HardwareReturnSections';
 import axios from 'axios';
 import { userService } from '../services/userService';
 import { Company, Contact, Group, User } from '../types';
@@ -214,10 +208,6 @@ export function CreateTicketDialog({
   const [portalContacts, setPortalContacts] = useState<ContactOption[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [formData, setFormData] = useState<FormState>(EMPTY_FORM);
-  const [hardwareEnabled, setHardwareEnabled] = useState(false);
-  const [hardwareForm, setHardwareForm] = useState<HardwareReturnFormState>(() =>
-    emptyHardwareReturnForm(),
-  );
   const [baselineJson, setBaselineJson] = useState(() => JSON.stringify(EMPTY_FORM));
   const defaultsAppliedRef = useRef(false);
   const submitLockRef = useRef(false);
@@ -429,20 +419,10 @@ export function CreateTicketDialog({
 
     if (!orgId) {
       setPortalContacts([]);
-      setHardwareEnabled(false);
       return;
     }
 
     let cancelled = false;
-    void axios
-      .get(`/api/admin/organizations/${encodeURIComponent(orgId)}`, { withCredentials: true })
-      .then((orgRes) => {
-        if (cancelled) return;
-        setHardwareEnabled(Boolean(orgRes.data?.organization?.hardware_returns_enabled));
-      })
-      .catch(() => {
-        if (!cancelled) setHardwareEnabled(false);
-      });
     void axios
       .get(`/api/admin/organizations/${encodeURIComponent(orgId)}/users`, {
         withCredentials: true,
@@ -780,18 +760,6 @@ export function CreateTicketDialog({
         updatedAt: new Date(),
       } as any);
 
-      if (hardwareEnabled && createdId && organizationId) {
-        try {
-          await axios.put(
-            `/api/tickets/${encodeURIComponent(String(createdId))}/hardware-return`,
-            hardwareFormToPayload(hardwareForm),
-            { withCredentials: true },
-          );
-        } catch {
-          /* non-fatal — ticket already exists */
-        }
-      }
-
       logAudit({
         module: 'tickets',
         action: 'CREATE_TICKET',
@@ -1077,10 +1045,6 @@ export function CreateTicketDialog({
               </div>
             </div>
           </div>
-
-          {hardwareEnabled ? (
-            <HardwareReturnSections value={hardwareForm} onChange={setHardwareForm} />
-          ) : null}
 
           <div className="bg-white border border-slate-200/60 rounded-2xl p-5 sm:p-6 shadow-sm">
             <div className="flex items-center gap-3 mb-5">

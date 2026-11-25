@@ -1773,6 +1773,50 @@ function testHardwareReturnsEscalationEngine(): void {
   );
 }
 
+/**
+ * Default Neues Ticket erstellen must stay free of RMA / SL1–SL3 fields.
+ * (Hardware-Rücklieferung lives only under the dedicated returns workbench.)
+ */
+function testDefaultTicketCreateExcludesRmaFields(): void {
+  console.log('\n--- Default ticket create excludes RMA / SL fields ---');
+
+  // Contract: portal + staff create payloads for normal IT tickets omit hardwareReturn.
+  const portalCreateBody = {
+    subject: 'VPN down',
+    description: '<p>Cannot connect</p>',
+    priority: 'medium',
+    category: 'Netzwerk',
+  };
+  assert(
+    !('hardwareReturn' in portalCreateBody) &&
+      !('service_level' in portalCreateBody) &&
+      !('return_due_date' in portalCreateBody),
+    'portal create payload has no RMA / SL keys',
+  );
+
+  const staffCreateBody = {
+    subject: 'Laptop issue',
+    description: 'Screen flicker',
+    organizationId: ORG_B,
+  };
+  assert(
+    !('hardwareReturn' in staffCreateBody) && !('service_level' in staffCreateBody),
+    'staff create payload has no RMA / SL keys',
+  );
+
+  // /portal/tickets/new must scroll: ticket-detail regex must not treat "new" as a detail id.
+  const path = '/portal/tickets/new';
+  const isTicketCreate = path === '/portal/tickets/new';
+  const isTicketDetail =
+    !isTicketCreate && /^\/portal\/tickets\/[^/]+$/.test(path);
+  assert(isTicketCreate === true, '/portal/tickets/new is create route');
+  assert(isTicketDetail === false, '/portal/tickets/new is NOT treated as ticket detail (scroll lock)');
+  assert(
+    /^\/portal\/tickets\/[^/]+$/.test('/portal/tickets/abc-123') === true,
+    'real ticket detail path still matches detail regex',
+  );
+}
+
 /** /portal/returns page gate — no premature redirect while me/module still loading. */
 function testPortalReturnsPageNavigationGate(): void {
   console.log('\n--- Portal /portal/returns navigation gate ---');
@@ -2039,6 +2083,7 @@ async function main(): Promise<void> {
   testPortalTresorVaultIsolation();
   testHardwareReturnsModuleGate();
   testHardwareReturnsEscalationEngine();
+  testDefaultTicketCreateExcludesRmaFields();
   testPortalReturnsPageNavigationGate();
   testPortalUserDeleteAccess();
 

@@ -67,9 +67,11 @@ export default function ClientPortalLayout() {
   const [org, setOrg] = useState<OrgBranding | null>(null);
   /** null = still resolving /api/portal/me module flags */
   const [hardwareReturnsEnabled, setHardwareReturnsEnabled] = useState<boolean | null>(null);
-  const isTicketsWorkbench =
-    location.pathname === '/portal/tickets' ||
-    /^\/portal\/tickets\/[^/]+$/.test(location.pathname);
+  // Ticket list + ticket detail need a non-scrolling shell; /portal/tickets/new must scroll.
+  const isTicketCreate = location.pathname === '/portal/tickets/new';
+  const isTicketDetail =
+    !isTicketCreate && /^\/portal\/tickets\/[^/]+$/.test(location.pathname);
+  const isTicketsWorkbench = location.pathname === '/portal/tickets' || isTicketDetail;
   const isReturnsWorkbench = location.pathname === '/portal/returns';
 
   useEffect(() => {
@@ -201,7 +203,7 @@ export default function ClientPortalLayout() {
         className={
           isTicketsWorkbench || isReturnsWorkbench
             ? 'flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col'
-            : 'flex-1 min-w-0 min-h-0 overflow-y-auto overflow-x-hidden'
+            : 'flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden flex flex-col'
         }
       >
         <Outlet
