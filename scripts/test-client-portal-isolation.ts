@@ -2196,6 +2196,103 @@ function testPortalUserDeleteAccess(): void {
   );
 }
 
+function testTicketsWorkbenchSharedUiIsolation(): void {
+  console.log('\n[Tickets Workbench] Shared UI adapter — no /api/db in presentational shell');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/TicketsWorkbench.tsx'),
+    'utf8',
+  );
+  const pageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/TicketsPage.tsx'),
+    'utf8',
+  );
+  const portalPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientTicketsPage.tsx'),
+    'utf8',
+  );
+  const portalAdapterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/hooks/usePortalTicketsAdapter.ts'),
+    'utf8',
+  );
+  const adapterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/tickets/tickets-workbench-adapter.ts'),
+    'utf8',
+  );
+  const listViewSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/TicketListView.tsx'),
+    'utf8',
+  );
+
+  assert(
+    workbenchSrc.includes('TicketsWorkbenchAdapter') && workbenchSrc.includes('mode'),
+    'TicketsWorkbench accepts mode + adapter',
+  );
+  assert(
+    !workbenchSrc.includes('/api/db') &&
+      !workbenchSrc.includes("from '../../services/ticketService'") &&
+      !workbenchSrc.includes("from '../services/ticketService'") &&
+      !workbenchSrc.includes("from 'axios'") &&
+      !workbenchSrc.includes('axios.get') &&
+      !workbenchSrc.includes('axios.patch'),
+    'TicketsWorkbench has zero /api/db, ticketService import, or axios calls',
+  );
+  assert(
+    workbenchSrc.includes('TicketListView') &&
+      workbenchSrc.includes("mode === 'portal'") &&
+      workbenchSrc.includes('PortalTicketsSidebar'),
+    'portal mode mounts PortalTicketsSidebar + TicketListView',
+  );
+  assert(
+    pageSrc.includes('useStaffTicketsAdapter') && pageSrc.includes('mode="staff"'),
+    '/tickets mounts TicketsWorkbench with staff adapter',
+  );
+  assert(
+    pageSrc.includes('ReturnsWorkbench') && pageSrc.includes("panel', 'returns'"),
+    'staff /tickets keeps DPG → Rücklieferungen (ReturnsWorkbench) outside shared shell',
+  );
+  assert(
+    portalPageSrc.includes('usePortalTicketsAdapter') && portalPageSrc.includes('mode="portal"'),
+    '/portal/tickets mounts TicketsWorkbench with portal adapter',
+  );
+  assert(
+    !portalPageSrc.includes('/api/db') && !portalPageSrc.includes('ticketService'),
+    'ClientTicketsPage has zero /api/db or ticketService',
+  );
+  assert(
+    adapterSrc.includes("'staff'") && adapterSrc.includes("'portal'"),
+    'adapter typed for staff | portal modes',
+  );
+  assert(
+    adapterSrc.includes('kundenNav: false') &&
+      adapterSrc.includes('inlineAssignee: false') &&
+      adapterSrc.includes('aiSummaryChip: false') &&
+      adapterSrc.includes('slaChrome: false') &&
+      adapterSrc.includes('bulkSelection: false'),
+    'portal capabilities hide staff-only chrome',
+  );
+  assert(
+    portalAdapterSrc.includes('clientPortalApi') &&
+      !portalAdapterSrc.includes('/api/db') &&
+      !portalAdapterSrc.includes("from '../services/ticketService'") &&
+      !portalAdapterSrc.includes("'/api/tickets") &&
+      !portalAdapterSrc.includes('"/api/tickets'),
+    'usePortalTicketsAdapter uses clientPortalApi only (no /api/db or staff ticketService)',
+  );
+  assert(
+    listViewSrc.includes('TicketsWorkbenchCapabilities') &&
+      listViewSrc.includes('capabilities.bulkSelection') &&
+      listViewSrc.includes('capabilities.inlineAssignee') &&
+      listViewSrc.includes('capabilities.aiSummaryChip'),
+    'TicketListView gates staff chrome via capabilities',
+  );
+  assert(
+    !portalPageSrc.includes('/portal/tickets/new') ||
+      portalAdapterSrc.includes('/portal/tickets/new'),
+    'create CTA stays on adapter openCreateTicket → /portal/tickets/new',
+  );
+}
+
 function testKbWorkbenchSharedUiIsolation(): void {
   console.log('\n[KB Workbench] Shared UI adapter — no staff API clients in presentational shell');
 
@@ -2308,6 +2405,7 @@ async function main(): Promise<void> {
   testPortalReturnsPageNavigationGate();
   testPortalUserDeleteAccess();
   testKbWorkbenchSharedUiIsolation();
+  testTicketsWorkbenchSharedUiIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

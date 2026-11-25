@@ -52,8 +52,15 @@ import { isTicketAssignedToUser } from '../../lib/ticketAssignee';
 import { useTicketCategories } from '../../hooks/useTicketCategories';
 import { useTicketStatuses } from '../../hooks/useTicketStatuses';
 import { useTicketPriorities } from '../../hooks/useTicketPriorities';
+import {
+  STAFF_TICKETS_CAPABILITIES,
+  type TicketsWorkbenchCapabilities,
+  type TicketsWorkbenchMode,
+} from '../../lib/tickets/tickets-workbench-adapter';
 
 export interface TicketListViewProps {
+  mode?: TicketsWorkbenchMode;
+  capabilities?: TicketsWorkbenchCapabilities;
   ticketQueueStats: TicketQueueStats;
   topStatusFilter: TopStatusFilterId;
   setTopStatusFilter: (f: TopStatusFilterId) => void;
@@ -104,6 +111,8 @@ export interface TicketListViewProps {
 
 export function TicketListView(props: TicketListViewProps) {
   const { t } = useTranslation();
+  const mode = props.mode ?? 'staff';
+  const capabilities = props.capabilities ?? STAFF_TICKETS_CAPABILITIES;
   const teamCategoryLabels = props.teamCategoryLabels || [];
   // Load all categories (incl. inactive) so renamed/recoloured/inactive values resolve like detail.
   const { categories: allTicketCategories } = useTicketCategories(false);
@@ -216,6 +225,7 @@ export function TicketListView(props: TicketListViewProps) {
               }}
               trailing={
                 <div className="flex items-center gap-2">
+                  {mode === 'staff' ? (
                   <Button
                     variant="ghost"
                     size="icon"
@@ -225,6 +235,8 @@ export function TicketListView(props: TicketListViewProps) {
                   >
                     <List className="w-4 h-4" />
                   </Button>
+                  ) : null}
+                  {capabilities.canCreateTicket ? (
                   <ModuleCreateButton
                     ariaLabelKey="actions.createTicket"
                     ariaLabelDefault="Ticket erstellen"
@@ -233,6 +245,7 @@ export function TicketListView(props: TicketListViewProps) {
                     onClick={openCreateTicket}
                     className="!rounded-lg !h-9 !w-auto !min-w-0 !px-3.5 gap-1.5"
                   />
+                  ) : null}
                 </div>
               }
             />
@@ -244,7 +257,14 @@ export function TicketListView(props: TicketListViewProps) {
                 { id: 'pending', label: `${t('tickets.inProgress', 'In Bearbeitung')} (${ticketQueueStats.pending})` },
                 { id: 'onhold', label: `${t('tickets.pendingOnHold', 'Wartend')} (${ticketQueueStats.onhold})` },
                 { id: 'urgent', label: `${t('tickets.priorityUrgent', 'Dringend')} (${ticketQueueStats.urgent})` },
-                { id: 'unassigned', label: `${t('tickets.unassigned', 'Nicht zugewiesen')} (${ticketQueueStats.unassigned})` },
+                ...(capabilities.unassignedTab
+                  ? [
+                      {
+                        id: 'unassigned',
+                        label: `${t('tickets.unassigned', 'Nicht zugewiesen')} (${ticketQueueStats.unassigned})`,
+                      },
+                    ]
+                  : []),
               ]}
               activeId={topStatusFilter}
               onChange={(id) => setTopStatusFilter(id as typeof topStatusFilter)}
@@ -280,7 +300,7 @@ export function TicketListView(props: TicketListViewProps) {
                 <TicketsViewModeSelector value={layoutMode} onChange={setLayoutMode} />
               }
             />
-            {ticketQueueStats.critical > 0 ? (
+            {capabilities.aiSummaryChip && ticketQueueStats.critical > 0 ? (
               <TicketsQueueAiChip
                 id="tickets-ai-chip"
                 ticketCount={tickets.length}
@@ -289,7 +309,7 @@ export function TicketListView(props: TicketListViewProps) {
               />
             ) : null}
 
-            {teamCategoryLabels.length > 0 && (
+            {capabilities.teamCategoryFilter && teamCategoryLabels.length > 0 && (
               <div className="mx-4 sm:mx-6 mb-2 flex flex-wrap items-center gap-2">
                 <Badge
                   variant="outline"
@@ -792,7 +812,7 @@ export function TicketListView(props: TicketListViewProps) {
 
             {/* Inline Bulk Actions Toolbar (Conditional Render) */}
             <AnimatePresence>
-              {selectedTicketIds.length > 0 && (
+              {capabilities.bulkSelection && selectedTicketIds.length > 0 && (
                 <motion.div
                   initial={{ opacity: 0, y: -10, height: 0 }}
                   animate={{ opacity: 1, y: 0, height: "auto" }}
@@ -1006,10 +1026,16 @@ export function TicketListView(props: TicketListViewProps) {
                   onSelect={handleTicketSelect}
                   onStatusChange={(id, status) => handleInlineUpdate(id, { status })}
                   onPriorityChange={(id, priority) => handleInlineUpdate(id, { priority })}
-                  onAssigneeChange={(id, agentId, agentName) => handleInlineUpdate(id, { agentId, agentName })}
+                  onAssigneeChange={
+                    capabilities.inlineAssignee
+                      ? (id, agentId, agentName) =>
+                          handleInlineUpdate(id, { agentId, agentName })
+                      : () => undefined
+                  }
                   currentUserId={user?.uid}
                   currentUserLabel={user?.displayName || user?.email || t('tickets.assigneeYourself', 'Yourself')}
                   formatTicketRef={formatTicketRef}
+                  assigneeReadOnly={!capabilities.inlineAssignee}
                 />
               ) : (
               <>
@@ -1019,6 +1045,7 @@ export function TicketListView(props: TicketListViewProps) {
                 <TicketsTableHeader
                   headerCheckboxActive={headerCheckboxActive}
                   onToggleSelectAll={toggleSelectAll}
+                  showSelection={capabilities.bulkSelection}
                 />
 
                   <div className="divide-y divide-border">
@@ -1044,12 +1071,14 @@ export function TicketListView(props: TicketListViewProps) {
                             onClick={(e) => e.stopPropagation()}
                             onPointerDown={(e) => e.stopPropagation()}
                           >
+                            {capabilities.bulkSelection ? (
                             <Checkbox 
                               checked={selectedTicketIds.includes(ticket.id)}
                               onCheckedChange={() => toggleTicketSelection(ticket.id)}
                               onClick={(e) => e.stopPropagation()}
                               className="bg-card border-border h-4 w-4 rounded-sm cursor-pointer"
                             />
+                            ) : null}
                           </div>
 
                           {/* Customer Column */}
@@ -1130,6 +1159,7 @@ export function TicketListView(props: TicketListViewProps) {
                               agentName={ticket.agentName}
                               currentUserId={user?.uid}
                               currentUserLabel={user?.displayName || user?.email || t('tickets.assigneeYourself', 'Yourself')}
+                              readOnly={!capabilities.inlineAssignee}
                               onChange={(agentId, agentName) => handleInlineUpdate(ticket.id, { agentId, agentName })}
                             />
                           </div>
@@ -1168,6 +1198,7 @@ export function TicketListView(props: TicketListViewProps) {
                     })();
 
                     const sla = (() => {
+                      if (!capabilities.slaChrome) return null;
                       if (ticket.status === 'resolved' || ticket.status === 'closed') return null;
                       const now = new Date();
                       const due = ticket.slaDueAt || ticket.firstResponseDue;
@@ -1210,6 +1241,7 @@ export function TicketListView(props: TicketListViewProps) {
 
                           {/* Sentiment icon in the corner */}
                           <div className="flex items-center gap-2 shrink-0">
+                            {capabilities.bulkSelection ? (
                             <Checkbox 
                               checked={selectedTicketIds.includes(ticket.id)}
                               onCheckedChange={() => toggleTicketSelection(ticket.id)}
@@ -1217,6 +1249,7 @@ export function TicketListView(props: TicketListViewProps) {
                               onPointerDown={(e) => e.stopPropagation()}
                               className="bg-card border-border h-4 w-4 cursor-pointer"
                             />
+                            ) : null}
                             <div className="p-1 rounded-full bg-slate-50/50 dark:bg-slate-800 border">
                               {ticket.sentiment === 'positive' && <Smile className="w-3.5 h-3.5 text-emerald-500" />}
                               {ticket.sentiment === 'neutral' && <Meh className="w-3.5 h-3.5 text-slate-400" />}
@@ -1281,6 +1314,7 @@ export function TicketListView(props: TicketListViewProps) {
                                 currentUserLabel={
                                   user?.displayName || user?.email || t('tickets.assigneeYourself', 'Yourself')
                                 }
+                                readOnly={!capabilities.inlineAssignee}
                                 onChange={(agentId, agentName) =>
                                   handleInlineUpdate(ticket.id, { agentId, agentName })
                                 }

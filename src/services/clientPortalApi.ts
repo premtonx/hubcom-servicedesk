@@ -352,6 +352,20 @@ export const clientPortalApi = {
     return res.data?.ticket;
   },
 
+  async updateTicketFields(
+    ticketId: string,
+    patch: { status?: TicketStatus; priority?: TicketPriority },
+  ) {
+    const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}`;
+    assertNeverDb(path);
+    const body: Record<string, unknown> = {};
+    if (patch.status != null) body.status = patch.status;
+    if (patch.priority != null) body.priority = patch.priority;
+    if (Object.keys(body).length === 0) return null;
+    const res = await axios.patch(path, body, { withCredentials: true });
+    return res.data?.ticket;
+  },
+
   async listParticipants(ticketId: string) {
     const res = await axios.get(`/api/tickets/${encodeURIComponent(ticketId)}/participants`, {
       withCredentials: true,

@@ -199,6 +199,8 @@ interface TicketAssigneeChipProps {
   currentUserId?: string;
   currentUserLabel?: string;
   onChange: (agentId: string | null | undefined, agentName: string | null | undefined) => void;
+  /** Portal: show assignee as label only (no agent dispatch menu). */
+  readOnly?: boolean;
 }
 
 const AGENT_OPTIONS = TICKET_DISPATCH_AGENTS;
@@ -209,6 +211,7 @@ export function TicketAssigneeChip({
   currentUserId,
   currentUserLabel,
   onChange,
+  readOnly = false,
 }: TicketAssigneeChipProps) {
   const { t } = useTranslation();
   const unassignedLabel = t('tickets.unassigned', 'Unassigned');
@@ -221,6 +224,34 @@ export function TicketAssigneeChip({
   });
   const display = isUnassigned ? unassignedLabel : safeString(agentName, unassignedLabel);
   const initial = isUnassigned ? '—' : getInitials(display);
+
+  if (readOnly) {
+    return (
+      <span
+        className={cn(
+          'inline-flex items-center gap-1.5 max-w-[150px] text-[11px] font-medium px-1 py-0.5',
+          isUnassigned ? 'text-slate-400 italic font-normal' : 'text-slate-700',
+        )}
+      >
+        <Avatar
+          className={cn(
+            'h-5 w-5 shrink-0',
+            isUnassigned ? 'border border-dashed border-slate-300' : 'border border-slate-200',
+          )}
+        >
+          <AvatarFallback
+            className={cn(
+              'text-[8px] font-bold',
+              isUnassigned ? 'bg-slate-50 text-slate-400' : 'bg-slate-100 text-slate-700',
+            )}
+          >
+            {initial}
+          </AvatarFallback>
+        </Avatar>
+        <span className="truncate">{display}</span>
+      </span>
+    );
+  }
 
   return (
     <DropdownMenu>

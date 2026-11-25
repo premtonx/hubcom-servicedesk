@@ -11,12 +11,14 @@ interface TicketsTableHeaderProps {
   headerCheckboxActive: boolean;
   onToggleSelectAll: () => void;
   className?: string;
+  showSelection?: boolean;
 }
 
 export function TicketsTableHeader({
   headerCheckboxActive,
   onToggleSelectAll,
   className,
+  showSelection = true,
 }: TicketsTableHeaderProps) {
   const { t } = useTranslation();
   const grid = getTicketTableGridClass();
@@ -30,12 +32,14 @@ export function TicketsTableHeader({
       )}
     >
       <div className="justify-self-center">
+        {showSelection ? (
         <Checkbox
           checked={headerCheckboxActive}
           onCheckedChange={onToggleSelectAll}
           className="bg-card border-border cursor-pointer"
           aria-label={t('tickets.table.selectAll', 'Alle auswählen')}
         />
+        ) : null}
       </div>
 
       <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.customer', 'Kunde')}</div>

@@ -16,6 +16,7 @@ interface TicketsCardGridProps {
   currentUserId?: string;
   currentUserLabel?: string;
   formatTicketRef: (id: string) => string;
+  assigneeReadOnly?: boolean;
 }
 
 export function TicketsCardGrid({
@@ -27,6 +28,7 @@ export function TicketsCardGrid({
   currentUserId,
   currentUserLabel,
   formatTicketRef,
+  assigneeReadOnly = false,
 }: TicketsCardGridProps) {
   const { t } = useTranslation();
 
@@ -89,6 +91,7 @@ export function TicketsCardGrid({
                 agentName={ticket.agentName}
                 currentUserId={currentUserId}
                 currentUserLabel={currentUserLabel}
+                readOnly={assigneeReadOnly}
                 onChange={(agentId, agentName) => onAssigneeChange(ticket.id, agentId, agentName)}
               />
             </div>

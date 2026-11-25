@@ -78,7 +78,9 @@ import { CreateTicketDialog } from '../CreateTicketDialog';
 import { TicketsLeftSidebar, type KundenSidebarOrg } from '../tickets/TicketsLeftSidebar';
 import { ReturnsWorkbench } from '../returns/ReturnsWorkbench';
 import { TicketsSidebarManageSheet } from '../tickets/TicketsSidebarManageSheet';
-import { TicketListView } from '../tickets/TicketListView';
+import { TicketsWorkbench } from '../tickets/TicketsWorkbench';
+import { STAFF_TICKETS_CAPABILITIES } from '../../lib/tickets/tickets-workbench-adapter';
+import { useStaffTicketsAdapter } from '../../hooks/useStaffTicketsAdapter';
 import { TicketDetailContextPane } from '../tickets/TicketDetailContextPane';
 import { TicketDetailView } from '../tickets/TicketDetailView';
 import { TicketDialogs } from '../tickets/TicketDialogs';
@@ -1333,6 +1335,11 @@ export default function TicketsPage() {
     setIsCreateTicketOpen(true);
   }, [navigate, selectedTicketId]);
 
+  const staffTicketsAdapter = useStaffTicketsAdapter({
+    onOpenTicket: openFullTicketView,
+    onOpenCreateTicket: openCreateTicket,
+  });
+
   const handleTicketSelect = (id: string) => {
     if (selectedTicketIds.length > 0) {
       toggleTicketSelection(id);
@@ -1340,7 +1347,7 @@ export default function TicketsPage() {
     }
 
     // Direct navigation: single click opens the full ticket view (no drawer).
-    openFullTicketView(id);
+    staffTicketsAdapter.openTicket(id);
   };
 
   useEffect(() => {
@@ -2159,51 +2166,56 @@ export default function TicketsPage() {
         )}
       </div>
     ) : (
-      <TicketListView
-        ticketQueueStats={ticketQueueStats}
-        topStatusFilter={topStatusFilter}
-        setTopStatusFilter={setTopStatusFilter}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        isFilterDrawerOpen={isFilterDrawerOpen}
-        setIsFilterDrawerOpen={setIsFilterDrawerOpen}
-        listSort={listSort}
-        setListSort={setListSort}
-        layoutMode={layoutMode}
-        setLayoutMode={setLayoutMode}
-        openCreateTicket={openCreateTicket}
-        tickets={tickets}
-        filters={filters}
-        setFilters={setFilters}
-        user={user}
-        handleViewChange={handleViewChange}
-        selectedTicketIds={selectedTicketIds}
-        setSelectedTicketIds={setSelectedTicketIds}
-        toggleSelectAll={toggleSelectAll}
-        toggleTicketSelection={toggleTicketSelection}
-        headerCheckboxActive={headerCheckboxActive}
-        handleInlineUpdate={handleInlineUpdate}
-        handleTicketSelect={handleTicketSelect}
-        handleBulkUpdate={handleBulkUpdate}
-        onOpenBulkMerge={openBulkMergeDialog}
-        viewDensity={viewDensity}
-        setHoveredTicketId={setHoveredTicketId}
-        mousePosRef={mousePosRef}
-        setPeekOffset={setPeekOffset}
-        handleMouseMove={handleMouseMove}
-        setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-        currentPage={currentPage}
-        setCurrentPage={setCurrentPage}
-        pageSize={pageSize}
-        setPageSize={setPageSize}
-        drawerTicketId={drawerTicketId}
-        setDrawerTicketId={setDrawerTicketId}
-        allTickets={allTickets}
-        kbArticles={kbArticles}
-        openFullTicketView={openFullTicketView}
-        ticketService={ticketService}
-        teamCategoryLabels={teamCategoryLabels}
-        organizationNameById={organizationNameById}
+      <TicketsWorkbench
+        mode="staff"
+        adapter={staffTicketsAdapter}
+        capabilities={STAFF_TICKETS_CAPABILITIES}
+        staffListProps={{
+          ticketQueueStats,
+          topStatusFilter,
+          setTopStatusFilter,
+          searchQuery,
+          setSearchQuery,
+          isFilterDrawerOpen,
+          setIsFilterDrawerOpen,
+          listSort,
+          setListSort,
+          layoutMode,
+          setLayoutMode,
+          openCreateTicket: () => staffTicketsAdapter.openCreateTicket(),
+          tickets,
+          filters,
+          setFilters,
+          user,
+          handleViewChange,
+          selectedTicketIds,
+          setSelectedTicketIds,
+          toggleSelectAll,
+          toggleTicketSelection,
+          headerCheckboxActive,
+          handleInlineUpdate,
+          handleTicketSelect,
+          handleBulkUpdate,
+          onOpenBulkMerge: openBulkMergeDialog,
+          viewDensity,
+          setHoveredTicketId,
+          mousePosRef,
+          setPeekOffset,
+          handleMouseMove,
+          setIsMobileSidebarOpen,
+          currentPage,
+          setCurrentPage,
+          pageSize,
+          setPageSize,
+          drawerTicketId,
+          setDrawerTicketId,
+          allTickets,
+          kbArticles,
+          openFullTicketView: (id) => staffTicketsAdapter.openTicket(id),
+          ticketService,
+          teamCategoryLabels,
+          organizationNameById,
+        }}
       />
         )}
 
