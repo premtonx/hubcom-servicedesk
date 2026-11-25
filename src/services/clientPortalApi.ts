@@ -183,6 +183,21 @@ export const clientPortalApi = {
     return { ...member, isDeactivated: member?.isActive === false };
   },
 
+  async deleteTeamMember(userId: string): Promise<{
+    deletedUserId: string;
+    email: string;
+    name: string;
+  }> {
+    const res = await axios.delete(`/api/portal/team/${encodeURIComponent(userId)}`, {
+      withCredentials: true,
+    });
+    return {
+      deletedUserId: String(res.data?.deletedUserId || userId),
+      email: String(res.data?.email || ''),
+      name: String(res.data?.name || ''),
+    };
+  },
+
   async resetTeamMemberPassword(userId: string): Promise<{
     setupLink?: string | null;
     emailSent?: boolean;

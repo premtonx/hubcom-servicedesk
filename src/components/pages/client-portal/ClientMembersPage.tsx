@@ -5,6 +5,7 @@ import {
   Pencil,
   Search,
   Shield,
+  Trash2,
   UserCheck,
   UserPlus,
   Users,
@@ -20,7 +21,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../ui/dialog';
+import { DeletePortalUserDialog } from '../../ui/DeletePortalUserDialog';
 import { cn } from '../../../lib/utils';
+import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
 import {
   clientPortalApi,
   type PortalMember,
@@ -64,6 +67,8 @@ const EMPTY_SUMMARY: PortalTeamSummary = {
 };
 
 export default function ClientMembersPage() {
+  const { session } = useClientPortalSession();
+  const selfId = String(session?.id || '');
   const [members, setMembers] = useState<PortalMember[]>([]);
   const [summary, setSummary] = useState<PortalTeamSummary>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(true);
@@ -74,6 +79,8 @@ export default function ClientMembersPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [selected, setSelected] = useState<PortalMember | null>(null);
+  const [deleteMember, setDeleteMember] = useState<PortalMember | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [formName, setFormName] = useState('');
   const [formEmail, setFormEmail] = useState('');
@@ -364,6 +371,20 @@ export default function ClientMembersPage() {
                           >
                             {active ? 'Deaktivieren' : 'Aktivieren'}
                           </Button>
+                          {selfId && m.id === selfId ? null : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 gap-1 px-2 text-xs font-bold text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                              disabled={deleting}
+                              onClick={() => setDeleteMember(m)}
+                              title="Entfernen"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Entfernen
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -374,6 +395,30 @@ export default function ClientMembersPage() {
           </table>
         </div>
       </div>
+
+      <DeletePortalUserDialog
+        open={Boolean(deleteMember)}
+        name={deleteMember?.name || ''}
+        email={deleteMember?.email || ''}
+        busy={deleting}
+        onCancel={() => setDeleteMember(null)}
+        onConfirm={async () => {
+          if (!deleteMember) return;
+          setDeleting(true);
+          try {
+            await clientPortalApi.deleteTeamMember(deleteMember.id);
+            toast.success(
+              `Portal-Benutzer entfernt: ${deleteMember.name || deleteMember.email}`,
+            );
+            setDeleteMember(null);
+            await load();
+          } catch (err: any) {
+            toast.error(err?.response?.data?.error || 'Entfernen fehlgeschlagen');
+          } finally {
+            setDeleting(false);
+          }
+        }}
+      />
 
       {/* Add modal */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>

@@ -24,6 +24,7 @@ import {
   userOrganizationId,
   type ClientTeamRole,
 } from '../lib/client-portal/team-service.js';
+import { deletePortalOrganizationUser } from '../lib/client-portal/portal-user-delete.js';
 
 const router = Router();
 
@@ -243,6 +244,51 @@ router.patch('/:userId', async (req: Request, res: Response): Promise<any> => {
   } catch (err: any) {
     safeLog('error', '[portal/team] patch failed', err?.message || err);
     return res.status(500).json({ error: safeErrorMessage(err, 'Failed to update team member') });
+  }
+});
+
+/**
+ * DELETE /api/portal/team/:userId
+ * CLIENT_ADMIN — remove a colleague from the same organization (not self).
+ */
+router.delete('/:userId', async (req: Request, res: Response): Promise<any> => {
+  const userId = routeParam(req.params.userId);
+  try {
+    const role = String(req.user?.role || '');
+    if (role !== 'CLIENT_ADMIN') {
+      return res.status(403).json({
+        error: 'Forbidden: Only CLIENT_ADMIN can remove team members.',
+      });
+    }
+    const organizationId = resolveOrganizationIdFromUser(req.user!);
+    if (!organizationId) {
+      return res.status(403).json({ error: 'Forbidden: Client admin has no organization.' });
+    }
+    const result = await deletePortalOrganizationUser({
+      organizationId,
+      userId,
+      mode: 'portal',
+      actor: {
+        id: String(req.user!.id),
+        role,
+        organizationId,
+      },
+    });
+    return res.json({
+      success: true,
+      deletedUserId: result.deletedUserId,
+      email: result.email,
+      name: result.name,
+      deletedContactIds: result.deletedContactIds,
+      message: `Portal-Benutzer entfernt: ${result.name} (${result.email})`,
+    });
+  } catch (err: any) {
+    const status = Number(err?.status) || 500;
+    if (status < 500) return res.status(status).json({ error: err.message });
+    safeLog('error', '[portal/team] delete failed', err?.message || err);
+    return res.status(500).json({
+      error: safeErrorMessage(err, 'Mitarbeiter konnte nicht entfernt werden'),
+    });
   }
 });
 

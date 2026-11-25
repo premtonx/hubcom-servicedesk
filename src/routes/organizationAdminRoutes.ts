@@ -55,6 +55,10 @@ import {
   toOrgVaultListItem,
   updateOrgVaultSecret,
 } from '../lib/client-portal/organization-vault.js';
+import {
+  deleteOrganizationContact,
+  deletePortalOrganizationUser,
+} from '../lib/client-portal/portal-user-delete.js';
 
 const router = Router();
 
@@ -583,6 +587,78 @@ router.patch(
       });
     } catch (err: any) {
       return res.status(500).json({ error: safeErrorMessage(err, 'Failed to update portal user') });
+    }
+  },
+);
+
+/**
+ * DELETE /api/admin/organizations/:id/users/:userId
+ * SYSTEM_ADMIN — hard-delete CLIENT_* portal user (frees email for re-invite).
+ */
+router.delete(
+  '/:id/users/:userId',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const organizationId = routeParam(req.params.id);
+    const userId = routeParam(req.params.userId);
+    try {
+      const result = await deletePortalOrganizationUser({
+        organizationId,
+        userId,
+        mode: 'admin',
+        actor: {
+          id: String(req.user?.id || ''),
+          role: String(req.user?.role || ''),
+          organizationId: null,
+        },
+      });
+      return res.json({
+        success: true,
+        deletedUserId: result.deletedUserId,
+        email: result.email,
+        name: result.name,
+        deletedContactIds: result.deletedContactIds,
+        message: `Portal-Benutzer entfernt: ${result.name} (${result.email})`,
+      });
+    } catch (err: any) {
+      const status = err?.status || 500;
+      return res.status(status).json({
+        error: safeErrorMessage(err, 'Portal-Benutzer konnte nicht gelöscht werden'),
+      });
+    }
+  },
+);
+
+/**
+ * DELETE /api/admin/organizations/:id/contacts/:contactId
+ * SYSTEM_ADMIN — delete CRM contact; also deletes linked portal user when present.
+ */
+router.delete(
+  '/:id/contacts/:contactId',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const organizationId = routeParam(req.params.id);
+    const contactId = routeParam(req.params.contactId);
+    try {
+      const result = await deleteOrganizationContact({
+        organizationId,
+        contactId,
+        actor: {
+          id: String(req.user?.id || ''),
+          role: String(req.user?.role || ''),
+          organizationId: null,
+        },
+      });
+      return res.json({
+        success: true,
+        ...result,
+        message: 'Kontakt entfernt.',
+      });
+    } catch (err: any) {
+      const status = err?.status || 500;
+      return res.status(status).json({
+        error: safeErrorMessage(err, 'Kontakt konnte nicht gelöscht werden'),
+      });
     }
   },
 );

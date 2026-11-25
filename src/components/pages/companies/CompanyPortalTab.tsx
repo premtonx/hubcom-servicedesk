@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
-import { KeyRound, Loader2, Mail, Shield, UserPlus, Users } from 'lucide-react';
+import { KeyRound, Loader2, Mail, Shield, Trash2, UserPlus, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
@@ -15,6 +15,7 @@ import {
 } from '../../ui/select';
 import { OrgPortalBrandingCard } from '../../client-portal/OrgPortalBrandingCard';
 import { HardwareReturnsModuleCard } from '../../client-portal/HardwareReturnsModuleCard';
+import { DeletePortalUserDialog } from '../../ui/DeletePortalUserDialog';
 import { useTranslation } from '../../../lib/context/I18nContext';
 
 interface PortalUserRow {
@@ -89,6 +90,8 @@ export default function CompanyPortalTab({
   const [manualPassword, setManualPassword] = useState('');
   const [manualPasswordConfirm, setManualPasswordConfirm] = useState('');
   const [manualConfirm, setManualConfirm] = useState(false);
+  const [deleteUser, setDeleteUser] = useState<PortalUserRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     if (!organizationId) return;
@@ -433,6 +436,18 @@ export default function CompanyPortalTab({
                         <KeyRound className="w-3 h-3" />
                         {t('companies.portal.setPassword', 'Passwort')}
                       </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1 text-[10px] font-bold text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                        disabled={busyUserId === u.id || deleting}
+                        onClick={() => setDeleteUser(u)}
+                        title={t('companies.portal.deleteUser', 'Löschen')}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        {t('companies.portal.delete', 'Löschen')}
+                      </Button>
                       {u.isDeactivated ? (
                         <Badge variant="destructive" className="text-[10px]">
                           inactive
@@ -641,6 +656,36 @@ export default function CompanyPortalTab({
           </Button>
         </div>
       </section>
+
+      <DeletePortalUserDialog
+        open={Boolean(deleteUser)}
+        name={deleteUser?.name || ''}
+        email={deleteUser?.email || ''}
+        busy={deleting}
+        onCancel={() => setDeleteUser(null)}
+        onConfirm={async () => {
+          if (!organizationId || !deleteUser) return;
+          setDeleting(true);
+          try {
+            await axios.delete(
+              `/api/admin/organizations/${encodeURIComponent(organizationId)}/users/${encodeURIComponent(deleteUser.id)}`,
+              { withCredentials: true },
+            );
+            toast.success(
+              t(
+                'companies.portal.userDeleted',
+                `Portal-Benutzer entfernt: ${deleteUser.name || deleteUser.email}`,
+              ),
+            );
+            setDeleteUser(null);
+            await load();
+          } catch (err: any) {
+            toast.error(err?.response?.data?.error || 'Löschen fehlgeschlagen');
+          } finally {
+            setDeleting(false);
+          }
+        }}
+      />
     </div>
   );
 }

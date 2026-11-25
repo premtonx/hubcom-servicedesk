@@ -38,6 +38,7 @@ import {
 import { toast } from 'sonner';
 import axios from 'axios';
 import { useTranslation } from '../../../lib/context/I18nContext';
+import { DeletePortalUserDialog } from '../../ui/DeletePortalUserDialog';
 
 interface CompanyOtherTabsProps {
   activeSubTab: string;
@@ -49,6 +50,8 @@ interface CompanyOtherTabsProps {
   onSelectTicket?: (id: string) => void;
   onCompanyUpdated?: (patch: Partial<HydratedCompany>) => void;
   onVaultItemsChange?: (items: VaultItem[]) => void;
+  /** Notify parent after contact/portal-user delete so badge counts refresh. */
+  onContactsChanged?: () => void;
 }
 
 export default function CompanyOtherTabs({
@@ -61,8 +64,11 @@ export default function CompanyOtherTabs({
   onSelectTicket,
   onCompanyUpdated,
   onVaultItemsChange,
+  onContactsChanged,
 }: CompanyOtherTabsProps) {
   const { t } = useTranslation();
+  const [deleteContact, setDeleteContact] = useState<Contact | null>(null);
+  const [deletingContact, setDeletingContact] = useState(false);
   const [revealedKeys, setRevealedKeys] = useState<Record<string, boolean>>({});
   const [companyVaultItems, setCompanyVaultItems] = useState<VaultItem[]>([]);
   type OrgVaultSecretRow = {
@@ -280,6 +286,7 @@ export default function CompanyOtherTabs({
 
   if (activeSubTab === 'contacts') {
     return (
+      <>
       <Card className="border border-muted-foreground/10 rounded-2xl bg-background overflow-hidden">
         <CardHeader className="flex flex-row items-center justify-between pb-2 bg-muted/10">
           <div>
@@ -312,6 +319,7 @@ export default function CompanyOtherTabs({
                   <th className="px-5 py-3.5">{t('companies.directAccess', 'Direkter Kontakt')}</th>
                   <th className="px-5 py-3.5">{t('companies.customAttributes', 'Attribute')}</th>
                   <th className="px-5 py-3.5 text-center">{t('companies.status', 'Status')}</th>
+                  <th className="px-5 py-3.5 text-right">{t('companies.actions', 'Aktionen')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50 text-xs">
@@ -402,13 +410,27 @@ export default function CompanyOtherTabs({
                           <span className="text-[10px] text-muted-foreground">—</span>
                         )}
                       </td>
+                      <td className="px-5 py-3.5 text-right">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1 text-[10px] font-bold text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                          disabled={deletingContact}
+                          onClick={() => setDeleteContact(employee)}
+                          title={t('companies.deleteContact', 'Löschen')}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          {t('companies.delete', 'Löschen')}
+                        </Button>
+                      </td>
                     </tr>
                   );
                 })}
                 {employees.length === 0 && (
                   <tr>
                     <td
-                      colSpan={4}
+                      colSpan={5}
                       className="px-5 py-12 text-center text-muted-foreground italic font-semibold"
                     >
                       {t(
@@ -423,6 +445,45 @@ export default function CompanyOtherTabs({
           </div>
         </CardContent>
       </Card>
+
+      <DeletePortalUserDialog
+        open={Boolean(deleteContact)}
+        name={deleteContact?.name || ''}
+        email={deleteContact?.email || ''}
+        busy={deletingContact}
+        onCancel={() => setDeleteContact(null)}
+        onConfirm={async () => {
+          if (!deleteContact) return;
+          const orgId =
+            company.organizationId ||
+            (company as { organization_id?: string }).organization_id ||
+            null;
+          if (!orgId) {
+            toast.error('Organisation nicht verknüpft — Löschen nicht möglich.');
+            return;
+          }
+          setDeletingContact(true);
+          try {
+            await axios.delete(
+              `/api/admin/organizations/${encodeURIComponent(orgId)}/contacts/${encodeURIComponent(deleteContact.id)}`,
+              { withCredentials: true },
+            );
+            toast.success(
+              t(
+                'companies.contactDeleted',
+                `Kontakt entfernt: ${deleteContact.name || deleteContact.email}`,
+              ),
+            );
+            setDeleteContact(null);
+            onContactsChanged?.();
+          } catch (err: any) {
+            toast.error(err?.response?.data?.error || 'Löschen fehlgeschlagen');
+          } finally {
+            setDeletingContact(false);
+          }
+        }}
+      />
+      </>
     );
   }
 

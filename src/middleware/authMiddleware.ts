@@ -224,11 +224,10 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     }
 
     if (!userDoc) {
-      // Zero-trust: an authenticated token with no provisioned account is
-      // rejected. Accounts must be created explicitly via registration or by
-      // an administrator — never implicitly synthesized here.
-      return res.status(403).json({
-        error: "Forbidden: No active user profile is provisioned for this identity."
+      // Deleted / never-provisioned account: reject as Unauthorized so clients
+      // clear the session cookie. Soft-deactivated accounts stay 403 below.
+      return res.status(401).json({
+        error: "Unauthorized: No active user profile is provisioned for this identity."
       });
     }
 

@@ -791,6 +791,11 @@ export default function CustomersPage() {
                   onAddContactClick={() => setIsContactDialogOpen(true)}
                   onSelectTicket={(ticketId) => navigate(`/tickets/${ticketId}`)}
                   onVaultItemsChange={setCompanyVaultItems}
+                  onContactsChanged={() => {
+                    // Snapshot subscription refreshes employees; bump enrichment so badge re-renders.
+                    if (!selectedCompanyId) return;
+                    setOrgEnrichment((prev) => ({ ...prev }));
+                  }}
                   onCompanyUpdated={(patch) => {
                     if (!selectedCompanyId) return;
                     setOrgEnrichment((prev) => ({

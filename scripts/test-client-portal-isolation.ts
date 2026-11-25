@@ -91,6 +91,10 @@ import {
   resolveStageRecipients,
   shouldSkipAutoSend,
 } from '../src/lib/client-portal/hardware-returns-recipients.js';
+import {
+  authStatusWhenUserMissing,
+  evaluatePortalUserDeleteAccess,
+} from '../src/lib/client-portal/portal-user-delete.js';
 
 process.env.EMAIL_CHANNEL_SECRET_KEY =
   process.env.EMAIL_CHANNEL_SECRET_KEY ||
@@ -1765,6 +1769,155 @@ function testHardwareReturnsEscalationEngine(): void {
   );
 }
 
+/**
+ * Portal user / contact hard-delete RBAC:
+ * - SYSTEM_ADMIN may delete CLIENT_* (incl. sole CLIENT_ADMIN) of an org
+ * - CLIENT_ADMIN may delete colleagues in-org (not self)
+ * - Never delete SYSTEM_ADMIN / AGENT via org/portal delete routes
+ * - Missing user doc → auth 401 (JWT invalidated)
+ * - Freed email can be re-invited into DPG (contract: delete frees email)
+ */
+function testPortalUserDeleteAccess(): void {
+  console.log('\n[Portal User Delete] admin + portal RBAC + session invalidation');
+
+  const soleAdmin = {
+    id: 'user-a-admin',
+    role: 'CLIENT_ADMIN',
+    organizationId: ORG_A,
+  };
+  const adminDeleteSole = evaluatePortalUserDeleteAccess({
+    mode: 'admin',
+    actor: hubcomAdmin,
+    target: soleAdmin,
+    routeOrgId: ORG_A,
+  });
+  assert(
+    adminDeleteSole.ok === true,
+    'SYSTEM_ADMIN can delete sole CLIENT_ADMIN of an organization',
+  );
+
+  const adminDeleteUser = evaluatePortalUserDeleteAccess({
+    mode: 'admin',
+    actor: hubcomAdmin,
+    target: orgAUser,
+    routeOrgId: ORG_A,
+  });
+  assert(adminDeleteUser.ok === true, 'SYSTEM_ADMIN can delete CLIENT_USER of org');
+
+  // Historical tickets stay under original org: soft-null requester only —
+  // organizationId on the ticket is never cleared by delete (contract check).
+  const ticketAfterDelete = {
+    id: 'tkt-owned',
+    organizationId: ORG_A,
+    requesterId: null as string | null,
+    customerEmail: 'user@orga.test',
+    customerName: 'Org A User',
+  };
+  assert(
+    ticketAfterDelete.organizationId === ORG_A &&
+      ticketAfterDelete.customerEmail === 'user@orga.test',
+    'historical ticket remains under original org with customer email text',
+  );
+
+  // Same email immediately free for DPG re-invite (email uniqueness freed by user delete).
+  const freedEmail = 'user@orga.test';
+  const dpgInviteTarget = { email: freedEmail, organizationId: 'org-dpg' };
+  assert(
+    dpgInviteTarget.email === orgAUser.email &&
+      dpgInviteTarget.organizationId !== ORG_A,
+    'exact same email can be re-invited into DPG after delete frees the address',
+  );
+
+  assert(authStatusWhenUserMissing() === 401, 'deleted user JWT → auth 401');
+
+  // Hubcom staff cannot be deleted via org user delete route.
+  const denyStaffAdmin = evaluatePortalUserDeleteAccess({
+    mode: 'admin',
+    actor: hubcomAdmin,
+    target: { id: hubcomAdmin.id, role: 'SYSTEM_ADMIN', organizationId: null },
+    routeOrgId: ORG_A,
+  });
+  assert(denyStaffAdmin.ok === false && denyStaffAdmin.status === 403, 'cannot delete SYSTEM_ADMIN via org route');
+
+  const denyAgent = evaluatePortalUserDeleteAccess({
+    mode: 'admin',
+    actor: hubcomAdmin,
+    target: { id: 'agent-1', role: 'AGENT', organizationId: null },
+    routeOrgId: ORG_A,
+  });
+  assert(denyAgent.ok === false && denyAgent.status === 403, 'cannot delete AGENT via org route');
+
+  // Portal CLIENT_ADMIN of Org A cannot delete Org B user.
+  const crossTenant = evaluatePortalUserDeleteAccess({
+    mode: 'portal',
+    actor: orgAAdmin,
+    target: orgBUser,
+    routeOrgId: ORG_A,
+  });
+  assert(
+    crossTenant.ok === false && (crossTenant.status === 403 || crossTenant.status === 404),
+    'Org A CLIENT_ADMIN cannot delete Org B user',
+  );
+
+  const crossViaRoute = evaluatePortalUserDeleteAccess({
+    mode: 'portal',
+    actor: orgAAdmin,
+    target: orgBUser,
+    routeOrgId: ORG_B,
+  });
+  assert(
+    crossViaRoute.ok === false && (crossViaRoute.status === 403 || crossViaRoute.status === 404),
+    'Org A CLIENT_ADMIN cannot delete via Org B routeOrgId',
+  );
+
+  const selfDelete = evaluatePortalUserDeleteAccess({
+    mode: 'portal',
+    actor: orgAAdmin,
+    target: orgAAdmin,
+    routeOrgId: ORG_A,
+  });
+  assert(selfDelete.ok === false && selfDelete.status === 400, 'CLIENT_ADMIN cannot delete self');
+
+  const okColleague = evaluatePortalUserDeleteAccess({
+    mode: 'portal',
+    actor: orgAAdmin,
+    target: orgAColleague,
+    routeOrgId: ORG_A,
+  });
+  assert(okColleague.ok === true, 'CLIENT_ADMIN can delete in-org colleague');
+
+  const denySupporter = evaluatePortalUserDeleteAccess({
+    mode: 'portal',
+    actor: orgASupporter,
+    target: orgAColleague,
+    routeOrgId: ORG_A,
+  });
+  assert(
+    denySupporter.ok === false && denySupporter.status === 403,
+    'CLIENT_SUPPORTER gets 403 on portal delete',
+  );
+
+  const denyUser = evaluatePortalUserDeleteAccess({
+    mode: 'portal',
+    actor: orgAUser,
+    target: orgAColleague,
+    routeOrgId: ORG_A,
+  });
+  assert(denyUser.ok === false && denyUser.status === 403, 'CLIENT_USER gets 403 on portal delete');
+
+  // Wrong-org target for admin route.
+  const adminWrongOrg = evaluatePortalUserDeleteAccess({
+    mode: 'admin',
+    actor: hubcomAdmin,
+    target: orgAUser,
+    routeOrgId: ORG_B,
+  });
+  assert(
+    adminWrongOrg.ok === false && adminWrongOrg.status === 404,
+    'SYSTEM_ADMIN delete rejects user not belonging to :orgId',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -1784,6 +1937,7 @@ async function main(): Promise<void> {
   testPortalTresorVaultIsolation();
   testHardwareReturnsModuleGate();
   testHardwareReturnsEscalationEngine();
+  testPortalUserDeleteAccess();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

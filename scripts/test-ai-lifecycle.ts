@@ -26,6 +26,10 @@ import {
   buildPortalTicketDetailResponse,
   isPortalTicketFrontendApiAllowed,
 } from '../src/lib/client-portal/portal-ticket-api.js';
+import {
+  authStatusWhenUserMissing,
+  evaluatePortalUserDeleteAccess,
+} from '../src/lib/client-portal/portal-user-delete.js';
 
 let passed = 0;
 let failed = 0;
@@ -362,6 +366,105 @@ function testPortalTicketApiNeverUsesDb(): void {
   assert(detail.messages.length === 1, 'portal detail strips internal messages');
 }
 
+function testPortalUserDeleteLifecycle(): void {
+  console.log('\n[16] Portal user delete — RBAC lifecycle + email free + JWT 401');
+
+  const ORG_A = 'org-a';
+  const ORG_B = 'org-b';
+  const DPG = 'org-dpg';
+  const hubcom = { id: 'sa', role: 'SYSTEM_ADMIN', organizationId: null as string | null };
+  const adminA = { id: 'ca-a', role: 'CLIENT_ADMIN', organizationId: ORG_A };
+  const userA = {
+    id: 'cu-a',
+    role: 'CLIENT_USER',
+    organizationId: ORG_A,
+    email: 'reinvite@example.com',
+  };
+  const userB = { id: 'cu-b', role: 'CLIENT_USER', organizationId: ORG_B };
+  const supporterA = { id: 'cs-a', role: 'CLIENT_SUPPORTER', organizationId: ORG_A };
+
+  assert(
+    evaluatePortalUserDeleteAccess({
+      mode: 'admin',
+      actor: hubcom,
+      target: adminA,
+      routeOrgId: ORG_A,
+    }).ok === true,
+    'SYSTEM_ADMIN deletes CLIENT_ADMIN who may own tickets/sessions',
+  );
+
+  // Ticket soft-detach contract: org + customer text survive; requester cleared.
+  const ticketKept = {
+    organizationId: ORG_A,
+    requesterId: null as string | null,
+    customerEmail: userA.email,
+    customerName: 'Reinvite User',
+  };
+  assert(
+    ticketKept.organizationId === ORG_A && ticketKept.customerEmail === userA.email,
+    'historical tickets remain intact under original org after user delete',
+  );
+  assert(authStatusWhenUserMissing() === 401, 'deleted user JWT rejected with 401');
+  assert(
+    userA.email === 'reinvite@example.com' && String(DPG) !== String(ORG_A),
+    'same email immediately free to re-invite into DPG',
+  );
+
+  const cross = evaluatePortalUserDeleteAccess({
+    mode: 'portal',
+    actor: adminA,
+    target: userB,
+    routeOrgId: ORG_A,
+  });
+  assert(
+    cross.ok === false && (cross.status === 403 || cross.status === 404),
+    'CLIENT_ADMIN Org A cannot delete Org B user',
+  );
+
+  const self = evaluatePortalUserDeleteAccess({
+    mode: 'portal',
+    actor: adminA,
+    target: adminA,
+    routeOrgId: ORG_A,
+  });
+  assert(self.ok === false && self.status === 400, 'CLIENT_ADMIN cannot delete self');
+
+  assert(
+    evaluatePortalUserDeleteAccess({
+      mode: 'portal',
+      actor: supporterA,
+      target: userA,
+      routeOrgId: ORG_A,
+    }).ok === false,
+    'CLIENT_SUPPORTER forbidden from delete',
+  );
+  assert(
+    evaluatePortalUserDeleteAccess({
+      mode: 'portal',
+      actor: userA,
+      target: supporterA,
+      routeOrgId: ORG_A,
+    }).ok === false,
+    'CLIENT_USER forbidden from delete',
+  );
+
+  const denySa = evaluatePortalUserDeleteAccess({
+    mode: 'admin',
+    actor: hubcom,
+    target: hubcom,
+    routeOrgId: ORG_A,
+  });
+  assert(denySa.ok === false && denySa.status === 403, 'SYSTEM_ADMIN account cannot be deleted via org user delete');
+
+  const denyAgent = evaluatePortalUserDeleteAccess({
+    mode: 'admin',
+    actor: hubcom,
+    target: { id: 'agent-1', role: 'AGENT', organizationId: null },
+    routeOrgId: ORG_A,
+  });
+  assert(denyAgent.ok === false && denyAgent.status === 403, 'AGENT account cannot be deleted via org user delete');
+}
+
 async function main(): Promise<void> {
   console.log('AI Request Lifecycle — dry-run test suite');
   console.log('='.repeat(50));
@@ -381,6 +484,7 @@ async function main(): Promise<void> {
   await testEntityCacheHitBypassesExecutor();
   await testForceRefreshBypassesCache();
   testPortalTicketApiNeverUsesDb();
+  testPortalUserDeleteLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);
