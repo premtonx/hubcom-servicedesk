@@ -95,6 +95,8 @@ import {
 import {
   assertPortalDashboardTenantIsolation,
   buildPortalDashboardPayload,
+  buildReturnsActivityByRange,
+  buildReturnsActivitySeries,
 } from '../src/lib/client-portal/portal-dashboard-service.js';
 import {
   buildClientPortalUserProfile,
@@ -768,6 +770,38 @@ function testPortalDashboardIsolation(): void {
   assert(
     !JSON.stringify(adminDash).includes('secret diagnosis'),
     'dashboard payload strips AI internal fields',
+  );
+  assert(
+    adminDash.returnsKpis == null && adminDash.returnsActivityByRange == null,
+    'returns KPIs/trends omitted when hardwareReturnsEnabled is false',
+  );
+
+  const adminReturnsDash = buildPortalDashboardPayload({
+    role: 'CLIENT_ADMIN',
+    userId: orgAAdmin.id,
+    userName: 'Admin A',
+    organizationId: ORG_A,
+    organization: {
+      id: ORG_A,
+      name: 'Org A',
+      hardwareReturnsEnabled: true,
+    },
+    tickets: mixedTickets,
+    returnsKpis: { open: 4, overdue: 2, stage3: 1, returnedLast30: 3 },
+    returnsActivityByRange: buildReturnsActivityByRange([
+      {
+        createdAt: '2026-10-01T10:00:00.000Z',
+        deliveryDate: '2026-10-01',
+        returnDueDate: '2026-10-15',
+        returned: false,
+        returnedAt: null,
+      },
+    ]),
+  });
+  assert(
+    adminReturnsDash.returnsKpis?.open === 4 &&
+      adminReturnsDash.returnsActivityByRange?.['30d']?.length === 30,
+    'enabled org receives returns KPIs + 30d trend series',
   );
 
   const isolation = assertPortalDashboardTenantIsolation(adminDash, ORG_A, mixedTickets);
@@ -4197,28 +4231,97 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
     'normalize forces returned_at=null when returned=false',
   );
 
-  // Portal Übersicht returns card — DPG only, zero /api/db.
+  // Portal Übersicht returns KPIs in hero + trends chart — DPG only, zero /api/db.
   assert(
     dashboardPageSrc.includes('Rücklieferungen') &&
       dashboardPageSrc.includes('returnsKpis') &&
       dashboardPageSrc.includes('hardwareReturnsEnabled') &&
       dashboardPageSrc.includes('/portal/returns') &&
       dashboardPageSrc.includes('Offene Rücklieferungen') &&
-      dashboardPageSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
+      dashboardPageSrc.includes('3. Erinnerung gesendet') &&
+      dashboardPageSrc.includes('Rücklieferungen-Trends') &&
+      dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('30d')") &&
+      dashboardPageSrc.includes('7 Tage') &&
+      dashboardPageSrc.includes('30 Tage') &&
+      dashboardPageSrc.includes('90 Tage') &&
+      dashboardPageSrc.includes('12 Monate') &&
+      dashboardPageSrc.includes("id: 'all', label: 'Alle'") &&
       !dashboardPageSrc.includes('/api/db'),
-    'portal Übersicht shows returns card when hardwareReturnsEnabled',
+    'portal Übersicht shows top returns KPIs + trends chart when hardwareReturnsEnabled',
+  );
+  assert(
+    dashboardPageSrc.includes('showReturns') &&
+      dashboardPageSrc.includes('hardwareReturnsEnabled === true') &&
+      /showReturns[\s\S]{0,80}returnsKpis/.test(dashboardPageSrc),
+    'returns KPIs/trends gated on hardwareReturnsEnabled',
   );
   assert(
     dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
       dashboardRouteSrc.includes('hardware_returns_enabled') &&
       dashboardRouteSrc.includes('returnsKpis') &&
+      dashboardRouteSrc.includes('returnsActivityByRange') &&
+      dashboardRouteSrc.includes('buildReturnsActivityByRange') &&
       !dashboardRouteSrc.includes('/api/db'),
-    'dashboard route loads returns KPIs via portal returns workbench (no /api/db)',
+    'dashboard route loads returns KPIs + trend series via /api/portal only',
   );
   assert(
     dashboardSvcSrc.includes('returnsKpis') &&
-      dashboardSvcSrc.includes('hardwareReturnsEnabled'),
-    'dashboard payload carries hardwareReturnsEnabled + returnsKpis',
+      dashboardSvcSrc.includes('hardwareReturnsEnabled') &&
+      dashboardSvcSrc.includes('buildReturnsActivitySeries') &&
+      dashboardSvcSrc.includes('returnsActivityByRange'),
+    'dashboard payload carries hardwareReturnsEnabled + returns KPIs/trends',
+  );
+}
+
+/** Portal Übersicht returns KPI band + trends chart builders. */
+function testPortalDashboardReturnsTrends(): void {
+  console.log('\n--- Portal dashboard returns KPI band + trends ---');
+
+  const now = new Date('2026-11-25T12:00:00.000Z');
+  const rows = [
+    {
+      createdAt: '2026-11-01T10:00:00.000Z',
+      deliveryDate: '2026-11-01',
+      returnDueDate: '2026-11-10',
+      returned: false,
+      returnedAt: null,
+    },
+    {
+      createdAt: '2026-11-05T10:00:00.000Z',
+      deliveryDate: '2026-11-05',
+      returnDueDate: '2026-11-20',
+      returned: true,
+      returnedAt: '2026-11-20T09:00:00.000Z',
+    },
+  ];
+
+  const series30 = buildReturnsActivitySeries(rows, '30d', now);
+  assert(series30.length === 30, '30d series has 30 points');
+  assert(
+    series30.every((p) => typeof p.open === 'number' && typeof p.overdue === 'number'),
+    'series points expose open/overdue/returned',
+  );
+  const last = series30[series30.length - 1]!;
+  assert(last.open >= 1, 'today still counts open return');
+  assert(last.overdue >= 1, 'open past-due counts as overdue');
+
+  const series7 = buildReturnsActivitySeries(rows, '7d', now);
+  assert(series7.length === 7, '7d series has 7 points');
+  const series90 = buildReturnsActivitySeries(rows, '90d', now);
+  assert(series90.length === 90, '90d series has 90 points');
+  const series12m = buildReturnsActivitySeries(rows, '12m', now);
+  assert(series12m.length === 12, '12m series has 12 monthly points');
+  const seriesAll = buildReturnsActivitySeries(rows, 'all', now);
+  assert(seriesAll.length >= 1, 'all series has monthly points');
+
+  const byRange = buildReturnsActivityByRange(rows, now);
+  assert(
+    byRange['7d'].length === 7 &&
+      byRange['30d'].length === 30 &&
+      byRange['90d'].length === 90 &&
+      byRange['12m'].length === 12 &&
+      byRange.all.length >= 1,
+    'buildReturnsActivityByRange covers all timeframe selectors',
   );
 }
 
@@ -4552,6 +4655,7 @@ async function main(): Promise<void> {
   testHardwareReturnsWorkbenchDrawerContract();
   testHardwareReturnsSchemaCatalogsPart1();
   testHardwareReturnsPaginationErinnerungAndDashboard();
+  testPortalDashboardReturnsTrends();
   testHardwareReturnsDynamicReminderStages();
   testHardwareReturnsDynamicReminderUiPart2();
   testHardwareReturnsListeKanbanKarten();

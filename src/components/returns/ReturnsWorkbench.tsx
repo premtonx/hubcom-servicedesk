@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import {
   AlertTriangle,
@@ -362,11 +362,35 @@ export function ReturnsWorkbench({
 }: ReturnsWorkbenchProps) {
   const base = mode === 'portal' ? '/api/portal/returns' : '/api/returns';
   const orgQ = mode === 'staff' ? `organizationId=${encodeURIComponent(organizationId)}` : '';
+  const [searchParams] = useSearchParams();
 
-  const [view, setView] = useState<(typeof VIEWS)[number]['id']>('open');
+  const initialView = ((): (typeof VIEWS)[number]['id'] => {
+    const v = String(searchParams.get('view') || '').trim();
+    if (v === 'open' || v === 'overdue' || v === 'done' || v === 'all') {
+      return v;
+    }
+    return 'open';
+  })();
+  const initialMailStatus = ((): string => {
+    const m = String(searchParams.get('mailStatus') || '').trim();
+    if (
+      m === 'none' ||
+      m === 'mail1' ||
+      m === 'mail2' ||
+      m === 'mail3' ||
+      m === 'mail4plus' ||
+      m === 'missing_recipients' ||
+      m === 'all'
+    ) {
+      return m;
+    }
+    return 'all';
+  })();
+
+  const [view, setView] = useState<(typeof VIEWS)[number]['id']>(initialView);
   const [layoutMode, setLayoutMode] = useState<ReturnsLayoutMode>('list');
   const [q, setQ] = useState('');
-  const [mailStatus, setMailStatus] = useState('all');
+  const [mailStatus, setMailStatus] = useState(initialMailStatus);
   const [overdueBucket, setOverdueBucket] = useState('all');
   const [exportStatus, setExportStatus] = useState('all');
   const [shippingMethod, setShippingMethod] = useState('all');

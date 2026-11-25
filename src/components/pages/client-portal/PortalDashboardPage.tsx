@@ -4,6 +4,7 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -17,6 +18,8 @@ import {
   Image,
   Loader2,
   Mail,
+  Package,
+  PackageCheck,
   PackageOpen,
   Palette,
   Plus,
@@ -31,6 +34,7 @@ import { cn } from '../../../lib/utils';
 import {
   clientPortalApi,
   type PortalDashboardResponse,
+  type PortalReturnsTrendRange,
 } from '../../../services/clientPortalApi';
 import {
   dashboardPriorityLabel,
@@ -38,6 +42,14 @@ import {
   formatRelativeTime,
 } from '../../../lib/dashboard-format-utils';
 import { portalStatusLabel } from '../../../lib/portal/status';
+
+const RETURNS_TREND_OPTIONS: Array<{ id: PortalReturnsTrendRange; label: string }> = [
+  { id: '7d', label: '7 Tage' },
+  { id: '30d', label: '30 Tage' },
+  { id: '90d', label: '90 Tage' },
+  { id: '12m', label: '12 Monate' },
+  { id: 'all', label: 'Alle' },
+];
 
 const HERO_GRADIENT =
   'linear-gradient(105deg, rgba(255,255,255,0.94) 0%, rgba(255,255,255,0.82) 38%, rgba(255,255,255,0.35) 62%, rgba(255,255,255,0.08) 100%)';
@@ -58,6 +70,8 @@ export default function PortalDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ticketTab, setTicketTab] = useState<'all' | 'mine'>('all');
+  const [returnsTrendRange, setReturnsTrendRange] =
+    useState<PortalReturnsTrendRange>('30d');
 
   useEffect(() => {
     let active = true;
@@ -108,6 +122,8 @@ export default function PortalDashboardPage() {
       navigate={navigate}
       ticketTab={ticketTab}
       setTicketTab={setTicketTab}
+      returnsTrendRange={returnsTrendRange}
+      setReturnsTrendRange={setReturnsTrendRange}
     />
   );
 }
@@ -117,16 +133,25 @@ function PortalDashboardShell({
   navigate,
   ticketTab,
   setTicketTab,
+  returnsTrendRange,
+  setReturnsTrendRange,
 }: {
   data: PortalDashboardResponse;
   navigate: ReturnType<typeof useNavigate>;
   ticketTab: 'all' | 'mine';
   setTicketTab: (t: 'all' | 'mine') => void;
+  returnsTrendRange: PortalReturnsTrendRange;
+  setReturnsTrendRange: (r: PortalReturnsTrendRange) => void;
 }) {
   const isAdmin = data.role === 'CLIENT_ADMIN';
   const isOrgWide = data.role === 'CLIENT_ADMIN' || data.role === 'CLIENT_SUPPORTER';
+  const showReturns =
+    isOrgWide &&
+    data.organization.hardwareReturnsEnabled === true &&
+    Boolean(data.returnsKpis);
   const bannerUrl = data.organization.portalBannerUrl;
   const dateLabel = new Date().toLocaleDateString('de-DE', {
+    timeZone: 'Europe/Berlin',
     weekday: 'short',
     day: '2-digit',
     month: 'short',
@@ -141,6 +166,12 @@ function PortalDashboardShell({
     if (!isOrgWide || ticketTab === 'all') return data.tickets;
     return (data.myOpenTickets || data.tickets).filter(Boolean);
   }, [data, isOrgWide, ticketTab]);
+
+  const returnsTrendData = useMemo(() => {
+    const byRange = data.returnsActivityByRange;
+    if (!byRange) return [];
+    return byRange[returnsTrendRange] || byRange['30d'] || [];
+  }, [data.returnsActivityByRange, returnsTrendRange]);
 
   return (
     <div className="flex-1 overflow-y-auto min-h-0 bg-[#F8F9FA]">
@@ -223,112 +254,212 @@ function PortalDashboardShell({
                 onClick={() => navigate('/portal/tickets')}
               />
             </div>
+
+            {showReturns && data.returnsKpis ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <PackageOpen className="w-3.5 h-3.5 text-sky-700" />
+                    Rücklieferungen
+                  </h2>
+                  <button
+                    type="button"
+                    className="text-[11px] font-bold text-sky-700 hover:text-sky-900"
+                    onClick={() => navigate('/portal/returns')}
+                  >
+                    Zur Übersicht →
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                  <HeroKpiCard
+                    label="Offene Rücklieferungen"
+                    value={data.returnsKpis.open}
+                    icon={<Package className="w-4 h-4" />}
+                    iconTone="blue"
+                    onClick={() => navigate('/portal/returns?view=open')}
+                  />
+                  <HeroKpiCard
+                    label="Überfällig"
+                    value={data.returnsKpis.overdue}
+                    icon={<AlertTriangle className="w-4 h-4" />}
+                    iconTone="amber"
+                    onClick={() => navigate('/portal/returns?view=overdue')}
+                  />
+                  <HeroKpiCard
+                    label="3. Erinnerung gesendet"
+                    value={data.returnsKpis.stage3}
+                    icon={<ShieldAlert className="w-4 h-4" />}
+                    iconTone="purple"
+                    onClick={() =>
+                      navigate('/portal/returns?view=open&mailStatus=mail3')
+                    }
+                  />
+                  <HeroKpiCard
+                    label="Zurückgeliefert (30 Tage)"
+                    value={data.returnsKpis.returnedLast30}
+                    icon={<PackageCheck className="w-4 h-4" />}
+                    iconTone="green"
+                    onClick={() => navigate('/portal/returns?view=done')}
+                  />
+                </div>
+              </div>
+            ) : null}
           </div>
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
-          <CardShell className="lg:col-span-2 flex flex-col min-h-[28rem]">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 shrink-0">
-              <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">
-                Aktuelle Tickets
-              </h2>
-              {isOrgWide ? (
-                <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
-                  {(
-                    [
-                      { id: 'all' as const, label: 'Alle Firmen-Tickets' },
-                      { id: 'mine' as const, label: 'Meine Tickets' },
-                    ] as const
-                  ).map((tab) => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setTicketTab(tab.id)}
-                      className={cn(
-                        'px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors',
-                        ticketTab === tab.id
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-slate-500 hover:text-slate-800',
-                      )}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <span className="text-[11px] font-bold text-slate-500">Meine Tickets</span>
-              )}
-            </div>
-            <TicketList tickets={listedTickets} navigate={navigate} showRequester={isOrgWide} />
-
-            {data.activity && data.activity.length > 0 ? (
-              <div className="mt-6 pt-5 border-t border-slate-100">
-                <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3">
-                  Ticket-Trends
-                </h3>
-                <div className="h-48">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={data.activity}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                      <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={4} />
-                      <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                      <Tooltip />
-                      <Area
-                        type="monotone"
-                        dataKey="created"
-                        name="Eingehend"
-                        stroke="#1B6CA8"
-                        fill="#1B6CA822"
-                        strokeWidth={2}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="resolved"
-                        name="Gelöst"
-                        stroke="#059669"
-                        fill="#05966922"
-                        strokeWidth={2}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
+          <div className="lg:col-span-2 flex flex-col gap-4 min-w-0">
+            <CardShell className="flex flex-col min-h-[28rem]">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 shrink-0">
+                <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">
+                  Aktuelle Tickets
+                </h2>
+                {isOrgWide ? (
+                  <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+                    {(
+                      [
+                        { id: 'all' as const, label: 'Alle Firmen-Tickets' },
+                        { id: 'mine' as const, label: 'Meine Tickets' },
+                      ] as const
+                    ).map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setTicketTab(tab.id)}
+                        className={cn(
+                          'px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors',
+                          ticketTab === tab.id
+                            ? 'bg-white text-slate-900 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-800',
+                        )}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-[11px] font-bold text-slate-500">Meine Tickets</span>
+                )}
               </div>
-            ) : null}
-          </CardShell>
+              <TicketList tickets={listedTickets} navigate={navigate} showRequester={isOrgWide} />
 
-          <div className="space-y-4">
-            {isOrgWide &&
-            data.organization.hardwareReturnsEnabled &&
-            data.returnsKpis ? (
+              {data.activity && data.activity.length > 0 ? (
+                <div className="mt-6 pt-5 border-t border-slate-100">
+                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3">
+                    Ticket-Trends
+                  </h3>
+                  <div className="h-48">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={data.activity}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                        <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={4} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                        <Tooltip />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Area
+                          type="monotone"
+                          dataKey="created"
+                          name="Eingehend"
+                          stroke="#1B6CA8"
+                          fill="#1B6CA822"
+                          strokeWidth={2}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="resolved"
+                          name="Gelöst"
+                          stroke="#059669"
+                          fill="#05966922"
+                          strokeWidth={2}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              ) : null}
+            </CardShell>
+
+            {showReturns ? (
               <CardShell>
-                <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
-                  <PackageOpen className="w-4 h-4 text-sky-600" /> Rücklieferungen
-                </h3>
-                <dl className="space-y-2 text-sm">
-                  <SummaryRow
-                    label="Offene Rücklieferungen"
-                    value={data.returnsKpis.open}
-                  />
-                  <SummaryRow label="Überfällig" value={data.returnsKpis.overdue} />
-                  <SummaryRow
-                    label="Letzte Stufe / Eskaliert (4.+ Erinnerung)"
-                    value={data.returnsKpis.stage3}
-                  />
-                  <SummaryRow
-                    label="Zurückgeliefert (30 Tage)"
-                    value={data.returnsKpis.returnedLast30}
-                  />
-                </dl>
-                <Button
-                  variant="outline"
-                  className="w-full mt-4 rounded-xl font-bold gap-2"
-                  onClick={() => navigate('/portal/returns')}
-                >
-                  <ShieldAlert className="w-4 h-4" />
-                  Zu Rücklieferungen
-                </Button>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                    <PackageOpen className="w-4 h-4 text-sky-600" />
+                    Rücklieferungen-Trends
+                  </h3>
+                  <div className="flex flex-wrap items-center gap-1 rounded-xl bg-slate-100 p-1">
+                    {RETURNS_TREND_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setReturnsTrendRange(opt.id)}
+                        className={cn(
+                          'px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-colors',
+                          returnsTrendRange === opt.id
+                            ? 'bg-white text-slate-900 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-800',
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="h-56">
+                  {returnsTrendData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={returnsTrendData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                        <XAxis
+                          dataKey="name"
+                          tick={{ fontSize: 10 }}
+                          interval={
+                            returnsTrendRange === '90d'
+                              ? 6
+                              : returnsTrendRange === '7d'
+                                ? 0
+                                : 4
+                          }
+                        />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                        <Tooltip />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Area
+                          type="monotone"
+                          dataKey="open"
+                          name="Offen"
+                          stroke="#1B6CA8"
+                          fill="#1B6CA822"
+                          strokeWidth={2}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="overdue"
+                          name="Überfällig"
+                          stroke="#D97706"
+                          fill="#D9770622"
+                          strokeWidth={2}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="returned"
+                          name="Zurückgeliefert"
+                          stroke="#059669"
+                          fill="#05966922"
+                          strokeWidth={2}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="text-sm text-slate-500 py-16 text-center">
+                      Noch keine Rücklieferungsdaten für diesen Zeitraum.
+                    </p>
+                  )}
+                </div>
               </CardShell>
             ) : null}
+          </div>
+
+          <div className="space-y-4">
             {isAdmin ? (
               <>
                 <CardShell>

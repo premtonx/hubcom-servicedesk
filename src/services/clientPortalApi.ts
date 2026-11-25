@@ -74,6 +74,16 @@ export interface PortalDashboardReturnsKpis {
   returnedLast30: number;
 }
 
+export type PortalReturnsTrendRange = '7d' | '30d' | '90d' | '12m' | 'all';
+
+export interface PortalDashboardReturnsActivityPoint {
+  date: string;
+  name: string;
+  open: number;
+  overdue: number;
+  returned: number;
+}
+
 export interface PortalDashboardResponse {
   role: string;
   organization: {
@@ -108,6 +118,9 @@ export interface PortalDashboardResponse {
     sendAsEnabled: boolean;
   } | null;
   returnsKpis?: PortalDashboardReturnsKpis | null;
+  returnsActivityByRange?: Partial<
+    Record<PortalReturnsTrendRange, PortalDashboardReturnsActivityPoint[]>
+  > | null;
 }
 
 export const clientPortalApi = {

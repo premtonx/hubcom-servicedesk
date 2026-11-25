@@ -364,9 +364,11 @@ router.get(
       const { listTicketIdsForParticipant } = await import(
         '../lib/client-portal/ticket-participants.js'
       );
-      const { buildPortalDashboardPayload } = await import(
-        '../lib/client-portal/portal-dashboard-service.js'
-      );
+      const {
+        buildPortalDashboardPayload,
+        buildReturnsActivityByRange,
+        returnsTrendSourceFromWorkbenchItems,
+      } = await import('../lib/client-portal/portal-dashboard-service.js');
       const { listOrganizationUsers } = await import('../lib/client-portal/team-service.js');
       const { findOrganizationEmailChannel } = await import(
         '../lib/email-ingestion/channel-store.js'
@@ -412,6 +414,7 @@ router.get(
       }
 
       let returnsKpis = null;
+      let returnsActivityByRange = null;
       const hardwareReturnsEnabled = Boolean(org.hardware_returns_enabled);
       if (
         hardwareReturnsEnabled &&
@@ -424,7 +427,7 @@ router.get(
           const listed = await listHardwareReturnsWorkbench({
             organizationId,
             view: 'all',
-            limit: 1,
+            limit: 2000,
             offset: 0,
           });
           returnsKpis = {
@@ -433,9 +436,13 @@ router.get(
             stage3: listed.kpis.stage3,
             returnedLast30: listed.kpis.returnedLast30,
           };
+          returnsActivityByRange = buildReturnsActivityByRange(
+            returnsTrendSourceFromWorkbenchItems(listed.items),
+          );
         } catch (err: any) {
           safeLog('warn', '[portal] dashboard returns KPIs skipped', err?.message || err);
           returnsKpis = null;
+          returnsActivityByRange = null;
         }
       }
 
@@ -457,6 +464,7 @@ router.get(
         teamSummary,
         emailStatus,
         returnsKpis,
+        returnsActivityByRange,
       });
 
       return res.json(payload);

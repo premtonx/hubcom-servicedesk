@@ -1182,10 +1182,14 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
   assert(
     dashboardPageSrc.includes('returnsKpis') &&
       dashboardPageSrc.includes('hardwareReturnsEnabled') &&
+      dashboardPageSrc.includes('Rücklieferungen-Trends') &&
+      dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('30d')") &&
+      dashboardPageSrc.includes('3. Erinnerung gesendet') &&
       dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
+      dashboardRouteSrc.includes('returnsActivityByRange') &&
       !dashboardPageSrc.includes('/api/db') &&
       !dashboardRouteSrc.includes("'/api/db"),
-    'portal Übersicht returns stats for enabled orgs via /api/portal only',
+    'portal Übersicht returns top KPIs + trends for enabled orgs via /api/portal only',
   );
 }
 

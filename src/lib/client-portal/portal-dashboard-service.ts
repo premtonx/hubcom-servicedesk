@@ -52,6 +52,34 @@ export interface PortalDashboardReturnsKpis {
   returnedLast30: number;
 }
 
+/** One point on the Rücklieferungen-Trends chart. */
+export interface PortalDashboardReturnsActivityPoint {
+  date: string;
+  name: string;
+  open: number;
+  overdue: number;
+  returned: number;
+}
+
+export type PortalReturnsTrendRange = '7d' | '30d' | '90d' | '12m' | 'all';
+
+export const PORTAL_RETURNS_TREND_RANGES: PortalReturnsTrendRange[] = [
+  '7d',
+  '30d',
+  '90d',
+  '12m',
+  'all',
+];
+
+/** Minimal return facts for trend aggregation (no PII required). */
+export interface PortalReturnsTrendSourceRow {
+  createdAt: string | null;
+  deliveryDate: string | null;
+  returnDueDate: string | null;
+  returned: boolean;
+  returnedAt: string | null;
+}
+
 export interface PortalDashboardPayload {
   role: ClientPortalRole;
   organization: {
@@ -75,6 +103,10 @@ export interface PortalDashboardPayload {
   email?: PortalDashboardEmailStatus | null;
   /** Present when org has hardware_returns_enabled and caller is org-wide. */
   returnsKpis?: PortalDashboardReturnsKpis | null;
+  /** Precomputed trend series per timeframe (default chart uses `30d`). */
+  returnsActivityByRange?: Partial<
+    Record<PortalReturnsTrendRange, PortalDashboardReturnsActivityPoint[]>
+  > | null;
 }
 
 function parseTs(value: unknown): number {
@@ -161,6 +193,223 @@ function buildActivity(
   return points;
 }
 
+function berlinDayKey(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Berlin',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+function berlinMonthKey(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Berlin',
+    year: 'numeric',
+    month: '2-digit',
+  })
+    .format(d)
+    .slice(0, 7);
+}
+
+function berlinDayLabel(d: Date): string {
+  return d.toLocaleDateString('de-DE', {
+    timeZone: 'Europe/Berlin',
+    day: '2-digit',
+    month: '2-digit',
+  });
+}
+
+function berlinMonthLabel(d: Date): string {
+  return d.toLocaleDateString('de-DE', {
+    timeZone: 'Europe/Berlin',
+    month: 'short',
+    year: '2-digit',
+  });
+}
+
+function parseDateOnlyUtc(raw: string | null | undefined): Date | null {
+  if (!raw) return null;
+  const iso = String(raw).trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  const d = new Date(`${iso}T00:00:00.000Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function startOfBerlinDayUtc(now: Date = new Date()): Date {
+  const key = berlinDayKey(now);
+  return new Date(`${key}T00:00:00.000Z`);
+}
+
+function addUtcDays(d: Date, days: number): Date {
+  const next = new Date(d.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function addUtcMonths(d: Date, months: number): Date {
+  const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months, 1));
+  return next;
+}
+
+function wasOpenOnDay(
+  row: PortalReturnsTrendSourceRow,
+  dayStart: Date,
+): boolean {
+  const created = parseTs(row.createdAt) || parseTs(row.deliveryDate);
+  if (created && created > dayStart.getTime() + 24 * 60 * 60 * 1000 - 1) {
+    return false;
+  }
+  if (!row.returned) return true;
+  const returnedAt = parseTs(row.returnedAt);
+  if (!returnedAt) return false;
+  // Still open on day if returned after end of that day.
+  return returnedAt > dayStart.getTime() + 24 * 60 * 60 * 1000 - 1;
+}
+
+function wasOverdueOnDay(
+  row: PortalReturnsTrendSourceRow,
+  dayStart: Date,
+): boolean {
+  if (!wasOpenOnDay(row, dayStart)) return false;
+  const due =
+    parseDateOnlyUtc(row.returnDueDate) || parseDateOnlyUtc(row.deliveryDate);
+  if (!due) return false;
+  return due.getTime() < dayStart.getTime();
+}
+
+function returnedOnDay(row: PortalReturnsTrendSourceRow, dayStart: Date): boolean {
+  if (!row.returned || !row.returnedAt) return false;
+  const t = parseTs(row.returnedAt);
+  if (!t) return false;
+  const key = berlinDayKey(new Date(t));
+  return key === berlinDayKey(dayStart);
+}
+
+function returnedInMonth(row: PortalReturnsTrendSourceRow, monthStart: Date): boolean {
+  if (!row.returned || !row.returnedAt) return false;
+  const t = parseTs(row.returnedAt);
+  if (!t) return false;
+  return berlinMonthKey(new Date(t)) === berlinMonthKey(monthStart);
+}
+
+function wasOpenInMonth(
+  row: PortalReturnsTrendSourceRow,
+  monthStart: Date,
+): boolean {
+  // Snapshot at end of month (or today if current month).
+  const nextMonth = addUtcMonths(monthStart, 1);
+  const end = addUtcDays(nextMonth, -1);
+  const today = startOfBerlinDayUtc();
+  const snapshot = end.getTime() > today.getTime() ? today : end;
+  return wasOpenOnDay(row, snapshot);
+}
+
+function wasOverdueInMonth(
+  row: PortalReturnsTrendSourceRow,
+  monthStart: Date,
+): boolean {
+  const nextMonth = addUtcMonths(monthStart, 1);
+  const end = addUtcDays(nextMonth, -1);
+  const today = startOfBerlinDayUtc();
+  const snapshot = end.getTime() > today.getTime() ? today : end;
+  return wasOverdueOnDay(row, snapshot);
+}
+
+/**
+ * Build Rücklieferungen-Trends series for a timeframe.
+ * Daily buckets for 7d/30d/90d; monthly for 12m/all.
+ */
+export function buildReturnsActivitySeries(
+  rows: PortalReturnsTrendSourceRow[],
+  range: PortalReturnsTrendRange,
+  now: Date = new Date(),
+): PortalDashboardReturnsActivityPoint[] {
+  const today = startOfBerlinDayUtc(now);
+
+  if (range === '12m' || range === 'all') {
+    let months = range === '12m' ? 12 : 24;
+    if (range === 'all' && rows.length) {
+      let earliest = today.getTime();
+      for (const r of rows) {
+        const t = parseTs(r.createdAt) || parseTs(r.deliveryDate);
+        if (t && t < earliest) earliest = t;
+      }
+      const earliestMonth = new Date(
+        Date.UTC(
+          new Date(earliest).getUTCFullYear(),
+          new Date(earliest).getUTCMonth(),
+          1,
+        ),
+      );
+      const span =
+        (today.getUTCFullYear() - earliestMonth.getUTCFullYear()) * 12 +
+        (today.getUTCMonth() - earliestMonth.getUTCMonth()) +
+        1;
+      months = Math.max(1, Math.min(60, span));
+    }
+    const points: PortalDashboardReturnsActivityPoint[] = [];
+    for (let i = months - 1; i >= 0; i -= 1) {
+      const monthStart = addUtcMonths(
+        new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)),
+        -i,
+      );
+      points.push({
+        date: berlinMonthKey(monthStart),
+        name: berlinMonthLabel(monthStart),
+        open: rows.filter((r) => wasOpenInMonth(r, monthStart)).length,
+        overdue: rows.filter((r) => wasOverdueInMonth(r, monthStart)).length,
+        returned: rows.filter((r) => returnedInMonth(r, monthStart)).length,
+      });
+    }
+    return points;
+  }
+
+  const days = range === '7d' ? 7 : range === '90d' ? 90 : 30;
+  const points: PortalDashboardReturnsActivityPoint[] = [];
+  for (let i = days - 1; i >= 0; i -= 1) {
+    const day = addUtcDays(today, -i);
+    points.push({
+      date: berlinDayKey(day),
+      name: berlinDayLabel(day),
+      open: rows.filter((r) => wasOpenOnDay(r, day)).length,
+      overdue: rows.filter((r) => wasOverdueOnDay(r, day)).length,
+      returned: rows.filter((r) => returnedOnDay(r, day)).length,
+    });
+  }
+  return points;
+}
+
+/** Precompute all timeframe series for the dashboard payload. */
+export function buildReturnsActivityByRange(
+  rows: PortalReturnsTrendSourceRow[],
+  now: Date = new Date(),
+): Record<PortalReturnsTrendRange, PortalDashboardReturnsActivityPoint[]> {
+  const out = {} as Record<
+    PortalReturnsTrendRange,
+    PortalDashboardReturnsActivityPoint[]
+  >;
+  for (const range of PORTAL_RETURNS_TREND_RANGES) {
+    out[range] = buildReturnsActivitySeries(rows, range, now);
+  }
+  return out;
+}
+
+export function returnsTrendSourceFromWorkbenchItems(
+  items: Array<{ hardwareReturn: Record<string, any> }>,
+): PortalReturnsTrendSourceRow[] {
+  return items.map((it) => {
+    const hw = it.hardwareReturn || {};
+    return {
+      createdAt: hw.created_at ? String(hw.created_at) : null,
+      deliveryDate: hw.delivery_date ? String(hw.delivery_date) : null,
+      returnDueDate: hw.return_due_date ? String(hw.return_due_date) : null,
+      returned: Boolean(hw.returned),
+      returnedAt: hw.returned_at ? String(hw.returned_at) : null,
+    };
+  });
+}
+
 /**
  * Build a portal dashboard payload from already-loaded org-scoped tickets.
  * Enforces CLIENT_USER own/participant visibility and strips internal fields.
@@ -184,6 +433,9 @@ export function buildPortalDashboardPayload(params: {
   teamSummary?: PortalDashboardTeamSummary | null;
   emailStatus?: PortalDashboardEmailStatus | null;
   returnsKpis?: PortalDashboardReturnsKpis | null;
+  returnsActivityByRange?: Partial<
+    Record<PortalReturnsTrendRange, PortalDashboardReturnsActivityPoint[]>
+  > | null;
 }): PortalDashboardPayload {
   if (!isClientPortalRole(params.role)) {
     throw Object.assign(new Error('Not a client portal role'), { status: 403 });
@@ -259,8 +511,11 @@ export function buildPortalDashboardPayload(params: {
     baseOrg.hardwareReturnsEnabled &&
     (role === 'CLIENT_ADMIN' || role === 'CLIENT_SUPPORTER') &&
     params.returnsKpis
-      ? { returnsKpis: params.returnsKpis }
-      : { returnsKpis: null };
+      ? {
+          returnsKpis: params.returnsKpis,
+          returnsActivityByRange: params.returnsActivityByRange || null,
+        }
+      : { returnsKpis: null, returnsActivityByRange: null };
 
   if (role === 'CLIENT_USER') {
     const myOpen = sortedOpen
