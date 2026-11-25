@@ -41,10 +41,12 @@ Data durability:
 |---|---|
 | `/portal` Übersicht | all `CLIENT_*` |
 | `/portal/tickets` | all `CLIENT_*` |
-| `/portal/kb` | all (write: ADMIN/SUPPORTER) |
+| `/portal/kb` | all (write: ADMIN/SUPPORTER); API `/api/portal/kb*` only |
 | `/portal/exchange` | all (scoped) |
 | `/portal/vault` | ADMIN/SUPPORTER only |
 | `/portal/members`, `/email`, `/branding` | `CLIENT_ADMIN` |
+
+**Shared UI, Separate APIs:** Prefer one shared presentational workbench (`mode: 'staff' | 'portal'` + typed adapter) over a forked portal UI. Portal pages call `/api/portal/*` exclusively; staff keep staff APIs. See `AGENTS.md`.
 
 ## Required environment
 

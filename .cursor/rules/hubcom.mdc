@@ -12,4 +12,5 @@ Follow `AGENTS.md` at repo root. Highlights:
 - Portal RBAC: `CLIENT_ADMIN` > `CLIENT_SUPPORTER` > `CLIENT_USER`. Tresor: `client_visible` default **false**; `CLIENT_USER` forbidden.
 - `VAULT_ENCRYPTION_KEY` AES-256-GCM; no SVG uploads; no portal `/api/db` roles bootstrap.
 - German UI; no mock fixture data in live paths.
+- **Shared UI, Separate APIs:** Never ship a stripped-down `/portal/*` UI when a Staff workbench exists. Share one presentational workbench (`mode: 'staff' | 'portal'` + typed adapter) so layout/CSS/filters/view switchers stay synced. Portal calls **only** `/api/portal/*` (never `/api/db`, staff `/api/kb*`, or staff telemetry). Do not add `CLIENT_*` to staff endpoints. Portal routers must `authenticate` before `requireClientPortalRole`.
 - Verify: `npx tsc --noEmit`, `npm run build`, `npm run test:portal-isolation`, `npm run test:lifecycle`, `npm run test:email-html`.

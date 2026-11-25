@@ -46,6 +46,16 @@ CRM `companies.id` ≠ portal tenant. Bridge via `organizations.crm_company_id`.
 - Ticket status/KPI filters: shared helpers (`src/lib/portal/status.ts`, dashboard format utils).
 - HTML: sanitize on render; unwrap Outlook SafeLinks on ingest/send paths.
 
+## Shared Workbench Rule (Shared UI, Separate APIs)
+
+Never create a separate stripped-down UI for `/portal/*` when a Hubcom Staff workbench already exists.
+
+- Extract **one** shared presentational workbench with `mode: 'staff' | 'portal'` and an injected typed **adapter**.
+- Layout, CSS, filters, and view switchers stay **100% synced** between staff and portal.
+- `/portal/*` pages must call **only** `/api/portal/*` endpoints — never `/api/db`, staff `/api/kb*`, `/api/header`, or other Hubcom staff telemetry.
+- Staff pages keep using staff APIs; do **not** weaken backend auth or add `CLIENT_*` roles to staff endpoints.
+- Portal routers under `/api/portal/*` must mount `authenticate` before `requireClientPortalRole` so session users are populated (missing auth → exact toast `Unauthorized.`).
+
 ## Verify before PR
 
 ```bash

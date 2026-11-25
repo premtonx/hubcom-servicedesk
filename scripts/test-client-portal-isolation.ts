@@ -51,6 +51,14 @@ import {
   sanitizeKbArticleForPortal,
 } from '../src/lib/client-portal/kb-visibility.js';
 import {
+  collectApiPathLiteralsFromSource,
+  isPortalKbFrontendApiAllowed,
+  portalKbListAuthStatus,
+  portalKbRouterMountsAuthenticate,
+} from '../src/lib/client-portal/portal-kb-api.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import {
   canPortalUserAccessVaultItem,
   isVaultItemInOrganization,
   sanitizeVaultItemForPortal,
@@ -943,6 +951,65 @@ function testPortalKbIsolation(): void {
   assert(
     assertPortalKbWriteRole('CLIENT_USER') === false,
     'CLIENT_USER gets 403 on POST/PATCH/DELETE /api/portal/kb',
+  );
+
+  // ── /portal/kb must never toast Unauthorized. for valid CLIENT_* ─────────
+  console.log('\n[12b] Portal KB auth gate + frontend API isolation (/portal/kb)');
+
+  assert(
+    portalKbListAuthStatus(null).status === 401 &&
+      portalKbListAuthStatus(null).error === 'Unauthorized.',
+    'missing session user → 401 Unauthorized. (authenticate not run)',
+  );
+  assert(
+    portalKbListAuthStatus(hubcomAdmin).status === 403,
+    'SYSTEM_ADMIN is not a portal KB caller via /api/portal/kb',
+  );
+
+  for (const actor of [orgAAdmin, orgASupporter, orgAUser]) {
+    const gate = portalKbListAuthStatus(actor);
+    assert(
+      gate.status === 200 && gate.error === undefined,
+      `${actor.role} GET /api/portal/kb succeeds with zero 401/403`,
+    );
+  }
+
+  assert(
+    isPortalKbFrontendApiAllowed('/api/portal/kb') === true,
+    'portal KB list path allowed',
+  );
+  assert(
+    isPortalKbFrontendApiAllowed('/api/portal/kb/abc') === true,
+    'portal KB detail/delete path allowed',
+  );
+  assert(
+    isPortalKbFrontendApiAllowed('/api/kb/articles') === false,
+    'staff /api/kb/articles blocked for portal KB page',
+  );
+  assert(
+    isPortalKbFrontendApiAllowed('/api/db?action=get_docs&collection=kb_articles') === false,
+    'staff /api/db blocked for portal KB page',
+  );
+
+  const kbPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientKbPage.tsx'),
+    'utf8',
+  );
+  const kbApiPaths = collectApiPathLiteralsFromSource(kbPageSrc);
+  assert(kbApiPaths.length > 0, 'ClientKbPage references at least one /api path');
+  assert(
+    kbApiPaths.every((p) => isPortalKbFrontendApiAllowed(p)),
+    'ClientKbPage calls ONLY /api/portal/kb* (no staff /api/kb or /api/db)',
+    kbApiPaths.filter((p) => !isPortalKbFrontendApiAllowed(p)).join(', '),
+  );
+
+  const kbRouteSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalKbRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    portalKbRouterMountsAuthenticate(kbRouteSrc),
+    'clientPortalKbRoutes mounts authenticate before requireClientPortalRole',
   );
 }
 

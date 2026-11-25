@@ -16,7 +16,11 @@ import {
   getDocsDirect,
   updateDocDirect,
 } from '../lib/postgres-backend.js';
-import { requireClientPortalRole } from '../middleware/clientPortalMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import {
+  attachClientOrganizationContext,
+  requireClientPortalRole,
+} from '../middleware/clientPortalMiddleware.js';
 import { resolveOrganizationIdFromUser } from '../lib/client-portal/ticket-visibility.js';
 import {
   articleOrganizationId,
@@ -32,6 +36,10 @@ import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 
 const KB_COLLECTION = 'kb_articles';
 const router = Router();
+
+// Session must be populated before requireClientPortalRole — otherwise every
+// /api/portal/kb* call returns 401 { error: 'Unauthorized.' } (toast on /portal/kb).
+router.use(authenticate, attachClientOrganizationContext);
 
 function sessionOrg(req: Request): string | null {
   return resolveOrganizationIdFromUser(req.user!);
