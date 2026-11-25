@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ChevronDown,
   ChevronRight,
+  Clock,
+  History,
   Loader2,
+  Mail,
   Package,
   Search,
   Truck,
@@ -40,9 +43,9 @@ interface ReturnCreateEditDrawerProps {
   open: boolean;
   mode: 'portal' | 'staff';
   organizationId: string;
-  /** Existing row when editing; null when creating. */
+  /** Existing row when editing; null when creating. Uses standalone return.id. */
   editItem: {
-    ticketId: string;
+    returnId: string;
     subject?: string | null;
     customerName?: string | null;
     customerEmail?: string | null;
@@ -59,6 +62,155 @@ function addDaysIso(dateIso: string, days: number): string {
   if (Number.isNaN(d.getTime())) return '';
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+type ActivityLogEntry = {
+  at?: string;
+  type?: string;
+  actor?: string | null;
+  message?: string | null;
+  to?: string[];
+  cc?: string[];
+  stage?: 1 | 2 | 3;
+};
+
+function formatDe(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString('de-DE');
+}
+
+function ActivityLogTimeline({
+  entries,
+  mailStamps,
+  createdAt,
+  returnedAt,
+}: {
+  entries: ActivityLogEntry[];
+  mailStamps: Array<{
+    stage: 1 | 2 | 3;
+    at: string | null | undefined;
+    recipients: { to?: string[]; cc?: string[] } | null | undefined;
+  }>;
+  createdAt: string | null;
+  returnedAt: string | null;
+}) {
+  const rows: Array<{
+    at: string;
+    title: string;
+    detail?: string;
+    icon: 'created' | 'mail' | 'returned' | 'edit';
+  }> = [];
+
+  if (createdAt) {
+    rows.push({
+      at: createdAt,
+      title: 'Rücklieferung erstellt',
+      icon: 'created',
+    });
+  }
+
+  for (const e of entries) {
+    const type = String(e.type || '');
+    if (type === 'created' && createdAt) continue;
+    if (type === 'mail_sent') {
+      const stage = e.stage || 1;
+      rows.push({
+        at: String(e.at || ''),
+        title: e.message || `${stage}. Mail versendet`,
+        detail: `An: ${(e.to || []).join(', ') || '—'} · CC: ${(e.cc || []).join(', ') || '—'}`,
+        icon: 'mail',
+      });
+      continue;
+    }
+    if (type === 'returned') {
+      rows.push({
+        at: String(e.at || ''),
+        title: e.message || 'Rücklieferung erfolgt',
+        detail: e.actor ? `von ${e.actor}` : undefined,
+        icon: 'returned',
+      });
+      continue;
+    }
+    rows.push({
+      at: String(e.at || ''),
+      title: e.message || type || 'Aktualisiert',
+      detail: e.actor ? `von ${e.actor}` : undefined,
+      icon: type === 'imported' ? 'created' : 'edit',
+    });
+  }
+
+  // Fallback stamps when activity_log predates mail entries
+  for (const stamp of mailStamps) {
+    if (!stamp.at) continue;
+    const already = rows.some(
+      (r) =>
+        r.icon === 'mail' &&
+        r.title.includes(`${stamp.stage}.`) &&
+        Math.abs(new Date(r.at).getTime() - new Date(stamp.at!).getTime()) < 60_000,
+    );
+    if (already) continue;
+    rows.push({
+      at: stamp.at,
+      title: `${stamp.stage}. Mail versendet`,
+      detail: `An: ${(stamp.recipients?.to || []).join(', ') || '—'} · CC: ${(stamp.recipients?.cc || []).join(', ') || '—'}`,
+      icon: 'mail',
+    });
+  }
+
+  if (returnedAt && !rows.some((r) => r.icon === 'returned')) {
+    rows.push({
+      at: returnedAt.includes('T') ? returnedAt : `${returnedAt}:00`,
+      title: 'Rücklieferung erfolgt',
+      icon: 'returned',
+    });
+  }
+
+  rows.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-sm text-slate-500 flex items-center gap-2">
+        <Clock className="w-4 h-4" />
+        Noch keine Verlaufseinträge.
+      </p>
+    );
+  }
+
+  return (
+    <ol className="space-y-3">
+      {rows.map((row, idx) => (
+        <li key={`${row.at}-${row.title}-${idx}`} className="flex gap-3">
+          <div
+            className={cn(
+              'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
+              row.icon === 'mail'
+                ? 'bg-sky-50 border-sky-100 text-sky-700'
+                : row.icon === 'returned'
+                  ? 'bg-emerald-50 border-emerald-100 text-emerald-700'
+                  : 'bg-slate-50 border-slate-200 text-slate-600',
+            )}
+          >
+            {row.icon === 'mail' ? (
+              <Mail className="w-3.5 h-3.5" />
+            ) : row.icon === 'returned' ? (
+              <Package className="w-3.5 h-3.5" />
+            ) : (
+              <Clock className="w-3.5 h-3.5" />
+            )}
+          </div>
+          <div className="min-w-0 flex-1 pb-3 border-b border-slate-100 last:border-0">
+            <p className="text-sm font-semibold text-slate-900">{row.title}</p>
+            {row.detail ? (
+              <p className="text-xs text-slate-600 mt-0.5 whitespace-pre-wrap">{row.detail}</p>
+            ) : null}
+            <p className="text-[11px] text-slate-400 mt-1 tabular-nums">{formatDe(row.at)}</p>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 function Toggle({
@@ -200,7 +352,7 @@ export function ReturnCreateEditDrawer({
   onSaved,
 }: ReturnCreateEditDrawerProps) {
   const base = mode === 'portal' ? '/api/portal/returns' : '/api/returns';
-  const isEdit = Boolean(editItem?.ticketId);
+  const isEdit = Boolean(editItem?.returnId);
   const [form, setForm] = useState<HardwareReturnFormState>(() => emptyHardwareReturnForm());
   const [requesterId, setRequesterId] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -293,10 +445,16 @@ export function ReturnCreateEditDrawer({
     }
     setSaving(true);
     try {
-      const hardwareReturn = hardwareFormToPayload(form);
+      const hardwareReturn = {
+        ...hardwareFormToPayload(form),
+        employee_name: customerName || null,
+        employee_email: customerEmail || null,
+        assignee_name: 'Support',
+      };
       if (isEdit && editItem) {
+        // Standalone PATCH/PUT on /api/returns/:id — never /api/tickets.
         await axios.put(
-          `${base}/${encodeURIComponent(editItem.ticketId)}${
+          `${base}/${encodeURIComponent(editItem.returnId)}${
             mode === 'staff' ? `?organizationId=${encodeURIComponent(organizationId)}` : ''
           }`,
           {
@@ -310,6 +468,7 @@ export function ReturnCreateEditDrawer({
         );
         toast.success('Rücklieferung gespeichert.');
       } else {
+        // Standalone POST /api/returns|/api/portal/returns — never ticket create.
         await axios.post(
           `${base}${mode === 'staff' ? `?organizationId=${encodeURIComponent(organizationId)}` : ''}`,
           {
@@ -356,7 +515,12 @@ export function ReturnCreateEditDrawer({
               {isEdit ? 'Rücklieferung bearbeiten' : 'Neue Rücklieferung erstellen'}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Hardware, Kontakte und Mahnstufen in einem Vorgang
+              {isEdit && editItem?.hardwareReturn?.return_number
+                ? `Nr. ${String(editItem.hardwareReturn.return_number).startsWith('#') ? '' : '#'}${editItem.hardwareReturn.return_number}`
+                : 'Hardware, Kontakte und Mahnstufen in einem Vorgang'}
+              {isEdit && editItem?.hardwareReturn?.external_ref_id
+                ? ` · PA ${editItem.hardwareReturn.external_ref_id}`
+                : ''}
             </p>
           </div>
           <button
@@ -714,6 +878,45 @@ export function ReturnCreateEditDrawer({
               </div>
             ) : null}
           </section>
+
+          {isEdit ? (
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+              <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                <History className="w-4 h-4 text-violet-600" />
+                Verlauf &amp; E-Mail-Protokoll
+              </h3>
+              <ActivityLogTimeline
+                entries={
+                  Array.isArray(editItem?.hardwareReturn?.activity_log)
+                    ? (editItem!.hardwareReturn.activity_log as ActivityLogEntry[])
+                    : []
+                }
+                mailStamps={[
+                  {
+                    stage: 1,
+                    at: form.mail1_sent_at,
+                    recipients: form.mail1_sent_recipients as { to?: string[]; cc?: string[] } | null,
+                  },
+                  {
+                    stage: 2,
+                    at: form.mail2_sent_at,
+                    recipients: form.mail2_sent_recipients as { to?: string[]; cc?: string[] } | null,
+                  },
+                  {
+                    stage: 3,
+                    at: form.mail3_sent_at,
+                    recipients: form.mail3_sent_recipients as { to?: string[]; cc?: string[] } | null,
+                  },
+                ]}
+                createdAt={
+                  editItem?.hardwareReturn?.created_at
+                    ? String(editItem.hardwareReturn.created_at)
+                    : null
+                }
+                returnedAt={form.returned ? form.returned_at || null : null}
+              />
+            </section>
+          ) : null}
         </div>
 
         <footer className="sticky bottom-0 z-10 flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200 bg-white">

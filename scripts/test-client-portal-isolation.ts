@@ -2002,22 +2002,119 @@ function testHardwareReturnsStandaloneBackend(): void {
 function testHardwareReturnsWorkbenchDrawerContract(): void {
   console.log('\n--- Hardware returns workbench create/edit drawer ---');
 
-  const primaryLabel = '+ Neue Rücklieferung erstellen';
-  assert(
-    primaryLabel.includes('Neue Rücklieferung') && !primaryLabel.includes('Neues Ticket'),
-    'primary action is Neue Rücklieferung erstellen (never Neues Ticket erstellen)',
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const drawerSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnCreateEditDrawer.tsx'),
+    'utf8',
+  );
+  const ticketDetailSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/TicketDetailView.tsx'),
+    'utf8',
+  );
+  const portalTicketDetailSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientTicketDetailPage.tsx'),
+    'utf8',
+  );
+  const portalTicketsPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientTicketsPage.tsx'),
+    'utf8',
   );
 
-  // Drawer layout contract (3 cards).
-  const cards = [
-    '1. Mitarbeiter & Kontakte',
-    '2. Hardware & Service-Level (SL1–SL3)',
-    '3. Rücklieferung & Mahnstufen',
-  ];
-  assert(cards.length === 3, 'drawer has exactly 3 German cards');
-  assert(cards[0].startsWith('1.'), 'card 1 Mitarbeiter & Kontakte');
-  assert(cards[1].includes('SL1–SL3'), 'card 2 Hardware & SL');
-  assert(cards[2].includes('Mahnstufen'), 'card 3 Rücklieferung & Mahnstufen');
+  assert(
+    workbenchSrc.includes('Neue Rücklieferung erstellen') &&
+      !workbenchSrc.includes('Neues Ticket erstellen'),
+    'primary action is Neue Rücklieferung erstellen (never Neues Ticket erstellen)',
+  );
+  assert(
+    workbenchSrc.includes('Details öffnen') && !workbenchSrc.includes('Ticket öffnen'),
+    'row action is Details öffnen (never Ticket öffnen)',
+  );
+  assert(
+    workbenchSrc.includes("'/api/portal/returns'") && workbenchSrc.includes("'/api/returns'"),
+    'ReturnsWorkbench uses standalone /api/returns + /api/portal/returns bases',
+  );
+  assert(
+    !workbenchSrc.includes("'/api/tickets") &&
+      !workbenchSrc.includes('"/api/tickets') &&
+      !workbenchSrc.includes('/api/portal/tickets') &&
+      !workbenchSrc.includes('/tickets/') &&
+      !workbenchSrc.includes('/portal/tickets/'),
+    'ReturnsWorkbench never navigates to or POSTs normal ticket routes',
+  );
+  assert(
+    workbenchSrc.includes('formatReturnNumber') && workbenchSrc.includes('return_number'),
+    'workbench displays return_number (#RL-…)',
+  );
+  assert(
+    workbenchSrc.includes('returnRowId') && workbenchSrc.includes('returnId'),
+    'workbench selection + send modal keyed by standalone return.id',
+  );
+
+  assert(
+    drawerSrc.includes("'/api/portal/returns'") && drawerSrc.includes("'/api/returns'"),
+    'drawer posts to standalone returns APIs',
+  );
+  const drawerApiLiterals = Array.from(
+    drawerSrc.matchAll(/(['"`])(\/api\/(?:portal\/)?tickets(?:\/[^'"`]*)?)\1/g),
+  ).map((m) => m[2]);
+  assert(
+    drawerSrc.includes('axios.post') &&
+      drawerSrc.includes('${base}') &&
+      drawerApiLiterals.length === 0,
+    'drawer create never calls POST /api/tickets or /api/portal/tickets',
+    drawerApiLiterals.join(', '),
+  );
+  assert(
+    (drawerSrc.includes('Verlauf & E-Mail-Protokoll') ||
+      drawerSrc.includes('Verlauf &amp; E-Mail-Protokoll')) &&
+      drawerSrc.includes('ActivityLogTimeline') &&
+      drawerSrc.includes('activity_log'),
+    'edit drawer renders Verlauf & E-Mail-Protokoll from activity_log',
+  );
+
+  // Drawer layout contract (3 cards + Verlauf on edit).
+  assert(
+    drawerSrc.includes('1. Mitarbeiter & Kontakte') ||
+      drawerSrc.includes('1. Mitarbeiter &amp; Kontakte'),
+    'card 1 Mitarbeiter & Kontakte',
+  );
+  assert(
+    drawerSrc.includes('2. Hardware & Service-Level') ||
+      drawerSrc.includes('2. Hardware &amp; Service-Level') ||
+      drawerSrc.includes('SL1–SL3'),
+    'card 2 Hardware & SL',
+  );
+  assert(
+    drawerSrc.includes('3. Rücklieferung') && drawerSrc.includes('Mahnstufen'),
+    'card 3 Rücklieferung & Mahnstufen',
+  );
+
+  assert(
+    !ticketDetailSrc.includes('StaffHardwareReturnPanel') &&
+      !ticketDetailSrc.includes('HardwareReturnSections') &&
+      !ticketDetailSrc.includes('hardwareReturn'),
+    'staff TicketDetailView has zero Rücklieferungen create/display',
+  );
+  assert(
+    !portalTicketDetailSrc.includes('HardwareReturnSections') &&
+      !portalTicketDetailSrc.includes('hardwareForm') &&
+      !portalTicketDetailSrc.includes('updateHardwareReturn') &&
+      !portalTicketDetailSrc.includes('Hardware-Daten'),
+    'portal ClientTicketDetailPage has zero Rücklieferungen create/display',
+  );
+  assert(
+    !portalTicketsPageSrc.includes('ReturnsWorkbench') &&
+      !portalTicketsPageSrc.includes('hardwareReturn') &&
+      !portalTicketsPageSrc.includes('Rücklieferung'),
+    '/portal/tickets page has zero Rücklieferungen create/display',
+  );
+  assert(
+    !fs.existsSync(path.join(process.cwd(), 'src/components/tickets/StaffHardwareReturnPanel.tsx')),
+    'StaffHardwareReturnPanel removed (returns live only in ReturnsWorkbench)',
+  );
 
   // Module gate still blocks Citadelle / CLIENT_USER (create endpoint uses same resolveOrg).
   assert(
@@ -2084,11 +2181,24 @@ function testDefaultTicketCreateExcludesRmaFields(): void {
     'staff create payload has no RMA / SL keys',
   );
 
+  // Source: portal create page must not wire RMA fields.
+  const portalCreateSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientCreateTicketPage.tsx'),
+    'utf8',
+  );
+  assert(
+    !portalCreateSrc.includes('hardwareReturn') &&
+      !portalCreateSrc.includes('HardwareReturn') &&
+      !portalCreateSrc.includes('Rücklieferung') &&
+      !portalCreateSrc.includes('service_level'),
+    'ClientCreateTicketPage has zero RMA / Rücklieferung fields',
+  );
+
   // /portal/tickets/new must scroll: ticket-detail regex must not treat "new" as a detail id.
-  const path = '/portal/tickets/new';
-  const isTicketCreate = path === '/portal/tickets/new';
+  const createPath = '/portal/tickets/new';
+  const isTicketCreate = createPath === '/portal/tickets/new';
   const isTicketDetail =
-    !isTicketCreate && /^\/portal\/tickets\/[^/]+$/.test(path);
+    !isTicketCreate && /^\/portal\/tickets\/[^/]+$/.test(createPath);
   assert(isTicketCreate === true, '/portal/tickets/new is create route');
   assert(isTicketDetail === false, '/portal/tickets/new is NOT treated as ticket detail (scroll lock)');
   assert(

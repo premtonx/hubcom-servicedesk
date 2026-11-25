@@ -62,6 +62,18 @@ const ROLE_LABELS: Record<string, string> = {
   ceo: 'Geschäftsführung / CEO',
 };
 
+/** Primary key for standalone returns API routes (`return.id`, never ticket id). */
+function returnRowId(it: ListItem): string {
+  return String(it.hardwareReturn?.id || '').trim();
+}
+
+function formatReturnNumber(hw: Record<string, any>): string {
+  const n = String(hw.return_number || '').trim();
+  if (n) return n.startsWith('#') ? n : `#${n}`;
+  const id = String(hw.id || '').trim();
+  return id ? `#${id.slice(0, 8).toUpperCase()}` : '#RL-—';
+}
+
 export function ReturnsWorkbench({
   mode,
   organizationId,
@@ -91,7 +103,7 @@ export function ReturnsWorkbench({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sendModal, setSendModal] = useState<{
-    ticketId: string;
+    returnId: string;
     stage: 1 | 2 | 3;
     to: string[];
     cc: string[];
@@ -102,7 +114,7 @@ export function ReturnsWorkbench({
   const [sending, setSending] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editItem, setEditItem] = useState<{
-    ticketId: string;
+    returnId: string;
     subject?: string | null;
     customerName?: string | null;
     customerEmail?: string | null;
@@ -168,11 +180,16 @@ export function ReturnsWorkbench({
   };
 
   const openEdit = (it: ListItem) => {
+    const id = returnRowId(it);
+    if (!id) {
+      toast.error('Rücklieferung ohne ID — bitte neu laden.');
+      return;
+    }
     setEditItem({
-      ticketId: String(it.hardwareReturn.ticket_id),
-      subject: it.ticket.subject,
-      customerName: it.ticket.customerName,
-      customerEmail: it.ticket.customerEmail,
+      returnId: id,
+      subject: it.hardwareReturn.subject || it.ticket.subject,
+      customerName: it.hardwareReturn.employee_name || it.ticket.customerName,
+      customerEmail: it.hardwareReturn.employee_email || it.ticket.customerEmail,
       hardwareReturn: it.hardwareReturn,
     });
     setDrawerOpen(true);
@@ -209,14 +226,14 @@ export function ReturnsWorkbench({
     void load();
   }, [load]);
 
-  const openSend = async (ticketId: string, stage: 1 | 2 | 3) => {
+  const openSend = async (returnId: string, stage: 1 | 2 | 3) => {
     try {
       const qs = mode === 'staff' ? `?${orgQ}&stage=${stage}` : `?stage=${stage}`;
-      const res = await axios.get(`${base}/${encodeURIComponent(ticketId)}/preview-reminder${qs}`, {
+      const res = await axios.get(`${base}/${encodeURIComponent(returnId)}/preview-reminder${qs}`, {
         withCredentials: true,
       });
       setSendModal({
-        ticketId,
+        returnId,
         stage,
         to: res.data?.to || [],
         cc: res.data?.cc || [],
@@ -234,7 +251,7 @@ export function ReturnsWorkbench({
     setSending(true);
     try {
       await axios.post(
-        `${base}/${encodeURIComponent(sendModal.ticketId)}/send-reminder`,
+        `${base}/${encodeURIComponent(sendModal.returnId)}/send-reminder`,
         {
           stage: sendModal.stage,
           to: sendModal.to,
@@ -452,7 +469,7 @@ export function ReturnsWorkbench({
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <Input
             className="pl-9"
-            placeholder="Suche: Ticket, Legacy-ID, Mitarbeiter, PM, Gerät…"
+            placeholder="Suche: RL-Nr., Legacy-ID, Mitarbeiter, PM, Gerät…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -497,7 +514,7 @@ export function ReturnsWorkbench({
           <option value="due_asc">Älteste Fälligkeit zuerst</option>
           <option value="newest">Neueste zuerst</option>
           <option value="employee">Mitarbeiter A–Z</option>
-          <option value="ticket">Ticket-ID</option>
+          <option value="ticket">Rückgabe-Nr.</option>
         </select>
       </div>
 
@@ -519,7 +536,7 @@ export function ReturnsWorkbench({
                       checked={selected.size > 0 && selected.size === items.length}
                       onChange={(e) => {
                         if (e.target.checked) {
-                          setSelected(new Set(items.map((i) => i.hardwareReturn.ticket_id)));
+                          setSelected(new Set(items.map((i) => returnRowId(i)).filter(Boolean)));
                         } else setSelected(new Set());
                       }}
                     />
@@ -535,10 +552,13 @@ export function ReturnsWorkbench({
               <tbody className="divide-y divide-slate-100">
                 {items.map((it) => {
                   const hw = it.hardwareReturn;
-                  const checked = selected.has(hw.ticket_id);
+                  const id = returnRowId(it);
+                  const checked = selected.has(id);
+                  const employeeName = hw.employee_name || it.ticket.customerName || '—';
+                  const employeeEmail = hw.employee_email || it.ticket.customerEmail || '—';
                   return (
                     <tr
-                      key={hw.ticket_id}
+                      key={id}
                       className="align-top hover:bg-slate-50/60 cursor-pointer"
                       onClick={() => openEdit(it)}
                     >
@@ -548,17 +568,18 @@ export function ReturnsWorkbench({
                           checked={checked}
                           onChange={(e) => {
                             const next = new Set(selected);
-                            if (e.target.checked) next.add(hw.ticket_id);
-                            else next.delete(hw.ticket_id);
+                            if (e.target.checked) next.add(id);
+                            else next.delete(id);
                             setSelected(next);
                           }}
                         />
                       </td>
                       <td className="p-3">
                         <span className="font-mono text-xs font-bold text-slate-800">
-                          #{hw.ticket_id.slice(0, 8)}
+                          {formatReturnNumber(hw)}
                         </span>
-                        {hw.external_ref_id ? (
+                        {hw.external_ref_id &&
+                        String(hw.external_ref_id) !== String(hw.return_number || '') ? (
                           <span className="ml-1 inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
                             PA {hw.external_ref_id}
                           </span>
@@ -566,9 +587,9 @@ export function ReturnsWorkbench({
                       </td>
                       <td className="p-3">
                         <p className="font-semibold text-slate-900">
-                          {it.ticket.customerName || '—'}
+                          {employeeName}
                         </p>
-                        <p className="text-xs text-slate-500">{it.ticket.customerEmail || '—'}</p>
+                        <p className="text-xs text-slate-500">{employeeEmail}</p>
                         <div className="mt-1 flex flex-wrap gap-1">
                           {hw.project_manager_email ? (
                             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold">
@@ -623,7 +644,7 @@ export function ReturnsWorkbench({
                                 type="button"
                                 title={tip}
                                 disabled={Boolean(hw.returned)}
-                                onClick={() => void openSend(hw.ticket_id, stage)}
+                                onClick={() => void openSend(id, stage)}
                                 className={cn(
                                   'rounded-full px-2 py-1 text-[10px] font-bold border',
                                   sentAt
@@ -645,7 +666,7 @@ export function ReturnsWorkbench({
                             variant="outline"
                             onClick={() => openEdit(it)}
                           >
-                            Details
+                            Details öffnen
                           </Button>
                           {!hw.returned ? (
                             <Button
@@ -655,7 +676,7 @@ export function ReturnsWorkbench({
                               onClick={async () => {
                                 try {
                                   await axios.post(
-                                    `${base}/${encodeURIComponent(hw.ticket_id)}/mark-returned`,
+                                    `${base}/${encodeURIComponent(id)}/mark-returned`,
                                     mode === 'staff' ? { organizationId } : {},
                                     { withCredentials: true },
                                   );
@@ -718,15 +739,22 @@ export function ReturnsWorkbench({
                   value={sendModal.to}
                   onChange={(to) => setSendModal({ ...sendModal, to })}
                   quickAdd={[
-                    { label: 'Mitarbeiter', email: items.find((i) => i.hardwareReturn.ticket_id === sendModal.ticketId)?.ticket.customerEmail },
+                    {
+                      label: 'Mitarbeiter',
+                      email:
+                        items.find((i) => returnRowId(i) === sendModal.returnId)?.hardwareReturn
+                          .employee_email ||
+                        items.find((i) => returnRowId(i) === sendModal.returnId)?.ticket
+                          .customerEmail,
+                    },
                     {
                       label: 'Projektmanager',
-                      email: items.find((i) => i.hardwareReturn.ticket_id === sendModal.ticketId)
+                      email: items.find((i) => returnRowId(i) === sendModal.returnId)
                         ?.hardwareReturn.project_manager_email,
                     },
                     {
                       label: 'Chef',
-                      email: items.find((i) => i.hardwareReturn.ticket_id === sendModal.ticketId)
+                      email: items.find((i) => returnRowId(i) === sendModal.returnId)
                         ?.hardwareReturn.manager_email,
                     },
                     { label: 'CEO', email: settings?.ceo_email },
@@ -741,12 +769,12 @@ export function ReturnsWorkbench({
                   quickAdd={[
                     {
                       label: 'Projektmanager',
-                      email: items.find((i) => i.hardwareReturn.ticket_id === sendModal.ticketId)
+                      email: items.find((i) => returnRowId(i) === sendModal.returnId)
                         ?.hardwareReturn.project_manager_email,
                     },
                     {
                       label: 'Chef',
-                      email: items.find((i) => i.hardwareReturn.ticket_id === sendModal.ticketId)
+                      email: items.find((i) => returnRowId(i) === sendModal.returnId)
                         ?.hardwareReturn.manager_email,
                     },
                     { label: 'CEO', email: settings?.ceo_email },
@@ -761,7 +789,7 @@ export function ReturnsWorkbench({
                     setSendModal({ ...sendModal, saveOverride: e.target.checked })
                   }
                 />
-                Als Empfänger für dieses Ticket speichern
+                Als Empfänger für diese Rücklieferung speichern
               </label>
               <div>
                 <p className="text-xs font-bold text-slate-500 mb-1">Betreff</p>
