@@ -9,11 +9,17 @@ import {
   setDocDirect,
   updateDocDirect,
 } from '../lib/postgres-backend.js';
+import {
+  assertStaffKbCategoryWriteRole,
+  categoryOrganizationId,
+  KB_CATEGORIES_COLLECTION,
+  slugifyCategoryName,
+  UNCATEGORIZED_CATEGORY_ID,
+} from '../lib/kb/kb-categories.js';
 
 const router = Router();
-const COLLECTION = 'kb_categories';
+const COLLECTION = KB_CATEGORIES_COLLECTION;
 const ARTICLES = 'kb_articles';
-const UNCATEGORIZED = 'uncategorized';
 
 const createCategorySchema = z.object({
   name: z.string().min(1).max(120),
@@ -39,21 +45,24 @@ const deleteCategorySchema = z.object({
   strategy: z.enum(['purge', 'reassign']).optional(),
 });
 
-function slugifyCategoryId(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '') || UNCATEGORIZED
-  );
+function requireStaffWrite(req: Request, res: Response): boolean {
+  if (!assertStaffKbCategoryWriteRole(req.user?.role)) {
+    res.status(403).json({ error: 'Forbidden: SYSTEM_ADMIN or AGENT required.' });
+    return false;
+  }
+  return true;
 }
 
 router.get('/', authenticate, async (_req: Request, res: Response) => {
   try {
     const rows = await getDocsDirect(COLLECTION, []);
+    // Staff sees global (no org) + all org-scoped categories for admin overview.
     const categories = rows
-      .map((row) => ({ ...row, id: row.id }))
+      .map((row) => ({
+        ...row,
+        id: row.id,
+        organizationId: categoryOrganizationId(row),
+      }))
       .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
     return res.json({ categories });
   } catch (error: unknown) {
@@ -64,6 +73,7 @@ router.get('/', authenticate, async (_req: Request, res: Response) => {
 
 router.post('/', authenticate, async (req: Request, res: Response) => {
   try {
+    if (!requireStaffWrite(req, res)) return;
     const parsed = createCategorySchema.safeParse(req.body || {});
     if (!parsed.success) {
       return res.status(400).json({ error: 'Category name is required.', details: parsed.error.flatten() });
@@ -73,7 +83,10 @@ router.post('/', authenticate, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Category name is required.' });
     }
 
-    const id = slugifyCategoryId(name);
+    const id = slugifyCategoryName(name);
+    if (id === UNCATEGORIZED_CATEGORY_ID) {
+      return res.status(400).json({ error: 'Invalid category name.' });
+    }
     const existing = await getDocDirect(COLLECTION, id);
     if (existing) {
       return res.status(409).json({ error: 'A category with this name already exists.' });
@@ -87,6 +100,8 @@ router.post('/', authenticate, async (req: Request, res: Response) => {
       subCategory: typeof subCategory === 'string' ? subCategory : 'General',
       iconName: typeof iconName === 'string' ? iconName : 'BookOpen',
       order: typeof order === 'number' ? order : Date.now(),
+      // Staff-created categories are global (shared Hubcom taxonomy).
+      organizationId: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -101,6 +116,7 @@ router.post('/', authenticate, async (req: Request, res: Response) => {
 
 router.patch('/:id', authenticate, async (req: Request, res: Response) => {
   try {
+    if (!requireStaffWrite(req, res)) return;
     const id = routeParam(req.params.id);
     const existing = await getDocDirect(COLLECTION, id);
     if (!existing) {
@@ -135,7 +151,13 @@ router.patch('/:id', authenticate, async (req: Request, res: Response) => {
     }
 
     const updated = await getDocDirect(COLLECTION, id);
-    return res.json({ category: { ...updated, id } });
+    return res.json({
+      category: {
+        ...updated,
+        id,
+        organizationId: categoryOrganizationId(updated),
+      },
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to update category.';
     return res.status(500).json({ error: message });
@@ -144,8 +166,9 @@ router.patch('/:id', authenticate, async (req: Request, res: Response) => {
 
 router.delete('/:id', authenticate, async (req: Request, res: Response) => {
   try {
+    if (!requireStaffWrite(req, res)) return;
     const id = routeParam(req.params.id);
-    if (id === UNCATEGORIZED) {
+    if (id === UNCATEGORIZED_CATEGORY_ID) {
       return res.status(400).json({ error: 'The uncategorized bucket cannot be deleted.' });
     }
 
@@ -168,7 +191,7 @@ router.delete('/:id', authenticate, async (req: Request, res: Response) => {
     } else {
       for (const article of affected) {
         await updateDocDirect(ARTICLES, article.id, {
-          category: UNCATEGORIZED,
+          category: UNCATEGORIZED_CATEGORY_ID,
           updatedAt: new Date().toISOString(),
         });
       }

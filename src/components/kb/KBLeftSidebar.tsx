@@ -12,11 +12,14 @@ import {
   BookX,
   AlertTriangle,
   Settings,
+  Plus,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { categoryI18nKey } from './kb-utils';
-import type { KBCategoryRecord } from './kbCategoryUtils';
+import { UNCATEGORIZED_CATEGORY_ID, type KBCategoryRecord } from './kbCategoryUtils';
 
 export type KBNavFilter =
   | { type: 'workspace'; id: string }
@@ -51,6 +54,11 @@ interface KBLeftSidebarProps {
   smartItemIds?: ReadonlyArray<
     'popular' | 'recent' | 'mostViewed' | 'missing' | 'outdated'
   >;
+  /** Show + beside KATEGORIEN and hover rename/delete for org categories. */
+  canManageCategories?: boolean;
+  onCreateCategory?: () => void;
+  onRenameCategory?: (categoryId: string) => void;
+  onDeleteCategory?: (categoryId: string) => void;
 }
 
 const WORKSPACE_ITEMS = [
@@ -124,6 +132,10 @@ export function KBLeftSidebar({
   workspaceItemIds,
   showHealthScore = true,
   smartItemIds,
+  canManageCategories = false,
+  onCreateCategory,
+  onRenameCategory,
+  onDeleteCategory,
 }: KBLeftSidebarProps) {
   const { t } = useTranslation();
 
@@ -178,23 +190,75 @@ export function KBLeftSidebar({
           ))}
         </nav>
 
-        <SectionLabel>{t('kb.sidebar.categories', 'Categories')}</SectionLabel>
+        <div className="flex items-center justify-between gap-1 px-3 pt-4 pb-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            {t('kb.sidebar.categories', 'Categories')}
+          </p>
+          {canManageCategories && onCreateCategory ? (
+            <button
+              type="button"
+              onClick={onCreateCategory}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              title={t('kb.actions.createCategory', 'Kategorie erstellen')}
+              aria-label={t('kb.actions.createCategory', 'Kategorie erstellen')}
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          ) : null}
+        </div>
         <nav className="space-y-0.5">
           {categories.length === 0 ? (
             <p className="px-3 py-2 text-[11px] text-slate-400">
               {t('kb.sidebar.noCategories', 'Noch keine Kategorien')}
             </p>
           ) : (
-          sortedCategories.map((item) => (
-            <NavButton
-              key={item.id}
-              active={isActive('category', item.id)}
-              onClick={() => onNavigate({ type: 'category', id: item.id })}
-              icon={item.icon}
-              label={t(categoryI18nKey(item.name), item.name)}
-              count={counts.categories[item.id] ?? 0}
-            />
-          ))
+          sortedCategories.map((item) => {
+            const canEditItem =
+              canManageCategories &&
+              item.id !== UNCATEGORIZED_CATEGORY_ID &&
+              (onRenameCategory || onDeleteCategory);
+            return (
+              <div key={item.id} className="group relative">
+                <NavButton
+                  active={isActive('category', item.id)}
+                  onClick={() => onNavigate({ type: 'category', id: item.id })}
+                  icon={item.icon}
+                  label={t(categoryI18nKey(item.name), item.name)}
+                  count={counts.categories[item.id] ?? 0}
+                />
+                {canEditItem ? (
+                  <div className="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/95 rounded-md border border-slate-200 shadow-sm p-0.5">
+                    {onRenameCategory ? (
+                      <button
+                        type="button"
+                        className="p-1 rounded text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                        title={t('kb.categoryRename.action', 'Umbenennen')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRenameCategory(item.id);
+                        }}
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                    ) : null}
+                    {onDeleteCategory ? (
+                      <button
+                        type="button"
+                        className="p-1 rounded text-rose-500 hover:text-rose-700 hover:bg-rose-50"
+                        title={t('kb.categoryDelete.action', 'Löschen')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteCategory(item.id);
+                        }}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })
           )}
         </nav>
 

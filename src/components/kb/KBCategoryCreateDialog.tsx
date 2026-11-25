@@ -12,8 +12,8 @@ import {
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { kbCategoryApi } from '../../services/kbDashboardApi';
 import { mapDbCategoryToRecord, type KBCategoryRecord } from './kbCategoryUtils';
+import type { KBCategoryDto } from '../../services/kbDashboardApi';
 import { toast } from 'sonner';
 
 interface KBCategoryCreateDialogProps {
@@ -21,6 +21,10 @@ interface KBCategoryCreateDialogProps {
   onOpenChange: (open: boolean) => void;
   categories: KBCategoryRecord[];
   onCategoriesChange: (categories: KBCategoryRecord[]) => void;
+  /** Shared adapter create — staff /api/kb/categories or portal /api/portal/kb/categories. */
+  onCreate: (payload: { name: string; desc?: string; order?: number }) => Promise<KBCategoryDto>;
+  /** When set, newly created category is applied to the open article draft. */
+  onCreated?: (category: KBCategoryRecord) => void;
 }
 
 export function KBCategoryCreateDialog({
@@ -28,6 +32,8 @@ export function KBCategoryCreateDialog({
   onOpenChange,
   categories,
   onCategoriesChange,
+  onCreate,
+  onCreated,
 }: KBCategoryCreateDialogProps) {
   const { t } = useTranslation();
   const [name, setName] = useState('');
@@ -45,16 +51,18 @@ export function KBCategoryCreateDialog({
     if (!name.trim()) return;
     setBusy(true);
     try {
-      const { category } = await kbCategoryApi.create({
+      const category = await onCreate({
         name: name.trim(),
         desc: desc.trim(),
         order: categories.length + 1,
       });
-      onCategoriesChange([...categories, mapDbCategoryToRecord(category, categories.length + 1)]);
-      toast.success(t('kb.categoryAdd.success', 'Category registered successfully.'));
+      const record = mapDbCategoryToRecord(category, categories.length + 1);
+      onCategoriesChange([...categories, record]);
+      onCreated?.(record);
+      toast.success(t('kb.categoryAdd.success', 'Kategorie erstellt.'));
       onOpenChange(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to create category.');
+      toast.error(error instanceof Error ? error.message : 'Kategorie konnte nicht erstellt werden.');
     } finally {
       setBusy(false);
     }
@@ -66,52 +74,54 @@ export function KBCategoryCreateDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <FolderPlus className="w-4 h-4 text-indigo-600" />
-            {t('kb.categoryAdd.title', 'Create category')}
+            {t('kb.categoryAdd.title', 'Kategorie erstellen')}
           </DialogTitle>
           <DialogDescription className="text-sm text-slate-500">
             {t(
               'kb.categoryAdd.description',
-              'Extend your knowledge structure with a new folder visible to all authenticated workspace profiles.',
+              'Neue Kategorie für Ihre Wissensdatenbank — sofort in der Artikelauswahl verfügbar.',
             )}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3 py-2">
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-slate-600">
-              {t('kb.categoryAdd.namePlaceholder', 'Category name')}
-            </Label>
+            <Label className="text-xs font-bold">{t('kb.categoryAdd.name', 'Name')}</Label>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={t('kb.categoryAdd.namePlaceholder', 'Category name')}
-              className="h-10 rounded-xl"
+              placeholder={t('kb.categoryAdd.namePlaceholder', 'z. B. Hardware & Geräte')}
+              className="h-10"
               autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void handleCreate();
+                }
+              }}
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-slate-600">
-              {t('kb.categoryAdd.descPlaceholder', 'Short description (optional)')}
+            <Label className="text-xs font-bold">
+              {t('kb.categoryAdd.desc', 'Beschreibung (optional)')}
             </Label>
             <Input
               value={desc}
               onChange={(e) => setDesc(e.target.value)}
-              placeholder={t('kb.categoryAdd.descPlaceholder', 'Short description (optional)')}
-              className="h-10 rounded-xl"
+              placeholder={t('kb.categoryAdd.descPlaceholder', 'Kurzbeschreibung…')}
+              className="h-10"
             />
           </div>
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)}>
-            {t('actions.cancel', 'Cancel')}
+        <DialogFooter className="gap-2">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            {t('common.cancel', 'Abbrechen')}
           </Button>
-          <Button
-            className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm"
-            disabled={busy || !name.trim()}
-            onClick={() => void handleCreate()}
-          >
-            {t('kb.categoryAdd.confirm', 'Create category')}
+          <Button type="button" onClick={() => void handleCreate()} disabled={busy || !name.trim()}>
+            {busy
+              ? t('kb.categoryAdd.saving', 'Speichern…')
+              : t('kb.categoryAdd.submit', 'Erstellen')}
           </Button>
         </DialogFooter>
       </DialogContent>

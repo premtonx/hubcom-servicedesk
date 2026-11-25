@@ -56,6 +56,10 @@ import {
   portalKbListAuthStatus,
   portalKbRouterMountsAuthenticate,
 } from '../src/lib/client-portal/portal-kb-api.js';
+import {
+  evaluatePortalKbCategoryWriteAccess,
+  portalCategoryId,
+} from '../src/lib/kb/kb-categories.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -1042,6 +1046,104 @@ function testPortalKbIsolation(): void {
   assert(
     portalKbRouterMountsAuthenticate(kbRouteSrc),
     'clientPortalKbRoutes mounts authenticate before requireClientPortalRole',
+  );
+
+  // --- Portal KB category CRUD + editor UX contracts ---
+  const portalCatRouteSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalKbCategoryRoutes.ts'),
+    'utf8',
+  );
+  const serverSrc = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
+  const editorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KBArticleEditorWorkspace.tsx'),
+    'utf8',
+  );
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KnowledgeBaseWorkbench.tsx'),
+    'utf8',
+  );
+  const adapterCapsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/kb/kb-workbench-adapter.ts'),
+    'utf8',
+  );
+  const portalAdapterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/hooks/usePortalKbAdapter.ts'),
+    'utf8',
+  );
+
+  assert(
+    serverSrc.includes('/api/portal/kb/categories') &&
+      portalCatRouteSrc.includes('evaluatePortalKbCategoryWriteAccess') &&
+      portalCatRouteSrc.includes('organizationId'),
+    'portal KB category routes mounted with org isolation',
+  );
+  assert(
+    isPortalKbFrontendApiAllowed('/api/portal/kb/categories') === true,
+    'portal KB categories path allowed for frontend',
+  );
+  assert(
+    evaluatePortalKbCategoryWriteAccess({
+      role: 'CLIENT_ADMIN',
+      sessionOrgId: ORG_B,
+    }).ok === true,
+    'DPG CLIENT_ADMIN can write portal categories',
+  );
+  assert(
+    evaluatePortalKbCategoryWriteAccess({
+      role: 'CLIENT_SUPPORTER',
+      sessionOrgId: ORG_B,
+    }).ok === true,
+    'DPG CLIENT_SUPPORTER can write portal categories',
+  );
+  assert(
+    evaluatePortalKbCategoryWriteAccess({
+      role: 'CLIENT_USER',
+      sessionOrgId: ORG_B,
+    }).ok === false,
+    'CLIENT_USER gets 403 on category mutations',
+  );
+  assert(
+    evaluatePortalKbCategoryWriteAccess({
+      role: 'CLIENT_ADMIN',
+      sessionOrgId: ORG_A,
+      targetOrgId: ORG_B,
+    }).ok === false,
+    'Citadelle AG cannot mutate DPG categories (cross-org)',
+  );
+  assert(
+    portalCategoryId(ORG_B, 'Hardware') !== portalCategoryId(ORG_A, 'Hardware'),
+    'org-prefixed category ids never collide across tenants',
+  );
+  assert(
+    portalAdapterSrc.includes('/api/portal/kb/categories') &&
+      portalAdapterSrc.includes('createCategory') &&
+      !portalAdapterSrc.includes('categoriesFromArticles'),
+    'portal adapter uses /api/portal/kb/categories CRUD (not article-derived)',
+  );
+  assert(
+    adapterCapsSrc.includes('PORTAL_KB_WRITER_CAPABILITIES') &&
+      /PORTAL_KB_WRITER_CAPABILITIES[\s\S]*categoryAdmin:\s*true/.test(adapterCapsSrc),
+    'portal writers get categoryAdmin capability',
+  );
+  assert(
+    workbenchSrc.includes('onCreateCategory') &&
+      workbenchSrc.includes('canManageCategories') &&
+      workbenchSrc.includes('setIsCategoryCreateOpen(true)'),
+    'workbench exposes category create in sidebar / Neu / editor',
+  );
+  assert(
+    editorSrc.includes("t('kb.editor.noCategory") &&
+      editorSrc.includes('UNCATEGORIZED_CATEGORY_ID') &&
+      editorSrc.includes('isPortal') &&
+      !editorSrc.includes('Dokument-Metadaten-Eigentümer') &&
+      editorSrc.includes('showAutoAssist'),
+    'optional Kategorie + portal hides owner/reviewer; auto-assist gated',
+  );
+  assert(
+    kbRouteSrc.includes('authorId: req.user!.id') &&
+      kbRouteSrc.includes("reviewer: ''") &&
+      kbRouteSrc.includes('uncategorized'),
+    'portal article create auto-stamps author; ignores client owner/reviewer; optional category',
   );
 }
 

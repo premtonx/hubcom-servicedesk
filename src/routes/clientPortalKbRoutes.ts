@@ -142,20 +142,31 @@ router.post(
         ? (req.body as any).tags.map((t: unknown) => String(t).trim()).filter(Boolean)
         : [];
 
+      const rawCategory = String((req.body as any)?.category || '')
+        .trim();
+      const category =
+        !rawCategory || rawCategory === 'All' || rawCategory.toLowerCase() === 'allgemein'
+          ? 'uncategorized'
+          : rawCategory;
+      const statusRaw = String((req.body as any)?.status || 'Published').trim();
+      const status = statusRaw === 'Draft' ? 'Draft' : 'Published';
+
       const now = new Date().toISOString();
       const created = await addDocDirect(KB_COLLECTION, {
         title,
         content,
-        category: String((req.body as any)?.category || 'Allgemein').trim() || 'Allgemein',
-        subCategory: String((req.body as any)?.subCategory || '').trim(),
+        category,
+        // Portal editor does not expose subcategory / owner / reviewer — server stamps author.
+        subCategory: '',
         tags,
         authorId: req.user!.id,
-        owner: req.user!.email || req.user!.name || req.user!.id,
+        owner: req.user!.name || req.user!.email || req.user!.id,
+        reviewer: '',
         // Server-enforced tenant fields — never trust client spoof.
         visibility: 'organization',
         organizationId,
         organization_id: organizationId,
-        status: 'Published',
+        status,
         views: 0,
         index_in_rag: false,
         language: 'de',
@@ -206,12 +217,18 @@ router.patch(
       const body = req.body as Record<string, unknown>;
       if (typeof body.title === 'string') updates.title = body.title.trim();
       if (typeof body.content === 'string') updates.content = body.content;
-      if (typeof body.category === 'string') updates.category = body.category.trim() || 'Allgemein';
-      if (typeof body.subCategory === 'string') updates.subCategory = body.subCategory.trim();
+      if (typeof body.category === 'string') {
+        const cat = body.category.trim();
+        updates.category =
+          !cat || cat === 'All' || cat.toLowerCase() === 'allgemein' ? 'uncategorized' : cat;
+      }
+      // Ignore client owner/reviewer/subCategory — author stays the creator; portal UI dropped these.
       if (Array.isArray(body.tags)) {
         updates.tags = body.tags.map((t) => String(t).trim()).filter(Boolean);
       }
-      if (typeof body.status === 'string') updates.status = body.status;
+      if (typeof body.status === 'string') {
+        updates.status = body.status === 'Draft' ? 'Draft' : 'Published';
+      }
 
       await updateDocDirect(KB_COLLECTION, id, updates);
       const article = await getDocDirect(KB_COLLECTION, id);

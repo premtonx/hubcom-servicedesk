@@ -58,6 +58,10 @@ import {
   formatDateDeOnly,
   toIsoDateOnly,
 } from '../src/lib/client-portal/hardware-returns-dates.js';
+import {
+  evaluatePortalKbCategoryWriteAccess,
+  portalCategoryId,
+} from '../src/lib/kb/kb-categories.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -838,6 +842,57 @@ function testPortalUserDeleteLifecycle(): void {
   assert(denyAgent.ok === false && denyAgent.status === 403, 'AGENT account cannot be deleted via org user delete');
 }
 
+function testPortalKbCategoryLifecycle(): void {
+  console.log('\n[19] Portal KB categories — tenant isolation + author stamp');
+
+  const ORG_A = 'org-a-aaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const ORG_B = 'org-b-bbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+  assert(
+    evaluatePortalKbCategoryWriteAccess({
+      role: 'CLIENT_ADMIN',
+      sessionOrgId: ORG_B,
+    }).ok === true,
+    'DPG CLIENT_ADMIN can create/rename/delete categories',
+  );
+  assert(
+    evaluatePortalKbCategoryWriteAccess({
+      role: 'CLIENT_USER',
+      sessionOrgId: ORG_B,
+    }).ok === false,
+    'CLIENT_USER forbidden on category mutations',
+  );
+  assert(
+    evaluatePortalKbCategoryWriteAccess({
+      role: 'CLIENT_ADMIN',
+      sessionOrgId: ORG_A,
+      targetOrgId: ORG_B,
+    }).ok === false,
+    'Citadelle cannot write DPG categories',
+  );
+  assert(
+    portalCategoryId(ORG_B, 'Hardware') !== portalCategoryId(ORG_A, 'Hardware'),
+    'category ids are org-scoped',
+  );
+
+  const portalKbSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalKbRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    portalKbSrc.includes('authorId: req.user!.id') &&
+      portalKbSrc.includes("reviewer: ''") &&
+      !portalKbSrc.includes('owner: (req.body'),
+    'portal article create auto-records logged-in author (no client owner/reviewer)',
+  );
+  assert(
+    fs
+      .readFileSync(path.join(process.cwd(), 'src/hooks/usePortalKbAdapter.ts'), 'utf8')
+      .includes('/api/portal/kb/categories'),
+    'portal adapter wires category CRUD',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('AI Request Lifecycle — dry-run test suite');
   console.log('='.repeat(50));
@@ -862,6 +917,7 @@ async function main(): Promise<void> {
   testHardwareReturnsSchemaCatalogsLifecycle();
   await testOrganizationDirectorySyncLifecycle();
   testPortalUserDeleteLifecycle();
+  testPortalKbCategoryLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);

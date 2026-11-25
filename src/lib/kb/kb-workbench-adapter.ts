@@ -101,9 +101,10 @@ export const PORTAL_KB_CAPABILITIES: KbWorkbenchCapabilities = {
   smartItemIds: ['popular', 'recent'],
 };
 
-/** CLIENT_ADMIN | CLIENT_SUPPORTER — write own-org articles only. */
+/** CLIENT_ADMIN | CLIENT_SUPPORTER — write own-org articles + categories. */
 export const PORTAL_KB_WRITER_CAPABILITIES: KbWorkbenchCapabilities = {
   ...PORTAL_KB_CAPABILITIES,
+  categoryAdmin: true,
   canCreateArticles: true,
   canEditArticles: true,
   canDeleteArticles: true,
@@ -139,6 +140,15 @@ export interface KbWorkbenchAdapter {
 
   listCategories(): Promise<KBCategoryDto[]>;
 
+  createCategory(payload: {
+    name: string;
+    desc?: string;
+    owner?: string;
+    subCategory?: string;
+    iconName?: string;
+    order?: number;
+  }): Promise<KBCategoryDto>;
+
   updateCategory(
     id: string,
     payload: Partial<{
@@ -155,6 +165,11 @@ export interface KbWorkbenchAdapter {
     id: string,
     strategy: 'reassign' | 'purge',
   ): Promise<{ success: boolean; strategy: string; affectedCount: number }>;
+
+  /** Staff: Hubcom users for Autor / Prüfer dropdowns. Portal may return []. */
+  listAssignableUsers?(): Promise<
+    Array<{ uid: string; name: string; role: string; email: string }>
+  >;
 
   getGlobalSettings(): Promise<KBGlobalSettings | null>;
 

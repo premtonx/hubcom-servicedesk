@@ -863,9 +863,14 @@ async function startServer() {
   app.use("/api/portal/team", clientPortalTeamRoutes);
   app.use("/api/portal/email-channel", clientPortalEmailRoutes);
   const { default: clientPortalKbRoutes } = await import("./src/routes/clientPortalKbRoutes.js");
+  const { default: clientPortalKbCategoryRoutes } = await import(
+    "./src/routes/clientPortalKbCategoryRoutes.js"
+  );
   const { default: clientPortalExchangeRoutes } = await import(
     "./src/routes/clientPortalExchangeRoutes.js"
   );
+  // Categories before /api/portal/kb so /categories is not captured by /:id.
+  app.use("/api/portal/kb/categories", clientPortalKbCategoryRoutes);
   app.use("/api/portal/kb", clientPortalKbRoutes);
   app.use("/api/portal/exchange", clientPortalExchangeRoutes);
   const { default: clientPortalVaultRoutes } = await import(

@@ -58,6 +58,11 @@ export function useStaffKbAdapter(): KbWorkbenchAdapter {
         return categories;
       },
 
+      async createCategory(payload) {
+        const { category } = await kbCategoryApi.create(payload);
+        return category;
+      },
+
       async updateCategory(id, payload) {
         const { category } = await kbCategoryApi.update(id, payload);
         return category;
@@ -65,6 +70,34 @@ export function useStaffKbAdapter(): KbWorkbenchAdapter {
 
       async removeCategory(id, strategy) {
         return kbCategoryApi.remove(id, strategy);
+      },
+
+      async listAssignableUsers() {
+        try {
+          const res = await axios.get('/api/admin/users', { withCredentials: true });
+          const rows = Array.isArray(res.data?.users) ? res.data.users : [];
+          return rows
+            .filter((u: Record<string, unknown>) => {
+              const role = String(u.role || '');
+              return (
+                role === 'SYSTEM_ADMIN' ||
+                role === 'AGENT' ||
+                role === 'agent' ||
+                role === 'TEAM_LEAD' ||
+                role === 'team_lead' ||
+                role === 'admin'
+              );
+            })
+            .map((u: Record<string, unknown>) => ({
+              uid: String(u.id || u.uid || ''),
+              name: String(u.name || u.email || ''),
+              role: String(u.role || ''),
+              email: String(u.email || ''),
+            }))
+            .filter((u: { uid: string; name: string }) => u.uid && u.name);
+        } catch {
+          return [];
+        }
       },
 
       async getGlobalSettings() {

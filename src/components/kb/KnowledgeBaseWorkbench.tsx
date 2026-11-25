@@ -121,7 +121,6 @@ import {
   resolveArticleCategoryId,
   articleMatchesCategoryId,
   mapDbCategoryToRecord,
-  slugifyCategoryId,
 } from './kbCategoryUtils';
 import { KBCategoryAdminPanel } from './KBCategoryAdminPanel';
 import { KBCategoryCreateDialog } from './KBCategoryCreateDialog';
@@ -148,14 +147,13 @@ import type {
 } from '../../lib/kb/kb-workbench-adapter';
 import { STAFF_KB_CAPABILITIES } from '../../lib/kb/kb-workbench-adapter';
 
-// Owners & reviewers come from the signed-in user — no hardcoded demo roster.
-const ENTERPRISE_USERS: Array<{
+type StaffAssignableUser = {
   uid: string;
   name: string;
   role: string;
   email: string;
   avatar: string;
-}> = [];
+};
 
 export interface KnowledgeBaseWorkbenchProps {
   mode: KbWorkbenchMode;
@@ -398,6 +396,7 @@ export function KnowledgeBaseWorkbench({
   }, [workspace, closeArticleDraft]);
 
   const [categories, setCategories] = useState<KBCategoryRecord[]>([]);
+  const [enterpriseUsers, setEnterpriseUsers] = useState<StaffAssignableUser[]>([]);
 
   const loadCategories = useCallback(async () => {
     try {
@@ -412,20 +411,36 @@ export function KnowledgeBaseWorkbench({
     void loadCategories();
   }, [loadCategories]);
 
-  // Portal has no category CRUD API — keep sidebar categories derived from visible articles.
   useEffect(() => {
-    if (mode !== 'portal') return;
-    const seen = new Map<string, KBCategoryRecord>();
-    let order = 1;
-    for (const art of articles) {
-      const name = String(art.category || 'Allgemein').trim() || 'Allgemein';
-      const id = slugifyCategoryId(name);
-      if (seen.has(id)) continue;
-      seen.set(id, mapDbCategoryToRecord({ id, name, order }, order));
-      order += 1;
-    }
-    setCategories(Array.from(seen.values()));
-  }, [mode, articles]);
+    if (mode !== 'staff' || !adapter.listAssignableUsers) return;
+    let active = true;
+    void adapter.listAssignableUsers().then((rows) => {
+      if (!active) return;
+      const mapped = rows.map((u) => ({
+        uid: u.uid,
+        name: u.name,
+        role: u.role,
+        email: u.email,
+        avatar: '',
+      }));
+      // Ensure logged-in user appears and is selectable.
+      const meId = String(user?.uid || '');
+      const meName = String(user?.displayName || user?.email || '');
+      if (meId && meName && !mapped.some((u) => u.uid === meId)) {
+        mapped.unshift({
+          uid: meId,
+          name: meName,
+          role: 'AGENT',
+          email: String(user?.email || ''),
+          avatar: '',
+        });
+      }
+      setEnterpriseUsers(mapped);
+    });
+    return () => {
+      active = false;
+    };
+  }, [mode, adapter, user?.uid, user?.displayName, user?.email]);
 
   useEffect(() => {
     void adapter
@@ -621,19 +636,24 @@ export function KnowledgeBaseWorkbench({
     if (!capabilities.canCreateArticles) return;
     const catId =
       category === 'All'
-        ? (categories[0]?.id ?? UNCATEGORIZED_CATEGORY_ID)
+        ? UNCATEGORIZED_CATEGORY_ID
         : resolveArticleCategoryId({ category }, categories);
+    const meName =
+      enterpriseUsers.find((u) => u.uid === user?.uid)?.name ||
+      user?.displayName ||
+      user?.email ||
+      '';
     setNewArticle({
       title: '',
       content: '',
-      category: catId,
+      category: catId || UNCATEGORIZED_CATEGORY_ID,
       subCategory: '',
       visibility: mode === 'portal' ? 'organization' : 'internal',
       organizationId: '',
       tags: [],
-      owner: user?.email || '',
+      owner: mode === 'portal' ? '' : meName,
       reviewer: '',
-      lastEditor: user?.email || '',
+      lastEditor: user?.email || meName || '',
       status: mode === 'portal' ? 'Published' : 'Draft',
       avgReadTime: '',
       index_in_rag: mode !== 'portal',
@@ -689,24 +709,31 @@ export function KnowledgeBaseWorkbench({
         return;
       }
 
+      const categoryId =
+        !newArticle.category ||
+        newArticle.category === 'All' ||
+        newArticle.category === UNCATEGORIZED_CATEGORY_ID
+          ? UNCATEGORIZED_CATEGORY_ID
+          : newArticle.category;
+
       const payload: any = {
         title,
         content: newArticle.content || '',
-        category: newArticle.category,
-        subCategory: newArticle.subCategory || '',
+        category: categoryId,
+        subCategory: mode === 'portal' ? '' : newArticle.subCategory || '',
         visibility,
         organizationId:
           visibility === 'organization' ? String(newArticle.organizationId || '').trim() : null,
         organization_id:
           visibility === 'organization' ? String(newArticle.organizationId || '').trim() : null,
         tags,
-        owner: newArticle.owner,
-        reviewer: newArticle.reviewer,
-        lastEditor: user.email || 'Admin',
+        owner: mode === 'portal' ? undefined : newArticle.owner,
+        reviewer: mode === 'portal' ? undefined : newArticle.reviewer || '',
+        lastEditor: user.email || user.displayName || 'Admin',
         status,
         avgReadTime: newArticle.avgReadTime || '4m 00s',
-        language: 'English',
-        index_in_rag: newArticle.index_in_rag !== false,
+        language: 'de',
+        index_in_rag: mode === 'portal' ? false : newArticle.index_in_rag !== false,
       };
 
       if (editingArticleId) {
@@ -1722,7 +1749,9 @@ export function KnowledgeBaseWorkbench({
               active={kbNav}
               onNavigate={handleKbNavigate}
               onOpenSettings={
-                capabilities.categoryAdmin ? () => setIsCategoryAdminOpen(true) : undefined
+                capabilities.categoryAdmin && mode === 'staff'
+                  ? () => setIsCategoryAdminOpen(true)
+                  : undefined
               }
               categories={categories}
               counts={sidebarCounts}
@@ -1734,6 +1763,12 @@ export function KnowledgeBaseWorkbench({
               workspaceItemIds={workspaceNavIds}
               showHealthScore={capabilities.kbHealthTelemetry}
               smartItemIds={capabilities.smartItemIds}
+              canManageCategories={capabilities.categoryAdmin}
+              onCreateCategory={
+                capabilities.categoryAdmin ? () => setIsCategoryCreateOpen(true) : undefined
+              }
+              onRenameCategory={capabilities.categoryAdmin ? openRenameCategory : undefined}
+              onDeleteCategory={capabilities.categoryAdmin ? openDeleteCategory : undefined}
             />
             {isAddingArticle ? (
               <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#F8F9FB] overflow-hidden">
@@ -1744,7 +1779,7 @@ export function KnowledgeBaseWorkbench({
                     className="flex items-center gap-1 text-slate-500 hover:text-slate-800 font-extrabold text-xs cursor-pointer transition-colors select-none group"
                   >
                     <ChevronLeft className="w-3.5 h-3.5 text-slate-450 group-hover:text-slate-650 transition-colors" />
-                    {t('kb.editor.backToOverview', 'Back to knowledge base')}
+                    {t('kb.editor.backToOverview', 'Zurück zur Wissensdatenbank')}
                   </button>
                 </div>
                 <KBArticleEditorWorkspace
@@ -1755,7 +1790,7 @@ export function KnowledgeBaseWorkbench({
                   tagInput={tagInput}
                   onTagInputChange={setTagInput}
                   categories={categories}
-                  enterpriseUsers={ENTERPRISE_USERS}
+                  enterpriseUsers={enterpriseUsers}
                   portalOrganizations={portalOrganizations}
                   onClose={closeArticleDraft}
                   onSave={handleSaveArticle}
@@ -1770,6 +1805,14 @@ export function KnowledgeBaseWorkbench({
                   }
                   lockPortalOrgVisibility={mode === 'portal'}
                   showRagToggle={capabilities.ragIndexToggle}
+                  mode={mode}
+                  showAutoAssist={
+                    mode === 'staff' && Boolean(adapter.isAiSearchConfigured?.())
+                  }
+                  canCreateCategory={capabilities.categoryAdmin}
+                  onCreateCategory={
+                    capabilities.categoryAdmin ? () => setIsCategoryCreateOpen(true) : undefined
+                  }
                   className="flex-1 min-h-0"
                 />
               </div>
@@ -2147,6 +2190,12 @@ export function KnowledgeBaseWorkbench({
         onOpenChange={setIsCategoryCreateOpen}
         categories={categories}
         onCategoriesChange={setCategories}
+        onCreate={(payload) => adapter.createCategory(payload)}
+        onCreated={(cat) => {
+          if (isAddingArticle) {
+            setNewArticle((prev) => ({ ...prev, category: cat.id }));
+          }
+        }}
       />
       ) : null}
 

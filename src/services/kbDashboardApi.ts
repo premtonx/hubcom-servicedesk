@@ -8,6 +8,7 @@ export interface KBCategoryDto {
   subCategory?: string;
   iconName?: string;
   order?: number;
+  organizationId?: string | null;
   updatedAt?: string;
   createdAt?: string;
 }

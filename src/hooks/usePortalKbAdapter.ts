@@ -8,9 +8,9 @@ import axios from 'axios';
 import type { KbWorkbenchAdapter } from '../lib/kb/kb-workbench-adapter';
 import type { KBArticle } from '../types';
 import type { KBCategoryDto } from '../services/kbDashboardApi';
-import { slugifyCategoryId } from '../components/kb/kbCategoryUtils';
 
 const PORTAL_KB = '/api/portal/kb';
+const PORTAL_KB_CATEGORIES = '/api/portal/kb/categories';
 const POLL_MS = 20_000;
 
 function toKbArticle(row: Record<string, unknown>): KBArticle {
@@ -18,7 +18,7 @@ function toKbArticle(row: Record<string, unknown>): KBArticle {
     id: String(row.id),
     title: String(row.title || ''),
     content: String(row.content || ''),
-    category: String(row.category || 'Allgemein'),
+    category: String(row.category || 'uncategorized'),
     subCategory: String(row.subCategory || ''),
     tags: Array.isArray(row.tags) ? row.tags.map((t) => String(t)) : [],
     visibility: (row.visibility as KBArticle['visibility']) || 'organization',
@@ -44,26 +44,11 @@ async function fetchPortalArticles(): Promise<KBArticle[]> {
   return rows.map((row: Record<string, unknown>) => toKbArticle(row));
 }
 
-function categoriesFromArticles(articles: KBArticle[]): KBCategoryDto[] {
-  const seen = new Map<string, KBCategoryDto>();
-  let order = 1;
-  for (const art of articles) {
-    const name = String(art.category || 'Allgemein').trim() || 'Allgemein';
-    const id = slugifyCategoryId(name);
-    if (seen.has(id)) continue;
-    seen.set(id, { id, name, order: order++ });
-  }
-  return Array.from(seen.values());
-}
-
 export function usePortalKbAdapter(): KbWorkbenchAdapter {
   return useMemo(() => {
-    /** Last list used so listCategories can stay in sync without a second staff API. */
-    let latestArticles: KBArticle[] = [];
     const listeners = new Set<(articles: KBArticle[]) => void>();
 
     const notify = (articles: KBArticle[]) => {
-      latestArticles = articles;
       listeners.forEach((cb) => cb(articles));
     };
 
@@ -96,14 +81,16 @@ export function usePortalKbAdapter(): KbWorkbenchAdapter {
       },
 
       async createArticle(article) {
+        const category = String(article.category || '').trim();
         const res = await axios.post(
           PORTAL_KB,
           {
             title: article.title,
             content: article.content,
-            category: article.category || 'Allgemein',
-            subCategory: article.subCategory || '',
+            category: category && category !== 'All' ? category : 'uncategorized',
+            subCategory: '',
             tags: article.tags || [],
+            status: article.status || 'Published',
           },
           { withCredentials: true },
         );
@@ -118,7 +105,6 @@ export function usePortalKbAdapter(): KbWorkbenchAdapter {
             title: patch.title,
             content: patch.content,
             category: patch.category,
-            subCategory: patch.subCategory,
             tags: patch.tags,
             status: patch.status,
           },
@@ -144,22 +130,34 @@ export function usePortalKbAdapter(): KbWorkbenchAdapter {
       },
 
       async listCategories() {
-        if (latestArticles.length === 0) {
-          try {
-            latestArticles = await fetchPortalArticles();
-          } catch {
-            return [];
-          }
-        }
-        return categoriesFromArticles(latestArticles);
+        const res = await axios.get(PORTAL_KB_CATEGORIES, { withCredentials: true });
+        return (res.data?.categories || []) as KBCategoryDto[];
       },
 
-      async updateCategory() {
-        throw new Error('Kategorien werden im Kunden-Portal nicht verwaltet.');
+      async createCategory(payload) {
+        const res = await axios.post(
+          PORTAL_KB_CATEGORIES,
+          { name: payload.name, desc: payload.desc, order: payload.order, iconName: payload.iconName },
+          { withCredentials: true },
+        );
+        return res.data.category as KBCategoryDto;
       },
 
-      async removeCategory() {
-        throw new Error('Kategorien werden im Kunden-Portal nicht verwaltet.');
+      async updateCategory(id, payload) {
+        const res = await axios.patch(
+          `${PORTAL_KB_CATEGORIES}/${encodeURIComponent(id)}`,
+          payload,
+          { withCredentials: true },
+        );
+        return res.data.category as KBCategoryDto;
+      },
+
+      async removeCategory(id, strategy) {
+        const res = await axios.delete(`${PORTAL_KB_CATEGORIES}/${encodeURIComponent(id)}`, {
+          withCredentials: true,
+          data: { strategy },
+        });
+        return res.data as { success: boolean; strategy: string; affectedCount: number };
       },
 
       async getGlobalSettings() {
@@ -171,6 +169,10 @@ export function usePortalKbAdapter(): KbWorkbenchAdapter {
       },
 
       async listPortalOrganizations() {
+        return [];
+      },
+
+      async listAssignableUsers() {
         return [];
       },
     };
