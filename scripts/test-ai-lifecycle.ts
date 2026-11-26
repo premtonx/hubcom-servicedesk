@@ -1214,17 +1214,29 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
       dashboardPageSrc.includes('Rücklieferungen-Trends') &&
       dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('30d')") &&
       dashboardPageSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
+      dashboardPageSrc.includes('getReturnsTrends') &&
+      dashboardPageSrc.includes('AbortController') &&
+      dashboardPageSrc.includes('ZERO_RETURNS_KPIS') &&
+      dashboardPageSrc.includes('dashboardLoading') &&
+      dashboardPageSrc.includes('animate-pulse') &&
+      !dashboardPageSrc.includes('returnsActivityByRange[') &&
       dashboardRouteSrc.includes('loadPortalDashboardReturnsStats') &&
       !dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
       dashboardRouteSrc.includes('returnsActivityByRange = null') &&
       !dashboardPageSrc.includes('/api/db') &&
       !dashboardRouteSrc.includes("'/api/db"),
-    'portal Übersicht KPIs via SQL loader; trends detached from dashboard',
+    'portal Übersicht 0-first KPIs + independent /returns/trends fetch',
   );
   // FE must not cascade-refetch dashboard on trend range changes.
   assert(
-    /useEffect\(\(\) => \{[\s\S]*?getDashboard\(\)[\s\S]*?\}, \[\]\)/.test(dashboardPageSrc),
+    /useEffect\(\(\) => \{[\s\S]*?getDashboard\([\s\S]*?\}, \[\]\)/.test(dashboardPageSrc),
     'portal dashboard fetches /api/portal/dashboard once (empty deps)',
+  );
+  assert(
+    /useEffect\(\(\) => \{[\s\S]*?getReturnsTrends\([\s\S]*?\}, \[returnsTrendRange/.test(
+      dashboardPageSrc,
+    ),
+    'trends useEffect depends on timeframe (independent of dashboard)',
   );
 }
 

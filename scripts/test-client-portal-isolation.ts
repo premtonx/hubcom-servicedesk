@@ -4261,7 +4261,11 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
     'normalize forces returned_at=null when returned=false',
   );
 
-  // Portal Übersicht returns KPIs in hero + trends chart — DPG only, zero /api/db.
+  // Portal Übersicht — 0-first render, independent trends, zero /api/db.
+  const apiSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/services/clientPortalApi.ts'),
+    'utf8',
+  );
   assert(
     dashboardPageSrc.includes('Rücklieferungen') &&
       dashboardPageSrc.includes('returnsKpis') &&
@@ -4276,14 +4280,30 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       dashboardPageSrc.includes('90 Tage') &&
       dashboardPageSrc.includes('12 Monate') &&
       dashboardPageSrc.includes("id: 'all', label: 'Alle'") &&
+      dashboardPageSrc.includes('ZERO_RETURNS_KPIS') &&
+      dashboardPageSrc.includes('dashboardLoading') &&
+      dashboardPageSrc.includes('getReturnsTrends') &&
+      dashboardPageSrc.includes('AbortController') &&
+      dashboardPageSrc.includes('animate-pulse') &&
       !dashboardPageSrc.includes('/api/db'),
-    'portal Übersicht shows top returns KPIs + trends chart when hardwareReturnsEnabled',
+    'portal Übersicht 0-first KPIs + independent trends (no /api/db)',
   );
   assert(
     dashboardPageSrc.includes('showReturns') &&
       dashboardPageSrc.includes('hardwareReturnsEnabled === true') &&
-      /showReturns[\s\S]{0,80}returnsKpis/.test(dashboardPageSrc),
-    'returns KPIs/trends gated on hardwareReturnsEnabled',
+      /useEffect\(\(\) => \{[\s\S]*?getDashboard\([\s\S]*?\}, \[\]\)/.test(dashboardPageSrc) &&
+      /useEffect\(\(\) => \{[\s\S]*?getReturnsTrends\([\s\S]*?\}, \[returnsTrendRange/.test(
+        dashboardPageSrc,
+      ),
+    'dashboard + trends fetched independently; returns gated on hardwareReturnsEnabled',
+  );
+  assert(
+    apiSrc.includes('async getReturnsTrends') &&
+      apiSrc.includes('/api/portal/returns/trends') &&
+      apiSrc.includes('params: { timeframe }') &&
+      apiSrc.includes('assertNeverDb') &&
+      !/getReturnsTrends[\s\S]{0,500}\/api\/db/.test(apiSrc),
+    'getReturnsTrends uses portal trends endpoint (never /api/db)',
   );
   assert(
     dashboardRouteSrc.includes('loadPortalDashboardReturnsStats') &&
