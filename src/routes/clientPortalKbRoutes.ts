@@ -234,17 +234,38 @@ router.post(
       if (!parsed.success) {
         return res.status(400).json({ error: 'subject required', details: parsed.error.flatten() });
       }
-      const { AIAdapter } = await import('../lib/ai/provider-adapter.js');
-      const ai = new AIAdapter();
-      const generated = await ai.generateKBArticle({
-        subject: parsed.data.subject,
-        description: parsed.data.description || '',
-        threadHistory: parsed.data.threadHistory || [],
-        customerMetadata: { organizationId },
-      });
+      const { executeAiFeatureRequest, requireLifecycleOutput } = await import(
+        '../lib/ai-orchestrator-service.js'
+      );
+      const prompt = `You are a technical writer. Convert the following support ticket into a structured Knowledge Base article.
+Follow this format:
+1. Title: A concise, searchable title.
+2. Problem: A brief description of the issue.
+3. Solution: Step-by-step instructions to resolve.
+IMPORTANT: DO NOT include any PII. Return ONLY JSON with "title" and "content".
+
+TICKET SUBJECT: ${parsed.data.subject}
+TICKET DESCRIPTION: ${parsed.data.description || ''}
+THREAD HISTORY: ${(parsed.data.threadHistory || []).join('\n') || 'No history.'}`;
+      let title = `KB: ${parsed.data.subject}`;
+      let content = `### Summary\n${parsed.data.description || parsed.data.subject}`;
+      try {
+        const result = await executeAiFeatureRequest({
+          feature: 'kb_generation',
+          prompt,
+          customerId: organizationId,
+          metadata: { organizationId, source: 'portal_kb_ai_generate' },
+        } as any);
+        const output = requireLifecycleOutput(result);
+        const body = JSON.parse(output);
+        if (body.title) title = String(body.title);
+        if (body.content) content = String(body.content);
+      } catch (genErr: any) {
+        safeLog('warn', '[portal/kb] ai-generate LLM fallback', genErr?.message || genErr);
+      }
       return res.json({
-        title: generated.title,
-        content: generated.content,
+        title,
+        content,
         organizationId,
         ragTenantId: resolveTenantIdForOrganization(organizationId),
       });
@@ -350,11 +371,31 @@ router.post(
 
       let answer = '';
       try {
-        const { AIAdapter } = await import('../lib/ai/provider-adapter.js');
-        const ai = new AIAdapter();
-        answer = await ai.answerKnowledgeQuery(parsed.data.query, snippets, {
-          entityId: `portal-kb-ask-${organizationId}-${parsed.data.query.slice(0, 48)}`,
-        });
+        const { executeAiFeatureRequest, requireLifecycleOutput } = await import(
+          '../lib/ai-orchestrator-service.js'
+        );
+        const contextBlock =
+          snippets.length > 0
+            ? snippets
+                .map((s) => `[${s.source}: ${s.sourceTitle}]\n${s.text}`)
+                .join('\n\n')
+            : 'No matching documentation found.';
+        const prompt = `Answer using ONLY the provided documentation excerpts. If insufficient, say so clearly.
+USER QUESTION: ${parsed.data.query}
+
+DOCUMENTATION:
+${contextBlock}`;
+        const result = await executeAiFeatureRequest({
+          feature: 'ticket_summarization',
+          prompt,
+          customerId: organizationId,
+          metadata: {
+            organizationId,
+            source: 'portal_kb_ai_ask',
+            entityId: `portal-kb-ask-${organizationId}-${parsed.data.query.slice(0, 48)}`,
+          },
+        } as any);
+        answer = requireLifecycleOutput(result);
       } catch (err: any) {
         safeLog('warn', '[portal/kb] ai-ask LLM fallback', err?.message || err);
         answer =

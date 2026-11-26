@@ -76,7 +76,10 @@ export async function hybridSearchKnowledge(params: {
 
   let queryVector: number[] | null = null;
   try {
-    const [vec] = await embedTexts([queryText]);
+    const [vec] = await embedTexts([queryText], {
+      workspaceId: tenantId,
+      organizationId: params.organizationId,
+    });
     queryVector = vec || null;
   } catch (err: any) {
     console.warn('[ki-orchestrator] embedding unavailable — FTS-only hybrid fallback:', err?.message || err);

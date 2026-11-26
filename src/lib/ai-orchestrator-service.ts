@@ -41,15 +41,39 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 export { isBudgetExceeded } from './ai-budget.js';
 
+/** Resolve organizationId from execution context (metadata / customerId). */
+export function resolveOrganizationIdFromAiContext(
+  ctx: AiExecutionContext,
+): string | null {
+  const fromMeta =
+    ctx.metadata && typeof ctx.metadata === 'object'
+      ? String(
+          (ctx.metadata as any).organizationId ??
+            (ctx.metadata as any).organization_id ??
+            '',
+        ).trim()
+      : '';
+  if (fromMeta) return fromMeta;
+  const customerId = String(ctx.customerId || '').trim();
+  // customerId may be org UUID when portal/staff stamp it; ignore non-uuid-ish scopes.
+  if (customerId && customerId.length >= 8 && !['standard', 'vip', 'enterprise'].includes(customerId)) {
+    return customerId;
+  }
+  return null;
+}
+
 /** Production AI execution — routes through lifecycle middleware with live model executor. */
 export async function executeAiFeatureRequest(
   ctx: AiExecutionContext,
   options: AiLifecycleOptions = {},
 ): Promise<AiExecutionResult> {
   const workspaceId = ctx.workspaceId ?? 'default';
+  const organizationId = resolveOrganizationIdFromAiContext(ctx);
   return runAiRequestLifecycle(ctx, {
     ...options,
-    executor: options.executor ?? createProductionModelExecutor(workspaceId),
+    executor:
+      options.executor ??
+      createProductionModelExecutor(workspaceId, { organizationId }),
   });
 }
 

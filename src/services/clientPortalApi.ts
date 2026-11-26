@@ -783,6 +783,55 @@ export const clientPortalApi = {
     };
   },
 
+  async getAiSettings(): Promise<{ settings: Record<string, unknown>; organization: { id: string; name: string } }> {
+    const path = '/api/portal/ai-settings';
+    assertNeverDb(path);
+    const res = await axios.get(path, { withCredentials: true });
+    return {
+      settings: (res.data?.settings || {}) as Record<string, unknown>,
+      organization: res.data?.organization || { id: '', name: '' },
+    };
+  },
+
+  async updateAiSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const path = '/api/portal/ai-settings';
+    assertNeverDb(path);
+    const res = await axios.put(path, payload, { withCredentials: true });
+    return (res.data?.settings || {}) as Record<string, unknown>;
+  },
+
+  async testAiSettings(payload?: { endpoint?: string }): Promise<{
+    ok: boolean;
+    message: string;
+    latencyMs?: number;
+  }> {
+    const path = '/api/portal/ai-settings/test';
+    assertNeverDb(path);
+    const res = await axios.post(path, payload || {}, { withCredentials: true });
+    return {
+      ok: Boolean(res.data?.ok ?? res.data?.success),
+      message: res.data?.message || res.data?.error || '',
+      latencyMs: typeof res.data?.latencyMs === 'number' ? res.data.latencyMs : undefined,
+    };
+  },
+
+  async reindexAiSettings(): Promise<{
+    ok: boolean;
+    enqueued: number;
+    deletedChunks: number;
+    message: string;
+  }> {
+    const path = '/api/portal/ai-settings/reindex';
+    assertNeverDb(path);
+    const res = await axios.post(path, {}, { withCredentials: true });
+    return {
+      ok: Boolean(res.data?.success ?? true),
+      enqueued: Number(res.data?.enqueued || 0),
+      deletedChunks: Number(res.data?.deletedChunks || 0),
+      message: res.data?.message || '',
+    };
+  },
+
   async approveTeamMember(
     userId: string,
     role: PortalTeamRole,

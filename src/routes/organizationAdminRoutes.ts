@@ -13,6 +13,7 @@ import {
   listOrganizations,
   organizationEnabledModules,
   updateOrganization,
+  updateOrganizationAiSettings,
   updateOrganizationBranding,
   updateOrganizationHardwareModule,
   updateOrganizationPortalModules,
@@ -383,6 +384,137 @@ router.put(
       return res
         .status(500)
         .json({ error: safeErrorMessage(err, 'Portal-Module konnten nicht gespeichert werden') });
+    }
+  },
+);
+
+const orgAiSettingsSchema = z.object({
+  ai_mode: z.enum(['global_default', 'org_local_ai', 'disabled']).optional(),
+  local_llm_endpoint: z.string().max(500).optional().nullable(),
+  local_llm_model: z.string().max(120).optional().nullable(),
+  local_embedding_endpoint: z.string().max(500).optional().nullable(),
+  local_embedding_model: z.string().max(120).optional().nullable(),
+  local_ai_api_key: z.string().max(2000).optional().nullable(),
+  strict_local_only: z.boolean().optional().nullable(),
+  include_shared_kb_in_rag: z.boolean().optional().nullable(),
+});
+
+/**
+ * GET /api/admin/organizations/:id/ai-settings — Mandanten-KI (SYSTEM_ADMIN).
+ */
+router.get(
+  '/:id/ai-settings',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const id = routeParam(req.params.id);
+      const org = await getOrganization(id);
+      if (!org) return res.status(404).json({ error: 'Organization not found.' });
+      const {
+        normalizeOrgAiSettings,
+        toPublicOrgAiSettings,
+      } = await import('../lib/ai/org-ai-settings.js');
+      return res.json({
+        settings: toPublicOrgAiSettings(normalizeOrgAiSettings(org)),
+        organization: { id: org.id, name: org.name },
+      });
+    } catch (err: any) {
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'KI-Einstellungen konnten nicht geladen werden') });
+    }
+  },
+);
+
+/**
+ * PUT /api/admin/organizations/:id/ai-settings
+ */
+router.put(
+  '/:id/ai-settings',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const id = routeParam(req.params.id);
+    const parsed = orgAiSettingsSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Invalid ai-settings payload',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    try {
+      const org = await updateOrganizationAiSettings(id, parsed.data);
+      if (!org) return res.status(404).json({ error: 'Organization not found.' });
+      const {
+        normalizeOrgAiSettings,
+        toPublicOrgAiSettings,
+      } = await import('../lib/ai/org-ai-settings.js');
+      return res.json({
+        settings: toPublicOrgAiSettings(normalizeOrgAiSettings(org)),
+        organization: { id: org.id, name: org.name },
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        error: safeErrorMessage(err, 'KI-Einstellungen konnten nicht gespeichert werden'),
+      });
+    }
+  },
+);
+
+/**
+ * POST /api/admin/organizations/:id/ai-settings/test
+ */
+router.post(
+  '/:id/ai-settings/test',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const id = routeParam(req.params.id);
+      const org = await getOrganization(id);
+      if (!org) return res.status(404).json({ error: 'Organization not found.' });
+      const {
+        decryptOrgAiApiKey,
+        normalizeOrgAiSettings,
+        resolveOrgLlmEndpoint,
+      } = await import('../lib/ai/org-ai-settings.js');
+      const { testOrgLocalAiConnection } = await import('../lib/ai/org-rag-reindex.js');
+      const settings = normalizeOrgAiSettings(org);
+      const endpointOverride = String((req.body as any)?.endpoint || '').trim();
+      const result = await testOrgLocalAiConnection({
+        endpoint: endpointOverride || resolveOrgLlmEndpoint(settings),
+        apiKey: decryptOrgAiApiKey(settings),
+        model: settings.local_llm_model,
+      });
+      return res.json({ ...result, success: result.ok, organizationId: id });
+    } catch (err: any) {
+      return res.status(500).json({
+        error: safeErrorMessage(err, 'Verbindungstest fehlgeschlagen'),
+      });
+    }
+  },
+);
+
+/**
+ * POST /api/admin/organizations/:id/ai-settings/reindex
+ */
+router.post(
+  '/:id/ai-settings/reindex',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const id = routeParam(req.params.id);
+      const org = await getOrganization(id);
+      if (!org) return res.status(404).json({ error: 'Organization not found.' });
+      const { reindexOrganizationKbRag } = await import('../lib/ai/org-rag-reindex.js');
+      const result = await reindexOrganizationKbRag(id);
+      return res.status(202).json({
+        success: true,
+        message: 'Wissensdatenbank-Index für diesen Mandanten wird neu aufgebaut.',
+        ...result,
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        error: safeErrorMessage(err, 'Reindex fehlgeschlagen'),
+      });
     }
   },
 );

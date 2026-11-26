@@ -161,13 +161,16 @@ async function upsertChunks(params: {
     ? chunks.map((chunk) => `${params.chunkPrefix!}\n\n${chunk}`)
     : chunks;
 
-  const vectors = await embedTexts(stamped, { workspaceId: params.tenantId });
-  await deleteEmbeddingsForSource(params.tenantId, params.sourceType, params.sourceId);
-
   const organizationId =
     params.organizationId == null || String(params.organizationId).trim() === ''
       ? null
       : String(params.organizationId).trim();
+
+  const vectors = await embedTexts(stamped, {
+    workspaceId: params.tenantId,
+    organizationId,
+  });
+  await deleteEmbeddingsForSource(params.tenantId, params.sourceType, params.sourceId);
 
   for (let i = 0; i < chunks.length; i += 1) {
     const content = stamped[i];
