@@ -920,7 +920,7 @@ export function normalizeHardwareReturnInput(
     const coerced = coerceShipmentStatus(input.shipment_status);
     if (input.shipment_status !== null && String(input.shipment_status).trim() && !coerced) {
       throw Object.assign(
-        new Error('Ungültiger Rücksendestatus (ausstehend|versendet|eingegangen).'),
+        new Error('Ungültiger Rücksendestatus (versendet|eingegangen).'),
         { status: 400 },
       );
     }

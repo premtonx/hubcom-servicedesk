@@ -1846,20 +1846,20 @@ function testReturnsDetailOverviewLifecycle(): void {
 function testReturnsShipmentStatusLifecycle(): void {
   console.log('\n[23] Rücksendestatus shipment_status — PATCH sync + pills (Part 1)');
 
-  assert(coerceShipmentStatus('Ausstehend') === 'ausstehend', 'coerce ausstehend');
+  assert(coerceShipmentStatus('Ausstehend') === 'versendet', 'legacy ausstehend → versendet');
   assert(coerceShipmentStatus('VERSENDET') === 'versendet', 'coerce versendet');
   assert(coerceShipmentStatus('eingegangen') === 'eingegangen', 'coerce eingegangen');
   assert(coerceShipmentStatus('bogus') === null, 'coerce rejects unknown');
 
-  // Legacy 888 DPG rows: returned → eingegangen; null → versendet; ausstehend kept.
+  // Effective display: only Versendet | Eingegangen (returned wins).
   assert(
     resolveEffectiveShipmentStatus({ returned: true, shipment_status: null }) === 'eingegangen',
     'returned=true → Eingegangen (no backfill)',
   );
   assert(
     resolveEffectiveShipmentStatus({ returned: false, shipment_status: 'ausstehend' }) ===
-      'ausstehend',
-    'ausstehend when not returned',
+      'versendet',
+    'legacy ausstehend displays as Versendet',
   );
   assert(
     resolveEffectiveShipmentStatus({ returned: false, shipment_status: null }) === 'versendet',
@@ -1882,8 +1882,8 @@ function testReturnsShipmentStatusLifecycle(): void {
     { existing: base as any },
   );
   assert(
-    toPending.shipment_status === 'ausstehend' && !toPending.returned,
-    'PATCH ausstehend persists without marking returned',
+    toPending.shipment_status === 'versendet' && !toPending.returned,
+    'PATCH legacy ausstehend normalizes to versendet',
   );
 
   const toReceived = normalizeHardwareReturnInput(
@@ -2012,35 +2012,48 @@ function testReturnsShipmentStatusLifecycle(): void {
     'utf8',
   );
 
-  assert(
-    pillSrc.includes('bg-blue-50 text-blue-600 border-blue-200') &&
-      pillSrc.includes('bg-amber-50 text-amber-600 border-amber-200') &&
-      pillSrc.includes('bg-emerald-50 text-emerald-700 border-emerald-200') &&
-      pillSrc.includes('Send') &&
-      pillSrc.includes('Clock') &&
-      pillSrc.includes('CheckCircle2') &&
-      pillSrc.includes('e.stopPropagation()'),
-    'ShipmentStatusPill color-coded + stopPropagation',
+  const deliveryPillsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/DeliveryDuePills.tsx'),
+    'utf8',
+  );
+  const stepperSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsReminderStepper.tsx'),
+    'utf8',
   );
   assert(
-    workbenchSrc.includes('ShipmentStatusPill') &&
-      workbenchSrc.includes('patchShipmentStatus') &&
+    pillSrc.includes('bg-blue-50 text-blue-700 border-blue-200') &&
+      pillSrc.includes('bg-emerald-50 text-emerald-700 border-emerald-200') &&
+      !pillSrc.includes('ausstehend') &&
+      pillSrc.includes('Send') &&
+      pillSrc.includes('CheckCircle2') &&
+      pillSrc.includes('e.stopPropagation()'),
+    'ShipmentStatusPill Versendet|Eingegangen only',
+  );
+  assert(
+    workbenchSrc.includes('DeliveryDuePills') &&
+      deliveryPillsSrc.includes('Versendet ·') &&
+      deliveryPillsSrc.includes('Eingegangen ·') &&
+      deliveryPillsSrc.includes('Tage überfällig') &&
       !workbenchSrc.includes('Versand: {hw.') &&
       !workbenchSrc.includes("'/api/db") &&
       !workbenchSrc.includes('"/api/db'),
-    'list replaces Versand: Standard with pill; zero /api/db',
+    'list uses 2-pill DeliveryDuePills; zero /api/db',
   );
   assert(
-    sharedSrc.includes('ShipmentStatusPill') &&
-      kanbanSrc.includes('onShipmentStatusChange') &&
-      cardsSrc.includes('onShipmentStatusChange'),
-    'Kanban + Karten wire shipment status pill',
+    sharedSrc.includes('DeliveryDuePills') &&
+      stepperSrc.includes('h-6 min-w-6') &&
+      stepperSrc.includes('text-[11px]') &&
+      stepperSrc.includes('h-[1.5px] w-2') &&
+      workbenchSrc.includes('ArrowUpRight') &&
+      workbenchSrc.includes('shadow-2xs'),
+    'compact 24px stepper + modern Details button',
   );
   assert(
     editorSrc.includes('Rücksendestatus') &&
       editorSrc.includes('SHIPMENT_STATUS_OPTIONS') &&
-      editorSrc.includes('shipment_status'),
-    'full-page form has Rücksendestatus selector',
+      editorSrc.includes('shipment_status') &&
+      !editorSrc.includes("'ausstehend'"),
+    'full-page form has 2-state Rücksendestatus selector',
   );
   assert(
     workbenchSrc.includes("'/api/portal/returns'") && workbenchSrc.includes("'/api/returns'"),

@@ -1,7 +1,7 @@
 import {
+  ArrowUpRight,
   Package,
   PackageCheck,
-  PanelRight,
   Plug,
   Tablet,
   Undo2,
@@ -10,17 +10,14 @@ import {
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { cn } from '../../lib/utils';
-import {
-  formatDateDeOnly,
-  toIsoDateOnly,
-} from '../../lib/client-portal/hardware-returns-dates';
+import { toIsoDateOnly } from '../../lib/client-portal/hardware-returns-dates';
 import {
   buildReturnsStatusColumns,
   DEFAULT_RETURN_STATUSES,
 } from '../../lib/client-portal/hardware-returns-layout';
 import type { ConfiguredReminderStage } from '../../lib/client-portal/hardware-returns-stages';
 import { ReturnsReminderStepper } from './ReturnsReminderStepper';
-import { ShipmentStatusPill } from './ShipmentStatusPill';
+import { DeliveryDuePills } from './DeliveryDuePills';
 import type { ShipmentStatus } from '../../lib/client-portal/hardware-returns-shipment';
 
 export { buildReturnsStatusColumns, DEFAULT_RETURN_STATUSES };
@@ -257,23 +254,13 @@ export function ReturnsItemCardBody({
         <p className="text-[10px] text-slate-500 truncate">Bearbeiter: {assigneeName}</p>
       </div>
       <CompactDevicePills hw={hw} />
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[10px] text-slate-600 font-medium">
-          Fällig: {formatDateDeOnly(hw.return_due_date)}
-        </span>
-        <div onClick={(e) => e.stopPropagation()}>
-          <ShipmentStatusPill
-            returned={Boolean(hw.returned)}
-            shipmentStatus={hw.shipment_status}
-            interactive={Boolean(onShipmentStatusChange)}
-            onChange={onShipmentStatusChange}
-          />
-        </div>
-        <DueCountdownPill
-          overdueDays={item.overdueDays}
-          dueDate={hw.return_due_date || hw.delivery_date}
+      <div onClick={(e) => e.stopPropagation()}>
+        <DeliveryDuePills
           returned={Boolean(hw.returned)}
-          className="mt-0"
+          deliveryDate={hw.delivery_date}
+          returnedAt={hw.returned_at}
+          returnDueDate={hw.return_due_date}
+          overdueDays={item.overdueDays}
         />
       </div>
       {onOpenSend ? (
@@ -317,36 +304,38 @@ export function ReturnsItemCardBody({
         </select>
       ) : null}
       <div
-        className="flex flex-wrap items-center gap-1.5 pt-1"
+        className="flex flex-wrap items-center justify-end gap-2 pt-1"
         onClick={(e) => e.stopPropagation()}
       >
-        <Button type="button" size="sm" variant="outline" className="h-7 text-[10px]" onClick={onOpenDetails}>
-          <PanelRight className="w-3 h-3 mr-1" />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 rounded-lg text-xs font-medium border-slate-200/90 bg-white text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300"
+          onClick={onOpenDetails}
+        >
+          <ArrowUpRight className="w-3.5 h-3.5 mr-1" />
           Details
         </Button>
         {!hw.returned ? (
           <Button
             type="button"
             size="sm"
-            className="h-7 text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white"
+            className="h-8 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all"
             title="Eingang bestätigen"
             onClick={onMarkReturned}
           >
-            <PackageCheck className="w-3 h-3 mr-1" />
+            <PackageCheck className="w-3.5 h-3.5 mr-1" />
             Eingang bestätigen
           </Button>
         ) : (
           <>
-            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 px-1">
-              <PackageCheck className="w-3 h-3" />
-              Eingegangen
-            </span>
             {onUnreturn ? (
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
-                className="h-7 px-1.5 text-[10px] text-slate-500"
+                className="h-8 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-800"
                 title="Eingang rückgängig machen"
                 onClick={onUnreturn}
               >

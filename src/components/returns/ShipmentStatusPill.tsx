@@ -1,8 +1,8 @@
 /**
- * Color-coded Rücksendestatus pill — Versendet | Ausstehend | Eingegangen.
+ * Color-coded Rücksendestatus pill — Versendet | Eingegangen.
  */
 
-import { CheckCircle2, Clock, Send } from 'lucide-react';
+import { CheckCircle2, Send } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
   resolveEffectiveShipmentStatus,
@@ -18,14 +18,12 @@ import {
 } from '../ui/dropdown-menu';
 
 const PILL_STYLES: Record<ShipmentStatus, string> = {
-  versendet: 'bg-blue-50 text-blue-600 border-blue-200',
-  ausstehend: 'bg-amber-50 text-amber-600 border-amber-200',
+  versendet: 'bg-blue-50 text-blue-700 border-blue-200',
   eingegangen: 'bg-emerald-50 text-emerald-700 border-emerald-200',
 };
 
 function StatusIcon({ status, className }: { status: ShipmentStatus; className?: string }) {
   if (status === 'eingegangen') return <CheckCircle2 className={className} />;
-  if (status === 'ausstehend') return <Clock className={className} />;
   return <Send className={className} />;
 }
 
