@@ -150,8 +150,7 @@ export function ReturnsReminderStepper({
             {idx > 0 ? (
               <div
                 className={cn(
-                  'h-0.5',
-                  compact ? 'w-2' : 'w-3 sm:w-4',
+                  'h-[1.5px] w-2',
                   prevDone ? 'bg-emerald-300' : 'bg-slate-200',
                 )}
               />
@@ -165,21 +164,16 @@ export function ReturnsReminderStepper({
                 onOpenSend(stage);
               }}
               className={cn(
-                'relative flex items-center justify-center gap-0.5 rounded-full border font-bold transition',
-                compact
-                  ? 'h-6 min-w-[1.75rem] px-1.5 text-[9px]'
-                  : 'h-8 min-w-[2.75rem] px-2 text-[10px]',
+                'relative flex h-6 min-w-6 items-center justify-center gap-0.5 rounded-full border px-1.5 text-[11px] font-bold transition',
                 done
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                   : isNext
-                    ? 'bg-amber-50 text-amber-800 border-amber-300 ring-2 ring-amber-100'
+                    ? 'bg-amber-50 text-amber-800 border-amber-300 ring-1 ring-amber-100'
                     : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400',
                 returned && 'opacity-60 cursor-not-allowed',
               )}
             >
-              {done ? (
-                <Check className={cn('shrink-0', compact ? 'w-2.5 h-2.5' : 'w-3 h-3')} />
-              ) : null}
+              {done ? <Check className="w-2.5 h-2.5 shrink-0" /> : null}
               <span>{stage}.</span>
             </button>
           </div>
@@ -187,7 +181,7 @@ export function ReturnsReminderStepper({
       })}
       {showPlus && !returned ? (
         <div className="flex items-center">
-          <div className={cn('h-0.5 bg-slate-200', compact ? 'w-2' : 'w-3 sm:w-4')} />
+          <div className="h-[1.5px] w-2 bg-slate-200" />
           <button
             type="button"
             title={`${reminderStageLabel(nextPlus)} hinzufügen`}
@@ -195,12 +189,9 @@ export function ReturnsReminderStepper({
               e.stopPropagation();
               onOpenSend(nextPlus);
             }}
-            className={cn(
-              'inline-flex items-center justify-center rounded-full border border-dashed border-slate-300 bg-white text-slate-500 hover:border-sky-400 hover:text-sky-700 hover:bg-sky-50 transition',
-              compact ? 'h-6 w-6' : 'h-8 w-8',
-            )}
+            className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-dashed border-slate-300 bg-white text-slate-500 hover:border-sky-400 hover:text-sky-700 hover:bg-sky-50 transition"
           >
-            <Plus className={compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
+            <Plus className="w-3 h-3" />
           </button>
         </div>
       ) : null}

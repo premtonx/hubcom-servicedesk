@@ -442,11 +442,7 @@ export function ReturnEditorPage({
         next.returned = true;
         if (!next.returned_at) next.returned_at = new Date().toISOString();
       }
-      if (
-        key === 'shipment_status' &&
-        (value === 'versendet' || value === 'ausstehend') &&
-        prev.returned
-      ) {
+      if (key === 'shipment_status' && value === 'versendet' && prev.returned) {
         next.returned = false;
         next.returned_at = '';
       }

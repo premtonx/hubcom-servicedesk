@@ -1,16 +1,18 @@
 /**
- * Rücksendestatus (shipment_status) — Ausstehend | Versendet | Eingegangen.
- * Effective display prefers `returned` so legacy rows need no backfill.
+ * Rücksendestatus (shipment_status) — Versendet | Eingegangen.
+ * Effective display prefers `returned`. Legacy `ausstehend` maps to Versendet.
  */
 
-export type ShipmentStatus = 'ausstehend' | 'versendet' | 'eingegangen';
+export type ShipmentStatus = 'versendet' | 'eingegangen';
+
+/** Legacy DB value still accepted by coerce/normalize. */
+export type ShipmentStatusLegacy = ShipmentStatus | 'ausstehend';
 
 export const SHIPMENT_STATUS_OPTIONS: Array<{
   id: ShipmentStatus;
   label: string;
 }> = [
   { id: 'versendet', label: 'Versendet' },
-  { id: 'ausstehend', label: 'Ausstehend' },
   { id: 'eingegangen', label: 'Eingegangen' },
 ];
 
@@ -18,22 +20,22 @@ export function coerceShipmentStatus(raw: unknown): ShipmentStatus | null {
   const s = String(raw || '')
     .trim()
     .toLowerCase();
-  if (s === 'ausstehend' || s === 'versendet' || s === 'eingegangen') return s;
+  if (s === 'versendet' || s === 'eingegangen') return s;
+  // Legacy: treat ausstehend as versendet for UI/API write-through.
+  if (s === 'ausstehend') return 'versendet';
   return null;
 }
 
 /**
- * Effective list/form display:
+ * Effective list/form display (2 states only):
  * - returned → eingegangen
- * - shipment_status === ausstehend → ausstehend
- * - else → versendet (incl. null / unknown)
+ * - else → versendet (incl. null / ausstehend / unknown)
  */
 export function resolveEffectiveShipmentStatus(hw: {
   returned?: boolean | null;
   shipment_status?: string | null;
 }): ShipmentStatus {
   if (hw.returned === true) return 'eingegangen';
-  if (coerceShipmentStatus(hw.shipment_status) === 'ausstehend') return 'ausstehend';
   return 'versendet';
 }
 

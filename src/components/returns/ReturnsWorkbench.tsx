@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import {
   AlertTriangle,
+  ArrowUpRight,
   CheckCircle2,
   Clock,
   Download,
@@ -11,7 +12,6 @@ import {
   Package,
   PackageCheck,
   PackageOpen,
-  PanelRight,
   Plug,
   PlugZap,
   Plus,
@@ -60,7 +60,7 @@ import {
   InlineStatusSelect,
   type DeviceFieldsPatch,
 } from './ReturnsInlineEditors';
-import { ShipmentStatusPill } from './ShipmentStatusPill';
+import { DeliveryDuePills } from './DeliveryDuePills';
 import type { ShipmentStatus } from '../../lib/client-portal/hardware-returns-shipment';
 import {
   hasEscalatedReminder,
@@ -175,51 +175,6 @@ function statusBadgeClass(status: string): string {
     return 'bg-indigo-50 text-indigo-800 border-indigo-100';
   }
   return 'bg-slate-50 text-slate-700 border-slate-200';
-}
-
-function daysUntilDue(dueRaw: unknown, overdueDays: number): number | null {
-  if (overdueDays > 0) return -overdueDays;
-  const iso = toIsoDateOnly(dueRaw);
-  if (!iso) return null;
-  const due = new Date(`${iso}T00:00:00.000Z`);
-  if (Number.isNaN(due.getTime())) return null;
-  const now = new Date();
-  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const dueUtc = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
-  return Math.round((dueUtc - today) / (24 * 60 * 60 * 1000));
-}
-
-function DueCountdownPill({
-  overdueDays,
-  dueDate,
-  returned,
-}: {
-  overdueDays: number;
-  dueDate: unknown;
-  returned: boolean;
-}) {
-  if (returned) return null;
-  const remaining = daysUntilDue(dueDate, overdueDays);
-  if (remaining == null) return null;
-  if (remaining < 0) {
-    return (
-      <span className="inline-flex mt-1.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100 px-2 py-0.5 text-[10px] font-bold">
-        +{Math.abs(remaining)} Tage überfällig
-      </span>
-    );
-  }
-  if (remaining === 0) {
-    return (
-      <span className="inline-flex mt-1.5 rounded-full bg-amber-50 text-amber-800 border border-amber-100 px-2 py-0.5 text-[10px] font-bold">
-        Heute fällig
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex mt-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 text-[10px] font-bold">
-      Noch {remaining} Tage
-    </span>
-  );
 }
 
 type DeviceVisual = {
@@ -1486,25 +1441,12 @@ export function ReturnsWorkbench({
                         </div>
                       </td>
                       <td className="p-3 text-xs">
-                        <p className="text-slate-700">
-                          <span className="text-slate-400 font-medium">Lieferung:</span>{' '}
-                          {formatDateDeOnly(hw.delivery_date)}
-                        </p>
-                        <p className="text-slate-800 font-semibold mt-0.5">
-                          Fällig: {formatDateDeOnly(hw.return_due_date)}
-                        </p>
-                        <div className="mt-1" onClick={(e) => e.stopPropagation()}>
-                          <ShipmentStatusPill
-                            returned={Boolean(hw.returned)}
-                            shipmentStatus={hw.shipment_status}
-                            interactive
-                            onChange={(next) => void patchShipmentStatus(it, next)}
-                          />
-                        </div>
-                        <DueCountdownPill
-                          overdueDays={it.overdueDays}
-                          dueDate={hw.return_due_date || hw.delivery_date}
+                        <DeliveryDuePills
                           returned={Boolean(hw.returned)}
+                          deliveryDate={hw.delivery_date}
+                          returnedAt={hw.returned_at}
+                          returnDueDate={hw.return_due_date}
+                          overdueDays={it.overdueDays}
                         />
                       </td>
                       <td className="p-3" onClick={(e) => e.stopPropagation()}>
@@ -1513,68 +1455,45 @@ export function ReturnsWorkbench({
                           configuredStages={configuredStages}
                           nextDueStage={it.nextDueStage}
                           onOpenSend={(stage) => void openSend(id, stage)}
+                          compact
                         />
                       </td>
                       <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex flex-row flex-wrap items-center gap-1.5">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
                           <Button
                             type="button"
                             size="sm"
                             variant="outline"
-                            className="h-8"
+                            className="h-8 rounded-lg text-xs font-medium border-slate-200/90 bg-white text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300"
                             onClick={() => openDetails(it)}
                             title="Details öffnen"
                           >
-                            <PanelRight className="w-3.5 h-3.5 mr-1" />
+                            <ArrowUpRight className="w-3.5 h-3.5 mr-1" />
                             Details
                           </Button>
                           {!hw.returned ? (
-                            <>
-                              {it.nextDueStage ? (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 border-amber-200 text-amber-800 hover:bg-amber-50"
-                                  onClick={() => void openSend(id, it.nextDueStage!)}
-                                  title={`${it.nextDueStage}. Erinnerung senden`}
-                                >
-                                  <Mail className="w-3.5 h-3.5 mr-1" />
-                                  {it.nextDueStage}. Erinnerung
-                                </Button>
-                              ) : null}
-                              <Button
-                                type="button"
-                                size="sm"
-                                className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
-                                title="Eingang bestätigen"
-                                onClick={() => void markReturnedItem(it)}
-                              >
-                                <PackageCheck className="w-3.5 h-3.5 mr-1" />
-                                Eingang bestätigen
-                              </Button>
-                            </>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-8 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all"
+                              title="Eingang bestätigen"
+                              onClick={() => void markReturnedItem(it)}
+                            >
+                              <PackageCheck className="w-3.5 h-3.5 mr-1" />
+                              Eingang bestätigen
+                            </Button>
                           ) : (
-                            <div className="flex flex-col items-start gap-1">
-                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-100 px-2 py-0.5 text-[10px] font-bold">
-                                <PackageCheck className="w-3 h-3" />
-                                Eingegangen
-                                {formatBerlinDateTime(hw.returned_at)
-                                  ? ` am ${formatBerlinDateTime(hw.returned_at)}`
-                                  : ''}
-                              </span>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 px-2 text-[11px] text-slate-500 hover:text-slate-800"
-                                title="Eingang rückgängig machen"
-                                onClick={() => void unreturnItem(it)}
-                              >
-                                <Undo2 className="w-3 h-3 mr-1" />
-                                Rückgängig
-                              </Button>
-                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-800"
+                              title="Eingang rückgängig machen"
+                              onClick={() => void unreturnItem(it)}
+                            >
+                              <Undo2 className="w-3.5 h-3.5 mr-1" />
+                              Rückgängig
+                            </Button>
                           )}
                         </div>
                       </td>

@@ -5307,7 +5307,7 @@ function testHardwareReturnsDetailOverviewPart2(): void {
 function testHardwareReturnsShipmentStatusPart1(): void {
   console.log('\n--- Hardware returns shipment_status pills (Part 1) ---');
 
-  assert(coerceShipmentStatus('ausstehend') === 'ausstehend', 'coerce ausstehend');
+  assert(coerceShipmentStatus('ausstehend') === 'versendet', 'legacy ausstehend → versendet');
   assert(coerceShipmentStatus('Versendet') === 'versendet', 'coerce versendet');
   assert(coerceShipmentStatus('EINGEGANGEN') === 'eingegangen', 'coerce eingegangen');
   assert(coerceShipmentStatus('') === null, 'empty → null');
@@ -5315,12 +5315,12 @@ function testHardwareReturnsShipmentStatusPart1(): void {
   assert(
     resolveEffectiveShipmentStatus({ returned: true, shipment_status: 'ausstehend' }) ===
       'eingegangen',
-    'returned wins over ausstehend → Eingegangen (legacy 888 DPG)',
+    'returned wins → Eingegangen (legacy 888 DPG)',
   );
   assert(
     resolveEffectiveShipmentStatus({ returned: false, shipment_status: 'ausstehend' }) ===
-      'ausstehend',
-    'Ausstehend when not returned',
+      'versendet',
+    'legacy ausstehend displays as Versendet',
   );
   assert(
     resolveEffectiveShipmentStatus({ returned: false, shipment_status: null }) === 'versendet',
@@ -5335,8 +5335,8 @@ function testHardwareReturnsShipmentStatusPart1(): void {
     { existing: versendet as any },
   );
   assert(
-    ausstehend.shipment_status === 'ausstehend' && !ausstehend.returned,
-    'PATCH ausstehend persists',
+    ausstehend.shipment_status === 'versendet' && !ausstehend.returned,
+    'PATCH legacy ausstehend normalizes to versendet',
   );
 
   const eingegangen = normalizeHardwareReturnInput(
@@ -5351,7 +5351,7 @@ function testHardwareReturnsShipmentStatusPart1(): void {
   );
 
   const leave = normalizeHardwareReturnInput(
-    { shipment_status: 'ausstehend' },
+    { shipment_status: 'versendet' },
     {
       existing: {
         ...(versendet as any),
@@ -5362,7 +5362,7 @@ function testHardwareReturnsShipmentStatusPart1(): void {
     },
   );
   assert(
-    leave.shipment_status === 'ausstehend' && leave.returned === false && leave.returned_at == null,
+    leave.shipment_status === 'versendet' && leave.returned === false && leave.returned_at == null,
     'pill leave eingegangen → returned cleared',
   );
 
@@ -5407,20 +5407,20 @@ function testHardwareReturnsShipmentStatusPart1(): void {
     path.join(process.cwd(), 'src/components/returns/ShipmentStatusPill.tsx'),
     'utf8',
   );
+  const deliveryPillsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/DeliveryDuePills.tsx'),
+    'utf8',
+  );
+  const stepperSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsReminderStepper.tsx'),
+    'utf8',
+  );
   const editorSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/components/returns/ReturnEditorPage.tsx'),
     'utf8',
   );
   const sharedSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/components/returns/returns-layout-shared.tsx'),
-    'utf8',
-  );
-  const kanbanSrc = fs.readFileSync(
-    path.join(process.cwd(), 'src/components/returns/ReturnsKanbanBoard.tsx'),
-    'utf8',
-  );
-  const cardsSrc = fs.readFileSync(
-    path.join(process.cwd(), 'src/components/returns/ReturnsCardGrid.tsx'),
     'utf8',
   );
   const mig = fs.readFileSync(
@@ -5439,18 +5439,22 @@ function testHardwareReturnsShipmentStatusPart1(): void {
     'DB column + UPDATE/INSERT + mark-returned wire shipment_status',
   );
   assert(
-    pillSrc.includes('bg-blue-50 text-blue-600 border-blue-200') &&
-      pillSrc.includes('bg-amber-50 text-amber-600 border-amber-200') &&
+    pillSrc.includes('bg-blue-50 text-blue-700 border-blue-200') &&
       pillSrc.includes('bg-emerald-50 text-emerald-700 border-emerald-200') &&
-      workbenchSrc.includes('ShipmentStatusPill') &&
-      workbenchSrc.includes('patchShipmentStatus') &&
+      !pillSrc.includes('ausstehend') &&
+      workbenchSrc.includes('DeliveryDuePills') &&
+      deliveryPillsSrc.includes('Versendet ·') &&
+      deliveryPillsSrc.includes('Tage überfällig') &&
+      deliveryPillsSrc.includes('Heute fällig') &&
       !workbenchSrc.includes('Versand: {hw.') &&
-      !workbenchSrc.includes('shipping_method ||') &&
-      sharedSrc.includes('ShipmentStatusPill') &&
-      kanbanSrc.includes('onShipmentStatusChange') &&
-      cardsSrc.includes('onShipmentStatusChange') &&
-      editorSrc.includes('Rücksendestatus'),
-    'list/Kanban/Karten pills + form selector present',
+      sharedSrc.includes('DeliveryDuePills') &&
+      stepperSrc.includes('h-6 min-w-6') &&
+      stepperSrc.includes('text-[11px]') &&
+      workbenchSrc.includes('ArrowUpRight') &&
+      workbenchSrc.includes('shadow-2xs') &&
+      editorSrc.includes('Rücksendestatus') &&
+      !editorSrc.includes("'ausstehend'"),
+    '2-pill Lieferung/Fälligkeit + compact stepper + modern Aktionen',
   );
   assert(
     workbenchSrc.includes("'/api/portal/returns'") &&

@@ -12,7 +12,6 @@ import {
   Briefcase,
   CheckCircle2,
   ChevronDown,
-  Clock,
   Download,
   Loader2,
   Mail,
@@ -114,7 +113,7 @@ function resolveLifecycleStep(hw: Record<string, any>): 1 | 2 | 3 | 4 {
     /geschlossen|abgeschlossen|closed|done/i.test(String(hw.status || ''));
   if (hw.returned && closed) return 4;
   if (hw.returned) return 3;
-  if (hw.delivery_date || resolveEffectiveShipmentStatus(hw) !== 'ausstehend') return 2;
+  if (hw.delivery_date || resolveEffectiveShipmentStatus(hw) === 'versendet') return 2;
   return 1;
 }
 
@@ -124,13 +123,8 @@ const STATUS_HERO: Record<
 > = {
   versendet: {
     icon: Send,
-    wrap: 'bg-blue-50 text-blue-600 border-blue-200',
+    wrap: 'bg-blue-50 text-blue-700 border-blue-200',
     label: 'Versendet',
-  },
-  ausstehend: {
-    icon: Clock,
-    wrap: 'bg-amber-50 text-amber-600 border-amber-200',
-    label: 'Ausstehend',
   },
   eingegangen: {
     icon: CheckCircle2,
@@ -473,11 +467,7 @@ export function ReturnDetailOverviewPage({
     {
       n: 1 as const,
       label: 'Versendet',
-      detail: hw.delivery_date
-        ? formatDateDeOnly(hw.delivery_date)
-        : shipment === 'ausstehend'
-          ? 'Ausstehend'
-          : '—',
+      detail: hw.delivery_date ? formatDateDeOnly(hw.delivery_date) : '—',
     },
     {
       n: 2 as const,
@@ -666,15 +656,8 @@ export function ReturnDetailOverviewPage({
                 <p className="text-xs text-slate-600 mt-1 font-mono truncate">
                   SN: {hw.device_new_serial || '—'}
                 </p>
-                <span
-                  className={cn(
-                    'mt-3 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold',
-                    shipment === 'ausstehend'
-                      ? 'bg-amber-50 text-amber-600 border-amber-200'
-                      : 'bg-blue-50 text-blue-600 border-blue-200',
-                  )}
-                >
-                  {shipment === 'ausstehend' ? 'Ausstehend' : 'Versendet'}
+                <span className="mt-3 inline-flex rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                  Versendet
                 </span>
               </div>
             </div>
@@ -720,7 +703,7 @@ export function ReturnDetailOverviewPage({
               <TimelineItem
                 icon={<Truck className="w-3.5 h-3.5" />}
                 title="Ersatzgerät versendet"
-                active={Boolean(hw.delivery_date) || shipment !== 'ausstehend'}
+                active={Boolean(hw.delivery_date) || shipment === 'versendet'}
                 meta={[
                   hw.delivery_date
                     ? `Lieferung: ${formatDateDeOnly(hw.delivery_date)}`
