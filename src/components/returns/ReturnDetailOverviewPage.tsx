@@ -10,14 +10,18 @@ import {
   ArrowLeftRight,
   ArrowLeft,
   Briefcase,
+  Check,
   CheckCircle2,
   ChevronDown,
+  Copy,
   Download,
   Loader2,
   Mail,
   Package,
   PackageCheck,
+  Pencil,
   Phone,
+  RotateCcw,
   Send,
   Trash2,
   Truck,
@@ -53,6 +57,7 @@ import {
   visibleReminderStages,
 } from './ReturnsReminderStepper';
 import { formatReturnNumber, DueCountdownPill } from './returns-layout-shared';
+import { resolveDeviceTypeVisual } from './DeviceTypeSelect';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -137,10 +142,12 @@ function SectionCard({
   title,
   children,
   className,
+  headerRight,
 }: {
   title: string;
   children: ReactNode;
   className?: string;
+  headerRight?: ReactNode;
 }) {
   return (
     <section
@@ -149,11 +156,120 @@ function SectionCard({
         className,
       )}
     >
-      <div className="px-5 py-3.5 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
+      <div className="px-5 py-3.5 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white flex items-center justify-between gap-2">
         <h2 className="text-sm font-black text-slate-900 tracking-tight">{title}</h2>
+        {headerRight}
       </div>
       <div className="p-5">{children}</div>
     </section>
+  );
+}
+
+const DEVICE_ICON_TONE: Record<string, string> = {
+  amber: 'text-amber-600',
+  blue: 'text-sky-600',
+  indigo: 'text-indigo-600',
+  cyan: 'text-cyan-600',
+  slate: 'text-slate-600',
+  emerald: 'text-emerald-600',
+  violet: 'text-violet-600',
+  muted: 'text-slate-400',
+};
+
+function SerialCopyPill({ serial }: { serial?: string | null }) {
+  const [copied, setCopied] = useState(false);
+  const value = String(serial || '').trim();
+  if (!value) {
+    return <span className="text-xs text-slate-400 font-mono">SN: —</span>;
+  }
+  return (
+    <button
+      type="button"
+      title="Seriennummer kopieren"
+      className={cn(
+        'inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-mono font-semibold transition',
+        copied
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50',
+      )}
+      onClick={async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          toast.success('Seriennummer kopiert');
+          window.setTimeout(() => setCopied(false), 1600);
+        } catch {
+          toast.error('Kopieren fehlgeschlagen');
+        }
+      }}
+    >
+      {copied ? <Check className="w-3 h-3 shrink-0" /> : <Copy className="w-3 h-3 shrink-0" />}
+      <span className="truncate">SN: {value}</span>
+    </button>
+  );
+}
+
+function DeviceInfoCard({
+  kind,
+  type,
+  serial,
+  badge,
+  badgeClass,
+}: {
+  kind: 'alt' | 'neu';
+  type?: string | null;
+  serial?: string | null;
+  badge: string;
+  badgeClass: string;
+}) {
+  const visual = resolveDeviceTypeVisual(String(type || ''));
+  const Icon = visual.Icon;
+  return (
+    <div
+      className={cn(
+        'flex-1 rounded-xl border p-4 min-w-0',
+        kind === 'alt'
+          ? 'border-amber-100 bg-amber-50/40'
+          : 'border-blue-100 bg-blue-50/40',
+      )}
+    >
+      <div className="flex items-start gap-2.5">
+        <span
+          className={cn(
+            'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-white',
+            kind === 'alt' ? 'border-amber-100' : 'border-blue-100',
+            DEVICE_ICON_TONE[visual.tone] || DEVICE_ICON_TONE.muted,
+          )}
+        >
+          <Icon className="w-4.5 h-4.5 w-4 h-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p
+            className={cn(
+              'text-[10px] font-bold uppercase tracking-wide',
+              kind === 'alt' ? 'text-amber-700/80' : 'text-blue-700/80',
+            )}
+          >
+            {kind === 'alt' ? 'Bestehendes Gerät (Alt)' : 'Neues Gerät (Neu)'}
+          </p>
+          <p className="text-sm font-black text-slate-900 mt-0.5 truncate">
+            {type || (kind === 'alt' ? 'Altgerät' : 'Ersatzgerät')}
+          </p>
+          <div className="mt-1.5">
+            <SerialCopyPill serial={serial} />
+          </div>
+          <span
+            className={cn(
+              'mt-3 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold',
+              badgeClass,
+            )}
+          >
+            {badge}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -497,7 +613,7 @@ export function ReturnDetailOverviewPage({
   ];
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-5 space-y-5">
+    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-5 pb-10 space-y-5 min-h-0">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1">
@@ -513,6 +629,28 @@ export function ReturnDetailOverviewPage({
           </h1>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          {!hw.returned ? (
+            <Button
+              type="button"
+              disabled={busy}
+              className="h-10 font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+              onClick={markReturned}
+            >
+              <PackageCheck className="w-4 h-4 mr-1.5" />
+              Eingang bestätigen
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              disabled={busy}
+              variant="outline"
+              className="h-10 font-semibold text-slate-600 border-slate-200"
+              onClick={unreturn}
+            >
+              <RotateCcw className="w-4 h-4 mr-1.5" />
+              Eingang rückgängig
+            </Button>
+          )}
           <Button
             type="button"
             className="h-10 font-bold bg-blue-600 hover:bg-blue-700 text-white"
@@ -543,7 +681,7 @@ export function ReturnDetailOverviewPage({
                   onClick={unreturn}
                 >
                   <Undo2 className="w-3.5 h-3.5" />
-                  Rückgängig
+                  Eingang rückgängig
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
@@ -620,46 +758,42 @@ export function ReturnDetailOverviewPage({
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
         {/* Left 2/3-ish */}
         <div className="xl:col-span-5 space-y-5">
-          <SectionCard title="Geräte-Informationen">
+          <SectionCard
+            title="Geräte-Informationen"
+            headerRight={
+              <button
+                type="button"
+                title="Geräte bearbeiten"
+                onClick={() => navigate(editPath)}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-400 opacity-70 hover:opacity-100 hover:bg-slate-100 hover:text-slate-700 transition"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                Bearbeiten
+              </button>
+            }
+          >
             <div className="flex flex-col sm:flex-row items-stretch gap-3">
-              <div className="flex-1 rounded-xl border border-amber-100 bg-amber-50/40 p-4 min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-amber-700/80">
-                  Bestehendes Gerät (Alt)
-                </p>
-                <p className="text-sm font-black text-slate-900 mt-1 truncate">
-                  {hw.device_old_type || 'Altgerät'}
-                </p>
-                <p className="text-xs text-slate-600 mt-1 font-mono truncate">
-                  SN: {hw.device_old_serial || '—'}
-                </p>
-                <span
-                  className={cn(
-                    'mt-3 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold',
-                    hw.returned
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                      : 'bg-amber-50 text-amber-700 border-amber-200',
-                  )}
-                >
-                  {hw.returned ? 'Eingegangen' : 'Rückgabe offen'}
-                </span>
-              </div>
+              <DeviceInfoCard
+                kind="alt"
+                type={hw.device_old_type}
+                serial={hw.device_old_serial}
+                badge={hw.returned ? 'Eingegangen' : 'Rückgabe offen'}
+                badgeClass={
+                  hw.returned
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                }
+              />
               <div className="flex items-center justify-center sm:px-1 text-slate-400">
                 <ArrowLeftRight className="w-5 h-5" />
               </div>
-              <div className="flex-1 rounded-xl border border-blue-100 bg-blue-50/40 p-4 min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-blue-700/80">
-                  Neues Gerät (Neu)
-                </p>
-                <p className="text-sm font-black text-slate-900 mt-1 truncate">
-                  {hw.device_new_type || 'Ersatzgerät'}
-                </p>
-                <p className="text-xs text-slate-600 mt-1 font-mono truncate">
-                  SN: {hw.device_new_serial || '—'}
-                </p>
-                <span className="mt-3 inline-flex rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">
-                  Versendet
-                </span>
-              </div>
+              <DeviceInfoCard
+                kind="neu"
+                type={hw.device_new_type}
+                serial={hw.device_new_serial}
+                badge="Versendet"
+                badgeClass="bg-blue-50 text-blue-700 border-blue-200"
+              />
             </div>
             {note ? (
               <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
@@ -786,11 +920,6 @@ export function ReturnDetailOverviewPage({
               returned={Boolean(hw.returned)}
               className="text-xs px-2.5 py-1"
             />
-            {!hw.returned && overdue > 0 ? (
-              <p className="mt-2 text-sm font-black text-rose-700">
-                +{overdue} Tage überfällig
-              </p>
-            ) : null}
             <p className="mt-2 text-sm text-slate-700">
               Fällig am{' '}
               <span className="font-bold">
@@ -804,6 +933,29 @@ export function ReturnDetailOverviewPage({
             ) : null}
           </SectionCard>
 
+          {!hw.returned ? (
+            <Button
+              type="button"
+              disabled={busy}
+              className="w-full h-11 font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+              onClick={markReturned}
+            >
+              <PackageCheck className="w-4 h-4 mr-1.5" />
+              Eingang bestätigen
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              disabled={busy}
+              variant="outline"
+              className="w-full h-11 font-semibold text-slate-600"
+              onClick={unreturn}
+            >
+              <RotateCcw className="w-4 h-4 mr-1.5" />
+              Eingang rückgängig
+            </Button>
+          )}
+
           <Button
             type="button"
             className="w-full h-11 font-bold bg-violet-600 hover:bg-violet-700 text-white"
@@ -815,14 +967,7 @@ export function ReturnDetailOverviewPage({
             {nextStage != null ? ` (${nextStage}.)` : ''}
           </Button>
 
-          <SectionCard title="Notizen & Verlauf">
-            {note ? (
-              <p className="text-sm text-slate-700 whitespace-pre-wrap mb-4 border-b border-slate-100 pb-3">
-                {note}
-              </p>
-            ) : (
-              <p className="text-xs text-slate-400 mb-3">Keine Notiz hinterlegt.</p>
-            )}
+          <SectionCard title="Verlauf & Aktivitätsprotokoll">
             {activity.length === 0 ? (
               <p className="text-xs text-slate-400">Noch keine Aktivitäten.</p>
             ) : (

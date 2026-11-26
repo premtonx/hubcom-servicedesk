@@ -5260,13 +5260,24 @@ function testHardwareReturnsDetailOverviewPart2(): void {
       overviewSrc.includes('Geräte-Informationen') &&
       overviewSrc.includes('Mitarbeiter & Kontakt') &&
       overviewSrc.includes('Versand- & Rückgabe-Tracking') &&
-      overviewSrc.includes('Notizen & Verlauf') &&
+      overviewSrc.includes('Verlauf & Aktivitätsprotokoll') &&
+      !overviewSrc.includes('Notizen & Verlauf') &&
       overviewSrc.includes('resolveLifecycleStep') &&
       overviewSrc.includes("'Versendet'") &&
       overviewSrc.includes('Rückgabe offen') &&
       overviewSrc.includes("'Eingegangen'") &&
       overviewSrc.includes("'Abgeschlossen'"),
     'overview page header + 3-zone layout + lifecycle stepper',
+  );
+  assert(
+    overviewSrc.includes('SerialCopyPill') &&
+      overviewSrc.includes('Seriennummer kopiert') &&
+      overviewSrc.includes('resolveDeviceTypeVisual') &&
+      overviewSrc.includes('Eingang rückgängig') &&
+      overviewSrc.includes('RotateCcw') &&
+      (overviewSrc.match(/Eingang bestätigen/g) || []).length >= 2 &&
+      !overviewSrc.includes('+{overdue} Tage überfällig'),
+    'device icons + serial copy + header/sidebar Eingang bestätigen; no duplicate overdue line',
   );
   assert(
     overviewSrc.includes("'/api/portal/returns'") &&
@@ -5299,8 +5310,14 @@ function testHardwareReturnsDetailOverviewPart2(): void {
   );
   assert(
     layoutSrc.includes('isReturnsDetailOrEditor') &&
+      layoutSrc.includes('returnsNeedsPageScroll') &&
+      layoutSrc.includes('isReturnsList') &&
       layoutSrc.includes('/edit'),
-    'portal layout treats overview + edit as returns chrome',
+    'portal layout scrolls detail/edit; list keeps overflow-hidden',
+  );
+  assert(
+    staffDetailSrc.includes('overflow-y-auto'),
+    'staff detail page wrapper scrolls vertically',
   );
 }
 

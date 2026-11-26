@@ -1818,15 +1818,27 @@ function testReturnsDetailOverviewLifecycle(): void {
   );
   const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
 
+  const layoutSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/ClientPortalLayout.tsx'),
+    'utf8',
+  );
   assert(
     overviewSrc.includes('Bearbeiten') &&
       overviewSrc.includes('Geräte-Informationen') &&
       overviewSrc.includes('Mitarbeiter & Kontakt') &&
       overviewSrc.includes('Versand- & Rückgabe-Tracking') &&
+      overviewSrc.includes('Verlauf & Aktivitätsprotokoll') &&
       overviewSrc.includes('Erinnerung senden') &&
+      overviewSrc.includes('SerialCopyPill') &&
+      overviewSrc.includes('Eingang rückgängig') &&
+      !overviewSrc.includes('+{overdue} Tage überfällig') &&
       !overviewSrc.includes("'/api/db") &&
       !overviewSrc.includes('"/api/db'),
-    'overview layout present; zero /api/db',
+    'overview polish: scroll-friendly, copy SN, no duplicate note/overdue; zero /api/db',
+  );
+  assert(
+    layoutSrc.includes('returnsNeedsPageScroll') && layoutSrc.includes('isReturnsList'),
+    'portal main scrolls on returns detail/edit',
   );
   assert(
     workbenchSrc.includes('openDetails') &&
