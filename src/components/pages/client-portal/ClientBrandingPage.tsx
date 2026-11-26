@@ -11,6 +11,7 @@ type OrgBranding = {
   logo_url: string | null;
   portal_title: string | null;
   portal_banner_url: string | null;
+  favicon_url: string | null;
 };
 
 /**
@@ -73,7 +74,7 @@ export default function ClientBrandingPage() {
           <div>
             <h1 className="text-xl font-black tracking-tight text-slate-900">Portal-Branding</h1>
             <p className="text-sm text-slate-500 font-medium mt-1">
-              Logo, Portal-Titel und Dashboard-Banner für {org.name}
+              Logo, Portal-Titel, Favicon und Dashboard-Banner für {org.name}
               {session?.organizationId ? ` · ${session.organizationId.slice(0, 8)}…` : ''}
             </p>
           </div>
@@ -85,6 +86,7 @@ export default function ClientBrandingPage() {
             logoUrl={org.logo_url}
             portalTitle={org.portal_title}
             bannerUrl={org.portal_banner_url}
+            faviconUrl={org.favicon_url}
             saving={saving}
             onSave={async (payload) => {
               setSaving(true);
@@ -127,6 +129,28 @@ export default function ClientBrandingPage() {
               setSaving(true);
               try {
                 await axios.delete('/api/portal/branding/banner', { withCredentials: true });
+                await load();
+              } finally {
+                setSaving(false);
+              }
+            }}
+            onFaviconUpload={async (faviconDataUrl) => {
+              setSaving(true);
+              try {
+                await axios.post(
+                  '/api/portal/branding/favicon',
+                  { faviconDataUrl },
+                  { withCredentials: true },
+                );
+                await load();
+              } finally {
+                setSaving(false);
+              }
+            }}
+            onFaviconRemove={async () => {
+              setSaving(true);
+              try {
+                await axios.delete('/api/portal/branding/favicon', { withCredentials: true });
                 await load();
               } finally {
                 setSaving(false);

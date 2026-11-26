@@ -28,6 +28,8 @@ export interface OrganizationRecord {
   portal_title: string | null;
   /** Optional Kunden-Portal dashboard banner (data URL). */
   portal_banner_url: string | null;
+  /** Optional Kunden-Portal favicon (data URL). */
+  favicon_url: string | null;
   /** CRM / Unternehmen fields (unified with companies docs). */
   industry: string | null;
   website: string | null;
@@ -61,6 +63,7 @@ export interface OrganizationInput {
   logo_url?: string | null;
   portal_title?: string | null;
   portal_banner_url?: string | null;
+  favicon_url?: string | null;
   industry?: string | null;
   website?: string | null;
   tier?: string | null;
@@ -131,6 +134,8 @@ function mapRow(row: any): OrganizationRecord {
       row.portal_banner_url == null || row.portal_banner_url === ''
         ? null
         : String(row.portal_banner_url),
+    favicon_url:
+      row.favicon_url == null || row.favicon_url === '' ? null : String(row.favicon_url),
     industry: row.industry == null || row.industry === '' ? null : String(row.industry),
     website: row.website == null || row.website === '' ? null : String(row.website),
     tier: row.tier == null || row.tier === '' ? null : String(row.tier),
@@ -264,6 +269,10 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
     input.portal_banner_url == null || String(input.portal_banner_url).trim() === ''
       ? null
       : String(input.portal_banner_url).trim();
+  const faviconUrl =
+    input.favicon_url == null || String(input.favicon_url).trim() === ''
+      ? null
+      : String(input.favicon_url).trim();
   const monthlyRate =
     input.monthly_rate == null || String(input.monthly_rate).trim() === ''
       ? null
@@ -293,11 +302,11 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
   const res = await queryDb(
     `INSERT INTO organizations (
        id, name, slug, domain, is_active, settings, m365_tenant_id, sso_enabled,
-       logo_url, portal_title, portal_banner_url, industry, website, tier, sla,
+       logo_url, portal_title, portal_banner_url, favicon_url, industry, website, tier, sla,
        contract_renewal, monthly_rate, contract_reference, contract_notes, contract_term,
        is_demo, crm_company_id, hardware_returns_enabled, hardware_returns_config
      )
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24::jsonb)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25::jsonb)
      RETURNING *`,
     [
       id,
@@ -311,6 +320,7 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
       logoUrl,
       portalTitle,
       portalBannerUrl,
+      faviconUrl,
       industry,
       website,
       tier,
@@ -408,6 +418,12 @@ export async function updateOrganization(
         ? null
         : String(input.portal_banner_url).trim()
       : existing.portal_banner_url;
+  const faviconUrl =
+    input.favicon_url !== undefined
+      ? input.favicon_url == null || String(input.favicon_url).trim() === ''
+        ? null
+        : String(input.favicon_url).trim()
+      : existing.favicon_url;
   const monthlyRate =
     input.monthly_rate !== undefined
       ? input.monthly_rate == null || String(input.monthly_rate).trim() === ''
@@ -464,19 +480,20 @@ export async function updateOrganization(
             logo_url = $9,
             portal_title = $10,
             portal_banner_url = $11,
-            industry = $12,
-            website = $13,
-            tier = $14,
-            sla = $15,
-            contract_renewal = $16,
-            monthly_rate = $17,
-            contract_reference = $18,
-            contract_notes = $19,
-            contract_term = $20,
-            is_demo = $21,
-            crm_company_id = $22,
-            hardware_returns_enabled = $23,
-            hardware_returns_config = $24::jsonb,
+            favicon_url = $12,
+            industry = $13,
+            website = $14,
+            tier = $15,
+            sla = $16,
+            contract_renewal = $17,
+            monthly_rate = $18,
+            contract_reference = $19,
+            contract_notes = $20,
+            contract_term = $21,
+            is_demo = $22,
+            crm_company_id = $23,
+            hardware_returns_enabled = $24,
+            hardware_returns_config = $25::jsonb,
             updated_at = NOW()
       WHERE id = $1
       RETURNING *`,
@@ -492,6 +509,7 @@ export async function updateOrganization(
       logoUrl,
       portalTitle,
       portalBannerUrl,
+      faviconUrl,
       industry,
       website,
       tier,
@@ -527,12 +545,14 @@ export async function updateOrganizationBranding(
     logo_url?: string | null;
     portal_title?: string | null;
     portal_banner_url?: string | null;
+    favicon_url?: string | null;
   },
 ): Promise<OrganizationRecord | null> {
   return updateOrganization(id, {
     logo_url: input.logo_url,
     portal_title: input.portal_title,
     portal_banner_url: input.portal_banner_url,
+    favicon_url: input.favicon_url,
   });
 }
 

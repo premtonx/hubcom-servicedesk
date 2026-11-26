@@ -343,6 +343,7 @@ export async function initDb() {
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS logo_url TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS portal_title TEXT;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS portal_banner_url TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS favicon_url TEXT;
     -- Portal KB / Secure Exchange visibility indexes (JSONB document store).
     CREATE INDEX IF NOT EXISTS idx_kb_articles_visibility
       ON geistdesk_documents ((data->>'visibility'))
