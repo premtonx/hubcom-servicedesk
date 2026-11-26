@@ -53,6 +53,7 @@ import {
   parseDateDeOnly,
   toIsoDateOnly,
 } from '../../lib/client-portal/hardware-returns-dates';
+import { SHIPMENT_STATUS_OPTIONS } from '../../lib/client-portal/hardware-returns-shipment';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -427,7 +428,23 @@ export function ReturnEditorPage({
       if (key === 'returned' && value === true && !prev.returned_at) {
         next.returned_at = new Date().toISOString();
       }
+      if (key === 'returned' && value === true) {
+        next.shipment_status = 'eingegangen';
+      }
       if (key === 'returned' && value === false) {
+        next.returned_at = '';
+        next.shipment_status = 'versendet';
+      }
+      if (key === 'shipment_status' && value === 'eingegangen') {
+        next.returned = true;
+        if (!next.returned_at) next.returned_at = new Date().toISOString();
+      }
+      if (
+        key === 'shipment_status' &&
+        (value === 'versendet' || value === 'ausstehend') &&
+        prev.returned
+      ) {
+        next.returned = false;
         next.returned_at = '';
       }
       return next;
@@ -1191,6 +1208,20 @@ export function ReturnEditorPage({
                       ))}
                     </select>
                   </IconFieldShell>
+                </Field>
+                <Field label="Rücksendestatus">
+                  <select
+                    className="h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold"
+                    value={form.shipment_status || 'versendet'}
+                    onChange={(e) => setField('shipment_status', e.target.value)}
+                    aria-label="Rücksendestatus"
+                  >
+                    {SHIPMENT_STATUS_OPTIONS.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
                 </Field>
                 <Field label="Datum der Rücklieferung">
                   <IconFieldShell icon={Calendar}>

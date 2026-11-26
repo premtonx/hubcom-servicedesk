@@ -20,6 +20,8 @@ import {
 } from '../../lib/client-portal/hardware-returns-layout';
 import type { ConfiguredReminderStage } from '../../lib/client-portal/hardware-returns-stages';
 import { ReturnsReminderStepper } from './ReturnsReminderStepper';
+import { ShipmentStatusPill } from './ShipmentStatusPill';
+import type { ShipmentStatus } from '../../lib/client-portal/hardware-returns-shipment';
 
 export { buildReturnsStatusColumns, DEFAULT_RETURN_STATUSES };
 
@@ -213,6 +215,7 @@ export function ReturnsItemCardBody({
   onMarkReturned,
   onUnreturn,
   onStatusChange,
+  onShipmentStatusChange,
   onOpenSend,
   showStatusSelect,
   compact,
@@ -224,6 +227,7 @@ export function ReturnsItemCardBody({
   onMarkReturned: () => void;
   onUnreturn?: () => void;
   onStatusChange?: (status: string) => void;
+  onShipmentStatusChange?: (status: ShipmentStatus) => void;
   onOpenSend?: (stage: number) => void;
   showStatusSelect?: boolean;
   compact?: boolean;
@@ -257,6 +261,14 @@ export function ReturnsItemCardBody({
         <span className="text-[10px] text-slate-600 font-medium">
           Fällig: {formatDateDeOnly(hw.return_due_date)}
         </span>
+        <div onClick={(e) => e.stopPropagation()}>
+          <ShipmentStatusPill
+            returned={Boolean(hw.returned)}
+            shipmentStatus={hw.shipment_status}
+            interactive={Boolean(onShipmentStatusChange)}
+            onChange={onShipmentStatusChange}
+          />
+        </div>
         <DueCountdownPill
           overdueDays={item.overdueDays}
           dueDate={hw.return_due_date || hw.delivery_date}

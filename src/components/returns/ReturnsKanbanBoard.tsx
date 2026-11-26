@@ -7,6 +7,7 @@ import {
   type ReturnsLifecycleColumnId,
 } from '../../lib/client-portal/hardware-returns-layout';
 import type { ConfiguredReminderStage } from '../../lib/client-portal/hardware-returns-stages';
+import type { ShipmentStatus } from '../../lib/client-portal/hardware-returns-shipment';
 import {
   returnRowId,
   ReturnsItemCardBody,
@@ -21,6 +22,7 @@ interface ReturnsKanbanBoardProps {
   onOpenDetails: (item: ReturnsListItem) => void;
   onMarkReturned: (item: ReturnsListItem) => void;
   onUnreturn?: (item: ReturnsListItem) => void;
+  onShipmentStatusChange?: (item: ReturnsListItem, status: ShipmentStatus) => void;
   onOpenSend?: (item: ReturnsListItem, stage: number) => void;
 }
 
@@ -31,6 +33,7 @@ export function ReturnsKanbanBoard({
   onOpenDetails,
   onMarkReturned,
   onUnreturn,
+  onShipmentStatusChange,
   onOpenSend,
 }: ReturnsKanbanBoardProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -144,6 +147,11 @@ export function ReturnsKanbanBoard({
                       onOpenDetails={() => onOpenDetails(item)}
                       onMarkReturned={() => onMarkReturned(item)}
                       onUnreturn={onUnreturn ? () => onUnreturn(item) : undefined}
+                      onShipmentStatusChange={
+                        onShipmentStatusChange
+                          ? (status) => onShipmentStatusChange(item, status)
+                          : undefined
+                      }
                       onOpenSend={
                         onOpenSend ? (stage) => onOpenSend(item, stage) : undefined
                       }

@@ -22,9 +22,17 @@ import {
   type ConfiguredReminderStage,
   type ReminderStageEvent,
 } from './hardware-returns-stages.js';
+import { coerceShipmentStatus } from './hardware-returns-shipment.js';
 
 export { toIsoDateOnly, formatDateDeOnly } from './hardware-returns-dates.js';
 export type { ConfiguredReminderStage, ReminderStageEvent };
+export {
+  coerceShipmentStatus,
+  resolveEffectiveShipmentStatus,
+  shipmentStatusLabel,
+  SHIPMENT_STATUS_OPTIONS,
+  type ShipmentStatus,
+} from './hardware-returns-shipment.js';
 
 export type HardwareRoleToken = 'employee' | 'project_manager' | 'manager' | 'ceo';
 
@@ -181,6 +189,8 @@ export interface TicketHardwareReturnRecord {
   solution_summary: string | null;
   shipping_method: string | null;
   shipping_reference: string | null;
+  /** ausstehend | versendet | eingegangen — effective display prefers `returned`. */
+  shipment_status: string | null;
   return_required: boolean;
   delivery_date: string | null;
   return_due_date: string | null;
@@ -708,6 +718,7 @@ export function mapHardwareRow(row: any): TicketHardwareReturnRecord {
     solution_summary: nullStr(row.solution_summary, 8000),
     shipping_method: nullStr(row.shipping_method, 120),
     shipping_reference: nullStr(row.shipping_reference, 200),
+    shipment_status: nullStr(row.shipment_status, 40),
     return_required: row.return_required === true || row.return_required === 't',
     delivery_date: toIsoDateOnly(row.delivery_date),
     return_due_date: toIsoDateOnly(row.return_due_date),
@@ -905,6 +916,16 @@ export function normalizeHardwareReturnInput(
     input.shipping_reference !== undefined
       ? nullStr(input.shipping_reference, 200)
       : next.shipping_reference;
+  if (input.shipment_status !== undefined) {
+    const coerced = coerceShipmentStatus(input.shipment_status);
+    if (input.shipment_status !== null && String(input.shipment_status).trim() && !coerced) {
+      throw Object.assign(
+        new Error('Ungültiger Rücksendestatus (ausstehend|versendet|eingegangen).'),
+        { status: 400 },
+      );
+    }
+    next.shipment_status = coerced;
+  }
 
   if (input.return_required !== undefined) next.return_required = Boolean(input.return_required);
   if (input.auto_reminder_enabled !== undefined) {
@@ -922,6 +943,9 @@ export function normalizeHardwareReturnInput(
     }
     // Not-returned must never keep a stale returned_at (even if client also sends one).
     if (!next.returned) next.returned_at = null;
+    // Sync shipment_status with Eingang bestätigen / Rückgängig.
+    if (next.returned) next.shipment_status = 'eingegangen';
+    else if (input.shipment_status === undefined) next.shipment_status = 'versendet';
   }
   if (input.returned_at !== undefined && next.returned) {
     const raw = input.returned_at ? new Date(String(input.returned_at)) : null;
@@ -931,6 +955,18 @@ export function normalizeHardwareReturnInput(
     next.returned_at = raw ? raw.toISOString() : null;
   }
   if (!next.returned) next.returned_at = null;
+
+  // Pill / form: selecting Eingegangen marks received; leaving it unmarks.
+  if (input.shipment_status !== undefined && input.returned === undefined) {
+    if (next.shipment_status === 'eingegangen') {
+      next.returned = true;
+      if (!next.returned_at) next.returned_at = new Date().toISOString();
+    } else if (next.returned) {
+      next.returned = false;
+      next.returned_at = null;
+    }
+  }
+  if (next.returned) next.shipment_status = 'eingegangen';
 
   return next;
 }
@@ -1101,15 +1137,16 @@ export async function updateHardwareReturnById(params: {
       solution_summary = $35,
       shipping_method = $36,
       shipping_reference = $37,
-      return_required = $38,
-      delivery_date = $39,
-      return_due_date = $40,
-      auto_reminder_enabled = $41,
-      mail1_scheduled_date = $42,
-      mail2_scheduled_date = $43,
-      mail3_scheduled_date = $44,
-      returned = $45,
-      returned_at = $46,
+      shipment_status = $38,
+      return_required = $39,
+      delivery_date = $40,
+      return_due_date = $41,
+      auto_reminder_enabled = $42,
+      mail1_scheduled_date = $43,
+      mail2_scheduled_date = $44,
+      mail3_scheduled_date = $45,
+      returned = $46,
+      returned_at = $47,
       updated_at = NOW()
     WHERE id = $1::uuid
     RETURNING *`,
@@ -1153,6 +1190,7 @@ export async function updateHardwareReturnById(params: {
       normalized.solution_summary ?? null,
       normalized.shipping_method ?? null,
       normalized.shipping_reference ?? null,
+      normalized.shipment_status ?? null,
       Boolean(normalized.return_required),
       normalized.delivery_date ?? null,
       normalized.return_due_date ?? null,
@@ -1251,7 +1289,7 @@ export async function insertStandaloneHardwareReturn(params: {
         employee_phone, employee_mobile,
         project_manager_name, project_manager_email, manager_name, manager_email,
         ceo_email_override, stage_recipients_override, solution_summary,
-        shipping_method, shipping_reference, return_required, delivery_date, return_due_date,
+        shipping_method, shipping_reference, shipment_status, return_required, delivery_date, return_due_date,
         auto_reminder_enabled,
         mail1_scheduled_date, mail2_scheduled_date, mail3_scheduled_date,
         returned, returned_at
@@ -1267,10 +1305,10 @@ export async function insertStandaloneHardwareReturn(params: {
         $27,$28,
         $29,$30,$31,$32,
         $33,$34::jsonb,$35,
-        $36,$37,$38,$39,$40,
-        $41,
-        $42,$43,$44,
-        $45,$46
+        $36,$37,$38,$39,$40,$41,
+        $42,
+        $43,$44,$45,
+        $46,$47
       ) RETURNING *`,
       [
         id,
@@ -1312,6 +1350,7 @@ export async function insertStandaloneHardwareReturn(params: {
         normalized.solution_summary ?? null,
         normalized.shipping_method ?? null,
         normalized.shipping_reference ?? null,
+        normalized.shipment_status ?? (normalized.returned ? 'eingegangen' : 'versendet'),
         normalized.return_required !== false,
         normalized.delivery_date ?? null,
         normalized.return_due_date ?? null,
