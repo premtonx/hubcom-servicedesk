@@ -13,6 +13,7 @@ import {
   type PortalMember,
   type PortalTicketAttachment,
 } from '../../../services/clientPortalApi';
+import { PortalKbTicketSuggestPanel } from '../../client-portal/PortalKbTicketSuggestPanel';
 import type { TicketPriority } from '../../../types';
 
 const PRIORITIES: { value: TicketPriority; label: string }[] = [
@@ -250,6 +251,17 @@ export default function ClientCreateTicketPage() {
                   className="h-11"
                 />
               </div>
+
+              <PortalKbTicketSuggestPanel
+                subject={subject}
+                descriptionPlain={description.replace(/<[^>]+>/g, ' ')}
+                onResolved={() => {
+                  toast.success(
+                    'Schön, dass die Wissensdatenbank geholfen hat — Ticket wird nicht erstellt.',
+                  );
+                  navigate('/portal/tickets', { replace: true });
+                }}
+              />
 
               <div className="space-y-1.5">
                 <Label className="text-sm font-bold text-slate-800">

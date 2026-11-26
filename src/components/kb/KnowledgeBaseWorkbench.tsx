@@ -904,14 +904,46 @@ export function KnowledgeBaseWorkbench({
     toast.success(`Duplicated "${article.title}" successfully.`);
   };
 
-  const handleArchiveArticle = (id: string) => {
-    setArticles(p => p.map(a => a.id === id ? { ...a, status: 'Archived' } : a));
-    toast.success(t('kb.archive.success', 'Article moved to archive.'));
+  const handleArchiveArticle = async (id: string) => {
+    try {
+      const article = articles.find((a) => a.id === id);
+      await adapter.updateArticle(
+        id,
+        {
+          status: 'Archived',
+          index_in_rag: false,
+          outdated_at: new Date().toISOString(),
+        } as any,
+        article?.tags || [],
+      );
+      setArticles((p) =>
+        p.map((a) =>
+          a.id === id ? { ...a, status: 'Archived', index_in_rag: false } : a,
+        ),
+      );
+      toast.success(t('kb.archive.success', 'Artikel archiviert.'));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Archivierung fehlgeschlagen.');
+    }
   };
 
-  const handleUpdateStatus = (id: string, newStats: string) => {
-    setArticles(p => p.map(a => a.id === id ? { ...a, status: newStats } : a));
-    toast.success(`Status updated to "${newStats}" successfully.`);
+  const handleUpdateStatus = async (id: string, newStats: string) => {
+    try {
+      const article = articles.find((a) => a.id === id);
+      const patch: Record<string, unknown> = { status: newStats };
+      if (
+        String(newStats).toLowerCase() === 'outdated' ||
+        String(newStats).toLowerCase() === 'archived' ||
+        String(newStats).toLowerCase() === 'draft'
+      ) {
+        patch.index_in_rag = false;
+      }
+      await adapter.updateArticle(id, patch as any, article?.tags || []);
+      setArticles((p) => p.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+      toast.success(`Status auf „${newStats}“ aktualisiert.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Status konnte nicht gespeichert werden.');
+    }
   };
 
   const handleCopyArticleLink = (articleId: string) => {
@@ -1132,7 +1164,7 @@ export function KnowledgeBaseWorkbench({
       recent: t('kb.sidebar.recentlyUpdated', 'Recently Updated'),
       mostViewed: t('kb.sidebar.mostViewed', 'Most Viewed'),
       missing: t('kb.sidebar.missingArticles', 'Missing Articles'),
-      outdated: t('kb.sidebar.outdatedContent', 'Outdated Content'),
+      outdated: t('kb.sidebar.outdatedContent', 'Veraltete Inhalte'),
     };
     return smartLabels[kbNav.id] ?? t('kb.allArticlesSection', 'All Articles');
   }, [kbNav, isOverviewMode, t, categories]);

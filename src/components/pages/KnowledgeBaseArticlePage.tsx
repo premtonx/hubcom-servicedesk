@@ -343,6 +343,74 @@ export function KnowledgeBaseArticlePage({
     [adapter, capabilities.ragIndexToggle, liveArticle.id, onArticleUpdated],
   );
 
+  const applyLifecyclePatch = useCallback(
+    async (patch: Partial<KBArticle> & { outdated_reason?: string }) => {
+      if (isSeedArticle(liveArticle.id)) {
+        setLiveArticle((prev) => ({ ...prev, ...patch }));
+        onArticleUpdated(liveArticle.id, patch);
+        return;
+      }
+      await adapter.updateArticle(liveArticle.id, patch as any, liveArticle.tags || []);
+      setLiveArticle((prev) => ({ ...prev, ...patch }));
+      onArticleUpdated(liveArticle.id, patch);
+    },
+    [adapter, liveArticle.id, liveArticle.tags, onArticleUpdated],
+  );
+
+  const handleMarkOutdated = useCallback(
+    async (reason: string) => {
+      try {
+        const now = new Date().toISOString();
+        await applyLifecyclePatch({
+          status: 'Outdated',
+          index_in_rag: false,
+          outdated_reason: reason,
+          outdated_at: now,
+        } as any);
+        toast.success('Artikel als veraltet markiert und aus dem KI-Wissensspeicher entfernt.');
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Markierung fehlgeschlagen.');
+      }
+    },
+    [applyLifecyclePatch],
+  );
+
+  const handleMarkArchived = useCallback(
+    async (reason: string) => {
+      try {
+        const now = new Date().toISOString();
+        await applyLifecyclePatch({
+          status: 'Archived',
+          index_in_rag: false,
+          outdated_reason: reason,
+          outdated_at: now,
+        } as any);
+        toast.success('Artikel archiviert und aus dem KI-Wissensspeicher entfernt.');
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Archivierung fehlgeschlagen.');
+      }
+    },
+    [applyLifecyclePatch],
+  );
+
+  const handleRepublish = useCallback(
+    async (reenableRag: boolean) => {
+      try {
+        await applyLifecyclePatch({
+          status: 'Published',
+          outdated_at: null,
+          outdated_reason: null,
+          outdated_by: null,
+          ...(reenableRag ? { index_in_rag: true } : {}),
+        } as any);
+        toast.success('Artikel wieder veröffentlicht.');
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Veröffentlichung fehlgeschlagen.');
+      }
+    },
+    [applyLifecyclePatch],
+  );
+
   const handleAiExplain = useCallback(async () => {
     if (isPortal || !aiAdapter) {
       throw new Error('KI-Erklärung ist im Kunden-Portal nicht verfügbar.');
@@ -473,6 +541,9 @@ export function KnowledgeBaseArticlePage({
           ? undefined
           : (checked) => void handleToggleIndexInRag(checked)
       }
+      onMarkOutdated={canEdit ? handleMarkOutdated : undefined}
+      onMarkArchived={canEdit ? handleMarkArchived : undefined}
+      onRepublish={canEdit ? handleRepublish : undefined}
     />
   );
 }

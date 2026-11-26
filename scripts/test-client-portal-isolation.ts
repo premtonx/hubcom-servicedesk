@@ -118,6 +118,20 @@ import {
   toPublicOrgAiSettings,
 } from '../src/lib/ai/org-ai-settings.js';
 import {
+  assertCanEnableRagIndex,
+  filterHybridHitsToPublishedRagArticles,
+  isArticleEligibleForRag,
+  KB_RAG_BLOCKED_STATUS_ERROR,
+  resolveKbLifecycleUpdate,
+  statusBlocksRag,
+} from '../src/lib/kb/kb-article-lifecycle.js';
+import {
+  assertSuggestHitsIsolated,
+  filterArticlesForPortalSuggest,
+  incrementDeflectedCount,
+  scorePortalKbSuggest,
+} from '../src/lib/kb/portal-kb-suggest.js';
+import {
   evaluatePortalKbCategoryWriteAccess,
   portalCategoryId,
 } from '../src/lib/kb/kb-categories.js';
@@ -1662,6 +1676,7 @@ function testPortalKbIsolation(): void {
   testPortalKbWorkspaceApiIsolation();
   testPortalRagOrganizationIdIsolation();
   testPortalOrgLocalAiSettingsIsolation();
+  testPortalKbSuggestAndOutdatedLifecycle();
 }
 
 /** Part 1 — portal KB workspace metrics, index_in_rag, ai-ask org tenant isolation. */
@@ -2384,6 +2399,178 @@ function testPortalOrgLocalAiSettingsIsolation(): void {
       portalApiSrc.includes('reindexAiSettings') &&
       !emailPageSrc.includes('MandantenKiRagCard'),
     'German Mandanten-KI UI + models API; no Email-page duplicate card',
+  );
+}
+
+/** Ticket deflection suggest + outdated/archived RAG purge isolation. */
+function testPortalKbSuggestAndOutdatedLifecycle(): void {
+  console.log('\n[12h] Portal KB suggest deflection + outdated RAG lifecycle');
+
+  const DPG = 'org-dpg-suggest-0001';
+  const OTHER = 'org-other-suggest-0002';
+  const articles = [
+    {
+      id: 'kb-dpg-vpn',
+      title: 'VPN Verbindung herstellen',
+      content: '<p>So richten Sie die Firmen-VPN ein.</p>',
+      status: 'Published',
+      visibility: 'organization',
+      organizationId: DPG,
+      category: 'Netzwerk',
+      category_name: 'Netzwerk',
+    },
+    {
+      id: 'kb-dpg-draft',
+      title: 'VPN Entwurf',
+      content: '<p>Entwurf VPN</p>',
+      status: 'Draft',
+      visibility: 'organization',
+      organizationId: DPG,
+    },
+    {
+      id: 'kb-dpg-outdated',
+      title: 'Alte VPN Anleitung',
+      content: '<p>Veraltet</p>',
+      status: 'Outdated',
+      visibility: 'organization',
+      organizationId: DPG,
+      index_in_rag: false,
+    },
+    {
+      id: 'kb-other-vpn',
+      title: 'VPN Verbindung herstellen',
+      content: '<p>Andere Firma VPN</p>',
+      status: 'Published',
+      visibility: 'organization',
+      organizationId: OTHER,
+    },
+  ];
+
+  const eligible = filterArticlesForPortalSuggest(articles, DPG);
+  assert(
+    eligible.length === 1 && eligible[0].id === 'kb-dpg-vpn',
+    'suggest filter keeps ONLY published DPG articles (drops draft/outdated/OtherOrg)',
+  );
+
+  const hits = scorePortalKbSuggest('VPN Verbindung', eligible, 3);
+  assert(
+    hits.length === 1 &&
+      hits[0].id === 'kb-dpg-vpn' &&
+      hits[0].title.includes('VPN') &&
+      typeof hits[0].snippet === 'string',
+    'suggest returns ≤3 published org hits with title/snippet',
+  );
+  assert(
+    assertSuggestHitsIsolated(hits, articles, DPG),
+    'suggest hits never include OtherOrg or non-published articles',
+  );
+  assert(incrementDeflectedCount(2) === 3, 'deflected_count increments');
+
+  const marked = resolveKbLifecycleUpdate({
+    existingStatus: 'Published',
+    existingIndexInRag: true,
+    nextStatusRaw: 'Outdated',
+    outdatedReason: 'Ersetzt durch neue PrüfApp-Version',
+    actorId: 'admin-1',
+  });
+  assert(marked.ok === true, 'mark outdated lifecycle ok');
+  if (marked.ok) {
+    assert(
+      marked.patch.status === 'Outdated' &&
+        marked.patch.index_in_rag === false &&
+        marked.purgeRag === true &&
+        String(marked.patch.outdated_reason).includes('PrüfApp'),
+      'outdated forces index_in_rag=false and purgeRag',
+    );
+  }
+  assert(statusBlocksRag('Outdated') && statusBlocksRag('Archived') && statusBlocksRag('Draft'), 'blocked statuses');
+  assert(
+    !isArticleEligibleForRag({ status: 'Outdated', index_in_rag: true }) &&
+      isArticleEligibleForRag({ status: 'Published', index_in_rag: true }),
+    'RAG eligibility requires published + indexed',
+  );
+  const ragGate = assertCanEnableRagIndex('Outdated');
+  assert(
+    ragGate.ok === false && ragGate.error === KB_RAG_BLOCKED_STATUS_ERROR,
+    'enabling RAG on outdated rejected with German message',
+  );
+
+  const hybridFiltered = filterHybridHitsToPublishedRagArticles(
+    [
+      { sourceType: 'KB_ARTICLE', sourceId: 'kb-dpg-vpn' },
+      { sourceType: 'KB_ARTICLE', sourceId: 'kb-dpg-outdated' },
+      { sourceType: 'RESOLVED_TICKET', sourceId: 't1' },
+    ],
+    new Map([
+      ['kb-dpg-vpn', { status: 'Published', index_in_rag: true }],
+      ['kb-dpg-outdated', { status: 'Outdated', index_in_rag: false }],
+    ]),
+  );
+  assert(
+    hybridFiltered.length === 2 &&
+      hybridFiltered.some((h) => h.sourceId === 'kb-dpg-vpn') &&
+      !hybridFiltered.some((h) => h.sourceId === 'kb-dpg-outdated') &&
+      hybridFiltered.some((h) => h.sourceId === 't1'),
+    'hybrid filter drops outdated KB hits; keeps tickets + published KB',
+  );
+
+  const kbRoutesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalKbRoutes.ts'),
+    'utf8',
+  );
+  const createTicketSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientCreateTicketPage.tsx'),
+    'utf8',
+  );
+  const portalApiSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/services/clientPortalApi.ts'),
+    'utf8',
+  );
+  const orchestratorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/ai/ki-orchestrator.ts'),
+    'utf8',
+  );
+  assert(
+    kbRoutesSrc.includes("'/suggest'") &&
+      kbRoutesSrc.includes('scorePortalKbSuggest') &&
+      kbRoutesSrc.includes('deflect') &&
+      kbRoutesSrc.includes('resolveKbLifecycleUpdate') &&
+      kbRoutesSrc.includes('deleteEmbeddingsForSource') &&
+      !/suggest[\s\S]{0,600}'\/api\/db/.test(kbRoutesSrc),
+    'portal exposes GET /kb/suggest + deflect + outdated lifecycle without /api/db',
+  );
+  assert(
+    createTicketSrc.includes('PortalKbTicketSuggestPanel') &&
+      createTicketSrc.includes('Das hat mein Problem gelöst') === false &&
+      portalApiSrc.includes('/api/portal/kb/suggest') &&
+      portalApiSrc.includes('suggestKbArticles') &&
+      portalApiSrc.includes('markKbDeflected'),
+    'create-ticket wires suggest panel + portal API (German copy in panel component)',
+  );
+  const suggestPanelSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/PortalKbTicketSuggestPanel.tsx'),
+    'utf8',
+  );
+  assert(
+    suggestPanelSrc.includes('Mögliche Lösungen aus Ihrer Wissensdatenbank') &&
+      suggestPanelSrc.includes('Das hat mein Problem gelöst') &&
+      suggestPanelSrc.includes('350'),
+    'German deflection panel with 350ms debounce',
+  );
+  assert(
+    orchestratorSrc.includes('filterHitsToLiveKbArticles') &&
+      orchestratorSrc.includes('isArticleEligibleForRag'),
+    'hybrid search double-guards published + index_in_rag',
+  );
+  const detailToolbarSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/kb/KBArticleDetailToolbar.tsx'),
+    'utf8',
+  );
+  assert(
+    detailToolbarSrc.includes('Als veraltet markieren') &&
+      detailToolbarSrc.includes('Wieder veröffentlichen') &&
+      detailToolbarSrc.includes('Archivieren'),
+    'article toolbar exposes German outdated/archive/republish actions',
   );
 }
 

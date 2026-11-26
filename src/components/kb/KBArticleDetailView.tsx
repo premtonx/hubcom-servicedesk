@@ -48,6 +48,9 @@ export interface KBArticleDetailViewProps {
   onUnhelpful: () => Promise<void>;
   indexInRag?: boolean;
   onToggleIndexInRag?: (checked: boolean) => void;
+  onMarkOutdated?: (reason: string) => Promise<void> | void;
+  onMarkArchived?: (reason: string) => Promise<void> | void;
+  onRepublish?: (reenableRag: boolean) => Promise<void> | void;
 }
 
 export function KBArticleDetailView({
@@ -82,6 +85,9 @@ export function KBArticleDetailView({
   onUnhelpful,
   indexInRag,
   onToggleIndexInRag,
+  onMarkOutdated,
+  onMarkArchived,
+  onRepublish,
 }: KBArticleDetailViewProps) {
   const isPortal = mode === 'portal';
   const [isEditing, setIsEditing] = useState(false);
@@ -90,8 +96,22 @@ export function KBArticleDetailView({
   const [activePanel, setActivePanel] = useState<KBArticleToolbarPanel>(null);
   const [aiExplainContent, setAiExplainContent] = useState('');
   const [isAiExplainLoading, setIsAiExplainLoading] = useState(false);
+  const [outdatedDialog, setOutdatedDialog] = useState<'outdated' | 'archived' | null>(null);
+  const [outdatedReason, setOutdatedReason] = useState('');
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const scrollAreaRootRef = useRef<HTMLDivElement>(null);
+
+  const statusLower = String(article.status || '').toLowerCase();
+  const isMarkedOutdated =
+    statusLower === 'outdated' || statusLower === 'archived';
+  const outdatedReasonText = String(
+    article.outdated_reason || article.outdatedReason || '',
+  ).trim();
+  const outdatedAtRaw = article.outdated_at || article.outdatedAt;
+  const outdatedAtLabel = outdatedAtRaw
+    ? new Date(String(outdatedAtRaw)).toLocaleString('de-DE')
+    : null;
 
   const articleUrl = useMemo(
     () => buildKbArticleDeepLink(article.id, mode),
@@ -220,13 +240,29 @@ export function KBArticleDetailView({
               />
             </div>
 
+            {isMarkedOutdated ? (
+              <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 print:hidden">
+                <p className="font-bold">
+                  Dieser Artikel ist als{' '}
+                  {statusLower === 'archived' ? 'archiviert' : 'veraltet'} markiert und wird von
+                  der KI nicht mehr verwendet.
+                </p>
+                {outdatedReasonText ? (
+                  <p className="mt-1 text-amber-900/90">Grund: {outdatedReasonText}</p>
+                ) : null}
+                {outdatedAtLabel ? (
+                  <p className="mt-0.5 text-xs text-amber-800/80">Markiert am {outdatedAtLabel}</p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="print:hidden">
               <KBArticleDetailToolbar
                 className="mt-4"
                 mode={mode}
                 canEdit={canEdit}
                 isEditing={isEditing}
-                isSaving={isSaving}
+                isSaving={isSaving || lifecycleBusy}
                 isTranslating={isTranslating}
                 activeLanguage={activeReadingLanguage}
                 onEdit={handleToggleEdit}
@@ -238,8 +274,90 @@ export function KBArticleDetailView({
                 onAiExplain={() => void handleAiExplain()}
                 onExportPdf={handleExportPdf}
                 onCopyLink={onCopyLink}
+                articleStatus={article.status}
+                onMarkOutdated={
+                  canEdit && onMarkOutdated ? () => setOutdatedDialog('outdated') : undefined
+                }
+                onMarkArchived={
+                  canEdit && onMarkArchived ? () => setOutdatedDialog('archived') : undefined
+                }
+                onRepublish={
+                  canEdit && onRepublish
+                    ? () => {
+                        void (async () => {
+                          setLifecycleBusy(true);
+                          try {
+                            await onRepublish(false);
+                          } finally {
+                            setLifecycleBusy(false);
+                          }
+                        })();
+                      }
+                    : undefined
+                }
               />
             </div>
+
+            {outdatedDialog ? (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-white p-4 shadow-sm space-y-3 print:hidden">
+                <p className="text-sm font-bold text-slate-900">
+                  {outdatedDialog === 'archived'
+                    ? 'Artikel archivieren?'
+                    : 'Artikel als veraltet markieren?'}
+                </p>
+                <p className="text-xs text-slate-600">
+                  Der Artikel wird sofort aus dem KI-Wissensspeicher (RAG) entfernt.
+                </p>
+                <label className="block space-y-1">
+                  <span className="text-xs font-semibold text-slate-700">
+                    Optionaler Grund (z. B. „Ersetzt durch neue PrüfApp-Version“)
+                  </span>
+                  <input
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    value={outdatedReason}
+                    onChange={(e) => setOutdatedReason(e.target.value)}
+                    placeholder="Grund (optional)"
+                  />
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={lifecycleBusy}
+                    onClick={() => {
+                      void (async () => {
+                        setLifecycleBusy(true);
+                        try {
+                          if (outdatedDialog === 'archived') {
+                            await onMarkArchived?.(outdatedReason);
+                          } else {
+                            await onMarkOutdated?.(outdatedReason);
+                          }
+                          setOutdatedDialog(null);
+                          setOutdatedReason('');
+                        } finally {
+                          setLifecycleBusy(false);
+                        }
+                      })();
+                    }}
+                  >
+                    Bestätigen
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={lifecycleBusy}
+                    onClick={() => {
+                      setOutdatedDialog(null);
+                      setOutdatedReason('');
+                    }}
+                  >
+                    Abbrechen
+                  </Button>
+                </div>
+              </div>
+            ) : null}
 
             <div className="print-only-article-title hidden print:block mb-6">
               <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>

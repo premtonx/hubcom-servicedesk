@@ -124,6 +124,15 @@ export function sanitizeKbArticleForPortal<T extends Record<string, unknown>>(
     index_in_rag: article.index_in_rag !== false,
     language: article.language || 'de',
     toc: Array.isArray(options?.toc) ? options!.toc : Array.isArray(article.toc) ? article.toc : [],
+    outdated_at: article.outdated_at || article.outdatedAt || null,
+    outdated_reason: article.outdated_reason || article.outdatedReason || null,
+    outdated_by: article.outdated_by || article.outdatedBy || null,
+    deflected_count:
+      typeof article.deflected_count === 'number'
+        ? article.deflected_count
+        : typeof article.deflectedCount === 'number'
+          ? article.deflectedCount
+          : 0,
   };
 }
 

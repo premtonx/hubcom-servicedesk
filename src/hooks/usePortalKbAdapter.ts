@@ -210,9 +210,15 @@ export function usePortalKbAdapter(): KbWorkbenchAdapter {
         if (patch.tags !== undefined) body.tags = patch.tags;
         if (patch.status !== undefined) body.status = patch.status;
         if (patch.index_in_rag !== undefined) body.index_in_rag = patch.index_in_rag;
+        const reason =
+          (patch as any).outdated_reason ?? (patch as any).outdatedReason;
+        if (typeof reason === 'string') body.outdated_reason = reason;
         const res = await axios.patch(`${PORTAL_KB}/${encodeURIComponent(id)}`, body, {
           withCredentials: true,
         });
+        if (res.data?.error) {
+          throw new Error(String(res.data.error));
+        }
         await refresh();
         return res.data?.article;
       },
