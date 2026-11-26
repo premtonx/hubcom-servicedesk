@@ -34,6 +34,8 @@ import { cn } from '../../../lib/utils';
 import {
   clientPortalApi,
   type PortalDashboardResponse,
+  type PortalDashboardReturnsActivityPoint,
+  type PortalDashboardReturnsKpis,
   type PortalReturnsTrendRange,
 } from '../../../services/clientPortalApi';
 import {
@@ -42,6 +44,7 @@ import {
   formatRelativeTime,
 } from '../../../lib/dashboard-format-utils';
 import { portalStatusLabel } from '../../../lib/portal/status';
+import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
 
 const RETURNS_TREND_OPTIONS: Array<{ id: PortalReturnsTrendRange; label: string }> = [
   { id: '7d', label: '7 Tage' },
@@ -64,91 +67,170 @@ const KPI_ICON_TONES = {
   amber: 'bg-amber-100 text-amber-700',
 } as const;
 
+const ZERO_RETURNS_KPIS: PortalDashboardReturnsKpis = {
+  open: 0,
+  overdue: 0,
+  stage3: 0,
+  returnedLast30: 0,
+};
+
+function isAbortError(err: unknown): boolean {
+  const e = err as { name?: string; code?: string };
+  return e?.name === 'CanceledError' || e?.name === 'AbortError' || e?.code === 'ERR_CANCELED';
+}
+
 export default function PortalDashboardPage() {
   const navigate = useNavigate();
+  const { session, isOrgWide } = useClientPortalSession();
+
   const [data, setData] = useState<PortalDashboardResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [ticketTab, setTicketTab] = useState<'all' | 'mine'>('all');
   const [returnsTrendRange, setReturnsTrendRange] =
     useState<PortalReturnsTrendRange>('30d');
+  const [returnsTrendData, setReturnsTrendData] = useState<
+    PortalDashboardReturnsActivityPoint[]
+  >([]);
+  const [trendsLoading, setTrendsLoading] = useState(false);
 
+  // Dashboard KPIs — once on mount; never refetch on timeframe change.
   useEffect(() => {
-    let active = true;
+    const ac = new AbortController();
     void (async () => {
       try {
-        const payload = await clientPortalApi.getDashboard();
-        if (active) setData(payload);
+        const payload = await clientPortalApi.getDashboard({ signal: ac.signal });
+        setData(payload);
+        setDashboardError(null);
       } catch (err: any) {
-        if (active) {
-          setError(
-            err?.response?.data?.error ||
-              err?.message ||
-              'Dashboard konnte nicht geladen werden.',
-          );
-        }
+        if (isAbortError(err)) return;
+        setDashboardError(
+          err?.response?.data?.error ||
+            err?.message ||
+            'Dashboard konnte nicht geladen werden.',
+        );
       } finally {
-        if (active) setLoading(false);
+        if (!ac.signal.aborted) setDashboardLoading(false);
       }
     })();
     return () => {
-      active = false;
+      ac.abort();
     };
   }, []);
 
-  if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center gap-2 text-slate-400 text-sm p-12">
-        <Loader2 className="w-4 h-4 animate-spin" /> Dashboard wird geladen…
-      </div>
-    );
-  }
+  const hardwareReturnsEnabled =
+    data?.organization.hardwareReturnsEnabled === true;
+  // Org-wide roles see returns strip immediately at 0 while first dashboard fetch
+  // is in flight; hide after load if module is off. CLIENT_USER never sees it.
+  const showReturns = isOrgWide && (dashboardLoading || hardwareReturnsEnabled);
 
-  if (error || !data) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 p-12 text-center">
-        <AlertTriangle className="w-8 h-8 text-amber-500" />
-        <p className="text-sm font-bold text-slate-800">{error || 'Keine Daten'}</p>
-        <Button variant="outline" className="rounded-xl" onClick={() => window.location.reload()}>
-          Erneut laden
-        </Button>
-      </div>
-    );
-  }
+  // Independent trends fetch — AbortController cancels on timeframe change.
+  useEffect(() => {
+    if (!showReturns || !hardwareReturnsEnabled) {
+      setReturnsTrendData([]);
+      setTrendsLoading(false);
+      return;
+    }
+    const ac = new AbortController();
+    setTrendsLoading(true);
+    void (async () => {
+      try {
+        const res = await clientPortalApi.getReturnsTrends(returnsTrendRange, {
+          signal: ac.signal,
+        });
+        if (!ac.signal.aborted) {
+          setReturnsTrendData(res.points);
+        }
+      } catch (err: any) {
+        if (isAbortError(err)) return;
+        if (!ac.signal.aborted) setReturnsTrendData([]);
+      } finally {
+        if (!ac.signal.aborted) setTrendsLoading(false);
+      }
+    })();
+    return () => {
+      ac.abort();
+    };
+  }, [returnsTrendRange, showReturns, hardwareReturnsEnabled]);
+
+  const shellData: PortalDashboardResponse = data || {
+    role: session?.role || 'CLIENT_USER',
+    organization: {
+      id: session?.organizationId || '',
+      name: '',
+      logoUrl: null,
+      portalBannerUrl: null,
+      portalTitle: 'ServiceDesk',
+      hardwareReturnsEnabled: false,
+    },
+    user: { id: session?.id || '', name: session?.name || 'Nutzer' },
+    kpis: {
+      openTickets: 0,
+      openCompanyTickets: 0,
+      inProgressTickets: 0,
+      resolvedLast30Days: 0,
+      recentlyResolvedCount: 0,
+      avgResponseTime: '—',
+    },
+    tickets: [],
+    myOpenTickets: [],
+    activity: [],
+    team: null,
+    email: null,
+    returnsKpis: ZERO_RETURNS_KPIS,
+    returnsActivityByRange: null,
+  };
+
+  const returnsKpis: PortalDashboardReturnsKpis =
+    data?.returnsKpis || ZERO_RETURNS_KPIS;
 
   return (
     <PortalDashboardShell
-      data={data}
+      data={shellData}
+      returnsKpis={returnsKpis}
+      showReturns={Boolean(showReturns)}
+      dashboardLoading={dashboardLoading}
+      dashboardError={dashboardError}
       navigate={navigate}
       ticketTab={ticketTab}
       setTicketTab={setTicketTab}
       returnsTrendRange={returnsTrendRange}
       setReturnsTrendRange={setReturnsTrendRange}
+      returnsTrendData={returnsTrendData}
+      trendsLoading={trendsLoading}
     />
   );
 }
 
 function PortalDashboardShell({
   data,
+  returnsKpis,
+  showReturns,
+  dashboardLoading,
+  dashboardError,
   navigate,
   ticketTab,
   setTicketTab,
   returnsTrendRange,
   setReturnsTrendRange,
+  returnsTrendData,
+  trendsLoading,
 }: {
   data: PortalDashboardResponse;
+  returnsKpis: PortalDashboardReturnsKpis;
+  showReturns: boolean;
+  dashboardLoading: boolean;
+  dashboardError: string | null;
   navigate: ReturnType<typeof useNavigate>;
   ticketTab: 'all' | 'mine';
   setTicketTab: (t: 'all' | 'mine') => void;
   returnsTrendRange: PortalReturnsTrendRange;
   setReturnsTrendRange: (r: PortalReturnsTrendRange) => void;
+  returnsTrendData: PortalDashboardReturnsActivityPoint[];
+  trendsLoading: boolean;
 }) {
   const isAdmin = data.role === 'CLIENT_ADMIN';
   const isOrgWide = data.role === 'CLIENT_ADMIN' || data.role === 'CLIENT_SUPPORTER';
-  const showReturns =
-    isOrgWide &&
-    data.organization.hardwareReturnsEnabled === true &&
-    Boolean(data.returnsKpis);
   const bannerUrl = data.organization.portalBannerUrl;
   const dateLabel = new Date().toLocaleDateString('de-DE', {
     timeZone: 'Europe/Berlin',
@@ -167,15 +249,24 @@ function PortalDashboardShell({
     return (data.myOpenTickets || data.tickets).filter(Boolean);
   }, [data, isOrgWide, ticketTab]);
 
-  const returnsTrendData = useMemo(() => {
-    const byRange = data.returnsActivityByRange;
-    if (!byRange) return [];
-    return byRange[returnsTrendRange] || byRange['30d'] || [];
-  }, [data.returnsActivityByRange, returnsTrendRange]);
-
   return (
     <div className="flex-1 overflow-y-auto min-h-0 bg-[#F8F9FA]">
       <div className="max-w-[1440px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 lg:py-8 space-y-6 pb-20">
+        {dashboardError ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-3 text-sm text-amber-900">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span className="font-medium flex-1">{dashboardError}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-xl shrink-0"
+              onClick={() => window.location.reload()}
+            >
+              Erneut laden
+            </Button>
+          </div>
+        ) : null}
+
         <section
           className="relative overflow-hidden rounded-[28px] border border-white/60 shadow-[0_8px_30px_rgba(15,23,42,0.06)]"
           style={{
@@ -199,8 +290,10 @@ function PortalDashboardShell({
                 </h1>
                 <p className="text-sm text-[#5F6368] font-medium mt-1">
                   {data.organization.portalTitle ||
-                    `${data.organization.name} ServiceDesk`}{' '}
-                  — {data.organization.name}
+                    (data.organization.name
+                      ? `${data.organization.name} ServiceDesk`
+                      : 'ServiceDesk')}{' '}
+                  {data.organization.name ? `— ${data.organization.name}` : null}
                 </p>
               </div>
 
@@ -228,6 +321,7 @@ function PortalDashboardShell({
               <HeroKpiCard
                 label="Offene Tickets"
                 value={openCount}
+                loading={dashboardLoading}
                 icon={<TicketIcon className="w-4 h-4" />}
                 iconTone="blue"
                 onClick={() => navigate('/portal/tickets?status=open')}
@@ -235,6 +329,7 @@ function PortalDashboardShell({
               <HeroKpiCard
                 label="In Bearbeitung"
                 value={inProgressCount}
+                loading={dashboardLoading}
                 icon={<Clock className="w-4 h-4" />}
                 iconTone="sky"
                 onClick={() => navigate('/portal/tickets?status=in_progress')}
@@ -242,6 +337,7 @@ function PortalDashboardShell({
               <HeroKpiCard
                 label="Gelöst (letzte 30 Tage)"
                 value={resolvedCount}
+                loading={dashboardLoading}
                 icon={<CheckCircle2 className="w-4 h-4" />}
                 iconTone="green"
                 onClick={() => navigate('/portal/tickets?status=resolved')}
@@ -249,13 +345,14 @@ function PortalDashboardShell({
               <HeroKpiCard
                 label="Ø Reaktionszeit"
                 value={avgResponse}
+                loading={dashboardLoading}
                 icon={<Zap className="w-4 h-4" />}
                 iconTone="purple"
                 onClick={() => navigate('/portal/tickets')}
               />
             </div>
 
-            {showReturns && data.returnsKpis ? (
+            {showReturns ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <h2 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
@@ -273,21 +370,24 @@ function PortalDashboardShell({
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                   <HeroKpiCard
                     label="Offene Rücklieferungen"
-                    value={data.returnsKpis.open}
+                    value={returnsKpis.open}
+                    loading={dashboardLoading}
                     icon={<Package className="w-4 h-4" />}
                     iconTone="blue"
                     onClick={() => navigate('/portal/returns?view=open')}
                   />
                   <HeroKpiCard
                     label="Überfällig"
-                    value={data.returnsKpis.overdue}
+                    value={returnsKpis.overdue}
+                    loading={dashboardLoading}
                     icon={<AlertTriangle className="w-4 h-4" />}
                     iconTone="amber"
                     onClick={() => navigate('/portal/returns?view=overdue')}
                   />
                   <HeroKpiCard
                     label="Letzte Stufe / Eskaliert (4.+ Erinnerung)"
-                    value={data.returnsKpis.stage3}
+                    value={returnsKpis.stage3}
+                    loading={dashboardLoading}
                     icon={<ShieldAlert className="w-4 h-4" />}
                     iconTone="purple"
                     onClick={() =>
@@ -296,7 +396,8 @@ function PortalDashboardShell({
                   />
                   <HeroKpiCard
                     label="Zurückgeliefert (30 Tage)"
-                    value={data.returnsKpis.returnedLast30}
+                    value={returnsKpis.returnedLast30}
+                    loading={dashboardLoading}
                     icon={<PackageCheck className="w-4 h-4" />}
                     iconTone="green"
                     onClick={() => navigate('/portal/returns?view=done')}
@@ -341,7 +442,14 @@ function PortalDashboardShell({
                   <span className="text-[11px] font-bold text-slate-500">Meine Tickets</span>
                 )}
               </div>
-              <TicketList tickets={listedTickets} navigate={navigate} showRequester={isOrgWide} />
+              {dashboardLoading ? (
+                <div className="flex-1 flex items-center justify-center gap-2 text-slate-400 text-sm py-16">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Tickets werden geladen…
+                </div>
+              ) : (
+                <TicketList tickets={listedTickets} navigate={navigate} showRequester={isOrgWide} />
+              )}
 
               {data.activity && data.activity.length > 0 ? (
                 <div className="mt-6 pt-5 border-t border-slate-100">
@@ -385,6 +493,9 @@ function PortalDashboardShell({
                   <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 flex items-center gap-2">
                     <PackageOpen className="w-4 h-4 text-sky-600" />
                     Rücklieferungen-Trends
+                    {trendsLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" aria-label="Trends laden" />
+                    ) : null}
                   </h3>
                   <div className="flex flex-wrap items-center gap-1 rounded-xl bg-slate-100 p-1">
                     {RETURNS_TREND_OPTIONS.map((opt) => (
@@ -404,51 +515,63 @@ function PortalDashboardShell({
                     ))}
                   </div>
                 </div>
-                <div className="h-56">
-                  {returnsTrendData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={returnsTrendData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                        <XAxis
-                          dataKey="name"
-                          tick={{ fontSize: 10 }}
-                          interval={
-                            returnsTrendRange === '90d'
-                              ? 6
-                              : returnsTrendRange === '7d'
-                                ? 0
-                                : 4
-                          }
-                        />
-                        <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                        <Tooltip />
-                        <Legend wrapperStyle={{ fontSize: 11 }} />
-                        <Area
-                          type="monotone"
-                          dataKey="open"
-                          name="Offen"
-                          stroke="#1B6CA8"
-                          fill="#1B6CA822"
-                          strokeWidth={2}
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="overdue"
-                          name="Überfällig"
-                          stroke="#D97706"
-                          fill="#D9770622"
-                          strokeWidth={2}
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="returned"
-                          name="Zurückgeliefert"
-                          stroke="#059669"
-                          fill="#05966922"
-                          strokeWidth={2}
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                <div className="h-56 relative">
+                  {trendsLoading && returnsTrendData.length === 0 ? (
+                    <div className="absolute inset-0 flex items-center justify-center gap-2 text-slate-400 text-sm">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Trends werden geladen…
+                    </div>
+                  ) : returnsTrendData.length > 0 ? (
+                    <>
+                      {trendsLoading ? (
+                        <div className="absolute inset-0 z-10 bg-white/40 flex items-start justify-end p-2 pointer-events-none">
+                          <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                        </div>
+                      ) : null}
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={returnsTrendData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                          <XAxis
+                            dataKey="name"
+                            tick={{ fontSize: 10 }}
+                            interval={
+                              returnsTrendRange === '90d'
+                                ? 6
+                                : returnsTrendRange === '7d'
+                                  ? 0
+                                  : 4
+                            }
+                          />
+                          <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                          <Tooltip />
+                          <Legend wrapperStyle={{ fontSize: 11 }} />
+                          <Area
+                            type="monotone"
+                            dataKey="open"
+                            name="Offen"
+                            stroke="#1B6CA8"
+                            fill="#1B6CA822"
+                            strokeWidth={2}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="overdue"
+                            name="Überfällig"
+                            stroke="#D97706"
+                            fill="#D9770622"
+                            strokeWidth={2}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="returned"
+                            name="Zurückgeliefert"
+                            stroke="#059669"
+                            fill="#05966922"
+                            strokeWidth={2}
+                          />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </>
                   ) : (
                     <p className="text-sm text-slate-500 py-16 text-center">
                       Noch keine Rücklieferungsdaten für diesen Zeitraum.
@@ -550,12 +673,14 @@ function HeroKpiCard({
   icon,
   iconTone,
   onClick,
+  loading = false,
 }: {
   label: string;
   value: number | string;
   icon: React.ReactNode;
   iconTone: keyof typeof KPI_ICON_TONES;
   onClick: () => void;
+  loading?: boolean;
 }) {
   return (
     <button
@@ -572,7 +697,17 @@ function HeroKpiCard({
         {icon}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-xl font-black tracking-tight text-slate-900 leading-none">{value}</p>
+        <p
+          className={cn(
+            'text-xl font-black tracking-tight text-slate-900 leading-none inline-flex items-center gap-1.5',
+            loading && 'animate-pulse',
+          )}
+        >
+          {value}
+          {loading ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" aria-hidden />
+          ) : null}
+        </p>
         <p className="text-[12px] font-semibold text-slate-500 mt-1 truncate">{label}</p>
       </div>
       <span

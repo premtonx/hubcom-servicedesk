@@ -82,6 +82,16 @@ export interface PortalDashboardReturnsActivityPoint {
   open: number;
   overdue: number;
   returned: number;
+  offen?: number;
+  ueberfaellig?: number;
+  zurueckgeliefert?: number;
+}
+
+export interface PortalReturnsTrendsResponse {
+  organizationId: string;
+  timeframe: PortalReturnsTrendRange;
+  points: PortalDashboardReturnsActivityPoint[];
+  cached?: boolean;
 }
 
 export interface PortalDashboardResponse {
@@ -124,9 +134,52 @@ export interface PortalDashboardResponse {
 }
 
 export const clientPortalApi = {
-  async getDashboard(): Promise<PortalDashboardResponse> {
-    const res = await axios.get('/api/portal/dashboard', { withCredentials: true });
+  async getDashboard(opts?: { signal?: AbortSignal }): Promise<PortalDashboardResponse> {
+    const path = '/api/portal/dashboard';
+    assertNeverDb(path);
+    const res = await axios.get(path, {
+      withCredentials: true,
+      signal: opts?.signal,
+    });
     return res.data as PortalDashboardResponse;
+  },
+
+  /**
+   * Independent Rücklieferungen trend series (Part 2) — never embeds in dashboard.
+   * GET /api/portal/returns/trends?timeframe=7d|30d|90d|12m|all
+   */
+  async getReturnsTrends(
+    timeframe: PortalReturnsTrendRange = '30d',
+    opts?: { signal?: AbortSignal },
+  ): Promise<PortalReturnsTrendsResponse> {
+    const path = '/api/portal/returns/trends';
+    assertNeverDb(path);
+    const res = await axios.get(path, {
+      withCredentials: true,
+      signal: opts?.signal,
+      params: { timeframe },
+    });
+    const points = Array.isArray(res.data?.points) ? res.data.points : [];
+    return {
+      organizationId: String(res.data?.organizationId || ''),
+      timeframe: (res.data?.timeframe || timeframe) as PortalReturnsTrendRange,
+      points: points.map((p: Record<string, unknown>) => {
+        const open = Number(p.open ?? p.offen) || 0;
+        const overdue = Number(p.overdue ?? p.ueberfaellig) || 0;
+        const returned = Number(p.returned ?? p.zurueckgeliefert) || 0;
+        return {
+          date: String(p.date || ''),
+          name: String(p.name || p.date || ''),
+          open,
+          overdue,
+          returned,
+          offen: open,
+          ueberfaellig: overdue,
+          zurueckgeliefert: returned,
+        };
+      }),
+      cached: Boolean(res.data?.cached),
+    };
   },
 
   async listMembers(): Promise<PortalMember[]> {
