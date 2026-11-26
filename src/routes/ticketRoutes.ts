@@ -22,6 +22,11 @@ import {
 } from '../lib/client-portal/hardware-returns.js';
 import { getOrganization } from '../lib/client-portal/organizations.js';
 import { ticketOrganizationId } from '../lib/client-portal/ticket-visibility.js';
+import {
+  buildSupportLevelPatch,
+  normalizeTicketSupportLevel,
+} from '../lib/client-portal/second-level-notify.js';
+import { maybeNotifySecondLevelAfterTicketPatch } from '../lib/client-portal/second-level-notify-hook.js';
 
 const router = Router();
 
@@ -45,6 +50,10 @@ const ALLOWED_NEW_FIELDS = new Set([
   'accountHealth', 'slaTier', 'isHelpRequested',
   'aiSuggestedDraft', 'aiDraftRaw', 'aiConfidenceScore', 'aiCritiqueLog',
   'aiExecutionStatus', 'updatedAt',
+  // 2nd-Level-Support queue / escalation target
+  'support_level', 'supportLevel', 'assigned_queue', 'assignedQueue',
+  'escalated', 'isEscalated',
+  'activityLog', 'activity_log',
   // Portal visibility + Kunde tab — must be storable even on legacy tickets.
   'organizationId', 'organization_id',
   'companyId', 'company_id', 'company',
@@ -187,12 +196,38 @@ router.patch('/:id', authenticate, attachClientOrganizationContext, async (req: 
     const now = new Date().toISOString();
     data.updatedAt = now;
 
+    // Normalize support-level / assigned_queue aliases into a consistent patch.
+    const supportRaw =
+      data.support_level !== undefined
+        ? data.support_level
+        : data.supportLevel !== undefined
+          ? data.supportLevel
+          : data.assigned_queue !== undefined
+            ? data.assigned_queue
+            : data.assignedQueue;
+    if (supportRaw !== undefined) {
+      const level = normalizeTicketSupportLevel(supportRaw);
+      Object.assign(data, buildSupportLevelPatch(level));
+    }
+
     await updateDocDirect('tickets', ticketId, data, { tenantId });
 
     const updated = await getDocDirect('tickets', ticketId);
+    const nextTicket = { id: ticketId, ...(updated || existing), ...data };
     const ticketPayload = isClientPortalRole(req.user?.role)
-      ? sanitizeTicketForClient({ id: ticketId, ...updated })
-      : { id: ticketId, ...updated };
+      ? sanitizeTicketForClient(nextTicket)
+      : nextTicket;
+
+    // Best-effort 2nd-Level notify on transition; never fails PATCH.
+    void maybeNotifySecondLevelAfterTicketPatch({
+      previousTicket: existing as Record<string, unknown>,
+      nextTicket: nextTicket as Record<string, unknown>,
+      ticketId,
+      assignedByName: String(req.user?.name || req.user?.email || 'Agent'),
+      organizationId:
+        ticketOrganizationId(nextTicket as any) ||
+        ticketOrganizationId(existing as any),
+    });
 
     let hardwareReturn = undefined as any;
     if (hardwareReturnInput !== undefined) {

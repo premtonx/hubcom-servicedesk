@@ -283,6 +283,13 @@ export interface Ticket {
   parentId?: string;
   childIds?: string[];
   isHelpRequested?: boolean;
+  /** Support queue: first_level | second_level (2nd-Level-Support notify target). */
+  supportLevel?: 'first_level' | 'second_level' | string | null;
+  support_level?: 'first_level' | 'second_level' | string | null;
+  assignedQueue?: 'first_level' | 'second_level' | string | null;
+  assigned_queue?: 'first_level' | 'second_level' | string | null;
+  escalated?: boolean;
+  isEscalated?: boolean;
   sources?: { paragraph: string; articleTitle: string; articleId: string }[];
   createdAt: any;
   updatedAt: any;

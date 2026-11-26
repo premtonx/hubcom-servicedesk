@@ -67,6 +67,8 @@ export function sanitizeTicketForPortalWorkspace(
     ticket.assigneeId ?? ticket.assignee_id ?? ticket.assignedTo ?? ticket.assigned_to ?? null;
   const ticketType = ticket.type ?? ticket.ticket_type ?? ticket.ticketType ?? null;
   const escalated = ticket.escalated === true || ticket.isEscalated === true;
+  const supportLevel =
+    ticket.support_level ?? ticket.supportLevel ?? ticket.assigned_queue ?? ticket.assignedQueue ?? null;
 
   return {
     ...base,
@@ -95,6 +97,10 @@ export function sanitizeTicketForPortalWorkspace(
     ticket_type: ticketType ? String(ticketType) : null,
     type: ticketType ? String(ticketType) : base.type ?? null,
     escalated,
+    support_level: supportLevel ? String(supportLevel) : null,
+    supportLevel: supportLevel ? String(supportLevel) : null,
+    assigned_queue: supportLevel ? String(supportLevel) : null,
+    assignedQueue: supportLevel ? String(supportLevel) : null,
     category: base.categoryName ?? base.category ?? ticket.category ?? null,
     categoryId: base.categoryId ?? ticket.categoryId ?? null,
     categoryName: base.categoryName ?? ticket.categoryName ?? null,
@@ -174,6 +180,23 @@ export function buildPortalVerlauf(params: {
       contentPreview: String(msg.content || '').slice(0, 240),
       is_internal: internal,
     });
+  }
+
+  const activityRaw =
+    params.ticket.activityLog ?? params.ticket.activity_log ?? params.ticket.ticketActivity;
+  if (Array.isArray(activityRaw)) {
+    for (const entry of activityRaw) {
+      if (!entry || typeof entry !== 'object') continue;
+      const e = entry as Record<string, unknown>;
+      events.push({
+        id: String(e.id || `act-${events.length}`),
+        kind: String(e.kind || 'note'),
+        at: String(e.at || e.createdAt || ''),
+        label: String(e.label || e.message || ''),
+        actor: e.actor != null ? String(e.actor) : null,
+        meta: e.meta && typeof e.meta === 'object' ? e.meta : undefined,
+      });
+    }
   }
 
   const resolvedAt = String(params.ticket.resolvedAt || params.ticket.resolved_at || '');

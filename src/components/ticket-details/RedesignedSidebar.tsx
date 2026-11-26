@@ -377,6 +377,67 @@ export function RedesignedSidebar({
             </select>
           </div>
 
+          <div className="space-y-1 pt-1">
+            <label
+              htmlFor="dispatch-support-level-select"
+              className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1"
+            >
+              {t('tickets.sidebar.supportLevelEscalation', 'Support-Level / Eskalation')}
+            </label>
+            <select
+              id="dispatch-support-level-select"
+              className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer dark:text-slate-200"
+              value={
+                String(
+                  ticket.support_level ||
+                    ticket.supportLevel ||
+                    ticket.assigned_queue ||
+                    ticket.assignedQueue ||
+                    'first_level',
+                )
+              }
+              onChange={(e) => {
+                const val = e.target.value === 'second_level' ? 'second_level' : 'first_level';
+                onUpdateTicketField({
+                  supportLevel: val,
+                  support_level: val,
+                  assignedQueue: val,
+                  assigned_queue: val,
+                  escalated: val === 'second_level',
+                  isEscalated: val === 'second_level',
+                } as Partial<TicketType>);
+              }}
+            >
+              <option value="first_level">
+                {t('tickets.sidebar.firstLevelSupport', '1st-Level / Standard')}
+              </option>
+              <option value="second_level">
+                {t('tickets.sidebar.secondLevelSupport', '2nd-Level-Support')}
+              </option>
+            </select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full mt-1.5 text-xs font-semibold py-2 rounded-xl border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+              onClick={() =>
+                onUpdateTicketField({
+                  supportLevel: 'second_level',
+                  support_level: 'second_level',
+                  assignedQueue: 'second_level',
+                  assigned_queue: 'second_level',
+                  escalated: true,
+                  isEscalated: true,
+                } as Partial<TicketType>)
+              }
+            >
+              {t(
+                'tickets.sidebar.escalateToSecondLevel',
+                'An 2nd-Level-Support eskalieren / zuweisen',
+              )}
+            </Button>
+          </div>
+
           {ticketAssignee && onInitiateHandoff && (
             <Button
               type="button"

@@ -69,6 +69,14 @@ export interface PortalEmailOrgSettings {
   m365TenantId?: string | null;
   ssoEnabled?: boolean;
   ssoApprovalMode?: PortalSsoApprovalMode;
+  second_level_notify_enabled?: boolean;
+  second_level_support_emails?: string[];
+  second_level_label?: string;
+  secondLevelNotify?: {
+    second_level_notify_enabled: boolean;
+    second_level_support_emails: string[];
+    second_level_label: string;
+  };
 }
 
 /** @deprecated Portal ticket paths must never call /api/db — kept only as a hard guard. */
@@ -556,6 +564,10 @@ export const clientPortalApi = {
       sla_tier?: string | null;
       account_health?: string | null;
       escalated?: boolean;
+      support_level?: string | null;
+      supportLevel?: string | null;
+      assigned_queue?: string | null;
+      assignedQueue?: string | null;
     },
   ) {
     const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}`;
@@ -571,6 +583,20 @@ export const clientPortalApi = {
     if (patch.sla_tier !== undefined) body.sla_tier = patch.sla_tier;
     if (patch.account_health !== undefined) body.account_health = patch.account_health;
     if (patch.escalated !== undefined) body.escalated = patch.escalated;
+    const supportLevel =
+      patch.support_level !== undefined
+        ? patch.support_level
+        : patch.supportLevel !== undefined
+          ? patch.supportLevel
+          : patch.assigned_queue !== undefined
+            ? patch.assigned_queue
+            : patch.assignedQueue;
+    if (supportLevel !== undefined) {
+      body.support_level = supportLevel;
+      body.supportLevel = supportLevel;
+      body.assigned_queue = supportLevel;
+      body.assignedQueue = supportLevel;
+    }
     if (Object.keys(body).length === 0) return null;
     const res = await axios.patch(path, body, { withCredentials: true });
     return res.data?.ticket;
@@ -719,6 +745,42 @@ export const clientPortalApi = {
       { withCredentials: true },
     );
     return res.data?.organization || null;
+  },
+
+  async updateSecondLevelNotify(payload: {
+    second_level_notify_enabled?: boolean;
+    second_level_support_emails?: string | string[];
+    second_level_label?: string | null;
+  }): Promise<PortalEmailOrgSettings | null> {
+    const path = '/api/portal/settings/notifications';
+    assertNeverDb(path);
+    const res = await axios.put(path, payload, { withCredentials: true });
+    return (
+      res.data?.organization ||
+      (res.data?.settings
+        ? {
+            id: '',
+            name: '',
+            second_level_notify_enabled: res.data.settings.second_level_notify_enabled,
+            second_level_support_emails: res.data.settings.second_level_support_emails,
+            second_level_label: res.data.settings.second_level_label,
+            secondLevelNotify: res.data.settings,
+          }
+        : null)
+    );
+  },
+
+  async sendSecondLevelTestEmail(payload?: {
+    to?: string | string[];
+  }): Promise<{ ok: boolean; message: string; emails?: string[] }> {
+    const path = '/api/portal/settings/second-level-test';
+    assertNeverDb(path);
+    const res = await axios.post(path, payload || {}, { withCredentials: true });
+    return {
+      ok: Boolean(res.data?.ok ?? res.data?.success ?? res.data?.delivered),
+      message: res.data?.message || res.data?.error || '',
+      emails: Array.isArray(res.data?.emails) ? res.data.emails : undefined,
+    };
   },
 
   async approveTeamMember(

@@ -37,6 +37,12 @@ import {
   resolveSsoApprovalMode,
 } from '../src/lib/client-portal/sso-approval.js';
 import {
+  buildSupportLevelPatch,
+  didTransitionIntoSecondLevel,
+  evaluateSecondLevelNotifyTrigger,
+  normalizeSecondLevelNotifySettings,
+} from '../src/lib/client-portal/second-level-notify.js';
+import {
   evaluatePortalReturnsPageAccess,
   resolveHardwareReturnsModuleFlag,
 } from '../src/lib/client-portal/hardware-returns-nav.js';
@@ -2325,6 +2331,53 @@ function testPortalKbSharePointCsvImportLifecycle(): void {
   );
 }
 
+function testSecondLevelSupportNotifyLifecycle(): void {
+  console.log('\n[2nd-Level] Support notify transition lifecycle');
+  const settings = normalizeSecondLevelNotifySettings({
+    second_level_notify_enabled: true,
+    second_level_support_emails: ['2ndlevel@dpg-gruppe.de'],
+  });
+  const prev = { id: 't1', support_level: 'first_level' };
+  const next = { id: 't1', ...buildSupportLevelPatch('second_level') };
+  assert(
+    didTransitionIntoSecondLevel({ previous: prev, next }) === true,
+    'transition into 2nd-Level detected',
+  );
+  const fire = evaluateSecondLevelNotifyTrigger({
+    previousTicket: prev,
+    nextTicket: next,
+    settings,
+  });
+  assert(
+    fire.shouldSend === true && fire.emails.length === 1,
+    'exactly one recipient on transition',
+  );
+  const again = evaluateSecondLevelNotifyTrigger({
+    previousTicket: next,
+    nextTicket: { ...next, priority: 'urgent' },
+    settings,
+  });
+  assert(again.shouldSend === false, 'unrelated update does not re-send');
+
+  const portalTicketSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalTicketRoutes.ts'),
+    'utf8',
+  );
+  const staffTicketSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/ticketRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    portalTicketSrc.includes('maybeNotifySecondLevelAfterTicketPatch') &&
+      staffTicketSrc.includes('maybeNotifySecondLevelAfterTicketPatch'),
+    'portal + staff PATCH wire notify hook',
+  );
+  assert(
+    !portalTicketSrc.includes("'/api/db'"),
+    'portal ticket routes stay off /api/db',
+  );
+}
+
 function testPortalSsoAdminApprovalLifecycle(): void {
   console.log('\n[SSO] Portal M365 Admin-Freigabe lifecycle');
   assert(
@@ -2403,6 +2456,7 @@ async function main(): Promise<void> {
   testSharePointReturnsCsvImportUiLifecycle();
   testReturnsShipmentStatusLifecycle();
   testReturnsDetailOverviewLifecycle();
+  testSecondLevelSupportNotifyLifecycle();
   testPortalSsoAdminApprovalLifecycle();
 
   console.log('\n' + '='.repeat(50));
