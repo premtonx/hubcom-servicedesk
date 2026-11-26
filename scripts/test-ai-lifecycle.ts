@@ -1245,7 +1245,10 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
       dashboardPageSrc.includes('Rückgabe-Status') &&
       dashboardPageSrc.includes('HardwareReturnsExecutiveBody') &&
       dashboardPageSrc.includes('Aktuelle Aktivitäten') &&
-      dashboardPageSrc.includes('WeeklyPerformanceCard') &&
+      dashboardPageSrc.includes('TicketStatusDonutCard') &&
+      dashboardPageSrc.includes('Ticket-Status') &&
+      dashboardPageSrc.includes('lg:grid-cols-12 gap-6 items-stretch') &&
+      !dashboardPageSrc.includes('WeeklyPerformanceCard') &&
       dashboardPageSrc.includes('ReturnKpiStrip') &&
       dashboardPageSrc.includes('returnKpiFilterHref') &&
       !dashboardPageSrc.includes('returnsActivityByRange[') &&
@@ -1258,7 +1261,7 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
       dashboardRouteSrc.includes('mergePortalRecentActivities') &&
       !dashboardPageSrc.includes('/api/db') &&
       !dashboardRouteSrc.includes("'/api/db"),
-    'portal Übersicht executive FE + shared ReturnKpiStrip + overview aggregates',
+    'portal Übersicht 3-row executive FE + shared ReturnKpiStrip + overview aggregates',
   );
   assert(
     kpiStripSrc.includes('formatReturnKpiDelta') &&
@@ -1269,16 +1272,19 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
     'ReturnKpiStrip shared on dashboard + returns workbench',
   );
   assert(
-    /function HardwareReturnsExecutiveBody[\s\S]*?Mitarbeiter & Rollen/.test(
+    !/function HardwareReturnsExecutiveBody[\s\S]*?Aktuelle Tickets[\s\S]*?function StandardPortalDashboardBody/.test(
       dashboardPageSrc,
     ) &&
+      !/function HardwareReturnsExecutiveBody[\s\S]*?Mitarbeiter & Rollen[\s\S]*?function StandardPortalDashboardBody/.test(
+        dashboardPageSrc,
+      ) &&
       !/function HardwareReturnsExecutiveBody[\s\S]*?E-Mail & M365[\s\S]*?function StandardPortalDashboardBody/.test(
         dashboardPageSrc,
       ) &&
       /function StandardPortalDashboardBody[\s\S]*?Portal-Branding/.test(
         dashboardPageSrc,
       ),
-    'returns executive dashboard removes Email/Branding cards',
+    'returns executive dashboard drops side cards; standard keeps Branding',
   );
   // FE must not cascade-refetch dashboard on trend range changes.
   assert(

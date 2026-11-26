@@ -4770,32 +4770,46 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       dashboardPageSrc.includes('Rückgabe-Status') &&
       dashboardPageSrc.includes('HardwareReturnsExecutiveBody') &&
       dashboardPageSrc.includes('ReturnStatusDonutCard') &&
-      dashboardPageSrc.includes('WeeklyPerformanceCard') &&
+      dashboardPageSrc.includes('TicketStatusDonutCard') &&
+      dashboardPageSrc.includes('Ticket-Status') &&
+      dashboardPageSrc.includes('Gelöst (30T)') &&
+      dashboardPageSrc.includes('lg:grid-cols-12 gap-6 items-stretch') &&
+      dashboardPageSrc.includes('lg:col-span-4') &&
+      dashboardPageSrc.includes('lg:col-span-8') &&
+      dashboardPageSrc.includes('Ticket-Trends') &&
       dashboardPageSrc.includes('Aktuelle Aktivitäten') &&
       dashboardPageSrc.includes('recentActivities') &&
-      dashboardPageSrc.includes('overallPuenktlichPct') &&
-      dashboardPageSrc.includes('puenktlichPct') &&
+      !dashboardPageSrc.includes('WeeklyPerformanceCard') &&
+      !/function HardwareReturnsExecutiveBody[\s\S]*?Performance[\s\S]*?function StandardPortalDashboardBody/.test(
+        dashboardPageSrc,
+      ) &&
+      !/function HardwareReturnsExecutiveBody[\s\S]*?Aktuelle Tickets[\s\S]*?function StandardPortalDashboardBody/.test(
+        dashboardPageSrc,
+      ) &&
+      !/function HardwareReturnsExecutiveBody[\s\S]*?Mitarbeiter & Rollen[\s\S]*?function StandardPortalDashboardBody/.test(
+        dashboardPageSrc,
+      ) &&
       dashboardPageSrc.includes('CheckCircle2') &&
       dashboardPageSrc.includes('Truck') &&
       dashboardPageSrc.includes('Alle anzeigen') &&
       dashboardPageSrc.includes('ReturnKpiStrip') &&
       dashboardPageSrc.includes('returnKpiFilterHref') &&
       !dashboardPageSrc.includes('/api/db'),
-    'portal Übersicht executive returns layout + 4 trend series (no /api/db)',
+    'portal Übersicht 3-row executive layout + ticket status donut (no /api/db)',
   );
   assert(
     dashboardPageSrc.includes('HardwareReturnsExecutiveBody') &&
       dashboardPageSrc.includes('StandardPortalDashboardBody') &&
-      /function HardwareReturnsExecutiveBody[\s\S]*?Mitarbeiter & Rollen/.test(
+      !/function HardwareReturnsExecutiveBody[\s\S]*?E-Mail & M365[\s\S]*?function StandardPortalDashboardBody/.test(
         dashboardPageSrc,
       ) &&
-      !/function HardwareReturnsExecutiveBody[\s\S]*?E-Mail & M365[\s\S]*?function StandardPortalDashboardBody/.test(
+      !/function HardwareReturnsExecutiveBody[\s\S]*?Portal-Branding[\s\S]*?function StandardPortalDashboardBody/.test(
         dashboardPageSrc,
       ) &&
       /function StandardPortalDashboardBody[\s\S]*?E-Mail & M365[\s\S]*?Portal-Branding/.test(
         dashboardPageSrc,
       ),
-    'returns dashboard drops Email/Branding; standard orgs keep them',
+    'returns dashboard drops Email/Branding/side cards; standard orgs keep Email/Branding',
   );
   assert(
     dashboardPageSrc.includes('showReturns') &&
