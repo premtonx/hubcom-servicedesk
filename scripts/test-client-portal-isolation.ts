@@ -3517,9 +3517,11 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
     editorSrc.includes('kundendaten &&') &&
       editorSrc.includes('geraete &&') &&
       editorSrc.includes('rueckgabe &&') &&
-      editorSrc.includes('assignee_user_id') &&
-      editorSrc.includes('Abschluss'),
-    'Abschluss step requires prior steps + assignee (not default status alone)',
+      editorSrc.includes('Erinnerungen & Abschluss') &&
+      editorSrc.includes("sectionId: 'section-erinnerung'") &&
+      editorSrc.includes('section-erinnerung') &&
+      !editorSrc.includes("sectionId: 'section-abschluss'"),
+    'Step 4 Erinnerungen & Abschluss scrolls to Erinnerungsmanagement card',
   );
   assert(
     (editorSrc.includes('Erinnerungsmanagement & Empfänger') ||
@@ -3575,7 +3577,7 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
       editorSrc.includes('Kundendaten') &&
       editorSrc.includes('Gerätedetails') &&
       editorSrc.includes('Rückgabedetails') &&
-      editorSrc.includes('Abschluss') &&
+      editorSrc.includes('Erinnerungen & Abschluss') &&
       editorSrc.includes('Zurücksetzen'),
     '3-column workspace: step rail + Überblick + Bearbeitung & Steuerung',
   );
@@ -4285,6 +4287,19 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       workbenchSrc.includes('lg:grid-cols-4') &&
       !workbenchSrc.includes('lg:grid-cols-5'),
     'KPI strip drops Nächste Mail; uses Erinnerung labels + 4 columns',
+  );
+  assert(
+    workbenchSrc.includes('applyViewFilter') &&
+      workbenchSrc.includes('applyEscalatedFilter') &&
+      workbenchSrc.includes("setMailStatus('all')") &&
+      workbenchSrc.includes("setOverdueBucket('all')") &&
+      workbenchSrc.includes("prev === 'mail4plus' ? 'all' : 'mail4plus'") &&
+      workbenchSrc.includes('applyViewFilter(v.id)') &&
+      workbenchSrc.includes("applyViewFilter('open')") &&
+      workbenchSrc.includes("applyViewFilter('overdue')") &&
+      workbenchSrc.includes("applyViewFilter('done')") &&
+      !workbenchSrc.includes('/api/db'),
+    'KPI + quick-filter pills clear Erinnerungsstufe (mail4plus) when switching views',
   );
 
   // Workbench KPIs use shared classifier (same as dashboard lean stats).
