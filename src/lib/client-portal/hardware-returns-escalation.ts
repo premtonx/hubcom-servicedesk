@@ -29,6 +29,10 @@ import {
   type ReminderStage,
   type ResolveStageTicketContext,
 } from './hardware-returns-recipients.js';
+import {
+  computeHardwareReturnsKpis,
+  kpiRowFromHardwareRecord,
+} from './hardware-returns-kpis.js';
 
 function ticketContextFromReturn(
   hw: TicketHardwareReturnRecord,
@@ -637,23 +641,17 @@ export async function listHardwareReturnsWorkbench(
   const openItems = items.filter(
     (i) => !i.hardwareReturn.returned && i.hardwareReturn.return_required,
   );
+  // Shared KPI rules (same as GET /api/portal/dashboard lean stats).
+  const shared = computeHardwareReturnsKpis(
+    items.map((i) => kpiRowFromHardwareRecord(i.hardwareReturn)),
+    now,
+  );
   const kpis: HardwareReturnsKpis = {
-    open: openItems.length,
-    overdue: openItems.filter((i) => i.overdueDays > 0).length,
+    open: shared.open,
+    overdue: shared.overdue,
     nextMailDue: openItems.filter((i) => i.nextDueStage != null).length,
-    stage3: openItems.filter(
-      (i) =>
-        !i.hardwareReturn.returned &&
-        i.hardwareReturn.return_required &&
-        Boolean(i.hardwareReturn.mail3_sent_at),
-    ).length,
-    // Only count rows that are still marked returned with a recent returned_at.
-    returnedLast30: items.filter((i) => {
-      if (!i.hardwareReturn.returned || !i.hardwareReturn.returned_at) return false;
-      const t = new Date(i.hardwareReturn.returned_at).getTime();
-      if (Number.isNaN(t)) return false;
-      return t >= now.getTime() - 30 * 24 * 60 * 60 * 1000;
-    }).length,
+    stage3: shared.stage3,
+    returnedLast30: shared.returnedLast30,
   };
 
   return { items: page, kpis, total };

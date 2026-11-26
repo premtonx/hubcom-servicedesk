@@ -99,6 +99,15 @@ import {
   buildReturnsActivityByRangeFast,
   computePortalReturnsKpis,
 } from '../src/lib/client-portal/portal-dashboard-returns-stats.js';
+import {
+  computeHardwareReturnsKpis,
+  isEscalatedReturn,
+  isOpenReturn,
+  isOverdueReturn,
+  isReturnedLast30,
+  kpiRowFromHardwareRecord,
+  kpiRowFromLean,
+} from '../src/lib/client-portal/hardware-returns-kpis.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -1178,17 +1187,16 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
   );
   assert(
     escalationSrc.includes('Math.min(2000') &&
-      /returnedLast30:[\s\S]{0,200}!i\.hardwareReturn\.returned \|\| !i\.hardwareReturn\.returned_at/.test(
-        escalationSrc,
-      ),
-    'KPI returnedLast30 ignores returned=false; Alle limit ≤2000',
+      escalationSrc.includes('computeHardwareReturnsKpis') &&
+      escalationSrc.includes('kpiRowFromHardwareRecord'),
+    'returns list KPIs use shared classifier; Alle limit ≤2000',
   );
   assert(
     dashboardPageSrc.includes('returnsKpis') &&
       dashboardPageSrc.includes('hardwareReturnsEnabled') &&
       dashboardPageSrc.includes('Rücklieferungen-Trends') &&
       dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('30d')") &&
-      dashboardPageSrc.includes('3. Erinnerung gesendet') &&
+      dashboardPageSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
       dashboardRouteSrc.includes('loadPortalDashboardReturnsStats') &&
       !dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
       dashboardRouteSrc.includes('returnsActivityByRange') &&
@@ -1222,8 +1230,12 @@ function testPortalDashboardReturnsPerfLifecycle(): void {
       returnDueDate: due,
       returned,
       returnedAt: returned ? `${created}T16:00:00.000Z` : null,
-      mail3SentAt: i % 11 === 0 ? `${created}T12:00:00.000Z` : null,
-      reminderCount: i % 11 === 0 ? 3 : i % 7 === 0 ? 2 : 0,
+      mail1SentAt: i % 9 === 0 ? `${created}T12:00:00.000Z` : null,
+      reminderCount: i % 11 === 0 ? 4 : i % 7 === 0 ? 2 : 0,
+      reminderStages:
+        i % 11 === 0
+          ? [{ stage: 4, sentAt: `${created}T14:00:00.000Z` }]
+          : [],
     });
   }
 
@@ -1246,6 +1258,170 @@ function testPortalDashboardReturnsPerfLifecycle(): void {
   assert(
     elapsed < 500,
     `KPI + all trend ranges for 600 rows finish in <500ms (was ${elapsed}ms)`,
+  );
+}
+
+/** Shared KPI classifier + dashboard/returns parity + distinct trend series. */
+function testReturnsKpiConsistencyLifecycle(): void {
+  console.log('\n[19c3] Returns KPI consistency (shared classifier + distinct trends)');
+
+  const now = new Date('2026-11-25T12:00:00.000Z');
+
+  const onTimeOpen = kpiRowFromLean({
+    returned: false,
+    returnDueDate: '2026-12-10',
+    returnedAt: null,
+    mail1SentAt: null,
+    reminderStages: [],
+    reminderCount: 0,
+  });
+  assert(isOpenReturn(onTimeOpen) === true, 'future-due open counts in Offen');
+  assert(isOverdueReturn(onTimeOpen, now) === false, 'future-due + no mail1 NOT Überfällig');
+
+  const pastDueOpen = kpiRowFromLean({
+    returned: false,
+    returnDueDate: '2026-11-10',
+    returnedAt: null,
+    mail1SentAt: null,
+    reminderStages: [],
+    reminderCount: 0,
+  });
+  assert(isOpenReturn(pastDueOpen) && isOverdueReturn(pastDueOpen, now), 'past due → Offen + Überfällig');
+
+  const mail1Open = kpiRowFromLean({
+    returned: false,
+    returnDueDate: '2026-12-10',
+    returnedAt: null,
+    mail1SentAt: '2026-11-20T10:00:00.000Z',
+    reminderStages: [],
+    reminderCount: 1,
+  });
+  assert(
+    isOpenReturn(mail1Open) && isOverdueReturn(mail1Open, now),
+    '1. Erinnerung sent → Offen + Überfällig even if due in future',
+  );
+
+  const escalated = kpiRowFromHardwareRecord({
+    return_required: true,
+    returned: false,
+    return_due_date: '2026-10-01',
+    returned_at: null,
+    mail1_sent_at: '2026-10-15T10:00:00.000Z',
+    reminder_stages: [{ stage: 4, sentAt: '2026-11-01T10:00:00.000Z' }],
+    reminder_count: 4,
+  });
+  assert(isEscalatedReturn(escalated), 'stage ≥ 4 → Letzte Stufe / Eskaliert');
+
+  const returnedRecent = kpiRowFromLean({
+    returned: true,
+    returnDueDate: '2026-11-01',
+    returnedAt: '2026-11-20T10:00:00.000Z',
+    mail1SentAt: null,
+    reminderStages: [],
+    reminderCount: 0,
+  });
+  assert(isReturnedLast30(returnedRecent, now), 'returned within 30d counted');
+
+  const mixed = [
+    onTimeOpen,
+    pastDueOpen,
+    mail1Open,
+    escalated,
+    returnedRecent,
+  ];
+  const leanKpis = computeHardwareReturnsKpis(mixed, now);
+  const hwKpis = computeHardwareReturnsKpis(
+    [
+      {
+        return_required: true,
+        returned: false,
+        return_due_date: '2026-12-10',
+        returned_at: null,
+        mail1_sent_at: null,
+        reminder_stages: [],
+        reminder_count: 0,
+      },
+      {
+        return_required: true,
+        returned: false,
+        return_due_date: '2026-11-10',
+        returned_at: null,
+        mail1_sent_at: null,
+        reminder_stages: [],
+        reminder_count: 0,
+      },
+      {
+        return_required: true,
+        returned: false,
+        return_due_date: '2026-12-10',
+        returned_at: null,
+        mail1_sent_at: '2026-11-20T10:00:00.000Z',
+        reminder_stages: [],
+        reminder_count: 1,
+      },
+      {
+        return_required: true,
+        returned: false,
+        return_due_date: '2026-10-01',
+        returned_at: null,
+        mail1_sent_at: '2026-10-15T10:00:00.000Z',
+        reminder_stages: [{ stage: 4, sentAt: '2026-11-01T10:00:00.000Z' }],
+        reminder_count: 4,
+      },
+      {
+        return_required: true,
+        returned: true,
+        return_due_date: '2026-11-01',
+        returned_at: '2026-11-20T10:00:00.000Z',
+        mail1_sent_at: null,
+        reminder_stages: [],
+        reminder_count: 0,
+      },
+    ].map(kpiRowFromHardwareRecord),
+    now,
+  );
+  assert(
+    leanKpis.open === 4 &&
+      leanKpis.overdue === 3 &&
+      leanKpis.stage3 === 1 &&
+      leanKpis.returnedLast30 === 1,
+    'mixed set: open=4 overdue=3 escalated=1 returned30=1',
+  );
+  assert(
+    JSON.stringify(leanKpis) === JSON.stringify(hwKpis),
+    'dashboard lean KPIs match returns workbench KPIs 1:1',
+  );
+
+  const trendRows = [
+    {
+      createdAt: '2026-11-01T10:00:00.000Z',
+      deliveryDate: '2026-11-01',
+      returnDueDate: '2026-12-10',
+      returned: false,
+      returnedAt: null,
+      mail1SentAt: null,
+      reminderCount: 0,
+      reminderStages: [],
+    },
+    {
+      createdAt: '2026-11-05T10:00:00.000Z',
+      deliveryDate: '2026-11-05',
+      returnDueDate: '2026-11-10',
+      returned: false,
+      returnedAt: null,
+      mail1SentAt: null,
+      reminderCount: 0,
+      reminderStages: [],
+    },
+  ];
+  const series = buildReturnsActivityByRangeFast(trendRows, now)['30d'];
+  const last = series[series.length - 1]!;
+  assert(last.open === 2, 'trend Offen = 2 open returns');
+  assert(last.overdue === 1, 'trend Überfällig = 1 (only past-due)');
+  assert(last.overdue < last.open, 'Überfällig strictly < Offen (not identical)');
+  assert(
+    series.some((p) => p.open !== p.overdue),
+    'RÜCKLIEFERUNGEN-TRENDS produces distinct Offen vs Überfällig series',
   );
 }
 
@@ -1531,6 +1707,7 @@ async function main(): Promise<void> {
   testPortalKbArticleEditLifecycle();
   testReturnsPaginationErinnerungDashboardLifecycle();
   testPortalDashboardReturnsPerfLifecycle();
+  testReturnsKpiConsistencyLifecycle();
   testReturnsListeKanbanKartenLifecycle();
   testReturnsInlineListEditorsLifecycle();
   testReturnsDynamicReminderStagesLifecycle();

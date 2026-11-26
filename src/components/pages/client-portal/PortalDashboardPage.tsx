@@ -286,12 +286,12 @@ function PortalDashboardShell({
                     onClick={() => navigate('/portal/returns?view=overdue')}
                   />
                   <HeroKpiCard
-                    label="3. Erinnerung gesendet"
+                    label="Letzte Stufe / Eskaliert (4.+ Erinnerung)"
                     value={data.returnsKpis.stage3}
                     icon={<ShieldAlert className="w-4 h-4" />}
                     iconTone="purple"
                     onClick={() =>
-                      navigate('/portal/returns?view=open&mailStatus=mail3')
+                      navigate('/portal/returns?view=open&mailStatus=mail4plus')
                     }
                   />
                   <HeroKpiCard

@@ -1,10 +1,19 @@
 /**
  * Fast portal-dashboard hardware-returns KPIs + trends.
  * One lean SQL query + O(N + D) aggregation (D ≤ 90 buckets).
- * Safe for unit tests without HTTP when given in-memory rows.
+ * KPI rules live in hardware-returns-kpis.ts (single source of truth).
  */
 
 import { queryDb } from '../postgres-backend.js';
+import {
+  computeHardwareReturnsKpis,
+  kpiRowFromLean,
+  overdueStartBerlinMs,
+  toBerlinDayMs,
+  type HardwareReturnKpiRow,
+  type HardwareReturnsKpiCounts,
+  type ReminderStageSentLike,
+} from './hardware-returns-kpis.js';
 
 const MS_DAY = 86_400_000;
 /** Hard cap so "Alle" never exceeds ~90 monthly buckets. */
@@ -28,12 +37,7 @@ export interface PortalDashboardReturnsActivityPoint {
   returned: number;
 }
 
-export interface PortalDashboardReturnsKpis {
-  open: number;
-  overdue: number;
-  stage3: number;
-  returnedLast30: number;
-}
+export type PortalDashboardReturnsKpis = HardwareReturnsKpiCounts;
 
 export interface PortalReturnsTrendSourceRow {
   createdAt: string | null;
@@ -44,9 +48,13 @@ export interface PortalReturnsTrendSourceRow {
 }
 
 export type PortalReturnsLeanRow = PortalReturnsTrendSourceRow & {
-  mail3SentAt?: string | null;
+  returnRequired?: boolean;
+  mail1SentAt?: string | null;
+  reminderStages?: ReminderStageSentLike[];
   reminderCount?: number;
 };
+
+export { toBerlinDayMs } from './hardware-returns-kpis.js';
 
 function berlinDayKey(d: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -77,24 +85,6 @@ function berlinMonthLabelFromMs(monthMs: number): string {
   });
 }
 
-/** Parse any date-ish value to UTC midnight of its Europe/Berlin calendar day. */
-export function toBerlinDayMs(raw: string | Date | null | undefined): number | null {
-  if (raw == null || raw === '') return null;
-  if (raw instanceof Date) {
-    if (Number.isNaN(raw.getTime())) return null;
-    const key = berlinDayKey(raw);
-    return Date.parse(`${key}T00:00:00.000Z`);
-  }
-  const s = String(raw).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    return Date.parse(`${s}T00:00:00.000Z`);
-  }
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-  const key = berlinDayKey(d);
-  return Date.parse(`${key}T00:00:00.000Z`);
-}
-
 function startOfBerlinMonthMs(dayMs: number): number {
   const key = berlinDayKey(new Date(dayMs));
   const [y, m] = key.split('-').map(Number);
@@ -110,10 +100,9 @@ type PreparedRow = {
   createdMs: number;
   /** First day the row is no longer open (returned day), or null if still open. */
   closedMs: number | null;
-  dueMs: number | null;
+  /** First day overdue while open; null if never overdue by due/mail1 rules. */
+  overdueStartMs: number | null;
   returnedEventMs: number | null;
-  mail3: boolean;
-  returned: boolean;
 };
 
 function prepareRows(rows: PortalReturnsLeanRow[]): PreparedRow[] {
@@ -124,14 +113,12 @@ function prepareRows(rows: PortalReturnsLeanRow[]): PreparedRow[] {
     if (createdMs == null) continue;
     const returnedEventMs = r.returned ? toBerlinDayMs(r.returnedAt) : null;
     const closedMs = r.returned ? returnedEventMs : null;
-    const dueMs = toBerlinDayMs(r.returnDueDate) || toBerlinDayMs(r.deliveryDate);
+    const kpiRow: HardwareReturnKpiRow = kpiRowFromLean(r);
     out.push({
       createdMs,
       closedMs,
-      dueMs,
+      overdueStartMs: overdueStartBerlinMs(kpiRow),
       returnedEventMs,
-      mail3: Boolean(r.mail3SentAt) || (Number(r.reminderCount) || 0) >= 3,
-      returned: Boolean(r.returned),
     });
   }
   return out;
@@ -141,32 +128,17 @@ export function computePortalReturnsKpis(
   rows: PortalReturnsLeanRow[],
   now: Date = new Date(),
 ): PortalDashboardReturnsKpis {
-  const todayMs = toBerlinDayMs(now) || Date.parse(`${berlinDayKey(now)}T00:00:00.000Z`);
-  const thirtyAgo = todayMs - 30 * MS_DAY;
-  let open = 0;
-  let overdue = 0;
-  let stage3 = 0;
-  let returnedLast30 = 0;
-
-  for (const r of rows) {
-    const returned = Boolean(r.returned);
-    if (!returned) {
-      open += 1;
-      const dueMs = toBerlinDayMs(r.returnDueDate);
-      if (dueMs != null && dueMs < todayMs) overdue += 1;
-      if (r.mail3SentAt || (Number(r.reminderCount) || 0) >= 3) stage3 += 1;
-    } else if (r.returnedAt) {
-      const t = new Date(r.returnedAt).getTime();
-      if (!Number.isNaN(t) && t >= thirtyAgo) returnedLast30 += 1;
-    }
-  }
-
-  return { open, overdue, stage3, returnedLast30 };
+  return computeHardwareReturnsKpis(
+    rows.map((r) => kpiRowFromLean(r)),
+    now,
+  );
 }
 
 /**
  * O(N + D) differential-array series for open/overdue snapshots + returned events.
  * Daily for 7d/30d/90d; monthly for 12m/all (≤ MAX_MONTH_BUCKETS).
+ *
+ * Überfällig is a strict subset of Offen: overdue only after due+1 or mail1 day.
  */
 export function buildReturnsActivitySeriesFast(
   rows: PortalReturnsLeanRow[],
@@ -216,19 +188,14 @@ export function buildReturnsActivitySeriesFast(
       if (r.closedMs != null) {
         const closedMonth = startOfBerlinMonthMs(r.closedMs);
         endIdx = monthIndex(closedMonth);
-        // Open through end of month before returned month; if returned mid-month,
-        // treat returned month as closed for snapshot-at-month-end when returned
-        // before month end — use closed month as exclusive end (not open that month).
         if (endIdx < 0) continue;
         if (endIdx > months) endIdx = months;
       }
       if (startIdx < endIdx) {
         openDelta[startIdx] += 1;
         openDelta[endIdx] -= 1;
-        if (r.dueMs != null) {
-          // Overdue from the month after due month (snapshot at month end after due).
-          const dueMonth = startOfBerlinMonthMs(r.dueMs);
-          let overdueStart = monthIndex(addMonthsUtc(dueMonth, 1));
+        if (r.overdueStartMs != null) {
+          let overdueStart = monthIndex(startOfBerlinMonthMs(r.overdueStartMs));
           if (overdueStart < startIdx) overdueStart = startIdx;
           if (overdueStart < endIdx) {
             overdueDelta[overdueStart] += 1;
@@ -283,9 +250,8 @@ export function buildReturnsActivitySeriesFast(
     if (startIdx < endIdx) {
       openDelta[startIdx] += 1;
       openDelta[endIdx] -= 1;
-      if (r.dueMs != null) {
-        // Overdue on days strictly after due date while still open.
-        let overdueStart = dayIndex(r.dueMs) + 1;
+      if (r.overdueStartMs != null) {
+        let overdueStart = dayIndex(r.overdueStartMs);
         if (overdueStart < startIdx) overdueStart = startIdx;
         if (overdueStart < endIdx) {
           overdueDelta[overdueStart] += 1;
@@ -331,6 +297,30 @@ export function buildReturnsActivityByRangeFast(
   return out;
 }
 
+function parseStagesJson(raw: unknown): ReminderStageSentLike[] {
+  if (raw == null) return [];
+  if (typeof raw === 'string') {
+    try {
+      return parseStagesJson(JSON.parse(raw));
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  const out: ReminderStageSentLike[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const stage = Number((item as { stage?: unknown }).stage);
+    if (!Number.isFinite(stage) || stage < 1) continue;
+    const sentAt = (item as { sentAt?: unknown }).sentAt;
+    out.push({
+      stage: Math.floor(stage),
+      sentAt: sentAt == null || sentAt === '' ? null : String(sentAt),
+    });
+  }
+  return out;
+}
+
 /**
  * Single indexed SQL — only the columns needed for KPIs/trends.
  * No history blobs, device JSON, or ticket joins.
@@ -346,7 +336,8 @@ export async function fetchPortalReturnsLeanRows(
        return_required,
        returned,
        returned_at,
-       mail3_sent_at,
+       mail1_sent_at,
+       reminder_stages,
        reminder_count
      FROM ticket_hardware_returns
      WHERE organization_id = $1::uuid
@@ -360,9 +351,11 @@ export async function fetchPortalReturnsLeanRows(
     returnDueDate: row.return_due_date
       ? String(row.return_due_date).slice(0, 10)
       : null,
+    returnRequired: row.return_required === true || row.return_required === 't',
     returned: row.returned === true || row.returned === 't',
     returnedAt: row.returned_at ? String(row.returned_at) : null,
-    mail3SentAt: row.mail3_sent_at ? String(row.mail3_sent_at) : null,
+    mail1SentAt: row.mail1_sent_at ? String(row.mail1_sent_at) : null,
+    reminderStages: parseStagesJson(row.reminder_stages),
     reminderCount: Number(row.reminder_count) || 0,
   }));
 }

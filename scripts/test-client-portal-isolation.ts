@@ -99,6 +99,13 @@ import {
   buildReturnsActivitySeries,
 } from '../src/lib/client-portal/portal-dashboard-service.js';
 import {
+  computeHardwareReturnsKpis,
+  isOpenReturn,
+  isOverdueReturn,
+  kpiRowFromHardwareRecord,
+  kpiRowFromLean,
+} from '../src/lib/client-portal/hardware-returns-kpis.js';
+import {
   buildClientPortalUserProfile,
   buildClientPortalUserRole,
   shouldFetchRolesCollection,
@@ -4222,15 +4229,11 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
     'KPI strip drops Nächste Mail; uses Erinnerung labels + 4 columns',
   );
 
-  // returnedLast30 requires returned===true; stage3 only open+mail3.
+  // Workbench KPIs use shared classifier (same as dashboard lean stats).
   assert(
-    escalationSrc.includes('!i.hardwareReturn.returned') &&
-      escalationSrc.includes('i.hardwareReturn.returned') &&
-      escalationSrc.includes('returned_at') &&
-      /returnedLast30:[\s\S]*!i\.hardwareReturn\.returned \|\| !i\.hardwareReturn\.returned_at/.test(
-        escalationSrc,
-      ),
-    'returnedLast30 requires returned=true AND returned_at within 30 days',
+    escalationSrc.includes('computeHardwareReturnsKpis') &&
+      escalationSrc.includes('kpiRowFromHardwareRecord'),
+    'returns list KPIs use shared hardware-returns-kpis classifier',
   );
   assert(
     normalizeSrc.includes('if (!next.returned) next.returned_at = null') &&
@@ -4245,7 +4248,7 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       dashboardPageSrc.includes('hardwareReturnsEnabled') &&
       dashboardPageSrc.includes('/portal/returns') &&
       dashboardPageSrc.includes('Offene Rücklieferungen') &&
-      dashboardPageSrc.includes('3. Erinnerung gesendet') &&
+      dashboardPageSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
       dashboardPageSrc.includes('Rücklieferungen-Trends') &&
       dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('30d')") &&
       dashboardPageSrc.includes('7 Tage') &&
@@ -4285,6 +4288,36 @@ function testPortalDashboardReturnsTrends(): void {
   console.log('\n--- Portal dashboard returns KPI band + trends ---');
 
   const now = new Date('2026-11-25T12:00:00.000Z');
+
+  // Classification rules: future-due open ≠ overdue; past-due OR mail1 ⇒ overdue.
+  const futureOpen = kpiRowFromLean({
+    returned: false,
+    returnDueDate: '2026-12-01',
+    returnedAt: null,
+    mail1SentAt: null,
+    reminderCount: 0,
+    reminderStages: [],
+  });
+  assert(isOpenReturn(futureOpen) && !isOverdueReturn(futureOpen, now), 'open future-due NOT overdue');
+  const pastOpen = kpiRowFromLean({
+    returned: false,
+    returnDueDate: '2026-11-01',
+    returnedAt: null,
+    mail1SentAt: null,
+    reminderCount: 0,
+    reminderStages: [],
+  });
+  assert(isOpenReturn(pastOpen) && isOverdueReturn(pastOpen, now), 'open past-due IS overdue');
+  const mail1Open = kpiRowFromLean({
+    returned: false,
+    returnDueDate: '2026-12-01',
+    returnedAt: null,
+    mail1SentAt: '2026-11-20T09:00:00.000Z',
+    reminderCount: 1,
+    reminderStages: [{ stage: 1, sentAt: '2026-11-20T09:00:00.000Z' }],
+  });
+  assert(isOverdueReturn(mail1Open, now), 'mail1 sent ⇒ overdue even if due in future');
+
   const rows = [
     {
       createdAt: '2026-11-01T10:00:00.000Z',
@@ -4292,8 +4325,19 @@ function testPortalDashboardReturnsTrends(): void {
       returnDueDate: '2026-11-10',
       returned: false,
       returnedAt: null,
-      mail3SentAt: null,
+      mail1SentAt: null,
       reminderCount: 0,
+      reminderStages: [],
+    },
+    {
+      createdAt: '2026-11-05T10:00:00.000Z',
+      deliveryDate: '2026-11-05',
+      returnDueDate: '2026-12-20',
+      returned: false,
+      returnedAt: null,
+      mail1SentAt: null,
+      reminderCount: 0,
+      reminderStages: [],
     },
     {
       createdAt: '2026-11-05T10:00:00.000Z',
@@ -4301,8 +4345,9 @@ function testPortalDashboardReturnsTrends(): void {
       returnDueDate: '2026-11-20',
       returned: true,
       returnedAt: '2026-11-20T09:00:00.000Z',
-      mail3SentAt: null,
+      mail1SentAt: null,
       reminderCount: 0,
+      reminderStages: [],
     },
   ];
 
@@ -4313,8 +4358,9 @@ function testPortalDashboardReturnsTrends(): void {
     'series points expose open/overdue/returned',
   );
   const last = series30[series30.length - 1]!;
-  assert(last.open >= 1, 'today still counts open return');
-  assert(last.overdue >= 1, 'open past-due counts as overdue');
+  assert(last.open === 2, 'today still counts 2 open returns');
+  assert(last.overdue === 1, 'only past-due open counts as overdue');
+  assert(last.overdue < last.open, 'Überfällig strictly less than Offen');
 
   const series7 = buildReturnsActivitySeries(rows, '7d', now);
   assert(series7.length === 7, '7d series has 7 points');
@@ -4336,24 +4382,68 @@ function testPortalDashboardReturnsTrends(): void {
     'buildReturnsActivityByRange covers all timeframe selectors (≤90 buckets)',
   );
 
+  // Dashboard lean KPIs === workbench snake_case KPIs (shared classifier).
+  const leanKpis = computeHardwareReturnsKpis(rows.map(kpiRowFromLean), now);
+  const hwKpis = computeHardwareReturnsKpis(
+    rows.map((r) =>
+      kpiRowFromHardwareRecord({
+        return_required: true,
+        returned: r.returned,
+        return_due_date: r.returnDueDate,
+        returned_at: r.returnedAt,
+        mail1_sent_at: r.mail1SentAt,
+        reminder_stages: r.reminderStages,
+        reminder_count: r.reminderCount,
+      }),
+    ),
+    now,
+  );
+  assert(
+    JSON.stringify(leanKpis) === JSON.stringify(hwKpis) &&
+      leanKpis.open === 2 &&
+      leanKpis.overdue === 1,
+    'dashboard KPIs match returns KPIs 1:1 (open=2 overdue=1)',
+  );
+
   // Route must not N+1 via workbench; lean stats module owns SQL.
   const statsSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/lib/client-portal/portal-dashboard-returns-stats.ts'),
     'utf8',
   );
+  const kpiSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-kpis.ts'),
+    'utf8',
+  );
   assert(
     statsSrc.includes('created_at') &&
-      statsSrc.includes('mail3_sent_at') &&
+      statsSrc.includes('mail1_sent_at') &&
+      statsSrc.includes('reminder_stages') &&
       statsSrc.includes('LIMIT 5000') &&
       !statsSrc.includes('activity_log') &&
       !statsSrc.includes('SELECT *'),
     'lean SQL selects only KPI/trend columns',
   );
   assert(
+    kpiSrc.includes('isOverdueReturn') &&
+      kpiSrc.includes('isEscalatedReturn') &&
+      kpiSrc.includes('hasStage1ReminderSent') &&
+      kpiSrc.includes('highestSentStage'),
+    'shared hardware-returns-kpis classifier exported',
+  );
+  assert(
     fs
       .readFileSync(path.join(process.cwd(), 'src/lib/postgres-backend.ts'), 'utf8')
       .includes('idx_ticket_hw_returns_org_req_returned_due'),
     'dashboard perf index ensured in postgres-backend',
+  );
+  assert(
+    fs
+      .readFileSync(
+        path.join(process.cwd(), 'src/components/pages/client-portal/PortalDashboardPage.tsx'),
+        'utf8',
+      )
+      .includes('mailStatus=mail4plus'),
+    'dashboard escalated KPI navigates to mail4plus filter',
   );
 }
 

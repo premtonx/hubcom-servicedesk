@@ -775,15 +775,8 @@ export function ReturnsWorkbench({
       {
         key: 's3',
         label: 'Letzte Stufe / Eskaliert (4.+ Erinnerung)',
-        value: Math.max(
-          kpis.stage3,
-          items.filter(
-            (it) =>
-              !it.hardwareReturn.returned &&
-              it.hardwareReturn.return_required &&
-              hasEscalatedReminder(it.hardwareReturn),
-          ).length,
-        ),
+        // Same shared classifier as GET /api/portal/dashboard (stage ≥ 4).
+        value: kpis.stage3,
         accent: 'border-t-violet-500',
         Icon: ShieldAlert,
         iconWrap: 'bg-violet-50 text-violet-700 border-violet-100',
@@ -802,7 +795,7 @@ export function ReturnsWorkbench({
         onClick: () => setView('done'),
       },
     ],
-    [kpis, items],
+    [kpis],
   );
 
   const pageCount =
