@@ -48,6 +48,17 @@ import {
 import type { EmailChannelConfig } from '../src/lib/email-ingestion/types.js';
 import { redactSecrets } from '../src/lib/safe-log.js';
 import { isClientAdmin, isClientPortalRole } from '../src/lib/client-portal/roles.js';
+import {
+  canManageSsoApprovals,
+  clientSupporterBlockedFromAdminSettings,
+  clientSupporterMayAccessPortalTicketsAndReturns,
+  decidePortalSsoProvisioning,
+  isPortalLoginAllowed,
+  normalizeApprovalStatus,
+  portalSsoStatusRedirectPath,
+  resolveSsoApprovalMode,
+  SSO_STATUS_BANNER_DE,
+} from '../src/lib/client-portal/sso-approval.js';
 import { parseAndValidateDashboardBannerDataUrl } from '../src/lib/dashboard-banner-validate.js';
 import { parseAndValidateFaviconDataUrl } from '../src/lib/client-portal/org-branding.js';
 import { parseAndValidateSystemFaviconDataUrl } from '../src/lib/system-favicon-validate.js';
@@ -6511,6 +6522,194 @@ function testHardwareReturnsShipmentStatusPart1(): void {
   );
 }
 
+function testPortalSsoAdminApprovalFreigabe(): void {
+  console.log('\n[SSO] M365 Admin-Freigabe — approval mode + gate + queue');
+
+  assert(
+    resolveSsoApprovalMode({ sso_enabled: true, settings: {} }) === 'admin_approval',
+    'SSO enabled without mode defaults to admin_approval',
+  );
+  assert(
+    resolveSsoApprovalMode({
+      sso_enabled: true,
+      settings: { sso_approval_mode: 'pre_provisioned_only' },
+    }) === 'pre_provisioned_only',
+    'settings.sso_approval_mode honored',
+  );
+
+  const orgA = {
+    id: ORG_A,
+    sso_enabled: true,
+    settings: { sso_approval_mode: 'admin_approval' },
+  };
+
+  // New M365 user → pending, no session
+  const pendingDecision = decidePortalSsoProvisioning({
+    org: orgA,
+    existingUser: null,
+    tenantLinked: true,
+  });
+  assert(
+    pendingDecision.action === 'jit_pending' &&
+      pendingDecision.approval_status === 'pending_approval' &&
+      pendingDecision.organizationId === ORG_A,
+    'admin_approval creates pending_approval CLIENT_USER for new tenant user',
+  );
+
+  const pendingUser = {
+    id: 'u-pending',
+    role: 'CLIENT_USER',
+    organizationId: ORG_A,
+    approval_status: 'pending_approval',
+  };
+  assert(
+    isPortalLoginAllowed(pendingUser).ok === false &&
+      (isPortalLoginAllowed(pendingUser) as any).reason === 'pending',
+    'pending_approval user cannot log in / access /api/portal/*',
+  );
+  assert(
+    decidePortalSsoProvisioning({
+      org: orgA,
+      existingUser: pendingUser,
+      tenantLinked: true,
+    }).action === 'reject',
+    'existing pending user rejected at SSO callback (no session cookie)',
+  );
+
+  // pre_provisioned_only — no user create
+  const preOnly = decidePortalSsoProvisioning({
+    org: {
+      id: ORG_A,
+      sso_enabled: true,
+      settings: { sso_approval_mode: 'pre_provisioned_only' },
+    },
+    existingUser: null,
+    tenantLinked: true,
+  });
+  assert(
+    preOnly.action === 'reject' && preOnly.code === 'not_invited',
+    'pre_provisioned_only rejects unknown M365 users without creating a row',
+  );
+
+  // Approve as CLIENT_SUPPORTER → active login allowed
+  const approvedSupporter = {
+    id: 'u-sup',
+    role: 'CLIENT_SUPPORTER',
+    organizationId: ORG_A,
+    approval_status: 'active',
+  };
+  assert(normalizeApprovalStatus('active') === 'active', 'active status normalized');
+  assert(isPortalLoginAllowed(approvedSupporter).ok === true, 'approved supporter may log in');
+  assert(
+    clientSupporterMayAccessPortalTicketsAndReturns('CLIENT_SUPPORTER') === true,
+    'CLIENT_SUPPORTER may access tickets + returns',
+  );
+  assert(
+    clientSupporterBlockedFromAdminSettings('CLIENT_SUPPORTER') === true,
+    'CLIENT_SUPPORTER blocked from admin settings (team/email/branding)',
+  );
+  assert(
+    canManageSsoApprovals('CLIENT_SUPPORTER') === false &&
+      canManageSsoApprovals('CLIENT_ADMIN') === true,
+    'only CLIENT_ADMIN (or SYSTEM_ADMIN) manages SSO Freigaben',
+  );
+
+  // Cross-tenant approve blocked at decision layer (org mismatch)
+  const crossReject = decidePortalSsoProvisioning({
+    org: orgA,
+    existingUser: {
+      id: 'u-b',
+      role: 'CLIENT_USER',
+      organizationId: ORG_B,
+      approval_status: 'pending_approval',
+    },
+    tenantLinked: true,
+  });
+  assert(
+    crossReject.action === 'reject',
+    'Org B pending user cannot be logged in under Org A tenant mapping',
+  );
+
+  const redirect = portalSsoStatusRedirectPath('pending', 'https://example.test');
+  assert(
+    redirect === 'https://example.test/portal/login?sso_status=pending',
+    'SSO pending redirects to /portal/login?sso_status=pending',
+  );
+  assert(
+    SSO_STATUS_BANNER_DE.pending.includes('Administrator') &&
+      SSO_STATUS_BANNER_DE.pending.includes('freigeben'),
+    'German pending banner copy present',
+  );
+
+  // Source wiring
+  const msSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/microsoftAuthRoutes.ts'),
+    'utf8',
+  );
+  const authSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/middleware/authMiddleware.ts'),
+    'utf8',
+  );
+  const teamSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalTeamRoutes.ts'),
+    'utf8',
+  );
+  const emailPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientEmailIntegrationPage.tsx'),
+    'utf8',
+  );
+  const membersSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientMembersPage.tsx'),
+    'utf8',
+  );
+  const loginSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/LoginPage.tsx'),
+    'utf8',
+  );
+
+  assert(
+    msSrc.includes('decidePortalSsoProvisioning') &&
+      msSrc.includes('getOrganizationByM365TenantId') &&
+      msSrc.includes('approval_status: decision.approval_status') &&
+      msSrc.includes('portalSsoStatusRedirectPath') &&
+      msSrc.includes('setSessionCookie') &&
+      msSrc.includes("ssoFail('pending')"),
+    'OIDC callback gates portal SSO with Freigabe (pending → no cookie)',
+  );
+  assert(
+    authSrc.includes('isPortalLoginAllowed') && authSrc.includes('sso_status'),
+    'authenticate rejects non-active approval_status for CLIENT_*',
+  );
+  assert(
+    teamSrc.includes('/approve') &&
+      teamSrc.includes('/reject') &&
+      teamSrc.includes('approvePortalSsoUser') &&
+      teamSrc.includes('canManageSsoApprovals'),
+    'portal team exposes approve/reject for CLIENT_ADMIN',
+  );
+  assert(
+    emailPageSrc.includes('Admin-Freigabe erforderlich') &&
+      emailPageSrc.includes('pre_provisioned_only') &&
+      emailPageSrc.includes('auto_domain') &&
+      emailPageSrc.includes('ssoApprovalMode'),
+    'E-Mail & M365 SSO settings expose Freigabe mode selector',
+  );
+  assert(
+    membersSrc.includes('Offene SSO-Zugriffsanfragen') &&
+      membersSrc.includes('Freigeben') &&
+      membersSrc.includes('Ablehnen') &&
+      membersSrc.includes('approveTeamMember') &&
+      membersSrc.includes('Bearbeiter / Supporter'),
+    'Mitarbeiter & Rollen renders SSO approval queue with role dropdown',
+  );
+  assert(
+    loginSrc.includes('sso_status') &&
+      loginSrc.includes('Zugriffsanfrage über Microsoft 365') &&
+      fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8').includes('/portal/login'),
+    'Login shows German SSO status banners; /portal/login route exists',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -6552,6 +6751,7 @@ async function main(): Promise<void> {
   testDefaultTicketCreateExcludesRmaFields();
   testPortalReturnsPageNavigationGate();
   testPortalUserDeleteAccess();
+  testPortalSsoAdminApprovalFreigabe();
   testKbWorkbenchSharedUiIsolation();
   testTicketsWorkbenchSharedUiIsolation();
   testTicketDetailWorkbenchSharedUiIsolation();

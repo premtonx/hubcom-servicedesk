@@ -66,6 +66,12 @@ const ssoSchema = z.object({
   m365_tenant_id: optionalText(255),
   ssoEnabled: z.boolean().optional(),
   sso_enabled: z.boolean().optional(),
+  ssoApprovalMode: z
+    .enum(['admin_approval', 'pre_provisioned_only', 'auto_domain'])
+    .optional(),
+  sso_approval_mode: z
+    .enum(['admin_approval', 'pre_provisioned_only', 'auto_domain'])
+    .optional(),
 });
 
 function resolveOrgId(req: Request): string | null {
@@ -168,6 +174,7 @@ router.get(
               domain: org.domain,
               m365TenantId: org.m365_tenant_id,
               ssoEnabled: org.sso_enabled,
+              ssoApprovalMode: org.sso_approval_mode,
             }
           : null,
         setupHelper: {
@@ -449,10 +456,13 @@ router.put(
         parsed.data.m365TenantId ?? parsed.data.m365_tenant_id ?? undefined;
       const ssoEnabled =
         parsed.data.ssoEnabled ?? parsed.data.sso_enabled ?? undefined;
+      const ssoApprovalMode =
+        parsed.data.ssoApprovalMode ?? parsed.data.sso_approval_mode ?? undefined;
 
       const org = await updateOrganizationSsoSettings(organizationId, {
         m365_tenant_id: m365TenantId === undefined ? undefined : m365TenantId || null,
         sso_enabled: ssoEnabled,
+        sso_approval_mode: ssoApprovalMode,
       });
 
       return res.json({
@@ -462,6 +472,7 @@ router.put(
               name: org.name,
               m365TenantId: org.m365_tenant_id,
               ssoEnabled: org.sso_enabled,
+              ssoApprovalMode: org.sso_approval_mode,
             }
           : null,
       });

@@ -31,6 +31,12 @@ import {
   evaluatePortalUserDeleteAccess,
 } from '../src/lib/client-portal/portal-user-delete.js';
 import {
+  clientSupporterMayAccessPortalTicketsAndReturns,
+  decidePortalSsoProvisioning,
+  isPortalLoginAllowed,
+  resolveSsoApprovalMode,
+} from '../src/lib/client-portal/sso-approval.js';
+import {
   evaluatePortalReturnsPageAccess,
   resolveHardwareReturnsModuleFlag,
 } from '../src/lib/client-portal/hardware-returns-nav.js';
@@ -2319,6 +2325,46 @@ function testPortalKbSharePointCsvImportLifecycle(): void {
   );
 }
 
+function testPortalSsoAdminApprovalLifecycle(): void {
+  console.log('\n[SSO] Portal M365 Admin-Freigabe lifecycle');
+  assert(
+    resolveSsoApprovalMode({ sso_enabled: true, settings: {} }) === 'admin_approval',
+    'default Freigabe mode is admin_approval',
+  );
+  const decision = decidePortalSsoProvisioning({
+    org: { id: 'org-a', sso_enabled: true, settings: { sso_approval_mode: 'admin_approval' } },
+    existingUser: null,
+    tenantLinked: true,
+  });
+  assert(
+    decision.action === 'jit_pending' && decision.approval_status === 'pending_approval',
+    'new linked-tenant user is pending_approval (no session)',
+  );
+  assert(
+    isPortalLoginAllowed({
+      role: 'CLIENT_USER',
+      approval_status: 'pending_approval',
+    }).ok === false,
+    'pending user blocked from portal APIs',
+  );
+  assert(
+    isPortalLoginAllowed({
+      role: 'CLIENT_SUPPORTER',
+      approval_status: 'active',
+    }).ok === true &&
+      clientSupporterMayAccessPortalTicketsAndReturns('CLIENT_SUPPORTER'),
+    'approved CLIENT_SUPPORTER may use tickets/returns',
+  );
+  const msSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/microsoftAuthRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    msSrc.includes('decidePortalSsoProvisioning') && msSrc.includes("ssoFail('pending')"),
+    'OIDC callback wires Freigabe gate',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('AI Request Lifecycle — dry-run test suite');
   console.log('='.repeat(50));
@@ -2357,6 +2403,7 @@ async function main(): Promise<void> {
   testSharePointReturnsCsvImportUiLifecycle();
   testReturnsShipmentStatusLifecycle();
   testReturnsDetailOverviewLifecycle();
+  testPortalSsoAdminApprovalLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);

@@ -10,6 +10,10 @@ import {
   normalizeHardwareReturnsConfig,
   type HardwareReturnsConfig,
 } from './hardware-returns.js';
+import {
+  resolveSsoApprovalMode,
+  type SsoApprovalMode,
+} from './sso-approval.js';
 
 export interface OrganizationRecord {
   id: string;
@@ -22,6 +26,11 @@ export interface OrganizationRecord {
   m365_tenant_id: string | null;
   /** When true, users from m365_tenant_id may sign in via Microsoft SSO. */
   sso_enabled: boolean;
+  /**
+   * M365 SSO Freigabe-Modus (stored in settings.sso_approval_mode).
+   * Defaults to admin_approval when SSO is used.
+   */
+  sso_approval_mode: SsoApprovalMode;
   /** Optional Kunden-Portal logo (data URL). */
   logo_url: string | null;
   /** Custom portal title; empty → "{name} ServiceDesk". */
@@ -60,6 +69,7 @@ export interface OrganizationInput {
   settings?: Record<string, unknown>;
   m365_tenant_id?: string | null;
   sso_enabled?: boolean;
+  sso_approval_mode?: SsoApprovalMode | null;
   logo_url?: string | null;
   portal_title?: string | null;
   portal_banner_url?: string | null;
@@ -125,6 +135,10 @@ function mapRow(row: any): OrganizationRecord {
         : String(row.m365_tenant_id),
     sso_enabled:
       row.sso_enabled === true || row.sso_enabled === 't' || settingsSso === true,
+    sso_approval_mode: resolveSsoApprovalMode({
+      sso_enabled: row.sso_enabled === true || row.sso_enabled === 't' || settingsSso === true,
+      settings: settings || {},
+    }),
     logo_url: row.logo_url == null || row.logo_url === '' ? null : String(row.logo_url),
     portal_title:
       row.portal_title == null || row.portal_title === ''
@@ -531,11 +545,29 @@ export async function updateOrganization(
 
 export async function updateOrganizationSsoSettings(
   id: string,
-  input: { m365_tenant_id?: string | null; sso_enabled?: boolean },
+  input: {
+    m365_tenant_id?: string | null;
+    sso_enabled?: boolean;
+    sso_approval_mode?: SsoApprovalMode | null;
+  },
 ): Promise<OrganizationRecord | null> {
+  const existing = await getOrganization(id);
+  if (!existing) return null;
+  const nextSettings: Record<string, unknown> = { ...(existing.settings || {}) };
+  if (input.sso_approval_mode) {
+    nextSettings.sso_approval_mode = input.sso_approval_mode;
+  } else if (
+    input.sso_enabled === true &&
+    nextSettings.sso_approval_mode == null &&
+    nextSettings.ssoApprovalMode == null
+  ) {
+    // Idempotent default when enabling SSO for the first time.
+    nextSettings.sso_approval_mode = 'admin_approval';
+  }
   return updateOrganization(id, {
     m365_tenant_id: input.m365_tenant_id,
     sso_enabled: input.sso_enabled,
+    settings: nextSettings,
   });
 }
 

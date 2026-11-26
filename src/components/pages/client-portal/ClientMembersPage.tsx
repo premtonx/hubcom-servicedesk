@@ -37,23 +37,20 @@ const ROLE_META: Record<
 > = {
   CLIENT_ADMIN: {
     badge: 'Admin',
-    label: 'Client Admin',
-    description:
-      'Verwaltet Mitarbeiter, Rollen und Einstellungen der Organisation und sieht alle Firmen-Tickets.',
+    label: 'Admin',
+    description: 'Vollzugriff inkl. Portal-Einstellungen, Benutzer & SSO-Freigaben',
     tone: 'bg-indigo-50 text-indigo-700',
   },
   CLIENT_SUPPORTER: {
-    badge: 'Support',
-    label: 'Client Supporter',
-    description:
-      'Sieht und bearbeitet alle Tickets der Organisation, kann Teilnehmer hinzufügen und Tickets schließen.',
+    badge: 'Bearbeiter',
+    label: 'Bearbeiter / Supporter',
+    description: 'Tickets & Rücklieferungen ansehen und bearbeiten',
     tone: 'bg-violet-50 text-violet-700',
   },
   CLIENT_USER: {
-    badge: 'Mitarbeiter',
-    label: 'Client User',
-    description:
-      'Erstellt Tickets und sieht nur eigene Tickets sowie Tickets, zu denen er/sie als Teilnehmer hinzugefügt wurde.',
+    badge: 'Benutzer',
+    label: 'Benutzer',
+    description: 'Eigene Tickets einsehen & erstellen',
     tone: 'bg-slate-100 text-slate-700',
   },
 };
@@ -110,16 +107,53 @@ export default function ClientMembersPage() {
     void load();
   }, [load]);
 
+  const pendingSso = useMemo(
+    () => members.filter((m) => m.approvalStatus === 'pending_approval'),
+    [members],
+  );
+
+  const [pendingRoles, setPendingRoles] = useState<Record<string, PortalTeamRole>>({});
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return members;
-    return members.filter(
+    const activePool = members.filter((m) => m.approvalStatus !== 'pending_approval');
+    if (!q) return activePool;
+    return activePool.filter(
       (m) =>
         m.name.toLowerCase().includes(q) ||
         m.email.toLowerCase().includes(q) ||
         m.role.toLowerCase().includes(q),
     );
   }, [members, search]);
+
+  const approvePending = async (member: PortalMember) => {
+    const role = pendingRoles[member.id] || (member.role as PortalTeamRole) || 'CLIENT_USER';
+    setApprovingId(member.id);
+    try {
+      await clientPortalApi.approveTeamMember(member.id, role);
+      toast.success(`${member.name || member.email} freigegeben als ${ROLE_META[role].label}.`);
+      await load();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Freigabe fehlgeschlagen');
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const rejectPending = async (member: PortalMember) => {
+    if (!confirm(`Zugriffsanfrage von ${member.email} ablehnen?`)) return;
+    setApprovingId(member.id);
+    try {
+      await clientPortalApi.rejectTeamMember(member.id);
+      toast.success('Zugriffsanfrage abgelehnt.');
+      await load();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Ablehnung fehlgeschlagen');
+    } finally {
+      setApprovingId(null);
+    }
+  };
 
   const openAdd = () => {
     setFormName('');
@@ -258,15 +292,87 @@ export default function ClientMembersPage() {
         />
         <SummaryCard
           icon={<UserCheck className="w-4 h-4 text-violet-600" />}
-          label="Client Supporters"
+          label="Bearbeiter / Supporter"
           value={summary.clientSupporters}
         />
         <SummaryCard
           icon={<Shield className="w-4 h-4 text-indigo-600" />}
-          label="Client Admins"
+          label="Admins"
           value={summary.clientAdmins}
         />
       </div>
+
+      {pendingSso.length > 0 ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5 shadow-sm space-y-4">
+          <div>
+            <h2 className="text-sm font-bold uppercase tracking-wider text-amber-900">
+              Offene SSO-Zugriffsanfragen
+            </h2>
+            <p className="text-sm text-amber-800/80 mt-1">
+              Neue Microsoft-365-Benutzer warten auf Freigabe und Rollenzuweisung.
+            </p>
+          </div>
+          <ul className="space-y-3">
+            {pendingSso.map((m) => {
+              const chosen =
+                pendingRoles[m.id] || (m.role as PortalTeamRole) || 'CLIENT_USER';
+              return (
+                <li
+                  key={m.id}
+                  className="rounded-xl border border-amber-200/80 bg-white p-4 flex flex-col lg:flex-row lg:items-center gap-3"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-slate-900 truncate">{m.name || '—'}</p>
+                    <p className="text-sm text-slate-600 truncate">{m.email}</p>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Anfrage: {formatDate(m.approvalRequestedAt || m.createdAt)}
+                    </p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 shrink-0">
+                    <select
+                      className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium max-w-xs"
+                      value={chosen}
+                      onChange={(e) =>
+                        setPendingRoles((prev) => ({
+                          ...prev,
+                          [m.id]: e.target.value as PortalTeamRole,
+                        }))
+                      }
+                      aria-label="Rolle bei Freigabe"
+                    >
+                      {(Object.keys(ROLE_META) as PortalTeamRole[]).map((role) => (
+                        <option key={role} value={role}>
+                          {ROLE_META[role].label} — {ROLE_META[role].description}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      type="button"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                      disabled={approvingId === m.id}
+                      onClick={() => void approvePending(m)}
+                    >
+                      {approvingId === m.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                      ) : null}
+                      Freigeben
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="border-rose-200 text-rose-700 hover:bg-rose-50"
+                      disabled={approvingId === m.id}
+                      onClick={() => void rejectPending(m)}
+                    >
+                      Ablehnen
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
 
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100">

@@ -385,6 +385,25 @@ async function startServer() {
       if (userDoc.isDeactivated) {
         return res.status(403).json({ error: "Your account has been deactivated." });
       }
+      {
+        const { isPortalLoginAllowed } = await import("./src/lib/client-portal/sso-approval.js");
+        const { isClientPortalRole } = await import("./src/lib/client-portal/roles.js");
+        if (isClientPortalRole(userDoc.role)) {
+          const gate = isPortalLoginAllowed(userDoc);
+          if (gate.ok === false) {
+            const reason = gate.reason;
+            return res.status(403).json({
+              error:
+                reason === "pending"
+                  ? "Ihre Zugriffsanfrage wartet noch auf Freigabe durch einen Administrator."
+                  : reason === "rejected"
+                    ? "Ihre Zugriffsanfrage wurde abgelehnt."
+                    : "Portal-Zugang ist für dieses Konto nicht aktiv.",
+              sso_status: reason,
+            });
+          }
+        }
+      }
       const method = String(userDoc.authMethod || "").toLowerCase();
       if (method === "microsoft365" || method === "sso") {
         return res.status(400).json({

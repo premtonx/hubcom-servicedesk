@@ -256,11 +256,32 @@ export default function LoginPage() {
     };
   }, [config.ssoEnabled, config.ssoClientId]);
 
+  const [ssoStatusBanner, setSsoStatusBanner] = useState<string | null>(null);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const err = params.get('error');
     if (err) {
       toast.error(decodeURIComponent(err));
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    const ssoStatus = params.get('sso_status');
+    if (ssoStatus) {
+      const banners: Record<string, string> = {
+        pending:
+          'Ihre Zugriffsanfrage über Microsoft 365 wurde übermittelt. Ein Administrator muss Ihren Zugang und Ihre Rolle zuerst freigeben.',
+        rejected:
+          'Ihre Microsoft-365-Zugriffsanfrage wurde abgelehnt. Bitte wenden Sie sich an Ihren Administrator.',
+        not_invited:
+          'Für Ihr Microsoft-365-Konto ist noch kein Zugang hinterlegt. Bitte lassen Sie sich von einem Administrator in „Mitarbeiter & Rollen“ anlegen.',
+        unknown_tenant:
+          'Unbekannter oder nicht verknüpfter Microsoft-365-Mandant. Bitte kontaktieren Sie Hubcom.',
+        sso_disabled:
+          'Microsoft-365-Anmeldung ist für Ihre Organisation derzeit nicht aktiviert.',
+        deactivated:
+          'Ihr Konto wurde deaktiviert. Bitte wenden Sie sich an den Administrator.',
+      };
+      setSsoStatusBanner(banners[ssoStatus] || banners.pending);
       window.history.replaceState({}, '', window.location.pathname);
     }
     const setup = params.get('setup');
@@ -650,6 +671,15 @@ export default function LoginPage() {
               {isRegister ? texts.registerSub : texts.welcomeSub}
             </p>
           </div>
+
+          {ssoStatusBanner ? (
+            <div
+              role="status"
+              className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-xs font-semibold text-amber-950 leading-relaxed"
+            >
+              {ssoStatusBanner}
+            </div>
+          ) : null}
 
           {showFirstRunCta ? (
             <div className="space-y-3">
