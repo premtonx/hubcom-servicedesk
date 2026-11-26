@@ -14,17 +14,20 @@ import { isClientPortalRole } from '../lib/client-portal/roles.js';
 import { resolveOrganizationIdFromUser } from '../lib/client-portal/ticket-visibility.js';
 import {
   CLIENT_TEAM_ROLES,
+  approvePortalSsoUser,
   countActiveClientAdmins,
   createOrInviteTeamMember,
   ensureClientRoleDoc,
   isClientTeamRole,
   listOrganizationUsers,
+  rejectPortalSsoUser,
   resetTeamMemberPassword,
   toTeamMemberView,
   userOrganizationId,
   type ClientTeamRole,
 } from '../lib/client-portal/team-service.js';
 import { deletePortalOrganizationUser } from '../lib/client-portal/portal-user-delete.js';
+import { canManageSsoApprovals } from '../lib/client-portal/sso-approval.js';
 
 const router = Router();
 
@@ -244,6 +247,74 @@ router.patch('/:userId', async (req: Request, res: Response): Promise<any> => {
   } catch (err: any) {
     safeLog('error', '[portal/team] patch failed', err?.message || err);
     return res.status(500).json({ error: safeErrorMessage(err, 'Failed to update team member') });
+  }
+});
+
+const approveSchema = z.object({
+  role: z.enum(CLIENT_TEAM_ROLES),
+});
+
+/**
+ * POST /api/portal/team/:userId/approve
+ * CLIENT_ADMIN — Freigeben pending SSO user + assign role.
+ */
+router.post('/:userId/approve', async (req: Request, res: Response): Promise<any> => {
+  const userId = routeParam(req.params.userId);
+  const parsed = approveSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: 'role (CLIENT_ADMIN | CLIENT_SUPPORTER | CLIENT_USER) is required.',
+      details: parsed.error.flatten().fieldErrors,
+    });
+  }
+  try {
+    if (!canManageSsoApprovals(req.user?.role)) {
+      return res.status(403).json({
+        error: 'Forbidden: Only CLIENT_ADMIN (or SYSTEM_ADMIN) can approve SSO requests.',
+      });
+    }
+    const organizationId = await resolveManagedOrganizationId(req, res);
+    if (!organizationId) return;
+    const member = await approvePortalSsoUser({
+      organizationId,
+      userId,
+      role: parsed.data.role,
+      approvedBy: String(req.user!.id),
+    });
+    return res.json({ success: true, member });
+  } catch (err: any) {
+    const status = Number(err?.status) || 500;
+    if (status < 500) return res.status(status).json({ error: err.message });
+    safeLog('error', '[portal/team] approve failed', err?.message || err);
+    return res.status(500).json({ error: safeErrorMessage(err, 'Freigabe fehlgeschlagen') });
+  }
+});
+
+/**
+ * POST /api/portal/team/:userId/reject
+ * CLIENT_ADMIN — Ablehnen pending SSO user.
+ */
+router.post('/:userId/reject', async (req: Request, res: Response): Promise<any> => {
+  const userId = routeParam(req.params.userId);
+  try {
+    if (!canManageSsoApprovals(req.user?.role)) {
+      return res.status(403).json({
+        error: 'Forbidden: Only CLIENT_ADMIN (or SYSTEM_ADMIN) can reject SSO requests.',
+      });
+    }
+    const organizationId = await resolveManagedOrganizationId(req, res);
+    if (!organizationId) return;
+    const member = await rejectPortalSsoUser({
+      organizationId,
+      userId,
+      rejectedBy: String(req.user!.id),
+    });
+    return res.json({ success: true, member });
+  } catch (err: any) {
+    const status = Number(err?.status) || 500;
+    if (status < 500) return res.status(status).json({ error: err.message });
+    safeLog('error', '[portal/team] reject failed', err?.message || err);
+    return res.status(500).json({ error: safeErrorMessage(err, 'Ablehnung fehlgeschlagen') });
   }
 });
 

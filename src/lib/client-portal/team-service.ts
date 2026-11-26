@@ -18,6 +18,10 @@ import {
   buildPortalInviteEmail,
   buildPortalPasswordResetEmail,
 } from './portal-auth-emails.js';
+import {
+  normalizeApprovalStatus,
+  type PortalApprovalStatus,
+} from './sso-approval.js';
 
 export const CLIENT_TEAM_ROLES = ['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER'] as const;
 export type ClientTeamRole = (typeof CLIENT_TEAM_ROLES)[number];
@@ -31,6 +35,9 @@ export interface TeamMemberView {
   lastLoginAt: string | null;
   createdAt: string | null;
   organizationId: string | null;
+  approvalStatus: PortalApprovalStatus;
+  approvalRequestedAt: string | null;
+  authMethod: string | null;
 }
 
 export function isClientTeamRole(role: string | null | undefined): role is ClientTeamRole {
@@ -59,7 +66,75 @@ export function toTeamMemberView(user: Record<string, unknown> & { id: string })
       null,
     createdAt: typeof user.createdAt === 'string' ? user.createdAt : null,
     organizationId: userOrganizationId(user),
+    approvalStatus: normalizeApprovalStatus(user.approval_status ?? user.approvalStatus),
+    approvalRequestedAt:
+      (typeof user.approvalRequestedAt === 'string' && user.approvalRequestedAt) ||
+      (typeof user.createdAt === 'string' && user.createdAt) ||
+      null,
+    authMethod: typeof user.authMethod === 'string' ? user.authMethod : null,
   };
+}
+
+/** Approve a pending SSO user — sets approval_status=active and chosen role. */
+export async function approvePortalSsoUser(params: {
+  organizationId: string;
+  userId: string;
+  role: ClientTeamRole;
+  approvedBy: string;
+}): Promise<TeamMemberView> {
+  const user = await getDocDirect('users', params.userId);
+  if (!user || userOrganizationId(user) !== params.organizationId) {
+    throw Object.assign(new Error('User not found.'), { status: 404 });
+  }
+  if (!isClientPortalRole(user.role)) {
+    throw Object.assign(new Error('Cannot approve Hubcom staff via portal team API.'), {
+      status: 403,
+    });
+  }
+  const status = normalizeApprovalStatus(user.approval_status ?? user.approvalStatus);
+  if (status === 'active' && user.isDeactivated !== true) {
+    // Idempotent re-approve with role change is allowed for pending→active only;
+    // active users should use PATCH. Still allow if already active for convenience.
+  }
+  const roleId = await ensureClientRoleDoc(params.role);
+  const now = new Date().toISOString();
+  await updateDocDirect('users', params.userId, {
+    approval_status: 'active',
+    role: params.role,
+    roleId,
+    isDeactivated: false,
+    approvedAt: now,
+    approvedBy: params.approvedBy,
+    updatedAt: now,
+  });
+  const refreshed = await getDocDirect('users', params.userId);
+  return toTeamMemberView({ id: params.userId, ...(refreshed || user) });
+}
+
+/** Reject a pending SSO user — sets approval_status=rejected (no session ever). */
+export async function rejectPortalSsoUser(params: {
+  organizationId: string;
+  userId: string;
+  rejectedBy: string;
+}): Promise<TeamMemberView> {
+  const user = await getDocDirect('users', params.userId);
+  if (!user || userOrganizationId(user) !== params.organizationId) {
+    throw Object.assign(new Error('User not found.'), { status: 404 });
+  }
+  if (!isClientPortalRole(user.role)) {
+    throw Object.assign(new Error('Cannot reject Hubcom staff via portal team API.'), {
+      status: 403,
+    });
+  }
+  const now = new Date().toISOString();
+  await updateDocDirect('users', params.userId, {
+    approval_status: 'rejected',
+    rejectedAt: now,
+    rejectedBy: params.rejectedBy,
+    updatedAt: now,
+  });
+  const refreshed = await getDocDirect('users', params.userId);
+  return toTeamMemberView({ id: params.userId, ...(refreshed || user) });
 }
 
 export async function listOrganizationUsers(organizationId: string): Promise<TeamMemberView[]> {
@@ -187,6 +262,8 @@ export async function createOrInviteTeamMember(params: {
     organization_id: params.organizationId,
     is_admin: false,
     isDeactivated: false,
+    // Pre-provisioned invitations are immediately active (Admin-Freigabe queue is SSO-only).
+    approval_status: 'active' as const,
     can_create_tickets: true,
     can_view_knowledgebase: params.role !== 'CLIENT_USER',
     authMethod: 'password' as const,

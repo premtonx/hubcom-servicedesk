@@ -7,6 +7,7 @@ import {
   getOrganization,
   getOrganizationByM365TenantId,
 } from "../lib/client-portal/organizations.js";
+import { isPortalLoginAllowed } from "../lib/client-portal/sso-approval.js";
 
 // JWT and Microsoft JWKS Clients
 const JWKS_URI = "https://login.microsoftonline.com/common/discovery/v2.0/keys";
@@ -235,6 +236,23 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       return res.status(403).json({
         error: "Forbidden: Your workforce account has been deactivated."
       });
+    }
+
+    // M365 Admin-Freigabe: pending/rejected portal users never access /api/portal/*.
+    if (isClientPortalRole(userDoc.role)) {
+      const gate = isPortalLoginAllowed(userDoc);
+      if (gate.ok === false) {
+        const reason = gate.reason;
+        return res.status(403).json({
+          error:
+            reason === "pending"
+              ? "Forbidden: Your Microsoft 365 access request is pending admin approval."
+              : reason === "rejected"
+                ? "Forbidden: Your Microsoft 365 access request was rejected."
+                : "Forbidden: Portal access is not active for this account.",
+          sso_status: reason,
+        });
+      }
     }
 
     // Resolve effective role strictly from the verified DB record.

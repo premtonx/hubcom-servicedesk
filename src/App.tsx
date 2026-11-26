@@ -324,6 +324,7 @@ function AppRoutes() {
                   <>
                     <Route path="/onboarding" element={<Navigate to="/login" replace />} />
                     <Route path="/login" element={<LoginPage />} />
+                    <Route path="/portal/login" element={<LoginPage />} />
                     <Route path="*" element={<LoginPage />} />
                   </>
                 ) : isCustomer ? (

@@ -10,6 +10,9 @@ export interface PortalMember {
   isActive?: boolean;
   lastLoginAt?: string | null;
   createdAt?: string | null;
+  approvalStatus?: PortalApprovalStatus;
+  approvalRequestedAt?: string | null;
+  authMethod?: string | null;
 }
 
 export interface PortalTeamSummary {
@@ -52,12 +55,20 @@ export interface PortalEmailChannel {
   hasSignatureLogo?: boolean;
 }
 
+export type PortalSsoApprovalMode =
+  | 'admin_approval'
+  | 'pre_provisioned_only'
+  | 'auto_domain';
+
+export type PortalApprovalStatus = 'active' | 'pending_approval' | 'rejected';
+
 export interface PortalEmailOrgSettings {
   id: string;
   name: string;
   domain?: string | null;
   m365TenantId?: string | null;
   ssoEnabled?: boolean;
+  ssoApprovalMode?: PortalSsoApprovalMode;
 }
 
 /** @deprecated Portal ticket paths must never call /api/db — kept only as a hard guard. */
@@ -696,15 +707,38 @@ export const clientPortalApi = {
   async updateEmailSso(payload: {
     m365TenantId?: string | null;
     ssoEnabled?: boolean;
+    ssoApprovalMode?: PortalSsoApprovalMode;
   }): Promise<PortalEmailOrgSettings | null> {
     const res = await axios.put(
       '/api/portal/email-channel/sso',
       {
         m365TenantId: payload.m365TenantId,
         ssoEnabled: payload.ssoEnabled,
+        ssoApprovalMode: payload.ssoApprovalMode,
       },
       { withCredentials: true },
     );
     return res.data?.organization || null;
+  },
+
+  async approveTeamMember(
+    userId: string,
+    role: PortalTeamRole,
+  ): Promise<PortalMember> {
+    const res = await axios.post(
+      `/api/portal/team/${encodeURIComponent(userId)}/approve`,
+      { role },
+      { withCredentials: true },
+    );
+    return res.data?.member;
+  },
+
+  async rejectTeamMember(userId: string): Promise<PortalMember> {
+    const res = await axios.post(
+      `/api/portal/team/${encodeURIComponent(userId)}/reject`,
+      {},
+      { withCredentials: true },
+    );
+    return res.data?.member;
   },
 };

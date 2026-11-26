@@ -52,6 +52,9 @@ export default function ClientEmailIntegrationPage() {
   const [org, setOrg] = useState<PortalEmailOrgSettings | null>(null);
   const [m365TenantId, setM365TenantId] = useState('');
   const [ssoEnabled, setSsoEnabled] = useState(false);
+  const [ssoApprovalMode, setSsoApprovalMode] = useState<
+    'admin_approval' | 'pre_provisioned_only' | 'auto_domain'
+  >('admin_approval');
   const [branding, setBranding] = useState<{
     name: string;
     logo_url: string | null;
@@ -80,6 +83,7 @@ export default function ClientEmailIntegrationPage() {
       setOrg(data.organization);
       setM365TenantId(data.organization?.m365TenantId || '');
       setSsoEnabled(Boolean(data.organization?.ssoEnabled));
+      setSsoApprovalMode(data.organization?.ssoApprovalMode || 'admin_approval');
       if (ch) {
         setSignature({
           signature_enabled: ch.signature_enabled !== false,
@@ -198,10 +202,12 @@ export default function ClientEmailIntegrationPage() {
       const updated = await clientPortalApi.updateEmailSso({
         m365TenantId: m365TenantId.trim() || null,
         ssoEnabled,
+        ssoApprovalMode,
       });
       setOrg(updated);
       setM365TenantId(updated?.m365TenantId || '');
       setSsoEnabled(Boolean(updated?.ssoEnabled));
+      setSsoApprovalMode(updated?.ssoApprovalMode || 'admin_approval');
       toast.success('SSO-Einstellungen gespeichert.');
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'SSO konnte nicht gespeichert werden.');
@@ -459,6 +465,53 @@ export default function ClientEmailIntegrationPage() {
             <p className="text-xs text-slate-500">Nur für diesen verknüpften Tenant zulassen.</p>
           </div>
           <Switch checked={ssoEnabled} onCheckedChange={setSsoEnabled} />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="sso-approval-mode">Zugriffsmodus für neue M365-Benutzer</Label>
+          <div className="space-y-2">
+            {(
+              [
+                {
+                  id: 'admin_approval' as const,
+                  title: 'Admin-Freigabe erforderlich (Empfohlen)',
+                  desc: 'Neue M365-Benutzer erscheinen unter Mitarbeiter & Rollen als Anfrage, bis ein Admin Rolle und Zugang freigibt.',
+                },
+                {
+                  id: 'pre_provisioned_only' as const,
+                  title: 'Nur vorab angelegte Benutzer',
+                  desc: 'Nur Personen, die bereits in Mitarbeiter & Rollen angelegt sind, können sich per M365 anmelden.',
+                },
+                {
+                  id: 'auto_domain' as const,
+                  title: 'Automatisch für verknüpften Tenant',
+                  desc: 'Legacy: Benutzer aus dem verknüpften Tenant werden automatisch als Benutzer freigeschaltet.',
+                },
+              ] as const
+            ).map((opt) => (
+              <label
+                key={opt.id}
+                className={`flex gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                  ssoApprovalMode === opt.id
+                    ? 'border-emerald-300 bg-emerald-50/60'
+                    : 'border-slate-200 hover:border-slate-300 bg-white'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="sso-approval-mode"
+                  id={opt.id === 'admin_approval' ? 'sso-approval-mode' : undefined}
+                  className="mt-1"
+                  checked={ssoApprovalMode === opt.id}
+                  onChange={() => setSsoApprovalMode(opt.id)}
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-slate-900">{opt.title}</span>
+                  <span className="block text-xs text-slate-500 mt-0.5 leading-relaxed">{opt.desc}</span>
+                </span>
+              </label>
+            ))}
+          </div>
         </div>
 
         <Button type="button" variant="outline" onClick={() => void handleSaveSso()} disabled={savingSso}>

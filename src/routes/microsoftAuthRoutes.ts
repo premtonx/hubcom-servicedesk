@@ -1,6 +1,9 @@
 /**
  * Microsoft 365 / Entra ID Login (OIDC Authorization Code + PKCE).
  * Mount: /api/auth
+ *
+ * Portal orgs with linked m365_tenant_id go through Admin-Freigabe gating
+ * (sso_approval_mode) — pending/rejected users never receive a session cookie.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -27,6 +30,14 @@ import {
 import { issueSessionToken } from '../lib/session-token.js';
 import { setSessionCookie } from '../lib/session-cookie.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
+import { getOrganizationByM365TenantId } from '../lib/client-portal/organizations.js';
+import { isClientPortalRole } from '../lib/client-portal/roles.js';
+import { ensureClientRoleDoc } from '../lib/client-portal/team-service.js';
+import {
+  decidePortalSsoProvisioning,
+  portalSsoStatusRedirectPath,
+  type PortalSsoStatusQuery,
+} from '../lib/client-portal/sso-approval.js';
 
 const router = Router();
 
@@ -54,7 +65,6 @@ router.get('/microsoft/status', async (_req: Request, res: Response) => {
     res.json({
       configured: publicCfg.configured,
       enabled: publicCfg.enabled,
-      // Keine Secrets
     });
   } catch (err: any) {
     res.status(500).json({ error: safeErrorMessage(err, 'Status nicht verfügbar') });
@@ -105,6 +115,8 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
   const origin = resolveAppOrigin(req);
   const fail = (msg: string) =>
     res.redirect(302, `${origin}/login?error=${encodeURIComponent(msg)}`);
+  const ssoFail = (code: PortalSsoStatusQuery) =>
+    res.redirect(302, portalSsoStatusRedirectPath(code, origin));
 
   try {
     const code = String(req.query.code || '');
@@ -145,14 +157,15 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
       return fail(tokenRes.error_description || tokenRes.error || 'Token-Austausch fehlgeschlagen.');
     }
 
-    const claims = tokenRes.id_token
-      ? decodeIdToken(tokenRes.id_token)
-      : {};
+    const claims = tokenRes.id_token ? decodeIdToken(tokenRes.id_token) : {};
     if (claims.nonce && oidc.nonce && claims.nonce !== oidc.nonce) {
       return fail('Sicherheitsprüfung fehlgeschlagen (Nonce).');
     }
 
     let identity = claimsToIdentity(claims);
+    const entraTenantId = String(claims.tid || '')
+      .trim()
+      .toLowerCase();
 
     // Fallback: Graph /me wenn id_token dünn ist
     if ((!identity.email || !identity.entraObjectId) && tokenRes.access_token) {
@@ -186,6 +199,15 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
       return fail('Ihre E-Mail-Domain ist für die Anmeldung nicht freigeschaltet.');
     }
 
+    // Map Entra tid → Kunden-Portal organization (strict unknown-tenant reject for portal path).
+    const mappedOrg = entraTenantId
+      ? await getOrganizationByM365TenantId(entraTenantId)
+      : null;
+    const hubcomTenant = String(settings.tenantId || '')
+      .trim()
+      .toLowerCase();
+    const isHubcomTenant = Boolean(hubcomTenant && hubcomTenant === entraTenantId);
+
     // Benutzer suchen: OID → E-Mail → UPN
     let userDoc: any = null;
     if (identity.entraObjectId) {
@@ -208,7 +230,78 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
 
     const now = new Date().toISOString();
 
-    if (userDoc) {
+    // ── Portal org SSO path (linked tenant) ──────────────────────────────
+    if (mappedOrg) {
+      const decision = decidePortalSsoProvisioning({
+        org: mappedOrg,
+        existingUser: userDoc
+          ? {
+              id: userDoc.id,
+              role: userDoc.role,
+              organizationId: userDoc.organizationId,
+              organization_id: userDoc.organization_id,
+              approval_status: userDoc.approval_status,
+              isDeactivated: userDoc.isDeactivated,
+            }
+          : null,
+        tenantLinked: true,
+      });
+
+      if (decision.action === 'reject') {
+        return ssoFail(decision.code);
+      }
+
+      if (decision.action === 'jit_pending' || decision.action === 'jit_active') {
+        const roleId = await ensureClientRoleDoc(decision.role);
+        const created = await addDocDirect('users', {
+          name: identity.name,
+          email: identity.email,
+          upn: identity.upn,
+          entraObjectId: identity.entraObjectId || null,
+          authMethod: 'microsoft365',
+          passwordHash: null,
+          kuerzel: deriveKuerzel(identity.name),
+          role: decision.role,
+          roleId,
+          is_admin: false,
+          company: mappedOrg.name,
+          organizationId: decision.organizationId,
+          organization_id: decision.organizationId,
+          approval_status: decision.approval_status,
+          approvalRequestedAt: now,
+          isDeactivated: false,
+          can_create_tickets: true,
+          can_view_knowledgebase: true,
+          lastActiveAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
+        if (decision.action === 'jit_pending') {
+          // No session cookie — admin must approve first.
+          return ssoFail('pending');
+        }
+        userDoc = { id: created.id, ...created.data, role: decision.role };
+      } else if (decision.action === 'login') {
+        await updateDocDirect('users', userDoc.id, {
+          entraObjectId: identity.entraObjectId || userDoc.entraObjectId || null,
+          upn: identity.upn || userDoc.upn || null,
+          authMethod: 'microsoft365',
+          name: userDoc.name || identity.name,
+          organizationId: userDoc.organizationId || mappedOrg.id,
+          organization_id: userDoc.organization_id || mappedOrg.id,
+          lastActiveAt: now,
+          updatedAt: now,
+        });
+        userDoc = await getDocDirect('users', userDoc.id);
+        const token = issueSessionToken({ id: userDoc.id, email: userDoc.email });
+        setSessionCookie(res, token);
+        return res.redirect(302, `${origin}${decision.redirect}`);
+      }
+    } else if (userDoc && isClientPortalRole(userDoc.role) && !isHubcomTenant) {
+      // Client portal account from an unlinked/unknown tenant — reject.
+      return ssoFail('unknown_tenant');
+    } else if (userDoc) {
+      // Hubcom staff / legacy path
       if (userDoc.isDeactivated) {
         return fail('Ihr Konto wurde deaktiviert. Bitte wenden Sie sich an den Administrator.');
       }
@@ -221,7 +314,7 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
         updatedAt: now,
       });
       userDoc = await getDocDirect('users', userDoc.id);
-    } else if (settings.jitProvisioning) {
+    } else if (settings.jitProvisioning && isHubcomTenant) {
       const role = normalizeRole(settings.defaultRole);
       const created = await addDocDirect('users', {
         name: identity.name,
@@ -234,6 +327,7 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
         role,
         is_admin: role === 'SYSTEM_ADMIN',
         company: '',
+        approval_status: 'active',
         isDeactivated: false,
         can_create_tickets: true,
         can_view_knowledgebase: true,
@@ -242,17 +336,33 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
         updatedAt: now,
       });
       userDoc = { id: created.id, ...created.data };
+    } else if (!userDoc && entraTenantId && !isHubcomTenant) {
+      return ssoFail('unknown_tenant');
     } else {
       return fail(
         'Kein Benutzerkonto gefunden. Bitte lassen Sie sich von einem Administrator freischalten.',
       );
     }
 
+    if (!userDoc) {
+      return fail('Anmeldung fehlgeschlagen.');
+    }
+
+    // Final approval gate (defense in depth for portal roles).
+    if (isClientPortalRole(userDoc.role)) {
+      const { isPortalLoginAllowed } = await import('../lib/client-portal/sso-approval.js');
+      const gate = isPortalLoginAllowed(userDoc);
+      if (gate.ok === false) {
+        return ssoFail(gate.reason);
+      }
+    }
+
     const token = issueSessionToken({ id: userDoc.id, email: userDoc.email });
     setSessionCookie(res, token);
 
     const role = normalizeRole(userDoc.role);
-    const dest = role === 'customer' ? '/portal' : '/tickets';
+    const dest =
+      isClientPortalRole(role) || role === 'customer' ? '/portal/dashboard' : '/tickets';
     return res.redirect(302, `${origin}${dest}`);
   } catch (err: any) {
     safeLog('error', '[auth/microsoft] callback failed', err?.message || err);
