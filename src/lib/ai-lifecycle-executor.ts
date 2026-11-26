@@ -154,7 +154,7 @@ export function createProductionModelExecutor(
       } = await import('./ai/org-ai-settings.js');
       const org = await getOrganization(organizationId);
       const orgAi = normalizeOrgAiSettings(org);
-      const routing = resolveOrgAiRouting(orgAi);
+      const routing = resolveOrgAiRouting(orgAi, feature);
 
       if (routing.mode === 'disabled') {
         throw new Error(routing.error);

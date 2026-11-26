@@ -346,7 +346,7 @@ async function buildOrgLocalCandidates(
     const org = await getOrganization(organizationId);
     if (!org) return null;
     const orgAi = normalizeOrgAiSettings(org);
-    const routing = resolveOrgAiRouting(orgAi);
+    const routing = resolveOrgAiRouting(orgAi, 'rag_embedding');
     if (routing.mode === 'disabled') {
       return { candidates: [], strictLocalOnly: true, disabled: true };
     }
@@ -361,21 +361,39 @@ async function buildOrgLocalCandidates(
     const apiKey = decryptOrgAiApiKey(orgAi);
     const model = routing.embeddingModel;
     const endpoint = routing.embeddingEndpoint;
+    // Prefer OpenAI-compat for openai_compatible servers; Ollama native otherwise.
+    if (routing.serverType === 'openai_compatible') {
+      return {
+        candidates: [
+          {
+            kind: 'openai_compat',
+            model,
+            label: `Mandanten-KI Embeddings (${organizationId.slice(0, 8)})`,
+            available: async () => true,
+            embed: async (texts) =>
+              embedWithOpenAICompat(texts, model, endpoint, apiKey || undefined),
+          },
+        ],
+        strictLocalOnly: routing.strictLocalOnly,
+        disabled: false,
+      };
+    }
+    // Ollama (default): try native /api/embeddings first, then OpenAI-compat.
     const candidates: ProviderCandidate[] = [
-      {
-        kind: 'openai_compat',
-        model,
-        label: `Mandanten-KI embeddings (${organizationId.slice(0, 8)})`,
-        available: async () => true,
-        embed: async (texts) =>
-          embedWithOpenAICompat(texts, model, endpoint, apiKey || undefined),
-      },
       {
         kind: 'ollama',
         model,
         label: `Mandanten-Ollama (${organizationId.slice(0, 8)})`,
         available: async () => true,
         embed: async (texts) => embedWithOllama(texts, model, endpoint),
+      },
+      {
+        kind: 'openai_compat',
+        model,
+        label: `Mandanten-KI Embeddings (${organizationId.slice(0, 8)})`,
+        available: async () => true,
+        embed: async (texts) =>
+          embedWithOpenAICompat(texts, model, endpoint, apiKey || undefined),
       },
     ];
     return {

@@ -230,6 +230,15 @@ router.post(
       if (!organizationId) {
         return res.status(403).json({ error: 'Organization missing.' });
       }
+      const orgForAi = await getOrganization(organizationId);
+      const {
+        isOrgAiEnabled,
+        normalizeOrgAiSettings,
+        ORG_AI_DISABLED_ERROR,
+      } = await import('../lib/ai/org-ai-settings.js');
+      if (!isOrgAiEnabled(normalizeOrgAiSettings(orgForAi))) {
+        return res.status(403).json({ error: ORG_AI_DISABLED_ERROR });
+      }
       const parsed = aiGenerateSchema.safeParse(req.body || {});
       if (!parsed.success) {
         return res.status(400).json({ error: 'subject required', details: parsed.error.flatten() });
@@ -303,6 +312,14 @@ router.post(
       const ragTenantId = resolveTenantIdForOrganization(organizationId);
       const limit = parsed.data.limit ?? 5;
       const org = await getOrganization(organizationId);
+      const {
+        isOrgAiEnabled,
+        normalizeOrgAiSettings,
+        ORG_AI_DISABLED_ERROR,
+      } = await import('../lib/ai/org-ai-settings.js');
+      if (!isOrgAiEnabled(normalizeOrgAiSettings(org))) {
+        return res.status(403).json({ error: ORG_AI_DISABLED_ERROR });
+      }
       const { resolveIncludeSharedKbInRag } = await import('../lib/ai/rag-org-scope.js');
       const includeSharedKb = resolveIncludeSharedKbInRag(org);
 
@@ -386,7 +403,7 @@ USER QUESTION: ${parsed.data.query}
 DOCUMENTATION:
 ${contextBlock}`;
         const result = await executeAiFeatureRequest({
-          feature: 'ticket_summarization',
+          feature: 'kb_assistant',
           prompt,
           customerId: organizationId,
           metadata: {

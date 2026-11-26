@@ -63,6 +63,21 @@ async function loadOrgBranding(organizationId: string | null | undefined) {
 router.get('/me', requireClientPortalRole(), async (req: Request, res: Response): Promise<any> => {
   const organizationId = resolveOrganizationIdFromUser(req.user!);
   const organization = await loadOrgBranding(organizationId);
+  let aiMode: 'global_default' | 'org_local_ai' | 'disabled' = 'global_default';
+  let aiEnabled = true;
+  if (organizationId) {
+    try {
+      const org = await getOrganization(organizationId);
+      const { isOrgAiEnabled, normalizeOrgAiSettings } = await import(
+        '../lib/ai/org-ai-settings.js'
+      );
+      const ai = normalizeOrgAiSettings(org);
+      aiMode = ai.ai_mode;
+      aiEnabled = isOrgAiEnabled(ai);
+    } catch {
+      /* optional */
+    }
+  }
   return res.json({
     user: {
       id: req.user!.id,
@@ -77,6 +92,8 @@ router.get('/me', requireClientPortalRole(), async (req: Request, res: Response)
       secureExchange: true,
       vault: true,
     },
+    aiMode,
+    aiEnabled,
   });
 });
 
@@ -738,11 +755,16 @@ router.put(
 
 const orgAiSettingsSchema = z.object({
   ai_mode: z.enum(['global_default', 'org_local_ai', 'disabled']).optional(),
+  local_server_type: z.enum(['ollama', 'openai_compatible']).optional().nullable(),
   local_llm_endpoint: z.string().max(500).optional().nullable(),
   local_llm_model: z.string().max(120).optional().nullable(),
   local_embedding_endpoint: z.string().max(500).optional().nullable(),
   local_embedding_model: z.string().max(120).optional().nullable(),
   local_ai_api_key: z.string().max(2000).optional().nullable(),
+  model_ticket_summary: z.string().max(120).optional().nullable(),
+  model_ticket_reply: z.string().max(120).optional().nullable(),
+  model_kb_assistant: z.string().max(120).optional().nullable(),
+  model_rag_embedding: z.string().max(120).optional().nullable(),
   strict_local_only: z.boolean().optional().nullable(),
   include_shared_kb_in_rag: z.boolean().optional().nullable(),
 });
@@ -765,8 +787,16 @@ router.get(
         normalizeOrgAiSettings,
         toPublicOrgAiSettings,
       } = await import('../lib/ai/org-ai-settings.js');
+      const { getOrganizationRagStatus } = await import('../lib/ai/org-rag-reindex.js');
+      let ragStatus = { indexedCount: 0, totalCount: 0, organizationId };
+      try {
+        ragStatus = await getOrganizationRagStatus(organizationId);
+      } catch {
+        /* RAG status optional */
+      }
       return res.json({
         settings: toPublicOrgAiSettings(normalizeOrgAiSettings(org)),
+        ragStatus,
         organization: { id: org.id, name: org.name },
       });
     } catch (err: any) {
@@ -787,14 +817,14 @@ router.put(
     const parsed = orgAiSettingsSchema.safeParse(req.body || {});
     if (!parsed.success) {
       return res.status(400).json({
-        error: 'Invalid ai-settings payload',
+        error: 'Ungültige KI-Einstellungen',
         details: parsed.error.flatten().fieldErrors,
       });
     }
     try {
       const organizationId = resolveOrganizationIdFromUser(req.user!);
       if (!organizationId) {
-        return res.status(403).json({ error: 'Organization missing.' });
+        return res.status(403).json({ error: 'Organisation fehlt.' });
       }
       const org = await updateOrganizationAiSettings(organizationId, parsed.data);
       if (!org) return res.status(404).json({ error: 'Organization not found.' });
@@ -830,6 +860,7 @@ router.post(
       if (!org) return res.status(404).json({ error: 'Organization not found.' });
       const {
         decryptOrgAiApiKey,
+        isLocalServerType,
         normalizeOrgAiSettings,
         resolveOrgLlmEndpoint,
       } = await import('../lib/ai/org-ai-settings.js');
@@ -837,10 +868,14 @@ router.post(
       const settings = normalizeOrgAiSettings(org);
       const endpointOverride = String((req.body as any)?.endpoint || '').trim();
       const endpoint = endpointOverride || resolveOrgLlmEndpoint(settings);
+      const serverTypeRaw = (req.body as any)?.serverType ?? (req.body as any)?.local_server_type;
       const result = await testOrgLocalAiConnection({
         endpoint,
         apiKey: decryptOrgAiApiKey(settings),
         model: settings.local_llm_model,
+        serverType: isLocalServerType(serverTypeRaw)
+          ? serverTypeRaw
+          : settings.local_server_type,
       });
       return res.json({
         ...result,
@@ -851,6 +886,56 @@ router.post(
       safeLog('error', '[portal] ai-settings/test failed', err?.message || err);
       return res.status(500).json({
         error: safeErrorMessage(err, 'Verbindungstest fehlgeschlagen'),
+      });
+    }
+  },
+);
+
+/**
+ * POST /api/portal/ai-settings/models — discover models on local server (Ollama / OpenAI-compat).
+ */
+router.post(
+  '/ai-settings/models',
+  requireClientPortalRole(['CLIENT_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organisation fehlt.' });
+      }
+      const org = await getOrganization(organizationId);
+      if (!org) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+      const {
+        decryptOrgAiApiKey,
+        isLocalServerType,
+        normalizeOrgAiSettings,
+        resolveOrgLlmEndpoint,
+      } = await import('../lib/ai/org-ai-settings.js');
+      const { discoverOrgLocalModels } = await import('../lib/ai/org-rag-reindex.js');
+      const settings = normalizeOrgAiSettings(org);
+      const endpointOverride = String((req.body as any)?.endpoint || '').trim();
+      const endpoint = endpointOverride || resolveOrgLlmEndpoint(settings);
+      const serverTypeRaw = (req.body as any)?.serverType ?? (req.body as any)?.local_server_type;
+      const result = await discoverOrgLocalModels({
+        endpoint,
+        apiKey: decryptOrgAiApiKey(settings),
+        serverType: isLocalServerType(serverTypeRaw)
+          ? serverTypeRaw
+          : settings.local_server_type,
+      });
+      return res.json({
+        ...result,
+        success: result.ok,
+        organizationId,
+        // Never echo secrets.
+      });
+    } catch (err: any) {
+      safeLog('error', '[portal] ai-settings/models failed', err?.message || err);
+      return res.status(500).json({
+        error: safeErrorMessage(
+          err,
+          'Lokaler KI-Server ist unter dieser Adresse nicht erreichbar.',
+        ),
       });
     }
   },
@@ -878,7 +963,7 @@ router.post(
     } catch (err: any) {
       safeLog('error', '[portal] ai-settings/reindex failed', err?.message || err);
       return res.status(500).json({
-        error: safeErrorMessage(err, 'Reindex fehlgeschlagen'),
+        error: safeErrorMessage(err, 'Neuindexierung fehlgeschlagen'),
       });
     }
   },

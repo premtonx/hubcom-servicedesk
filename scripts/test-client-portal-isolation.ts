@@ -109,8 +109,12 @@ import {
   embeddingRowsOwnedByOrg,
   filterKbArticlesForOrgReindex,
   LOCAL_AI_UNREACHABLE_ERROR,
+  mapAiFeatureToOrgModelKind,
   normalizeOrgAiSettings,
+  parseOllamaTagsResponse,
+  parseOpenAiModelsResponse,
   resolveOrgAiRouting,
+  resolveOrgFeatureModel,
   toPublicOrgAiSettings,
 } from '../src/lib/ai/org-ai-settings.js';
 import {
@@ -2140,9 +2144,9 @@ function testPortalRagOrganizationIdIsolation(): void {
   );
 }
 
-/** Part 2 — Mandanten local AI (Ollama) + org-only reindex isolation. */
+/** Part 2+ — Mandanten local AI, per-feature models, discovery parsers, reindex isolation. */
 function testPortalOrgLocalAiSettingsIsolation(): void {
-  console.log('\n[12g] Mandanten-KI org_local_ai + strict_local_only + reindex isolation');
+  console.log('\n[12g] Mandanten-KI org_local_ai + per-feature models + discovery + reindex');
 
   const DPG = 'org-dpg-ai-0001';
   const OTHER = 'org-other-ai-0002';
@@ -2150,12 +2154,18 @@ function testPortalOrgLocalAiSettingsIsolation(): void {
   const defaults = defaultOrgAiSettings();
   assert(defaults.ai_mode === 'global_default', 'default ai_mode is global_default');
   assert(defaults.include_shared_kb_in_rag === false, 'include_shared_kb_in_rag defaults false');
+  assert(defaults.local_server_type === 'ollama', 'default server type ollama');
 
   const dpgLocal = applyOrgAiSettingsUpdate(defaults, {
     ai_mode: 'org_local_ai',
+    local_server_type: 'ollama',
     local_llm_endpoint: 'http://10.0.0.5:11434',
     local_llm_model: 'llama3',
     local_embedding_model: 'nomic-embed-text',
+    model_ticket_summary: 'llama3:summary',
+    model_ticket_reply: 'llama3:reply',
+    model_kb_assistant: 'llama3:kb',
+    model_rag_embedding: 'nomic-embed-text:dpg',
     strict_local_only: true,
     include_shared_kb_in_rag: false,
     local_ai_api_key: 'dpg-secret-key',
@@ -2172,23 +2182,96 @@ function testPortalOrgLocalAiSettingsIsolation(): void {
   assert(
     publicDto.local_ai_api_key_set === true &&
       !(publicDto as any).local_ai_api_key &&
-      !(publicDto as any).local_ai_api_key_enc,
-    'public DTO never exposes raw or encrypted secrets',
+      !(publicDto as any).local_ai_api_key_enc &&
+      publicDto.model_ticket_summary === 'llama3:summary' &&
+      publicDto.model_rag_embedding === 'nomic-embed-text:dpg',
+    'public DTO never exposes secrets and surfaces per-feature models',
   );
 
-  const routing = resolveOrgAiRouting(dpgLocal);
+  // Per-feature routing — each portal AI area uses its configured model.
   assert(
-    routing.mode === 'org_local_ai' &&
-      routing.endpoint === 'http://10.0.0.5:11434' &&
-      routing.strictLocalOnly === true &&
-      routing.allowCloudFallback === false,
-    'DPG routing is exclusive local — no cloud fallback',
+    mapAiFeatureToOrgModelKind('ticket_summarization') === 'ticket_summary' &&
+      mapAiFeatureToOrgModelKind('smart_reply') === 'ticket_reply' &&
+      mapAiFeatureToOrgModelKind('kb_assistant') === 'kb_assistant' &&
+      mapAiFeatureToOrgModelKind('kb_generation') === 'kb_assistant' &&
+      mapAiFeatureToOrgModelKind('rag_embedding') === 'rag_embedding',
+    'portal AI features map to per-feature model buckets',
+  );
+  assert(
+    resolveOrgFeatureModel(dpgLocal, 'ticket_summary') === 'llama3:summary' &&
+      resolveOrgFeatureModel(dpgLocal, 'ticket_reply') === 'llama3:reply' &&
+      resolveOrgFeatureModel(dpgLocal, 'kb_assistant') === 'llama3:kb' &&
+      resolveOrgFeatureModel(dpgLocal, 'rag_embedding') === 'nomic-embed-text:dpg',
+    'each feature resolves to its configured org model',
+  );
+  const fallbackOnly = applyOrgAiSettingsUpdate(defaults, {
+    ai_mode: 'org_local_ai',
+    local_llm_model: 'fallback-chat',
+    model_rag_embedding: '',
+    local_embedding_model: 'fallback-emb',
+  });
+  assert(
+    resolveOrgFeatureModel(fallbackOnly, 'ticket_summary') === 'fallback-chat' &&
+      resolveOrgFeatureModel(fallbackOnly, 'rag_embedding') === 'fallback-emb',
+    'empty per-feature override falls back to local_llm_model / embedding default',
   );
 
-  // Simulate local failure decision: strict path must surface Mandanten error (never cloud).
+  const routingSummary = resolveOrgAiRouting(dpgLocal, 'ticket_summarization');
   assert(
-    LOCAL_AI_UNREACHABLE_ERROR === 'Lokale Mandanten-KI nicht erreichbar',
-    'strict failure message is Lokale Mandanten-KI nicht erreichbar',
+    routingSummary.mode === 'org_local_ai' &&
+      routingSummary.endpoint === 'http://10.0.0.5:11434' &&
+      routingSummary.model === 'llama3:summary' &&
+      routingSummary.strictLocalOnly === true &&
+      routingSummary.allowCloudFallback === false,
+    'ticket_summary routes to local server with configured model — no cloud fallback',
+  );
+  const routingReply = resolveOrgAiRouting(dpgLocal, 'smart_reply');
+  assert(
+    routingReply.mode === 'org_local_ai' &&
+      routingReply.model === 'llama3:reply' &&
+      routingReply.allowCloudFallback === false,
+    'ticket_reply never falls back to cloud when strict_local_only',
+  );
+  const routingKb = resolveOrgAiRouting(dpgLocal, 'kb_assistant');
+  assert(
+    routingKb.mode === 'org_local_ai' && routingKb.model === 'llama3:kb',
+    'kb_assistant uses model_kb_assistant',
+  );
+  const routingEmb = resolveOrgAiRouting(dpgLocal, 'rag_embedding');
+  assert(
+    routingEmb.mode === 'org_local_ai' &&
+      routingEmb.embeddingModel === 'nomic-embed-text:dpg' &&
+      routingEmb.allowCloudFallback === false,
+    'rag_embedding uses model_rag_embedding with zero cloud fallback',
+  );
+
+  // Live model discovery parsers (Ollama /api/tags + OpenAI /v1/models) — no secrets.
+  const ollamaModels = parseOllamaTagsResponse({
+    models: [{ name: 'llama3:latest' }, { name: 'nomic-embed-text' }, { name: 'llama3:latest' }],
+  });
+  assert(
+    ollamaModels.length === 2 &&
+      ollamaModels.includes('llama3:latest') &&
+      ollamaModels.includes('nomic-embed-text'),
+    'parseOllamaTagsResponse dedupes Ollama /api/tags names',
+  );
+  const openAiModels = parseOpenAiModelsResponse({
+    data: [{ id: 'gpt-oss' }, { id: 'embed-local' }, { name: 'ignored-if-id' }],
+  });
+  assert(
+    openAiModels.includes('gpt-oss') && openAiModels.includes('embed-local'),
+    'parseOpenAiModelsResponse reads OpenAI-compatible /v1/models ids',
+  );
+  assert(
+    parseOllamaTagsResponse(null).length === 0 &&
+      parseOpenAiModelsResponse({ data: 'bad' }).length === 0,
+    'model parsers tolerate malformed payloads',
+  );
+
+  assert(
+    LOCAL_AI_UNREACHABLE_ERROR ===
+      'Lokaler KI-Server ist unter dieser Adresse nicht erreichbar.',
+    'strict failure message is German local-server unreachable',
   );
 
   const globalOrg = normalizeOrgAiSettings({ settings: { ai_mode: 'global_default' } });
@@ -2250,39 +2333,57 @@ function testPortalOrgLocalAiSettingsIsolation(): void {
     path.join(process.cwd(), 'src/services/clientPortalApi.ts'),
     'utf8',
   );
+  const emailPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientEmailIntegrationPage.tsx'),
+    'utf8',
+  );
 
   assert(
     portalRoutesSrc.includes("'/ai-settings'") &&
       portalRoutesSrc.includes("'/ai-settings/test'") &&
+      portalRoutesSrc.includes("'/ai-settings/models'") &&
       portalRoutesSrc.includes("'/ai-settings/reindex'") &&
+      portalRoutesSrc.includes('discoverOrgLocalModels') &&
       portalRoutesSrc.includes('CLIENT_ADMIN') &&
       !portalRoutesSrc.includes("'/api/db") &&
       !/ai-settings[\s\S]{0,800}'\/api\/db/.test(portalRoutesSrc),
-    'portal exposes GET/PUT/test/reindex ai-settings for CLIENT_ADMIN (no /api/db)',
+    'portal exposes GET/PUT/test/models/reindex ai-settings for CLIENT_ADMIN (no /api/db)',
   );
   assert(
     adminOrgSrc.includes('ai-settings') &&
+      adminOrgSrc.includes('ai-settings/models') &&
       adminOrgSrc.includes('reindexOrganizationKbRag') &&
       adminOrgSrc.includes('updateOrganizationAiSettings'),
-    'Admin-Hub org routes expose Mandanten-KI settings + reindex',
+    'Admin-Hub org routes expose Mandanten-KI settings + models + reindex',
   );
   assert(
     executorSrc.includes('org_local_ai') &&
       executorSrc.includes('LOCAL_AI_UNREACHABLE_ERROR') &&
+      executorSrc.includes('resolveOrgAiRouting') &&
       executorSrc.includes('organizationId') &&
       embeddingsSrc.includes('organizationId') &&
+      embeddingsSrc.includes('rag_embedding') &&
       embeddingsSrc.includes('LOCAL_AI_UNREACHABLE_ERROR'),
-    'lifecycle + embeddings route org_local_ai with strict no-cloud error',
+    'lifecycle + embeddings route org_local_ai per-feature with strict no-cloud error',
   );
   assert(
-    (cardSrc.includes('Mandanten-KI & RAG') || cardSrc.includes('Mandanten-KI &amp; RAG')) &&
-      cardSrc.includes('Strict Local Only') &&
+    (cardSrc.includes('KI & Lokaler Server') ||
+      cardSrc.includes('KI &amp; Lokaler Server')) &&
+      cardSrc.includes('Kein Cloud-Fallback (100 % lokal)') &&
+      cardSrc.includes('Server-Adresse (URL)') &&
+      cardSrc.includes('RAG-Modell (Text-Vektoren / Suche)') &&
       cardSrc.includes('Verbindung testen') &&
-      cardSrc.includes('neu indexieren') &&
+      cardSrc.includes('Wissensdatenbank neu indexieren') &&
+      cardSrc.includes('Eigener lokaler KI-Server') &&
+      cardSrc.includes('Standard (Hubcom)') &&
+      !cardSrc.includes('Strict Local Only') &&
+      !cardSrc.includes('AI OFFLINE') &&
       portalApiSrc.includes('/api/portal/ai-settings') &&
+      portalApiSrc.includes('discoverAiModels') &&
       portalApiSrc.includes('getAiSettings') &&
-      portalApiSrc.includes('reindexAiSettings'),
-    'UI card + portal API client wire Mandanten-KI',
+      portalApiSrc.includes('reindexAiSettings') &&
+      !emailPageSrc.includes('MandantenKiRagCard'),
+    'German Mandanten-KI UI + models API; no Email-page duplicate card',
   );
 }
 

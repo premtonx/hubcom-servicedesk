@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import axios from 'axios';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { TicketDetailView } from './TicketDetailView';
@@ -116,32 +117,61 @@ export function PortalTicketStaffDetailHost({
   const { session, isOrgWide, isClientAdmin } = useClientPortalSession();
   const isClientUser = String(session?.role || '') === 'CLIENT_USER';
   const adapter = usePortalTicketDetailAdapter({ loadMembers: isOrgWide });
+  const [aiEnabled, setAiEnabled] = useState(true);
 
-  const capabilities =
-    capabilitiesProp ||
-    (isClientUser
-      ? {
-          ...PORTAL_TICKET_DETAIL_CAPABILITIES_CLIENT_USER,
-          emailComposer: true,
-          staffContextPane: true,
-          portalPropertiesPane: false,
-          portalPublicReply: false,
+  useEffect(() => {
+    let active = true;
+    void axios
+      .get('/api/portal/me', { withCredentials: true })
+      .then((res) => {
+        if (!active) return;
+        if (typeof res.data?.aiEnabled === 'boolean') {
+          setAiEnabled(res.data.aiEnabled);
         }
-      : {
-          ...PORTAL_TICKET_DETAIL_CAPABILITIES,
-          emailComposer: true,
-          staffContextPane: true,
-          portalPropertiesPane: false,
-          portalPublicReply: false,
-          canManageParticipants: isOrgWide,
-          canMarkClosed: isClientAdmin || isOrgWide,
-          canEditAssignee: isOrgWide,
-          canEditProperties: isOrgWide,
-          canUpdatePriority: isOrgWide,
-          internalNotes: isOrgWide,
-          aiSync: isOrgWide,
-          convertToKb: isOrgWide,
-        });
+      })
+      .catch(() => {
+        /* keep AI until proven disabled */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const capabilities = useMemo((): TicketDetailWorkbenchCapabilities => {
+    const base =
+      capabilitiesProp ||
+      (isClientUser
+        ? {
+            ...PORTAL_TICKET_DETAIL_CAPABILITIES_CLIENT_USER,
+            emailComposer: true,
+            staffContextPane: true,
+            portalPropertiesPane: false,
+            portalPublicReply: false,
+          }
+        : {
+            ...PORTAL_TICKET_DETAIL_CAPABILITIES,
+            emailComposer: true,
+            staffContextPane: true,
+            portalPropertiesPane: false,
+            portalPublicReply: false,
+            canManageParticipants: isOrgWide,
+            canMarkClosed: isClientAdmin || isOrgWide,
+            canEditAssignee: isOrgWide,
+            canEditProperties: isOrgWide,
+            canUpdatePriority: isOrgWide,
+            internalNotes: isOrgWide,
+            aiSync: isOrgWide,
+            convertToKb: isOrgWide,
+          });
+    if (aiEnabled) return base;
+    return { ...base, aiSync: false };
+  }, [
+    aiEnabled,
+    capabilitiesProp,
+    isClientAdmin,
+    isClientUser,
+    isOrgWide,
+  ]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

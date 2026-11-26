@@ -425,12 +425,20 @@ export async function runPortalTicketAiSync(params: {
   // Strict per-org RAG grounding — never search another customer's vectors.
   const organizationId = String(params.session.organizationId || '').trim();
   if (organizationId) {
+    const { getOrganization } = await import('./organizations.js');
+    const {
+      isOrgAiEnabled,
+      normalizeOrgAiSettings,
+      ORG_AI_DISABLED_ERROR,
+    } = await import('../ai/org-ai-settings.js');
+    const org = await getOrganization(organizationId);
+    if (!isOrgAiEnabled(normalizeOrgAiSettings(org))) {
+      throw new Error(ORG_AI_DISABLED_ERROR);
+    }
     try {
       const { resolveTenantIdForOrganization } = await import('./portal-kb-workspace.js');
-      const { getOrganization } = await import('./organizations.js');
       const { resolveIncludeSharedKbInRag } = await import('../ai/rag-org-scope.js');
       const { hybridSearchKnowledge } = await import('../ai/ki-orchestrator.js');
-      const org = await getOrganization(organizationId);
       const includeSharedKb = resolveIncludeSharedKbInRag(org);
       const ragTenantId = resolveTenantIdForOrganization(organizationId);
       const hits = await hybridSearchKnowledge({
