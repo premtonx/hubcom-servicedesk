@@ -128,7 +128,11 @@ const STEPS = [
   { id: 'kundendaten', label: 'Kundendaten', sectionId: 'section-kundendaten' },
   { id: 'geraete', label: 'Gerätedetails', sectionId: 'section-geraete' },
   { id: 'rueckgabe', label: 'Rückgabedetails', sectionId: 'section-rueckgabe' },
-  { id: 'abschluss', label: 'Abschluss', sectionId: 'section-abschluss' },
+  {
+    id: 'erinnerung',
+    label: 'Erinnerungen & Abschluss',
+    sectionId: 'section-erinnerung',
+  },
 ] as const;
 
 function addDaysIso(dateIso: string, days: number): string {
@@ -809,14 +813,18 @@ export function ReturnEditorPage({
     const rueckgabe = Boolean(
       form.shipping_method.trim() || form.delivery_date || form.returned,
     );
-    // Abschluss stays incomplete until prior steps are filled — default status
-    // alone must not paint a green check on /returns/new.
-    const abschluss =
+    // Step 4 → Erinnerungsmanagement: complete from reminder/return state once
+    // prior cards are filled (auto-ON alone must not green-check an empty form).
+    const hasReminderOverrides =
+      Boolean(form.mail1_scheduled_date) ||
+      Object.values(form.stage_scheduled_overrides || {}).some((v) => Boolean(v)) ||
+      Object.keys(form.stage_recipients_override || {}).length > 0;
+    const erinnerung =
       kundendaten &&
       geraete &&
       rueckgabe &&
-      Boolean(form.assignee_user_id || form.assignee_name.trim());
-    return [kundendaten, geraete, rueckgabe, abschluss] as const;
+      (form.returned || form.auto_reminder_enabled || hasReminderOverrides);
+    return [kundendaten, geraete, rueckgabe, erinnerung] as const;
   }, [customerName, customerEmail, form]);
 
   useEffect(() => {

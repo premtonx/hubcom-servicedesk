@@ -845,6 +845,27 @@ export function ReturnsWorkbench({
     return Array.from(map.entries()).map(([value, label]) => ({ value, label }));
   }, [items]);
 
+  /**
+   * KPI cards + quick-filter pills must clear KPI-induced Erinnerungsstufe /
+   * Überfälligkeit filters so switching away from 4.+ never sticks on empty.
+   */
+  const applyViewFilter = useCallback(
+    (nextView: (typeof VIEWS)[number]['id'], opts?: { clearOverdue?: boolean }) => {
+      setView(nextView);
+      setMailStatus('all');
+      if (opts?.clearOverdue !== false) setOverdueBucket('all');
+      setPage(1);
+    },
+    [],
+  );
+
+  const applyEscalatedFilter = useCallback(() => {
+    setView('open');
+    setMailStatus((prev) => (prev === 'mail4plus' ? 'all' : 'mail4plus'));
+    setOverdueBucket('all');
+    setPage(1);
+  }, []);
+
   const kpiCards = useMemo(
     () => [
       {
@@ -854,7 +875,7 @@ export function ReturnsWorkbench({
         accent: 'border-t-sky-500',
         Icon: PackageOpen,
         iconWrap: 'bg-sky-50 text-sky-700 border-sky-100',
-        onClick: () => setView('open'),
+        onClick: () => applyViewFilter('open'),
       },
       {
         key: 'overdue',
@@ -863,7 +884,7 @@ export function ReturnsWorkbench({
         accent: 'border-t-rose-500',
         Icon: AlertTriangle,
         iconWrap: 'bg-rose-50 text-rose-700 border-rose-100',
-        onClick: () => setView('overdue'),
+        onClick: () => applyViewFilter('overdue'),
       },
       {
         key: 's3',
@@ -873,10 +894,7 @@ export function ReturnsWorkbench({
         accent: 'border-t-violet-500',
         Icon: ShieldAlert,
         iconWrap: 'bg-violet-50 text-violet-700 border-violet-100',
-        onClick: () => {
-          setView('open');
-          setMailStatus('mail4plus');
-        },
+        onClick: () => applyEscalatedFilter(),
       },
       {
         key: 'done',
@@ -885,10 +903,10 @@ export function ReturnsWorkbench({
         accent: 'border-t-emerald-500',
         Icon: CheckCircle2,
         iconWrap: 'bg-emerald-50 text-emerald-700 border-emerald-100',
-        onClick: () => setView('done'),
+        onClick: () => applyViewFilter('done'),
       },
     ],
-    [kpis],
+    [kpis, applyViewFilter, applyEscalatedFilter],
   );
 
   const pageCount =
@@ -1049,7 +1067,7 @@ export function ReturnsWorkbench({
             <button
               key={v.id}
               type="button"
-              onClick={() => setView(v.id)}
+              onClick={() => applyViewFilter(v.id)}
               className={cn(
                 'rounded-full px-3 py-1.5 text-xs font-bold border transition',
                 view === v.id
