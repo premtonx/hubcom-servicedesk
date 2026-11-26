@@ -10,11 +10,15 @@ import {
   Link2,
   Save,
   ChevronDown,
+  AlertTriangle,
+  Archive,
+  RotateCcw,
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { cn } from '../../lib/utils';
 import type { KbWorkbenchMode } from '../../lib/kb/kb-workbench-adapter';
+import { isOutdatedStatus, normalizeKbStatus } from '../../lib/kb-dashboard-metrics';
 
 export const KB_TRANSLATE_LANGUAGES = [
   'English',
@@ -45,6 +49,10 @@ export interface KBArticleDetailToolbarProps {
   onAiExplain: () => void;
   onExportPdf: () => void;
   onCopyLink: () => void;
+  articleStatus?: string | null;
+  onMarkOutdated?: () => void;
+  onMarkArchived?: () => void;
+  onRepublish?: () => void;
 }
 
 type ToolbarActionId =
@@ -74,9 +82,15 @@ export function KBArticleDetailToolbar({
   onAiExplain,
   onExportPdf,
   onCopyLink,
+  articleStatus,
+  onMarkOutdated,
+  onMarkArchived,
+  onRepublish,
 }: KBArticleDetailToolbarProps) {
   const isPortal = mode === 'portal';
   const [translateOpen, setTranslateOpen] = useState(false);
+  const statusNorm = normalizeKbStatus(articleStatus || undefined);
+  const isOutdatedOrArchived = isOutdatedStatus(articleStatus || undefined);
 
   const actions: Array<{ id: ToolbarActionId; label: string; icon: typeof PenLine }> = isPortal
     ? [
@@ -208,6 +222,51 @@ export function KBArticleDetailToolbar({
             </Button>
           );
         })}
+
+        {canEdit && !isOutdatedOrArchived && onMarkOutdated ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={actionDisabled || isEditing}
+            className="h-8 rounded-xl text-[11px] font-semibold gap-1.5 border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 shadow-none"
+            onClick={onMarkOutdated}
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            Als veraltet markieren
+          </Button>
+        ) : null}
+        {canEdit && !isOutdatedOrArchived && onMarkArchived ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={actionDisabled || isEditing}
+            className="h-8 rounded-xl text-[11px] font-semibold gap-1.5 border-slate-200 bg-white text-slate-700 hover:bg-slate-50 shadow-none"
+            onClick={onMarkArchived}
+          >
+            <Archive className="w-3.5 h-3.5 text-slate-500" />
+            Archivieren
+          </Button>
+        ) : null}
+        {canEdit && isOutdatedOrArchived && onRepublish ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={actionDisabled || isEditing}
+            className="h-8 rounded-xl text-[11px] font-semibold gap-1.5 border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 shadow-none"
+            onClick={onRepublish}
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            Wieder veröffentlichen
+          </Button>
+        ) : null}
+        {statusNorm === 'outdated' || statusNorm === 'archived' ? (
+          <span className="text-[10px] font-bold uppercase tracking-wide text-amber-800 bg-amber-100 border border-amber-200 rounded-lg px-2 py-1">
+            {statusNorm === 'archived' ? 'Archiviert' : 'Veraltet'}
+          </span>
+        ) : null}
       </div>
     </div>
   );

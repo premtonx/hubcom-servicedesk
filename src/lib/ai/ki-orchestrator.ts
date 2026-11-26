@@ -124,10 +124,10 @@ export async function hybridSearchKnowledge(params: {
       queryText,
       tenantId,
       sourceFilter,
-      limit,
+      limit * 3,
       ...org.values,
     ]);
-    return res.rows.map(mapRow);
+    return filterHitsToLiveKbArticles(res.rows.map(mapRow), limit);
   }
 
   // FTS-only fallback when embeddings are not configured
@@ -153,8 +153,63 @@ export async function hybridSearchKnowledge(params: {
     ORDER BY fts_rank DESC NULLS LAST
     LIMIT $4
   `;
-  const res = await queryDb(sql, [queryText, tenantId, sourceFilter, limit, ...orgFts.values]);
-  return res.rows.map(mapRow);
+  const res = await queryDb(sql, [
+    queryText,
+    tenantId,
+    sourceFilter,
+    limit * 3,
+    ...orgFts.values,
+  ]);
+  return filterHitsToLiveKbArticles(res.rows.map(mapRow), limit);
+}
+
+/**
+ * Defense in depth: KB_ARTICLE hits must still be published + index_in_rag.
+ * Outdated/archived/draft articles are never returned to AI even if stale vectors remain.
+ */
+async function filterHitsToLiveKbArticles(
+  hits: HybridSearchHit[],
+  limit: number,
+): Promise<HybridSearchHit[]> {
+  const kbIds = [
+    ...new Set(
+      hits
+        .filter((h) => h.sourceType === 'KB_ARTICLE')
+        .map((h) => h.sourceId)
+        .filter(Boolean),
+    ),
+  ];
+  if (kbIds.length === 0) return hits.slice(0, limit);
+
+  const { getDocDirect } = await import('../postgres-backend.js');
+  const { isArticleEligibleForRag } = await import('../kb/kb-article-lifecycle.js');
+  const articlesById = new Map<
+    string,
+    { status?: string | null; index_in_rag?: boolean | null }
+  >();
+  await Promise.all(
+    kbIds.map(async (id) => {
+      try {
+        const doc = await getDocDirect('kb_articles', id);
+        if (doc) {
+          articlesById.set(id, {
+            status: String(doc.status || ''),
+            index_in_rag: doc.index_in_rag !== false,
+          });
+        }
+      } catch {
+        /* treat as missing → drop */
+      }
+    }),
+  );
+
+  const filtered = hits.filter((hit) => {
+    if (hit.sourceType !== 'KB_ARTICLE') return true;
+    const article = articlesById.get(hit.sourceId);
+    if (!article) return false;
+    return isArticleEligibleForRag(article);
+  });
+  return filtered.slice(0, limit);
 }
 
 function mapRow(row: any): HybridSearchHit {

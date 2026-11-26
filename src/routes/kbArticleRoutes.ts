@@ -268,6 +268,18 @@ router.patch('/:id', authenticate, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No supported fields to update.' });
     }
 
+    if (patch.index_in_rag === true) {
+      const { assertCanEnableRagIndex, KB_RAG_BLOCKED_STATUS_ERROR } = await import(
+        '../lib/kb/kb-article-lifecycle.js'
+      );
+      const gate = assertCanEnableRagIndex(String(article.status || ''));
+      if (!gate.ok) {
+        return res.status(400).json({
+          error: gate.error || KB_RAG_BLOCKED_STATUS_ERROR,
+        });
+      }
+    }
+
     patch.updatedAt = new Date().toISOString();
     await updateDocDirect('kb_articles', id, patch);
 
@@ -283,8 +295,13 @@ router.patch('/:id', authenticate, async (req: Request, res: Response) => {
     ) {
       const { getRagPipelineConfig } = await import('../lib/rag-pipeline-config.js');
       const { drainVectorQueue } = await import('../lib/ai/vector-queue.js');
+      const { statusBlocksRag } = await import('../lib/kb/kb-article-lifecycle.js');
       const ragConfig = await getRagPipelineConfig(tenantId);
-      if (ragConfig.indexNewKbArticles && (article.index_in_rag !== false || patch.index_in_rag === true)) {
+      if (
+        ragConfig.indexNewKbArticles &&
+        !statusBlocksRag(String(article.status || '')) &&
+        (article.index_in_rag !== false || patch.index_in_rag === true)
+      ) {
         await enqueueKbArticleIndex(id, tenantId);
         void drainVectorQueue();
       }

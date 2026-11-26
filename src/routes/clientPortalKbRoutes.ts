@@ -2,9 +2,11 @@
  * Kunden-Portal Knowledge Base API — strict multi-tenant isolation.
  *
  * GET    /api/portal/kb              — list + workspace metrics (org-scoped)
+ * GET    /api/portal/kb/suggest      — ticket deflection (published, org-scoped)
  * GET    /api/portal/kb/:id          — full article detail (404 if internal/other-org)
+ * POST   /api/portal/kb/:id/deflect  — increment deflected_count (ticket prevented)
  * POST   /api/portal/kb              — CLIENT_ADMIN|SUPPORTER create
- * PATCH  /api/portal/kb/:id          — edit + index_in_rag (org RAG tenant)
+ * PATCH  /api/portal/kb/:id          — edit + index_in_rag / outdated lifecycle
  * DELETE /api/portal/kb/:id          — delete own-org articles
  * POST   /api/portal/kb/import-csv   — SharePoint CSV import
  * POST   /api/portal/kb/import       — Dokumente importieren (CSV/Markdown alias)
@@ -58,6 +60,19 @@ import {
   enqueueKbArticleIndex,
 } from '../lib/ai/vector-queue.js';
 import { getOrganization } from '../lib/client-portal/organizations.js';
+import {
+  filterArticlesForPortalSuggest,
+  mergeSuggestWithHybridBoost,
+  PORTAL_KB_SUGGEST_LIMIT,
+  PORTAL_KB_SUGGEST_MIN_QUERY,
+  scorePortalKbSuggest,
+  incrementDeflectedCount,
+} from '../lib/kb/portal-kb-suggest.js';
+import {
+  KB_RAG_BLOCKED_STATUS_ERROR,
+  resolveKbLifecycleUpdate,
+  statusBlocksRag,
+} from '../lib/kb/kb-article-lifecycle.js';
 
 const KB_COLLECTION = 'kb_articles';
 const router = Router();
@@ -512,6 +527,124 @@ router.get(
   },
 );
 
+/**
+ * GET /api/portal/kb/suggest?q=… — ticket deflection (≤3 published org articles).
+ * Never uses /api/db; never leaks other organizations.
+ */
+router.get(
+  '/suggest',
+  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = sessionOrg(req);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organisation fehlt.' });
+      }
+      const q = String(req.query.q || '').trim();
+      if (q.length < PORTAL_KB_SUGGEST_MIN_QUERY) {
+        return res.json({
+          articles: [],
+          query: q,
+          organizationId,
+          minQueryLength: PORTAL_KB_SUGGEST_MIN_QUERY,
+        });
+      }
+
+      const [rows, categoryMap] = await Promise.all([
+        getDocsDirect(KB_COLLECTION, []),
+        loadCategoryNameMap(organizationId),
+      ]);
+
+      const eligible = filterArticlesForPortalSuggest(
+        rows.map((row) => ({
+          ...row,
+          category_name: resolveCategoryName(row.category || row.category_id, categoryMap),
+        })),
+        organizationId,
+      );
+
+      let hits = scorePortalKbSuggest(q, eligible, PORTAL_KB_SUGGEST_LIMIT);
+
+      // Optional hybrid boost (fast fail — never blocks deflection).
+      try {
+        const { resolveIncludeSharedKbInRag } = await import('../lib/ai/rag-org-scope.js');
+        const { hybridSearchKnowledge } = await import('../lib/ai/ki-orchestrator.js');
+        const org = await getOrganization(organizationId);
+        const includeSharedKb = resolveIncludeSharedKbInRag(org);
+        const ragTenantId = resolveTenantIdForOrganization(organizationId);
+        const vectorHits = await hybridSearchKnowledge({
+          query: q,
+          tenantId: ragTenantId,
+          organizationId,
+          includeSharedKb,
+          limit: PORTAL_KB_SUGGEST_LIMIT,
+          sourceTypes: ['KB_ARTICLE'],
+        });
+        const eligibleIds = new Set(eligible.map((a) => String(a.id || '')));
+        const hybridIds = vectorHits
+          .map((h) => String(h.sourceId || ''))
+          .filter((id) => eligibleIds.has(id));
+        hits = mergeSuggestWithHybridBoost(hits, hybridIds, PORTAL_KB_SUGGEST_LIMIT);
+      } catch {
+        /* keyword-only is fine */
+      }
+
+      return res.json({
+        articles: hits.map(({ id, title, snippet, category_name }) => ({
+          id,
+          title,
+          snippet,
+          category_name,
+        })),
+        query: q,
+        organizationId,
+      });
+    } catch (err: any) {
+      safeLog('error', '[portal/kb] suggest failed', err?.message || err);
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'Vorschläge konnten nicht geladen werden') });
+    }
+  },
+);
+
+/**
+ * POST /api/portal/kb/:id/deflect — user resolved via KB (ticket prevented).
+ */
+router.post(
+  '/:id/deflect',
+  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = sessionOrg(req);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organisation fehlt.' });
+      }
+      const id = routeParam(req.params.id);
+      const existing = await getDocDirect(KB_COLLECTION, id);
+      if (!existing || !isKbArticleVisibleToPortal(existing, organizationId)) {
+        return res.status(404).json({ error: 'Artikel nicht gefunden.' });
+      }
+      const nextCount = incrementDeflectedCount(existing.deflected_count);
+      await updateDocDirect(KB_COLLECTION, id, {
+        deflected_count: nextCount,
+        updatedAt: new Date().toISOString(),
+      });
+      return res.json({
+        success: true,
+        id,
+        deflected_count: nextCount,
+        organizationId,
+      });
+    } catch (err: any) {
+      safeLog('error', '[portal/kb] deflect failed', err?.message || err);
+      return res.status(500).json({
+        error: safeErrorMessage(err, 'Rückmeldung konnte nicht gespeichert werden'),
+      });
+    }
+  },
+);
+
 router.get(
   '/:id',
   requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
@@ -682,19 +815,33 @@ router.patch(
       if (Array.isArray(body.tags)) {
         updates.tags = body.tags.map((t) => String(t).trim()).filter(Boolean);
       }
-      if (typeof body.status === 'string') {
-        const s = body.status.trim();
-        updates.status = s === 'Draft' || s === 'draft' ? 'Draft' : 'Published';
+
+      const lifecycle = resolveKbLifecycleUpdate({
+        existingStatus: String(existing.status || 'Published'),
+        existingIndexInRag: existing.index_in_rag !== false,
+        nextStatusRaw: typeof body.status === 'string' ? body.status : null,
+        nextIndexInRag: typeof body.index_in_rag === 'boolean' ? body.index_in_rag : null,
+        outdatedReason:
+          typeof body.outdated_reason === 'string'
+            ? body.outdated_reason
+            : typeof body.outdatedReason === 'string'
+              ? body.outdatedReason
+              : null,
+        actorId: String(req.user?.id || ''),
+      });
+      if (lifecycle.ok === false) {
+        return res.status(400).json({
+          error: lifecycle.error || KB_RAG_BLOCKED_STATUS_ERROR,
+        });
       }
-      if (typeof body.index_in_rag === 'boolean') {
-        updates.index_in_rag = body.index_in_rag;
-      }
+      Object.assign(updates, lifecycle.patch);
 
       await updateDocDirect(KB_COLLECTION, id, updates);
 
       // RAG sync scoped to org tenant — never default Hubcom tenant.
       try {
-        if (updates.index_in_rag === false) {
+        const nextStatus = String(updates.status || existing.status || 'Published');
+        if (lifecycle.purgeRag || statusBlocksRag(nextStatus) || updates.index_in_rag === false) {
           await deleteEmbeddingsForSource(ragTenantId, 'KB_ARTICLE', id);
         } else if (
           typeof updates.index_in_rag === 'boolean' ||
@@ -708,7 +855,7 @@ router.patch(
             typeof updates.index_in_rag === 'boolean'
               ? updates.index_in_rag
               : existing.index_in_rag !== false;
-          if (ragConfig.indexNewKbArticles && nextIndexed) {
+          if (ragConfig.indexNewKbArticles && nextIndexed && !statusBlocksRag(nextStatus)) {
             await enqueueKbArticleIndex(id, ragTenantId);
             void drainVectorQueue();
           }

@@ -75,7 +75,7 @@ const SMART_ITEMS = [
   { id: 'recent', icon: Clock, labelKey: 'kb.sidebar.recentlyUpdated', defaultLabel: 'Recently Updated' },
   { id: 'mostViewed', icon: Eye, labelKey: 'kb.sidebar.mostViewed', defaultLabel: 'Most Viewed' },
   { id: 'missing', icon: BookX, labelKey: 'kb.sidebar.missingArticles', defaultLabel: 'Missing Articles' },
-  { id: 'outdated', icon: AlertTriangle, labelKey: 'kb.sidebar.outdatedContent', defaultLabel: 'Outdated Content' },
+  { id: 'outdated', icon: AlertTriangle, labelKey: 'kb.sidebar.outdatedContent', defaultLabel: 'Veraltete Inhalte' },
 ] as const;
 
 function NavButton({

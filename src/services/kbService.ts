@@ -103,11 +103,44 @@ export const kbService = {
 
   updateArticle: async (id: string, updates: Partial<KBArticle>, oldTags: string[] = []) => {
     try {
-      const docRef = doc(db, KB_COLLECTION, id);
-      await updateDoc(docRef, {
-        ...updates,
-        updatedAt: serverTimestamp()
+      const {
+        resolveKbLifecycleUpdate,
+        statusBlocksRag,
+      } = await import('../lib/kb/kb-article-lifecycle.js');
+
+      // Client-side firestore writer — never import postgres-backend (breaks Vite).
+      // When status is present, apply full lifecycle; RAG toggle alone is gated by
+      // assertCanEnableRagIndex using the status carried in the same patch when available.
+      const statusRaw =
+        typeof (updates as any).status === 'string' ? String((updates as any).status) : null;
+      const indexRaw =
+        typeof (updates as any).index_in_rag === 'boolean'
+          ? Boolean((updates as any).index_in_rag)
+          : null;
+      const lifecycle = resolveKbLifecycleUpdate({
+        existingStatus: statusRaw || String((updates as any).status || 'Published'),
+        existingIndexInRag: true,
+        nextStatusRaw: statusRaw,
+        nextIndexInRag: indexRaw,
+        outdatedReason:
+          typeof (updates as any).outdated_reason === 'string'
+            ? String((updates as any).outdated_reason)
+            : typeof (updates as any).outdatedReason === 'string'
+              ? String((updates as any).outdatedReason)
+              : null,
       });
+      if (lifecycle.ok === false) {
+        throw new Error(lifecycle.error);
+      }
+
+      const merged = {
+        ...updates,
+        ...lifecycle.patch,
+        updatedAt: serverTimestamp(),
+      } as Record<string, unknown>;
+
+      const docRef = doc(db, KB_COLLECTION, id);
+      await updateDoc(docRef, merged as any);
 
       // Handle tag changes
       if (updates.tags) {
@@ -115,20 +148,27 @@ export const kbService = {
         const removed = oldTags.filter(t => !updates.tags!.includes(t));
 
         for (const tagName of added) {
-          const tagId = tagName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+          const tagId = tagName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
           const tagRef = doc(db, TAGS_COLLECTION, tagId);
           await setDoc(tagRef, { name: tagName, count: increment(1) }, { merge: true });
         }
 
         for (const tagName of removed) {
-          const tagId = tagName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+          const tagId = tagName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
           const tagRef = doc(db, TAGS_COLLECTION, tagId);
           await setDoc(tagRef, { count: increment(-1) }, { merge: true });
         }
       }
-      enqueueKbIndex(id, 'INDEX_KB_ARTICLE');
+
+      const nextStatus = String(merged.status || statusRaw || 'Published');
+      if (lifecycle.purgeRag || statusBlocksRag(nextStatus) || merged.index_in_rag === false) {
+        enqueueKbIndex(id, 'DELETE_EMBEDDINGS');
+      } else {
+        enqueueKbIndex(id, 'INDEX_KB_ARTICLE');
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, KB_COLLECTION);
+      throw error;
     }
   },
 

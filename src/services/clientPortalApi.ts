@@ -62,6 +62,13 @@ export type PortalSsoApprovalMode =
 
 export type PortalApprovalStatus = 'active' | 'pending_approval' | 'rejected';
 
+export interface PortalKbSuggestHit {
+  id: string;
+  title: string;
+  snippet: string;
+  category_name: string | null;
+}
+
 export interface PortalEmailOrgSettings {
   id: string;
   name: string;
@@ -259,6 +266,31 @@ export const clientPortalApi = {
       aiMode: String(res.data?.aiMode || 'global_default'),
       enabledModules: res.data?.enabledModules,
       user: res.data?.user,
+    };
+  },
+
+  async suggestKbArticles(query: string): Promise<PortalKbSuggestHit[]> {
+    const path = '/api/portal/kb/suggest';
+    assertNeverDb(path);
+    const res = await axios.get(path, {
+      withCredentials: true,
+      params: { q: query },
+    });
+    const rows = Array.isArray(res.data?.articles) ? res.data.articles : [];
+    return rows.map((a: Record<string, unknown>) => ({
+      id: String(a.id || ''),
+      title: String(a.title || ''),
+      snippet: String(a.snippet || ''),
+      category_name: a.category_name ? String(a.category_name) : null,
+    })).filter((a: PortalKbSuggestHit) => a.id);
+  },
+
+  async markKbDeflected(articleId: string): Promise<{ deflected_count: number }> {
+    const path = `/api/portal/kb/${encodeURIComponent(articleId)}/deflect`;
+    assertNeverDb(path);
+    const res = await axios.post(path, {}, { withCredentials: true });
+    return {
+      deflected_count: Number(res.data?.deflected_count || 0),
     };
   },
 

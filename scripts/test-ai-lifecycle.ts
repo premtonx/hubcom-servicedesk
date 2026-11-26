@@ -163,6 +163,17 @@ import {
   resolveOrgFeatureModel,
   toPublicOrgAiSettings,
 } from '../src/lib/ai/org-ai-settings.js';
+import {
+  assertCanEnableRagIndex,
+  filterHybridHitsToPublishedRagArticles,
+  isArticleEligibleForRag,
+  KB_RAG_BLOCKED_STATUS_ERROR,
+  resolveKbLifecycleUpdate,
+} from '../src/lib/kb/kb-article-lifecycle.js';
+import {
+  filterArticlesForPortalSuggest,
+  scorePortalKbSuggest,
+} from '../src/lib/kb/portal-kb-suggest.js';
 
 let passed = 0;
 let failed = 0;
@@ -2535,6 +2546,79 @@ function testOrgLocalAiStrictLifecycle(): void {
   );
 }
 
+function testKbOutdatedRagLifecycle(): void {
+  console.log('\n[KB Lifecycle] outdated/archived purge + portal suggest isolation');
+
+  const DPG = 'dpg-kb-life';
+  const OTHER = 'other-kb-life';
+  const marked = resolveKbLifecycleUpdate({
+    existingStatus: 'Published',
+    existingIndexInRag: true,
+    nextStatusRaw: 'Outdated',
+    outdatedReason: 'Ersetzt',
+  });
+  assert(marked.ok && marked.purgeRag && marked.patch.index_in_rag === false, 'outdated purges RAG');
+  const blocked = assertCanEnableRagIndex('Outdated');
+  assert(
+    !blocked.ok && blocked.error === KB_RAG_BLOCKED_STATUS_ERROR,
+    'cannot re-enable RAG on outdated',
+  );
+  assert(
+    !isArticleEligibleForRag({ status: 'Archived', index_in_rag: true }),
+    'archived never eligible for RAG',
+  );
+  const filtered = filterHybridHitsToPublishedRagArticles(
+    [
+      { sourceType: 'KB_ARTICLE', sourceId: 'a1' },
+      { sourceType: 'KB_ARTICLE', sourceId: 'a2' },
+    ],
+    new Map([
+      ['a1', { status: 'Published', index_in_rag: true }],
+      ['a2', { status: 'Outdated', index_in_rag: false }],
+    ]),
+  );
+  assert(
+    filtered.length === 1 && filtered[0].sourceId === 'a1',
+    'hybrid returns 0 hits for outdated article',
+  );
+
+  const suggestEligible = filterArticlesForPortalSuggest(
+    [
+      {
+        id: 's1',
+        title: 'Drucker jam',
+        content: 'Papierstau lösen',
+        status: 'Published',
+        visibility: 'organization',
+        organizationId: DPG,
+      },
+      {
+        id: 's2',
+        title: 'Drucker jam',
+        content: 'Andere Org',
+        status: 'Published',
+        visibility: 'organization',
+        organizationId: OTHER,
+      },
+    ],
+    DPG,
+  );
+  assert(suggestEligible.length === 1, 'suggest eligible is org-isolated');
+  assert(
+    scorePortalKbSuggest('Drucker jam', suggestEligible, 3).every((h) => h.id === 's1'),
+    'suggest scores only DPG published articles',
+  );
+
+  const orchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/ai/ki-orchestrator.ts'),
+    'utf8',
+  );
+  assert(
+    orchSrc.includes('filterHitsToLiveKbArticles') && orchSrc.includes('isArticleEligibleForRag'),
+    'orchestrator enforces live published KB guard',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('AI Request Lifecycle — dry-run test suite');
   console.log('='.repeat(50));
@@ -2576,6 +2660,7 @@ async function main(): Promise<void> {
   testSecondLevelSupportNotifyLifecycle();
   testPortalSsoAdminApprovalLifecycle();
   testOrgLocalAiStrictLifecycle();
+  testKbOutdatedRagLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);
