@@ -4263,13 +4263,13 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
     'returns KPIs/trends gated on hardwareReturnsEnabled',
   );
   assert(
-    dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
+    dashboardRouteSrc.includes('loadPortalDashboardReturnsStats') &&
+      !dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
       dashboardRouteSrc.includes('hardware_returns_enabled') &&
       dashboardRouteSrc.includes('returnsKpis') &&
       dashboardRouteSrc.includes('returnsActivityByRange') &&
-      dashboardRouteSrc.includes('buildReturnsActivityByRange') &&
       !dashboardRouteSrc.includes('/api/db'),
-    'dashboard route loads returns KPIs + trend series via /api/portal only',
+    'dashboard route uses lean returns stats loader (no N+1 workbench)',
   );
   assert(
     dashboardSvcSrc.includes('returnsKpis') &&
@@ -4292,6 +4292,8 @@ function testPortalDashboardReturnsTrends(): void {
       returnDueDate: '2026-11-10',
       returned: false,
       returnedAt: null,
+      mail3SentAt: null,
+      reminderCount: 0,
     },
     {
       createdAt: '2026-11-05T10:00:00.000Z',
@@ -4299,6 +4301,8 @@ function testPortalDashboardReturnsTrends(): void {
       returnDueDate: '2026-11-20',
       returned: true,
       returnedAt: '2026-11-20T09:00:00.000Z',
+      mail3SentAt: null,
+      reminderCount: 0,
     },
   ];
 
@@ -4319,7 +4323,7 @@ function testPortalDashboardReturnsTrends(): void {
   const series12m = buildReturnsActivitySeries(rows, '12m', now);
   assert(series12m.length === 12, '12m series has 12 monthly points');
   const seriesAll = buildReturnsActivitySeries(rows, 'all', now);
-  assert(seriesAll.length >= 1, 'all series has monthly points');
+  assert(seriesAll.length >= 1 && seriesAll.length <= 36, 'all series monthly ≤36 buckets');
 
   const byRange = buildReturnsActivityByRange(rows, now);
   assert(
@@ -4327,8 +4331,29 @@ function testPortalDashboardReturnsTrends(): void {
       byRange['30d'].length === 30 &&
       byRange['90d'].length === 90 &&
       byRange['12m'].length === 12 &&
-      byRange.all.length >= 1,
-    'buildReturnsActivityByRange covers all timeframe selectors',
+      byRange.all.length >= 1 &&
+      byRange.all.length <= 90,
+    'buildReturnsActivityByRange covers all timeframe selectors (≤90 buckets)',
+  );
+
+  // Route must not N+1 via workbench; lean stats module owns SQL.
+  const statsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/portal-dashboard-returns-stats.ts'),
+    'utf8',
+  );
+  assert(
+    statsSrc.includes('created_at') &&
+      statsSrc.includes('mail3_sent_at') &&
+      statsSrc.includes('LIMIT 5000') &&
+      !statsSrc.includes('activity_log') &&
+      !statsSrc.includes('SELECT *'),
+    'lean SQL selects only KPI/trend columns',
+  );
+  assert(
+    fs
+      .readFileSync(path.join(process.cwd(), 'src/lib/postgres-backend.ts'), 'utf8')
+      .includes('idx_ticket_hw_returns_org_req_returned_due'),
+    'dashboard perf index ensured in postgres-backend',
   );
 }
 

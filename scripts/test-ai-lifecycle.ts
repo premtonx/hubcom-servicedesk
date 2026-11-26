@@ -95,6 +95,10 @@ import {
   DEFAULT_HARDWARE_RETURNS_CATALOGS,
   evaluateHardwareModuleAccess,
 } from '../src/lib/client-portal/hardware-returns.js';
+import {
+  buildReturnsActivityByRangeFast,
+  computePortalReturnsKpis,
+} from '../src/lib/client-portal/portal-dashboard-returns-stats.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -1185,11 +1189,63 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
       dashboardPageSrc.includes('Rücklieferungen-Trends') &&
       dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('30d')") &&
       dashboardPageSrc.includes('3. Erinnerung gesendet') &&
-      dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
+      dashboardRouteSrc.includes('loadPortalDashboardReturnsStats') &&
+      !dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
       dashboardRouteSrc.includes('returnsActivityByRange') &&
       !dashboardPageSrc.includes('/api/db') &&
       !dashboardRouteSrc.includes("'/api/db"),
-    'portal Übersicht returns top KPIs + trends for enabled orgs via /api/portal only',
+    'portal Übersicht returns top KPIs + trends via lean stats (no N+1 workbench)',
+  );
+  // FE must not cascade-refetch dashboard on trend range changes.
+  assert(
+    /useEffect\(\(\) => \{[\s\S]*?getDashboard\(\)[\s\S]*?\}, \[\]\)/.test(dashboardPageSrc),
+    'portal dashboard fetches /api/portal/dashboard once (empty deps)',
+  );
+}
+
+function testPortalDashboardReturnsPerfLifecycle(): void {
+  console.log('\n[19c2] Portal dashboard returns stats perf (500+ rows, all timeframes)');
+
+  const now = new Date('2026-11-25T12:00:00.000Z');
+  const rows = [];
+  for (let i = 0; i < 600; i += 1) {
+    const year = 2024 + (i % 3);
+    const month = (i % 12) + 1;
+    const day = (i % 27) + 1;
+    const created = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dueDay = Math.min(28, day + 14);
+    const due = `${year}-${String(month).padStart(2, '0')}-${String(dueDay).padStart(2, '0')}`;
+    const returned = i % 5 === 0;
+    rows.push({
+      createdAt: `${created}T10:00:00.000Z`,
+      deliveryDate: created,
+      returnDueDate: due,
+      returned,
+      returnedAt: returned ? `${created}T16:00:00.000Z` : null,
+      mail3SentAt: i % 11 === 0 ? `${created}T12:00:00.000Z` : null,
+      reminderCount: i % 11 === 0 ? 3 : i % 7 === 0 ? 2 : 0,
+    });
+  }
+
+  const t0 = Date.now();
+  const kpis = computePortalReturnsKpis(rows, now);
+  const byRange = buildReturnsActivityByRangeFast(rows, now);
+  const elapsed = Date.now() - t0;
+
+  assert(rows.length >= 500, 'seeded ≥500 returns spanning 2024–2026');
+  assert(kpis.open + kpis.returnedLast30 >= 0, 'KPIs computed');
+  assert(
+    byRange['7d'].length === 7 &&
+      byRange['30d'].length === 30 &&
+      byRange['90d'].length === 90 &&
+      byRange['12m'].length === 12 &&
+      byRange.all.length >= 1 &&
+      byRange.all.length <= 90,
+    'all timeframes produce ≤90 buckets',
+  );
+  assert(
+    elapsed < 500,
+    `KPI + all trend ranges for 600 rows finish in <500ms (was ${elapsed}ms)`,
   );
 }
 
@@ -1474,6 +1530,7 @@ async function main(): Promise<void> {
   testPortalKbCategoryLifecycle();
   testPortalKbArticleEditLifecycle();
   testReturnsPaginationErinnerungDashboardLifecycle();
+  testPortalDashboardReturnsPerfLifecycle();
   testReturnsListeKanbanKartenLifecycle();
   testReturnsInlineListEditorsLifecycle();
   testReturnsDynamicReminderStagesLifecycle();

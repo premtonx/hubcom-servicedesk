@@ -364,11 +364,9 @@ router.get(
       const { listTicketIdsForParticipant } = await import(
         '../lib/client-portal/ticket-participants.js'
       );
-      const {
-        buildPortalDashboardPayload,
-        buildReturnsActivityByRange,
-        returnsTrendSourceFromWorkbenchItems,
-      } = await import('../lib/client-portal/portal-dashboard-service.js');
+      const { buildPortalDashboardPayload } = await import(
+        '../lib/client-portal/portal-dashboard-service.js'
+      );
       const { listOrganizationUsers } = await import('../lib/client-portal/team-service.js');
       const { findOrganizationEmailChannel } = await import(
         '../lib/email-ingestion/channel-store.js'
@@ -421,24 +419,14 @@ router.get(
         (role === 'CLIENT_ADMIN' || role === 'CLIENT_SUPPORTER')
       ) {
         try {
-          const { listHardwareReturnsWorkbench } = await import(
-            '../lib/client-portal/hardware-returns-escalation.js'
+          // Lean single SQL + O(N+D) aggregation — never the N+1 workbench loader
+          // (that path hydrates tickets and pulls full-row blobs).
+          const { loadPortalDashboardReturnsStats } = await import(
+            '../lib/client-portal/portal-dashboard-returns-stats.js'
           );
-          const listed = await listHardwareReturnsWorkbench({
-            organizationId,
-            view: 'all',
-            limit: 2000,
-            offset: 0,
-          });
-          returnsKpis = {
-            open: listed.kpis.open,
-            overdue: listed.kpis.overdue,
-            stage3: listed.kpis.stage3,
-            returnedLast30: listed.kpis.returnedLast30,
-          };
-          returnsActivityByRange = buildReturnsActivityByRange(
-            returnsTrendSourceFromWorkbenchItems(listed.items),
-          );
+          const stats = await loadPortalDashboardReturnsStats(organizationId);
+          returnsKpis = stats.returnsKpis;
+          returnsActivityByRange = stats.returnsActivityByRange;
         } catch (err: any) {
           safeLog('warn', '[portal] dashboard returns KPIs skipped', err?.message || err);
           returnsKpis = null;

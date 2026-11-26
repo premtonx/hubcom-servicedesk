@@ -536,6 +536,8 @@ export async function initDb() {
       WHERE return_number IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_ticket_hw_returns_org_status
       ON ticket_hardware_returns (organization_id, status);
+    CREATE INDEX IF NOT EXISTS idx_ticket_hw_returns_org_req_returned_due
+      ON ticket_hardware_returns (organization_id, return_required, returned, return_due_date);
     CREATE TABLE IF NOT EXISTS organization_directory_users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
