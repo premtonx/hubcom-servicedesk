@@ -241,6 +241,16 @@ export function PortalTicketStaffDetailHost({
           sla_tier: data.slaTier != null ? String(data.slaTier) : undefined,
           account_health: data.accountHealth != null ? String(data.accountHealth) : undefined,
           escalated: (data as any).escalated,
+          support_level:
+            (data as any).support_level ??
+            (data as any).supportLevel ??
+            (data as any).assigned_queue ??
+            (data as any).assignedQueue,
+          supportLevel:
+            (data as any).supportLevel ??
+            (data as any).support_level ??
+            (data as any).assignedQueue ??
+            (data as any).assigned_queue,
         });
         if (updated) setTicket((prev) => (prev ? { ...prev, ...updated } : updated));
         return { success: true, ticket: updated || undefined };

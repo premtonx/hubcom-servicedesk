@@ -212,6 +212,10 @@ export type PortalTicketFieldPatch = {
   sla_tier?: string | null;
   account_health?: string | null;
   escalated?: boolean;
+  support_level?: string | null;
+  supportLevel?: string | null;
+  assigned_queue?: string | null;
+  assignedQueue?: string | null;
 };
 
 export interface TicketDetailWorkbenchAdapter {

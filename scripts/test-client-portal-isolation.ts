@@ -230,6 +230,15 @@ import {
 } from '../src/lib/client-portal/portal-modules-nav.js';
 import { organizationEnabledModules } from '../src/lib/client-portal/organizations.js';
 import {
+  appendSecondLevelNotifyActivity,
+  buildSupportLevelPatch,
+  didTransitionIntoSecondLevel,
+  evaluateSecondLevelNotifyTrigger,
+  normalizeSecondLevelNotifySettings,
+  parseSecondLevelEmails,
+  ticketSupportLevel,
+} from '../src/lib/client-portal/second-level-notify.js';
+import {
   buildReminderTemplateVars,
   evaluateDueReminderStage,
   isValidReminderStage,
@@ -6976,6 +6985,152 @@ function testPortalModuleTogglesDpg(): void {
   );
 }
 
+/**
+ * Part 3/3 — 2nd-Level-Support notify settings + transition-only email + Verlauf.
+ */
+function testSecondLevelSupportNotify(): void {
+  console.log('\n--- 2nd-Level-Support Benachrichtigungen ---');
+
+  assert(
+    parseSecondLevelEmails('2ndlevel@dpg-gruppe.de, a@b.de; c@d.de a@b.de').join(',') ===
+      '2ndlevel@dpg-gruppe.de,a@b.de,c@d.de',
+    'parse emails: comma/semicolon, dedupe, lowercase',
+  );
+  assert(parseSecondLevelEmails('not-an-email').length === 0, 'invalid emails dropped');
+
+  const defaults = normalizeSecondLevelNotifySettings({});
+  assert(defaults.second_level_notify_enabled === false, 'notify default false');
+  assert(defaults.second_level_label === '2nd-Level-Support', 'default label');
+  assert(defaults.second_level_support_emails.length === 0, 'default emails empty');
+
+  const enabled = normalizeSecondLevelNotifySettings({
+    second_level_notify_enabled: true,
+    second_level_support_emails: ['2ndlevel@dpg-gruppe.de'],
+    second_level_label: 'L2',
+  });
+  assert(enabled.second_level_notify_enabled === true, 'enabled true');
+  assert(enabled.second_level_support_emails[0] === '2ndlevel@dpg-gruppe.de', 'email kept');
+  assert(enabled.second_level_label === 'L2', 'custom label');
+
+  const first = { id: 't1', support_level: 'first_level' };
+  const second = { id: 't1', ...buildSupportLevelPatch('second_level') };
+  assert(ticketSupportLevel(second) === 'second_level', 'patch sets second_level');
+  assert(
+    didTransitionIntoSecondLevel({ previous: first, next: second }) === true,
+    'transition into second_level detected',
+  );
+  assert(
+    didTransitionIntoSecondLevel({ previous: second, next: second }) === false,
+    'no re-trigger when already second_level',
+  );
+  assert(
+    didTransitionIntoSecondLevel({
+      previous: second,
+      next: { ...second, priority: 'high' },
+    }) === false,
+    'unrelated edit on second_level ticket does not re-trigger',
+  );
+
+  const blocked = evaluateSecondLevelNotifyTrigger({
+    previousTicket: first,
+    nextTicket: second,
+    settings: defaults,
+  });
+  assert(blocked.shouldSend === false, 'disabled settings → no send');
+
+  const fire = evaluateSecondLevelNotifyTrigger({
+    previousTicket: first,
+    nextTicket: second,
+    settings: enabled,
+  });
+  assert(
+    fire.shouldSend === true &&
+      fire.emails.join(',') === '2ndlevel@dpg-gruppe.de',
+    'enabled + transition → exactly configured recipients',
+  );
+
+  const noRetrigger = evaluateSecondLevelNotifyTrigger({
+    previousTicket: second,
+    nextTicket: { ...second, status: 'in_progress' },
+    settings: enabled,
+  });
+  assert(noRetrigger.shouldSend === false, 'already second_level → no duplicate email');
+
+  const { entry, activityLog } = appendSecondLevelNotifyActivity({
+    ticket: second,
+    emails: ['2ndlevel@dpg-gruppe.de'],
+    assignedByName: 'Admin',
+  });
+  assert(
+    entry.kind === 'second_level_notify' &&
+      entry.label.includes('benachrichtigt an') &&
+      entry.label.includes('2ndlevel@dpg-gruppe.de'),
+    'Verlauf audit entry wording',
+  );
+  assert(activityLog.length === 1, 'activity log appends one entry');
+
+  // Source contracts: settings UI + APIs + zero /api/db in portal pages.
+  const emailPage = fs.readFileSync(
+    path.join(
+      process.cwd(),
+      'src/components/pages/client-portal/ClientEmailIntegrationPage.tsx',
+    ),
+    'utf8',
+  );
+  assert(
+    emailPage.includes('2nd-Level-Support Benachrichtigungen') &&
+      emailPage.includes('Automatische E-Mail bei Zuweisung an 2nd-Level-Support') &&
+      emailPage.includes('Test-E-Mail senden') &&
+      emailPage.includes('updateSecondLevelNotify') &&
+      !emailPage.includes('/api/db'),
+    'E-Mail & M365 page has 2nd-Level card; zero /api/db',
+  );
+
+  const portalRoutes = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    portalRoutes.includes("'/settings/notifications'") &&
+      portalRoutes.includes("'/settings/second-level-test'") &&
+      portalRoutes.includes('updateOrganizationSecondLevelSettings'),
+    'portal settings notifications + second-level-test endpoints',
+  );
+
+  const portalTicketRoutes = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalTicketRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    portalTicketRoutes.includes('support_level') &&
+      portalTicketRoutes.includes('maybeNotifySecondLevelAfterTicketPatch') &&
+      !portalTicketRoutes.includes("'/api/db'"),
+    'portal ticket PATCH persists support_level + notify hook; no /api/db',
+  );
+
+  const sidebar = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/ticket-details/RedesignedSidebar.tsx'),
+    'utf8',
+  );
+  assert(
+    sidebar.includes('Support-Level / Eskalation') &&
+      sidebar.includes('second_level') &&
+      sidebar.includes('An 2nd-Level-Support eskalieren'),
+    'ticket sidebar exposes 2nd-Level assignment target',
+  );
+
+  const apiClient = fs.readFileSync(
+    path.join(process.cwd(), 'src/services/clientPortalApi.ts'),
+    'utf8',
+  );
+  assert(
+    apiClient.includes('/api/portal/settings/notifications') &&
+      apiClient.includes('/api/portal/settings/second-level-test') &&
+      apiClient.includes('assertNeverDb'),
+    'clientPortalApi settings paths stay on /api/portal/*',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -6995,6 +7150,7 @@ async function main(): Promise<void> {
   testPortalExchangeIsolation();
   testPortalTresorVaultIsolation();
   testPortalModuleTogglesDpg();
+  testSecondLevelSupportNotify();
   testHardwareReturnsModuleGate();
   testHardwareReturnsEscalationEngine();
   testHardwareReturnsStandaloneBackend();

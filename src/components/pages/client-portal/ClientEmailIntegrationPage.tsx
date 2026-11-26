@@ -5,6 +5,7 @@ import {
   Info,
   Loader2,
   Mail,
+  ShieldAlert,
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
@@ -32,6 +33,11 @@ export default function ClientEmailIntegrationPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [savingSso, setSavingSso] = useState(false);
+  const [savingSecondLevel, setSavingSecondLevel] = useState(false);
+  const [testingSecondLevel, setTestingSecondLevel] = useState(false);
+  const [secondLevelEnabled, setSecondLevelEnabled] = useState(false);
+  const [secondLevelEmails, setSecondLevelEmails] = useState('');
+  const [secondLevelLabel, setSecondLevelLabel] = useState('2nd-Level-Support');
   const [signature, setSignature] = useState({
     signature_enabled: true,
     signature_html: DEFAULT_HUBCOM_SIGNATURE_HTML,
@@ -84,6 +90,23 @@ export default function ClientEmailIntegrationPage() {
       setM365TenantId(data.organization?.m365TenantId || '');
       setSsoEnabled(Boolean(data.organization?.ssoEnabled));
       setSsoApprovalMode(data.organization?.ssoApprovalMode || 'admin_approval');
+      const sl =
+        data.organization?.secondLevelNotify ||
+        ({
+          second_level_notify_enabled: Boolean(
+            data.organization?.second_level_notify_enabled,
+          ),
+          second_level_support_emails: data.organization?.second_level_support_emails || [],
+          second_level_label:
+            data.organization?.second_level_label || '2nd-Level-Support',
+        } as const);
+      setSecondLevelEnabled(Boolean(sl.second_level_notify_enabled));
+      setSecondLevelEmails(
+        Array.isArray(sl.second_level_support_emails)
+          ? sl.second_level_support_emails.join(', ')
+          : '',
+      );
+      setSecondLevelLabel(sl.second_level_label || '2nd-Level-Support');
       if (ch) {
         setSignature({
           signature_enabled: ch.signature_enabled !== false,
@@ -213,6 +236,59 @@ export default function ClientEmailIntegrationPage() {
       toast.error(err?.response?.data?.error || 'SSO konnte nicht gespeichert werden.');
     } finally {
       setSavingSso(false);
+    }
+  };
+
+  const handleSaveSecondLevel = async () => {
+    setSavingSecondLevel(true);
+    try {
+      const updated = await clientPortalApi.updateSecondLevelNotify({
+        second_level_notify_enabled: secondLevelEnabled,
+        second_level_support_emails: secondLevelEmails,
+        second_level_label: secondLevelLabel.trim() || '2nd-Level-Support',
+      });
+      const sl = updated?.secondLevelNotify || {
+        second_level_notify_enabled: Boolean(updated?.second_level_notify_enabled),
+        second_level_support_emails: updated?.second_level_support_emails || [],
+        second_level_label: updated?.second_level_label || '2nd-Level-Support',
+      };
+      setSecondLevelEnabled(Boolean(sl.second_level_notify_enabled));
+      setSecondLevelEmails(
+        Array.isArray(sl.second_level_support_emails)
+          ? sl.second_level_support_emails.join(', ')
+          : '',
+      );
+      setSecondLevelLabel(sl.second_level_label || '2nd-Level-Support');
+      if (updated) setOrg((prev) => (prev ? { ...prev, ...updated } : updated));
+      toast.success('2nd-Level-Support Benachrichtigungen gespeichert.');
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.error ||
+          '2nd-Level-Einstellungen konnten nicht gespeichert werden.',
+      );
+    } finally {
+      setSavingSecondLevel(false);
+    }
+  };
+
+  const handleTestSecondLevel = async () => {
+    setTestingSecondLevel(true);
+    try {
+      // Persist current draft first so the test uses the addresses on screen.
+      await clientPortalApi.updateSecondLevelNotify({
+        second_level_notify_enabled: secondLevelEnabled,
+        second_level_support_emails: secondLevelEmails,
+        second_level_label: secondLevelLabel.trim() || '2nd-Level-Support',
+      });
+      const result = await clientPortalApi.sendSecondLevelTestEmail({
+        to: secondLevelEmails,
+      });
+      if (result.ok) toast.success(result.message || 'Test-E-Mail gesendet.');
+      else toast.error(result.message || 'Test-E-Mail fehlgeschlagen.');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Test-E-Mail fehlgeschlagen.');
+    } finally {
+      setTestingSecondLevel(false);
     }
   };
 
@@ -427,6 +503,84 @@ export default function ClientEmailIntegrationPage() {
           >
             {testing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
             Verbindung testen
+          </Button>
+        </div>
+      </div>
+
+      {/* 2nd-Level-Support notifications */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
+            <ShieldAlert className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="font-bold text-slate-900">2nd-Level-Support Benachrichtigungen</h2>
+            <p className="text-sm text-slate-500 mt-1 leading-relaxed">
+              Automatische, formatierte E-Mail an Ihr 2nd-Level-Team, sobald ein Ticket auf
+              2nd-Level-Support eskaliert / zugewiesen wird.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-800">
+              Automatische E-Mail bei Zuweisung an 2nd-Level-Support
+            </p>
+            <p className="text-xs text-slate-500">
+              Nur beim Wechsel auf 2nd-Level — keine Doppelmails bei späteren Edits.
+            </p>
+          </div>
+          <Switch
+            checked={secondLevelEnabled}
+            onCheckedChange={setSecondLevelEnabled}
+            aria-label="2nd-Level-Support Benachrichtigungen"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="second-level-emails">2nd-Level-Support E-Mail-Adresse(n)</Label>
+          <Input
+            id="second-level-emails"
+            placeholder="2ndlevel@dpg-gruppe.de, escalation@dpg-gruppe.de"
+            value={secondLevelEmails}
+            onChange={(e) => setSecondLevelEmails(e.target.value)}
+            className="text-sm"
+            autoComplete="off"
+          />
+          <p className="text-[11px] text-slate-400">
+            Eine oder mehrere Adressen, getrennt durch Komma.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="second-level-label">Bezeichnung (optional)</Label>
+          <Input
+            id="second-level-label"
+            value={secondLevelLabel}
+            onChange={(e) => setSecondLevelLabel(e.target.value)}
+            className="text-sm"
+            maxLength={80}
+          />
+        </div>
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button
+            type="button"
+            onClick={() => void handleSaveSecondLevel()}
+            disabled={savingSecondLevel || testingSecondLevel}
+          >
+            {savingSecondLevel ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+            Speichern
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void handleTestSecondLevel()}
+            disabled={testingSecondLevel || savingSecondLevel}
+          >
+            {testingSecondLevel ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+            Test-E-Mail senden
           </Button>
         </div>
       </div>

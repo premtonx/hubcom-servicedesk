@@ -40,6 +40,11 @@ import {
   type PortalTicketScope,
 } from '../lib/client-portal/portal-ticket-api.js';
 import {
+  buildSupportLevelPatch,
+  normalizeTicketSupportLevel,
+} from '../lib/client-portal/second-level-notify.js';
+import { maybeNotifySecondLevelAfterTicketPatch } from '../lib/client-portal/second-level-notify-hook.js';
+import {
   addPortalTicketTask,
   addPortalTimeEntry,
   buildPortalTicketWorkspaceDetail,
@@ -512,6 +517,22 @@ const patchSchema = z.object({
   account_health: z.string().trim().max(32).optional().nullable(),
   accountHealth: z.string().trim().max(32).optional().nullable(),
   escalated: z.boolean().optional(),
+  support_level: z
+    .enum(['first_level', 'second_level'])
+    .optional()
+    .nullable(),
+  supportLevel: z
+    .enum(['first_level', 'second_level'])
+    .optional()
+    .nullable(),
+  assigned_queue: z
+    .enum(['first_level', 'second_level'])
+    .optional()
+    .nullable(),
+  assignedQueue: z
+    .enum(['first_level', 'second_level'])
+    .optional()
+    .nullable(),
   hardwareReturn: hardwareReturnSchema,
 });
 
@@ -625,6 +646,24 @@ router.patch('/tickets/:id', async (req: Request, res: Response): Promise<any> =
       patch.isEscalated = Boolean(data.escalated);
     }
 
+    const supportRaw =
+      data.support_level !== undefined
+        ? data.support_level
+        : data.supportLevel !== undefined
+          ? data.supportLevel
+          : data.assigned_queue !== undefined
+            ? data.assigned_queue
+            : data.assignedQueue;
+    if (supportRaw !== undefined) {
+      if (!isClientOrgWideTicketRole(session.role)) {
+        return res.status(403).json({
+          error: 'Forbidden: Support-Level nur für Kunden-Admin/Supporter.',
+        });
+      }
+      const level = normalizeTicketSupportLevel(supportRaw);
+      Object.assign(patch, buildSupportLevelPatch(level));
+    }
+
     if (Object.keys(patch).length > 1) {
       await updateDocDirect('tickets', id, patch);
     }
@@ -652,12 +691,23 @@ router.patch('/tickets/:id', async (req: Request, res: Response): Promise<any> =
     }
 
     const updated = await getDocDirect('tickets', id);
+    const nextTicket = { ...(updated || access.ticket), id, ...patch };
+
+    // Best-effort: only fires on transition into second_level; never fails PATCH.
+    void maybeNotifySecondLevelAfterTicketPatch({
+      previousTicket: access.ticket as Record<string, unknown>,
+      nextTicket: nextTicket as Record<string, unknown>,
+      ticketId: id,
+      assignedByName: String(req.user?.name || req.user?.email || 'Portal'),
+      organizationId: session.organizationId,
+    });
+
     const { sanitizeTicketForPortalWorkspace } = await import(
       '../lib/client-portal/portal-ticket-workspace.js'
     );
     return res.json({
       success: true,
-      ticket: sanitizeTicketForPortalWorkspace({ ...(updated || access.ticket), id, ...patch }),
+      ticket: sanitizeTicketForPortalWorkspace(nextTicket),
       hardwareReturn,
       enabledModules: { hardwareReturns: Boolean(org?.hardware_returns_enabled) },
     });

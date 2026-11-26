@@ -604,6 +604,40 @@ export async function updateOrganizationSsoSettings(
   });
 }
 
+/** Persist 2nd-Level-Support notification settings into organizations.settings. */
+export async function updateOrganizationSecondLevelSettings(
+  id: string,
+  input: {
+    second_level_notify_enabled?: boolean;
+    second_level_support_emails?: string | string[] | null;
+    second_level_label?: string | null;
+  },
+): Promise<OrganizationRecord | null> {
+  const existing = await getOrganization(id);
+  if (!existing) return null;
+  const { normalizeSecondLevelNotifySettings } = await import('./second-level-notify.js');
+  const current = normalizeSecondLevelNotifySettings(existing.settings || {});
+  const next = normalizeSecondLevelNotifySettings({
+    ...current,
+    ...(input.second_level_notify_enabled !== undefined
+      ? { second_level_notify_enabled: input.second_level_notify_enabled }
+      : {}),
+    ...(input.second_level_support_emails !== undefined
+      ? { second_level_support_emails: input.second_level_support_emails }
+      : {}),
+    ...(input.second_level_label !== undefined
+      ? { second_level_label: input.second_level_label }
+      : {}),
+  });
+  const nextSettings: Record<string, unknown> = {
+    ...(existing.settings || {}),
+    second_level_notify_enabled: next.second_level_notify_enabled,
+    second_level_support_emails: next.second_level_support_emails,
+    second_level_label: next.second_level_label,
+  };
+  return updateOrganization(id, { settings: nextSettings });
+}
+
 export async function updateOrganizationBranding(
   id: string,
   input: {

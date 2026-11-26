@@ -23,6 +23,10 @@ import {
   buildReminderTemplateVars,
 } from '../src/lib/client-portal/hardware-returns-recipients.ts';
 import { defaultHardwareReturnsConfig } from '../src/lib/client-portal/hardware-returns.ts';
+import {
+  buildSecondLevelAssignmentEmail,
+  formatBerlinDateTime,
+} from '../src/lib/client-portal/second-level-notify.ts';
 
 let passed = 0;
 let failed = 0;
@@ -331,6 +335,60 @@ check('all 3 reminder stages render Outlook-safe branded HTML', () => {
     assert.ok(looksLikeHtml(prepared), `stage ${stage} prepared HTML`);
     assert.ok(!prepared.includes('&lt;table'), `stage ${stage} tags not escaped`);
   }
+});
+
+console.log('\n[6] 2nd-Level-Support assignment HTML notification');
+check('renders metadata grid, Berlin time, escaped XSS, CTA', () => {
+  const built = buildSecondLevelAssignmentEmail({
+    portalTitle: 'DPG ServiceDesk',
+    label: '2nd-Level-Support',
+    ticketNumber: 'HC-4242',
+    subject: 'VPN down <script>alert(1)</script>',
+    priority: 'Dringend',
+    priorityKey: 'urgent',
+    status: 'In Bearbeitung',
+    category: 'Netzwerk',
+    requesterName: 'Max <img>',
+    requesterEmail: 'max@dpg.test',
+    assignedByName: 'Portal Admin',
+    assignedAt: new Date('2026-11-26T16:05:00.000Z'),
+    messageSnippet: 'Bitte prüfen: <b>tunnel</b> & "gateway"',
+    ticketUrl: 'https://portal.example.test/portal/tickets/tkt-4242',
+  });
+  assert.ok(
+    built.subject.includes('[2nd-Level-Support]') &&
+      built.subject.includes('HC-4242') &&
+      built.subject.includes('VPN down'),
+    `subject: ${built.subject}`,
+  );
+  assert.ok(/<table\b/i.test(built.html), 'table-based layout');
+  assert.ok(!/<pre\b/i.test(built.html), 'no <pre>');
+  assert.ok(built.html.includes('DPG ServiceDesk'), 'portal branding title');
+  assert.ok(built.html.includes('2nd-Level-Support Zuweisung'), 'badge');
+  assert.ok(built.html.includes('#HC-4242') || built.html.includes('HC-4242'), 'ticket nr');
+  assert.ok(built.html.includes('Dringend'), 'priority pill');
+  assert.ok(built.html.includes('In Bearbeitung'), 'status');
+  assert.ok(built.html.includes('Netzwerk'), 'category');
+  assert.ok(built.html.includes('max@dpg.test'), 'requester email');
+  assert.ok(built.html.includes('Portal Admin'), 'assigned by');
+  assert.ok(
+    built.html.includes('Ticket im Portal öffnen'),
+    'primary CTA label',
+  );
+  assert.ok(
+    built.html.includes('https://portal.example.test/portal/tickets/tkt-4242'),
+    'CTA href',
+  );
+  assert.ok(!/<script\b/i.test(built.html), 'script tags stripped/escaped');
+  assert.ok(built.html.includes('&lt;script&gt;') || !built.html.includes('<script>'), 'xss escaped in subject line body');
+  assert.ok(built.html.includes('&lt;img&gt;') || !built.html.includes('<img>'), 'requester xss escaped');
+  assert.ok(built.html.includes('&amp;') || built.html.includes('&quot;'), 'snippet entities escaped');
+  const berlin = formatBerlinDateTime(new Date('2026-11-26T16:05:00.000Z'));
+  assert.ok(/Uhr$/.test(berlin), `Berlin suffix: ${berlin}`);
+  assert.ok(built.html.includes('Uhr'), 'email shows Berlin-formatted time');
+  const prepared = prepareOutboundEmailHtml(built.html);
+  assert.ok(looksLikeHtml(prepared), 'prepared HTML');
+  assert.ok(!prepared.includes('&lt;table'), 'tags not double-escaped');
 });
 
 console.log('\n================================');

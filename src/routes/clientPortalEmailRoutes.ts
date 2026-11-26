@@ -21,9 +21,19 @@ import type { EmailChannelConfig } from '../lib/email-ingestion/types.js';
 import { resolveOrganizationIdFromUser } from '../lib/client-portal/ticket-visibility.js';
 import {
   getOrganization,
+  updateOrganizationSecondLevelSettings,
   updateOrganizationSsoSettings,
 } from '../lib/client-portal/organizations.js';
+import {
+  buildSecondLevelAssignmentEmail,
+  buildPortalTicketUrl,
+  normalizeSecondLevelNotifySettings,
+  parseSecondLevelEmails,
+  resolveSecondLevelNotifySettings,
+} from '../lib/client-portal/second-level-notify.js';
+import { resolvePortalTitle } from '../lib/client-portal/org-branding.js';
 import { isClientPortalRole } from '../lib/client-portal/roles.js';
+import { trySendTransactionalEmail } from '../lib/outbound-mail.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 import { parseAndValidateSignatureLogoDataUrl } from '../lib/email-signature.js';
 
@@ -73,6 +83,37 @@ const ssoSchema = z.object({
     .enum(['admin_approval', 'pre_provisioned_only', 'auto_domain'])
     .optional(),
 });
+
+const secondLevelSchema = z.object({
+  second_level_notify_enabled: z.boolean().optional(),
+  secondLevelNotifyEnabled: z.boolean().optional(),
+  second_level_support_emails: z
+    .union([z.string().max(2000), z.array(z.string().email().max(320)).max(20)])
+    .optional()
+    .nullable(),
+  secondLevelSupportEmails: z
+    .union([z.string().max(2000), z.array(z.string().email().max(320)).max(20)])
+    .optional()
+    .nullable(),
+  second_level_label: z.string().max(80).optional().nullable(),
+  secondLevelLabel: z.string().max(80).optional().nullable(),
+});
+
+function publicOrgEmailView(org: NonNullable<Awaited<ReturnType<typeof getOrganization>>>) {
+  const sl = resolveSecondLevelNotifySettings(org);
+  return {
+    id: org.id,
+    name: org.name,
+    domain: org.domain,
+    m365TenantId: org.m365_tenant_id,
+    ssoEnabled: org.sso_enabled,
+    ssoApprovalMode: org.sso_approval_mode,
+    second_level_notify_enabled: sl.second_level_notify_enabled,
+    second_level_support_emails: sl.second_level_support_emails,
+    second_level_label: sl.second_level_label,
+    secondLevelNotify: sl,
+  };
+}
 
 function resolveOrgId(req: Request): string | null {
   if (isClientPortalRole(req.user?.role)) {
@@ -167,16 +208,7 @@ router.get(
       const org = await getOrganization(organizationId);
       return res.json({
         channel: publicChannelView(channel),
-        organization: org
-          ? {
-              id: org.id,
-              name: org.name,
-              domain: org.domain,
-              m365TenantId: org.m365_tenant_id,
-              ssoEnabled: org.sso_enabled,
-              ssoApprovalMode: org.sso_approval_mode,
-            }
-          : null,
+        organization: org ? publicOrgEmailView(org) : null,
         setupHelper: {
           requiredApplicationPermissions: ['Mail.ReadWrite', 'Mail.Send'],
           consent: 'Admin consent required in Entra ID (Azure AD)',
@@ -466,20 +498,82 @@ router.put(
       });
 
       return res.json({
-        organization: org
-          ? {
-              id: org.id,
-              name: org.name,
-              m365TenantId: org.m365_tenant_id,
-              ssoEnabled: org.sso_enabled,
-              ssoApprovalMode: org.sso_approval_mode,
-            }
-          : null,
+        organization: org ? publicOrgEmailView(org) : null,
       });
     } catch (err: any) {
       safeLog('error', '[portal/email-channel] sso update failed', err?.message || err);
       return res.status(500).json({
         error: safeErrorMessage(err, 'Failed to update SSO settings'),
+      });
+    }
+  },
+);
+
+/**
+ * PUT /api/portal/email-channel/second-level
+ * CLIENT_ADMIN — 2nd-Level-Support notification settings for this org.
+ */
+router.put(
+  '/second-level',
+  authenticate,
+  attachClientOrganizationContext,
+  async (req: Request, res: Response): Promise<any> => {
+    const isAdmin = req.user?.role === 'SYSTEM_ADMIN' || req.user?.is_admin === true;
+    if (!isAdmin && req.user?.role !== 'CLIENT_ADMIN') {
+      return res.status(403).json({
+        error: 'Forbidden: CLIENT_ADMIN or SYSTEM_ADMIN required.',
+      });
+    }
+
+    const parsed = secondLevelSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Invalid second-level settings payload',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    try {
+      const organizationId = await requireOrgAccess(req, res);
+      if (!organizationId) return;
+
+      const emailsRaw =
+        parsed.data.second_level_support_emails ??
+        parsed.data.secondLevelSupportEmails;
+      const emails =
+        emailsRaw === undefined ? undefined : parseSecondLevelEmails(emailsRaw ?? '');
+      if (emailsRaw !== undefined && Array.isArray(emailsRaw) === false) {
+        const rawStr = String(emailsRaw || '');
+        if (rawStr.trim() && emails && emails.length === 0) {
+          return res.status(400).json({
+            error: 'Keine gültige E-Mail-Adresse gefunden.',
+          });
+        }
+      }
+
+      const org = await updateOrganizationSecondLevelSettings(organizationId, {
+        second_level_notify_enabled:
+          parsed.data.second_level_notify_enabled ??
+          parsed.data.secondLevelNotifyEnabled,
+        second_level_support_emails: emails,
+        second_level_label:
+          parsed.data.second_level_label ?? parsed.data.secondLevelLabel,
+      });
+
+      return res.json({
+        organization: org ? publicOrgEmailView(org) : null,
+        settings: org
+          ? resolveSecondLevelNotifySettings(org)
+          : normalizeSecondLevelNotifySettings({}),
+      });
+    } catch (err: any) {
+      safeLog(
+        'error',
+        '[portal/email-channel] second-level update failed',
+        err?.message || err,
+      );
+      return res.status(500).json({
+        error: safeErrorMessage(err, '2nd-Level-Einstellungen konnten nicht gespeichert werden'),
       });
     }
   },

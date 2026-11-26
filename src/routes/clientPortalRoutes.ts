@@ -17,6 +17,7 @@ import {
   organizationEnabledModules,
   updateOrganizationBranding,
   updateOrganizationPortalModules,
+  updateOrganizationSecondLevelSettings,
 } from '../lib/client-portal/organizations.js';
 import {
   parseAndValidateFaviconDataUrl,
@@ -25,6 +26,14 @@ import {
 } from '../lib/client-portal/org-branding.js';
 import { parseAndValidateDashboardBannerDataUrl } from '../lib/dashboard-banner-validate.js';
 import { getSystemFavicon } from '../lib/system-favicon.js';
+import {
+  buildPortalTicketUrl,
+  buildSecondLevelAssignmentEmail,
+  normalizeSecondLevelNotifySettings,
+  parseSecondLevelEmails,
+  resolveSecondLevelNotifySettings,
+} from '../lib/client-portal/second-level-notify.js';
+import { trySendTransactionalEmail } from '../lib/outbound-mail.js';
 
 const router = Router();
 
@@ -645,6 +654,157 @@ router.get(
       safeLog('error', '[portal] dashboard failed', err?.message || err);
       return res.status(500).json({
         error: safeErrorMessage(err, 'Dashboard konnte nicht geladen werden'),
+      });
+    }
+  },
+);
+
+const notificationsSchema = z.object({
+  second_level_notify_enabled: z.boolean().optional(),
+  second_level_support_emails: z
+    .union([z.string().max(2000), z.array(z.string().max(320)).max(20)])
+    .optional()
+    .nullable(),
+  second_level_label: z.string().max(80).optional().nullable(),
+});
+
+/**
+ * GET /api/portal/settings/notifications — 2nd-Level notify settings for session org.
+ */
+router.get(
+  '/settings/notifications',
+  requireClientPortalRole(['CLIENT_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organization missing.' });
+      }
+      const org = await getOrganization(organizationId);
+      if (!org) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({
+        settings: resolveSecondLevelNotifySettings(org),
+        organization: { id: org.id, name: org.name },
+      });
+    } catch (err: any) {
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'Einstellungen konnten nicht geladen werden') });
+    }
+  },
+);
+
+/**
+ * PUT /api/portal/settings/notifications — save 2nd-Level notify settings.
+ */
+router.put(
+  '/settings/notifications',
+  requireClientPortalRole(['CLIENT_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const parsed = notificationsSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Invalid notifications payload',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organization missing.' });
+      }
+      const emails =
+        parsed.data.second_level_support_emails === undefined
+          ? undefined
+          : parseSecondLevelEmails(parsed.data.second_level_support_emails ?? '');
+      const org = await updateOrganizationSecondLevelSettings(organizationId, {
+        second_level_notify_enabled: parsed.data.second_level_notify_enabled,
+        second_level_support_emails: emails,
+        second_level_label: parsed.data.second_level_label,
+      });
+      if (!org) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({
+        settings: resolveSecondLevelNotifySettings(org),
+        organization: { id: org.id, name: org.name },
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        error: safeErrorMessage(err, 'Einstellungen konnten nicht gespeichert werden'),
+      });
+    }
+  },
+);
+
+/**
+ * POST /api/portal/settings/second-level-test
+ * Send a sample 2nd-Level assignment email to configured recipients (or override).
+ */
+router.post(
+  '/settings/second-level-test',
+  requireClientPortalRole(['CLIENT_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organization missing.' });
+      }
+      const org = await getOrganization(organizationId);
+      if (!org) return res.status(404).json({ error: 'Organization not found.' });
+
+      const settings = resolveSecondLevelNotifySettings(org);
+      const overrideEmails = parseSecondLevelEmails(
+        (req.body as any)?.to ?? (req.body as any)?.emails ?? '',
+      );
+      const emails =
+        overrideEmails.length > 0 ? overrideEmails : settings.second_level_support_emails;
+      if (!emails.length) {
+        return res.status(400).json({
+          error: 'Bitte mindestens eine gültige 2nd-Level-Support E-Mail hinterlegen.',
+        });
+      }
+
+      const portalTitle = resolvePortalTitle(org.name, org.portal_title);
+      const sample = buildSecondLevelAssignmentEmail({
+        portalTitle,
+        label: settings.second_level_label,
+        ticketNumber: 'HC-TEST-001',
+        subject: 'Test: 2nd-Level-Support Benachrichtigung',
+        priority: 'Hoch',
+        priorityKey: 'high',
+        status: 'In Bearbeitung',
+        category: 'Second Level Support',
+        requesterName: String(req.user!.name || 'Portal Admin'),
+        requesterEmail: String(req.user!.email || ''),
+        assignedByName: String(req.user!.name || 'Portal Admin'),
+        assignedAt: new Date(),
+        messageSnippet:
+          'Dies ist eine Test-Benachrichtigung aus den Portal-Einstellungen. Bitte keine Aktion erforderlich.',
+        ticketUrl: buildPortalTicketUrl('test-ticket'),
+      });
+
+      const result = await trySendTransactionalEmail({
+        to: emails,
+        subject: sample.subject,
+        body: sample.html,
+        organizationId,
+        contentType: 'HTML',
+      });
+
+      return res.json({
+        ok: result.delivered === true,
+        success: result.delivered === true,
+        delivered: result.delivered === true,
+        emails,
+        via: result.via || null,
+        message: result.delivered
+          ? `Test-E-Mail an ${emails.join(', ')} gesendet.`
+          : result.reason || 'E-Mail konnte nicht zugestellt werden (Antwort trotzdem OK).',
+        settings: normalizeSecondLevelNotifySettings(settings),
+      });
+    } catch (err: any) {
+      safeLog('error', '[portal] second-level-test failed', err?.message || err);
+      return res.status(500).json({
+        error: safeErrorMessage(err, 'Test-E-Mail fehlgeschlagen'),
       });
     }
   },
