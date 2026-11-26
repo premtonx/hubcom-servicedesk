@@ -15,6 +15,7 @@ import {
 } from '../../ui/select';
 import { OrgPortalBrandingCard } from '../../client-portal/OrgPortalBrandingCard';
 import { HardwareReturnsModuleCard } from '../../client-portal/HardwareReturnsModuleCard';
+import { PortalModulesCard } from '../../client-portal/PortalModulesCard';
 import { DeletePortalUserDialog } from '../../ui/DeletePortalUserDialog';
 import { useTranslation } from '../../../lib/context/I18nContext';
 
@@ -70,6 +71,8 @@ export default function CompanyPortalTab({
   const [bannerUrl, setBannerUrl] = useState<string | null>(null);
   const [hardwareEnabled, setHardwareEnabled] = useState(false);
   const [hardwareConfig, setHardwareConfig] = useState<Record<string, unknown> | null>(null);
+  const [secureExchangeEnabled, setSecureExchangeEnabled] = useState(true);
+  const [vaultEnabled, setVaultEnabled] = useState(true);
   const [emailSummary, setEmailSummary] = useState<{
     mailbox: string | null;
     enabled: boolean;
@@ -113,6 +116,13 @@ export default function CompanyPortalTab({
       setFaviconUrl(org?.favicon_url || null);
       setHardwareEnabled(Boolean(org?.hardware_returns_enabled));
       setHardwareConfig(org?.hardware_returns_config || null);
+      setSecureExchangeEnabled(
+        org?.secure_exchange_enabled !== false &&
+          org?.enabledModules?.secureExchange !== false,
+      );
+      setVaultEnabled(
+        org?.vault_enabled !== false && org?.enabledModules?.vault !== false,
+      );
       setUsers(usersRes.data?.users || []);
       setEmailSummary({
         mailbox: usersRes.data?.emailChannel?.mailbox || null,
@@ -366,6 +376,17 @@ export default function CompanyPortalTab({
         onSaved={(next) => {
           setHardwareEnabled(next.hardware_returns_enabled);
           setHardwareConfig(next.hardware_returns_config);
+        }}
+      />
+
+      <PortalModulesCard
+        mode="admin"
+        organizationId={organizationId}
+        secureExchangeEnabled={secureExchangeEnabled}
+        vaultEnabled={vaultEnabled}
+        onSaved={(next) => {
+          setSecureExchangeEnabled(next.secure_exchange_enabled);
+          setVaultEnabled(next.vault_enabled);
         }}
       />
 

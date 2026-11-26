@@ -20,6 +20,10 @@ import { Input } from '../../ui/input';
 import { Label } from '../../ui/label';
 import { cn } from '../../../lib/utils';
 import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
+import {
+  evaluatePortalVaultPageAccess,
+  resolveVaultModuleFlag,
+} from '../../../lib/client-portal/portal-modules-nav';
 
 type VaultSecret = {
   id: string;
@@ -45,9 +49,17 @@ function categoryLabel(id: string): string {
 }
 
 export default function ClientVaultPage() {
-  const { isOrgWide, isClientAdmin, loading: sessionLoading } = useClientPortalSession();
+  const {
+    session,
+    isClient,
+    isOrgWide,
+    isClientAdmin,
+    loading: sessionLoading,
+  } = useClientPortalSession();
   const [secrets, setSecrets] = useState<VaultSecret[]>([]);
   const [loading, setLoading] = useState(true);
+  const [moduleEnabled, setModuleEnabled] = useState<boolean | null>(null);
+  const [moduleLoading, setModuleLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('all');
   const [composerOpen, setComposerOpen] = useState(false);
@@ -58,6 +70,40 @@ export default function ClientVaultPage() {
   const [draftCategory, setDraftCategory] = useState('password');
   const [draftValue, setDraftValue] = useState('');
   const [draftNotes, setDraftNotes] = useState('');
+
+  useEffect(() => {
+    if (sessionLoading) return;
+    if (!session?.organizationId) {
+      setModuleEnabled(false);
+      setModuleLoading(false);
+      return;
+    }
+    let active = true;
+    setModuleLoading(true);
+    void axios
+      .get('/api/portal/me', { withCredentials: true })
+      .then((res) => {
+        if (!active) return;
+        setModuleEnabled(resolveVaultModuleFlag(res.data));
+      })
+      .catch(() => {
+        if (active) setModuleEnabled(false);
+      })
+      .finally(() => {
+        if (active) setModuleLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [session?.organizationId, sessionLoading]);
+
+  const gate = evaluatePortalVaultPageAccess({
+    sessionLoading,
+    moduleLoading,
+    isClient,
+    role: session?.role,
+    moduleEnabled,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,13 +129,13 @@ export default function ClientVaultPage() {
   }, [search, category]);
 
   useEffect(() => {
-    if (!isOrgWide) return;
+    if (gate.action !== 'allow') return;
     void load();
-  }, [isOrgWide, load]);
+  }, [gate.action, load]);
 
   const filtered = useMemo(() => secrets, [secrets]);
 
-  if (sessionLoading) {
+  if (gate.action === 'spinner') {
     return (
       <div className="flex-1 flex items-center justify-center text-slate-400 text-sm p-12">
         <Loader2 className="w-4 h-4 animate-spin mr-2" /> Laden…
@@ -97,7 +143,11 @@ export default function ClientVaultPage() {
     );
   }
 
-  // CLIENT_USER (and any non org-wide role) must never see Tresor.
+  if (gate.action === 'redirect') {
+    return <Navigate to={gate.to || '/portal/dashboard'} replace />;
+  }
+
+  // Defensive: org-wide role required (also covered by gate).
   if (!isOrgWide) {
     return <Navigate to="/portal/dashboard" replace />;
   }

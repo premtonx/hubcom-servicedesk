@@ -219,6 +219,17 @@ import {
   resolveHardwareReturnsModuleFlag,
 } from '../src/lib/client-portal/hardware-returns-nav.js';
 import {
+  evaluatePortalExchangePageAccess,
+  evaluatePortalVaultPageAccess,
+  evaluateSecureExchangeModuleAccess,
+  evaluateVaultModuleAccess,
+  portalSidebarShowsSecureExchange,
+  portalSidebarShowsVault,
+  resolveSecureExchangeModuleFlag,
+  resolveVaultModuleFlag,
+} from '../src/lib/client-portal/portal-modules-nav.js';
+import { organizationEnabledModules } from '../src/lib/client-portal/organizations.js';
+import {
   buildReminderTemplateVars,
   evaluateDueReminderStage,
   isValidReminderStage,
@@ -6710,6 +6721,261 @@ function testPortalSsoAdminApprovalFreigabe(): void {
   );
 }
 
+/**
+ * Part 2/3 — per-org toggles for Sicherer Austausch & Tresor (DPG opt-out).
+ * Verifies sidebar hide, page redirect, API 403 helpers, /me payload flags,
+ * and zero /api/db usage in portal exchange/vault mode.
+ */
+function testPortalModuleTogglesDpg(): void {
+  console.log('\n--- Portal module toggles (Sicherer Austausch + Tresor / DPG) ---');
+
+  const dpgOrg = {
+    id: ORG_B,
+    name: 'DPG',
+    slug: 'dpg',
+    hardware_returns_enabled: true,
+    secure_exchange_enabled: false,
+    vault_enabled: false,
+  } as any;
+  const otherOrg = {
+    id: ORG_A,
+    name: 'Citadelle AG',
+    slug: 'citadelle',
+    hardware_returns_enabled: false,
+    secure_exchange_enabled: true,
+    vault_enabled: true,
+  } as any;
+
+  const dpgModules = organizationEnabledModules(dpgOrg);
+  assert(dpgModules.secureExchange === false, 'DPG enabledModules.secureExchange=false');
+  assert(dpgModules.vault === false, 'DPG enabledModules.vault=false');
+  const otherModules = organizationEnabledModules(otherOrg);
+  assert(otherModules.secureExchange === true, 'other org secureExchange stays true');
+  assert(otherModules.vault === true, 'other org vault stays true');
+
+  // Defaults when columns missing → true (legacy always-on).
+  assert(
+    organizationEnabledModules({
+      hardware_returns_enabled: false,
+      secure_exchange_enabled: true,
+      vault_enabled: true,
+    } as any).secureExchange === true,
+    'legacy/default secureExchange true',
+  );
+
+  assert(
+    resolveSecureExchangeModuleFlag({
+      enabledModules: { secureExchange: false },
+    }) === false,
+    'resolveSecureExchange from enabledModules',
+  );
+  assert(
+    resolveVaultModuleFlag({
+      organization: { vault_enabled: false },
+    }) === false,
+    'resolveVault from organization.vault_enabled',
+  );
+  assert(
+    resolveSecureExchangeModuleFlag({
+      enabledModules: { secureExchange: true },
+    }) === true,
+    'resolveSecureExchange true when enabled',
+  );
+
+  assert(
+    portalSidebarShowsSecureExchange(false) === false,
+    'sidebar hides Sicherer Austausch when disabled',
+  );
+  assert(
+    portalSidebarShowsSecureExchange(true) === true,
+    'sidebar shows Sicherer Austausch when enabled',
+  );
+  assert(
+    portalSidebarShowsVault({ isOrgWide: true, moduleEnabled: false }) === false,
+    'sidebar hides Tresor when vault disabled (even for org-wide)',
+  );
+  assert(
+    portalSidebarShowsVault({ isOrgWide: true, moduleEnabled: true }) === true,
+    'sidebar shows Tresor for org-wide when enabled',
+  );
+  assert(
+    portalSidebarShowsVault({ isOrgWide: false, moduleEnabled: true }) === false,
+    'sidebar never shows Tresor for CLIENT_USER',
+  );
+
+  const dpgExchangePage = evaluatePortalExchangePageAccess({
+    sessionLoading: false,
+    moduleLoading: false,
+    isClient: true,
+    moduleEnabled: false,
+  });
+  assert(
+    dpgExchangePage.action === 'redirect' && dpgExchangePage.to === '/portal/dashboard',
+    'DPG direct /portal/exchange → /portal/dashboard',
+  );
+  const dpgVaultPage = evaluatePortalVaultPageAccess({
+    sessionLoading: false,
+    moduleLoading: false,
+    isClient: true,
+    role: 'CLIENT_ADMIN',
+    moduleEnabled: false,
+  });
+  assert(
+    dpgVaultPage.action === 'redirect' && dpgVaultPage.to === '/portal/dashboard',
+    'DPG direct /portal/vault → /portal/dashboard',
+  );
+  const enabledExchange = evaluatePortalExchangePageAccess({
+    sessionLoading: false,
+    moduleLoading: false,
+    isClient: true,
+    moduleEnabled: true,
+  });
+  assert(enabledExchange.action === 'allow', 'exchange page allows when module on');
+
+  const exchangeApiBlocked = evaluateSecureExchangeModuleAccess({
+    orgEnabled: false,
+    sessionOrgId: ORG_B,
+    role: 'CLIENT_ADMIN',
+  });
+  assert(
+    exchangeApiBlocked.ok === false && exchangeApiBlocked.status === 403,
+    'DPG /api/portal/exchange* → 403 when secure_exchange_enabled=false',
+  );
+  const vaultApiBlocked = evaluateVaultModuleAccess({
+    orgEnabled: false,
+    sessionOrgId: ORG_B,
+    role: 'CLIENT_ADMIN',
+  });
+  assert(
+    vaultApiBlocked.ok === false && vaultApiBlocked.status === 403,
+    'DPG /api/portal/vault* → 403 when vault_enabled=false',
+  );
+  const exchangeApiOk = evaluateSecureExchangeModuleAccess({
+    orgEnabled: true,
+    sessionOrgId: ORG_A,
+    role: 'CLIENT_USER',
+  });
+  assert(exchangeApiOk.ok === true, 'other org exchange API allowed when enabled');
+
+  // Source contracts: migration + middleware + UI toggles + zero /api/db in portal pages.
+  const migrationSql = fs.readFileSync(
+    path.join(
+      process.cwd(),
+      'prisma/migrations/20261126160000_portal_module_toggles/migration.sql',
+    ),
+    'utf8',
+  );
+  assert(
+    migrationSql.includes('secure_exchange_enabled') &&
+      migrationSql.includes('vault_enabled') &&
+      migrationSql.includes("LOWER(TRIM(slug)) = 'dpg'") &&
+      migrationSql.includes('DEFAULT TRUE'),
+    'migration adds flags (default true) and disables DPG only',
+  );
+
+  const pgBackend = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/postgres-backend.ts'),
+    'utf8',
+  );
+  assert(
+    pgBackend.includes('secure_exchange_enabled BOOLEAN NOT NULL DEFAULT TRUE') &&
+      pgBackend.includes('vault_enabled BOOLEAN NOT NULL DEFAULT TRUE'),
+    'initDb ALTER adds portal module columns (default true)',
+  );
+
+  const meRoutes = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    meRoutes.includes('secure_exchange_enabled') &&
+      meRoutes.includes('vault_enabled') &&
+      meRoutes.includes("'/organization/modules'") &&
+      meRoutes.includes('updateOrganizationPortalModules'),
+    '/api/portal/me + /organization/modules expose/toggle flags',
+  );
+
+  const exchangeRoutes = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalExchangeRoutes.ts'),
+    'utf8',
+  );
+  const vaultRoutes = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalVaultRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    exchangeRoutes.includes('evaluateSecureExchangeModuleAccess') &&
+      exchangeRoutes.includes('requireSecureExchangeModule') &&
+      exchangeRoutes.includes('authenticate'),
+    'exchange routes enforce module middleware + auth',
+  );
+  assert(
+    vaultRoutes.includes('evaluateVaultModuleAccess') &&
+      vaultRoutes.includes('requireVaultModule') &&
+      vaultRoutes.includes('authenticate'),
+    'vault routes enforce module middleware + auth',
+  );
+
+  const layoutSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/ClientPortalLayout.tsx'),
+    'utf8',
+  );
+  assert(
+    layoutSrc.includes('resolveSecureExchangeModuleFlag') &&
+      layoutSrc.includes('resolveVaultModuleFlag') &&
+      layoutSrc.includes('portalSidebarShowsSecureExchange') &&
+      layoutSrc.includes('NAV_EXCHANGE') &&
+      layoutSrc.includes('NAV_VAULT'),
+    'portal sidebar gates exchange/vault via module flags',
+  );
+
+  const modulesCard = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/PortalModulesCard.tsx'),
+    'utf8',
+  );
+  const brandingPage = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientBrandingPage.tsx'),
+    'utf8',
+  );
+  const companyPortal = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/companies/CompanyPortalTab.tsx'),
+    'utf8',
+  );
+  assert(
+    modulesCard.includes('Portal-Module') &&
+      modulesCard.includes('Sicherer Austausch') &&
+      modulesCard.includes('Tresor') &&
+      brandingPage.includes('PortalModulesCard') &&
+      companyPortal.includes('PortalModulesCard'),
+    'Portal-Module toggles on branding + staff Kunden portal tab',
+  );
+
+  const exchangePage = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientExchangePage.tsx'),
+    'utf8',
+  );
+  const vaultPage = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientVaultPage.tsx'),
+    'utf8',
+  );
+  assert(
+    exchangePage.includes('evaluatePortalExchangePageAccess') &&
+      exchangePage.includes('/portal/dashboard') &&
+      !exchangePage.includes('/api/db'),
+    'exchange page redirects when disabled; no /api/db',
+  );
+  assert(
+    vaultPage.includes('evaluatePortalVaultPageAccess') &&
+      vaultPage.includes('/portal/dashboard') &&
+      !vaultPage.includes('/api/db'),
+    'vault page redirects when disabled; no /api/db',
+  );
+  assert(
+    !exchangeRoutes.includes('/api/db') && !vaultRoutes.includes("'/api/db'"),
+    'exchange/vault API routes never call /api/db',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -6728,6 +6994,7 @@ async function main(): Promise<void> {
   testPortalKbIsolation();
   testPortalExchangeIsolation();
   testPortalTresorVaultIsolation();
+  testPortalModuleTogglesDpg();
   testHardwareReturnsModuleGate();
   testHardwareReturnsEscalationEngine();
   testHardwareReturnsStandaloneBackend();

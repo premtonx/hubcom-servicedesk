@@ -23,14 +23,32 @@ import {
   resolvePortalTitle,
 } from '../../lib/client-portal/org-branding';
 import { resolveHardwareReturnsModuleFlag } from '../../lib/client-portal/hardware-returns-nav';
+import {
+  portalSidebarShowsSecureExchange,
+  portalSidebarShowsVault,
+  resolveSecureExchangeModuleFlag,
+  resolveVaultModuleFlag,
+} from '../../lib/client-portal/portal-modules-nav';
 
 /** Create lives inside /portal/tickets + dashboard — not as a sidebar nav item. */
-const NAV_ALL = [
+const NAV_CORE = [
   { to: '/portal/dashboard', label: 'Übersicht', icon: LayoutDashboard, end: true },
   { to: '/portal/tickets', label: 'Tickets', icon: Ticket, end: true },
-  { to: '/portal/kb', label: 'Wissensdatenbank', icon: BookOpen, end: false },
-  { to: '/portal/exchange', label: 'Sicherer Austausch', icon: Shield, end: false },
 ] as const;
+
+const NAV_KB = {
+  to: '/portal/kb',
+  label: 'Wissensdatenbank',
+  icon: BookOpen,
+  end: false,
+} as const;
+
+const NAV_EXCHANGE = {
+  to: '/portal/exchange',
+  label: 'Sicherer Austausch',
+  icon: Shield,
+  end: false,
+} as const;
 
 const NAV_RETURNS = {
   to: '/portal/returns',
@@ -39,9 +57,12 @@ const NAV_RETURNS = {
   end: false,
 } as const;
 
-const NAV_ORG_WIDE = [
-  { to: '/portal/vault', label: 'Tresor', icon: Lock, end: false },
-] as const;
+const NAV_VAULT = {
+  to: '/portal/vault',
+  label: 'Tresor',
+  icon: Lock,
+  end: false,
+} as const;
 
 const NAV_ADMIN_ONLY = [
   { to: '/portal/members', label: 'Mitarbeiter & Rollen', icon: Users, end: false },
@@ -57,7 +78,13 @@ interface OrgBranding {
   favicon_url?: string | null;
   resolved_portal_title?: string;
   hardware_returns_enabled?: boolean;
-  enabledModules?: { hardwareReturns?: boolean };
+  secure_exchange_enabled?: boolean;
+  vault_enabled?: boolean;
+  enabledModules?: {
+    hardwareReturns?: boolean;
+    secureExchange?: boolean;
+    vault?: boolean;
+  };
 }
 
 export default function ClientPortalLayout() {
@@ -67,6 +94,8 @@ export default function ClientPortalLayout() {
   const [org, setOrg] = useState<OrgBranding | null>(null);
   /** null = still resolving /api/portal/me module flags */
   const [hardwareReturnsEnabled, setHardwareReturnsEnabled] = useState<boolean | null>(null);
+  const [secureExchangeEnabled, setSecureExchangeEnabled] = useState<boolean | null>(null);
+  const [vaultEnabled, setVaultEnabled] = useState<boolean | null>(null);
   // Ticket list + ticket detail need a non-scrolling shell; /portal/tickets/new must scroll.
   const isTicketCreate = location.pathname === '/portal/tickets/new';
   const isTicketDetail =
@@ -84,6 +113,8 @@ export default function ClientPortalLayout() {
     if (!session?.organizationId) {
       setOrg(null);
       setHardwareReturnsEnabled(false);
+      setSecureExchangeEnabled(false);
+      setVaultEnabled(false);
       return;
     }
     let active = true;
@@ -97,10 +128,14 @@ export default function ClientPortalLayout() {
         const nextOrg = orgRes.data?.organization || null;
         setOrg(nextOrg);
         setHardwareReturnsEnabled(resolveHardwareReturnsModuleFlag(meRes.data));
+        setSecureExchangeEnabled(resolveSecureExchangeModuleFlag(meRes.data));
+        setVaultEnabled(resolveVaultModuleFlag(meRes.data));
       } catch {
         if (!active) return;
         setOrg(null);
         setHardwareReturnsEnabled(false);
+        setSecureExchangeEnabled(false);
+        setVaultEnabled(false);
       }
     })();
     return () => {
@@ -118,12 +153,23 @@ export default function ClientPortalLayout() {
 
   // Keep nav stable while module flag loads; show returns for org-wide roles once confirmed.
   const showReturns = isOrgWide && hardwareReturnsEnabled === true;
+  // While flags are still loading (null), keep legacy always-on visibility to avoid flicker;
+  // once resolved to false (e.g. DPG) hide immediately.
+  const showVaultNav =
+    vaultEnabled === null
+      ? isOrgWide
+      : portalSidebarShowsVault({ isOrgWide, moduleEnabled: vaultEnabled });
+  const showExchangeNav =
+    secureExchangeEnabled === null
+      ? true
+      : portalSidebarShowsSecureExchange(secureExchangeEnabled);
 
   const navItems = [
-    ...NAV_ALL.slice(0, 2),
+    ...NAV_CORE,
     ...(showReturns ? [NAV_RETURNS] : []),
-    ...NAV_ALL.slice(2),
-    ...(isOrgWide ? NAV_ORG_WIDE : []),
+    NAV_KB,
+    ...(showExchangeNav ? [NAV_EXCHANGE] : []),
+    ...(showVaultNav ? [NAV_VAULT] : []),
     ...(isClientAdmin ? NAV_ADMIN_ONLY : []),
   ];
 
@@ -218,6 +264,8 @@ export default function ClientPortalLayout() {
             organization: org,
             setOrganization: setOrg,
             hardwareReturnsEnabled: hardwareReturnsEnabled === true,
+            secureExchangeEnabled: secureExchangeEnabled !== false,
+            vaultEnabled: vaultEnabled !== false,
           }}
         />
       </main>

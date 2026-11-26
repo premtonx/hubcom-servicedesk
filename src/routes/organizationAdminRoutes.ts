@@ -15,6 +15,7 @@ import {
   updateOrganization,
   updateOrganizationBranding,
   updateOrganizationHardwareModule,
+  updateOrganizationPortalModules,
 } from '../lib/client-portal/organizations.js';
 import {
   normalizeHardwareReturnsConfig,
@@ -99,11 +100,18 @@ const orgSchema = z.object({
   portal_banner_url: z.string().max(3_000_000).optional().nullable(),
   hardware_returns_enabled: z.boolean().optional(),
   hardware_returns_config: z.record(z.string(), z.unknown()).optional().nullable(),
+  secure_exchange_enabled: z.boolean().optional(),
+  vault_enabled: z.boolean().optional(),
 });
 
 const hardwareModuleSchema = z.object({
   hardware_returns_enabled: z.boolean().optional(),
   hardware_returns_config: z.record(z.string(), z.unknown()).optional().nullable(),
+});
+
+const portalModulesSchema = z.object({
+  secure_exchange_enabled: z.boolean().optional(),
+  vault_enabled: z.boolean().optional(),
 });
 
 const invitePortalUserSchema = z.object({
@@ -333,6 +341,48 @@ router.put(
       return res
         .status(500)
         .json({ error: safeErrorMessage(err, 'Hardware-Modul konnte nicht gespeichert werden') });
+    }
+  },
+);
+
+/**
+ * PUT /api/admin/organizations/:id/portal-modules
+ * SYSTEM_ADMIN — toggle Sicherer Austausch / Tresor per customer.
+ */
+router.put(
+  '/:id/portal-modules',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const id = routeParam(req.params.id);
+    const parsed = portalModulesSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Invalid portal-modules payload',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    if (
+      parsed.data.secure_exchange_enabled === undefined &&
+      parsed.data.vault_enabled === undefined
+    ) {
+      return res.status(400).json({ error: 'No module flags provided.' });
+    }
+    try {
+      const organization = await updateOrganizationPortalModules(id, {
+        secure_exchange_enabled: parsed.data.secure_exchange_enabled,
+        vault_enabled: parsed.data.vault_enabled,
+      });
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({
+        organization: {
+          ...organization,
+          enabledModules: organizationEnabledModules(organization),
+        },
+      });
+    } catch (err: any) {
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'Portal-Module konnten nicht gespeichert werden') });
     }
   },
 );

@@ -406,6 +406,11 @@ export async function initDb() {
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hardware_returns_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hardware_returns_config JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hardware_returns_seq INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS secure_exchange_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS vault_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    -- DPG opt-out lives in prisma migration 20261126160000_portal_module_toggles
+    -- (idempotent UPDATE by slug/name). initDb only ensures columns exist.
+
     CREATE TABLE IF NOT EXISTS ticket_hardware_returns (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
