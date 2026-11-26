@@ -686,6 +686,7 @@ export async function initDb() {
       CREATE TABLE IF NOT EXISTS "KnowledgeEmbedding" (
         "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         "tenant_id" VARCHAR(255) NOT NULL DEFAULT 'default',
+        "organization_id" VARCHAR(255),
         "source_type" "KnowledgeSourceType" NOT NULL,
         "source_id" VARCHAR(255) NOT NULL,
         "chunk_index" INTEGER NOT NULL DEFAULT 0,
@@ -696,13 +697,57 @@ export async function initDb() {
         "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE "KnowledgeEmbedding"
+        ADD COLUMN IF NOT EXISTS organization_id VARCHAR(255);
       CREATE UNIQUE INDEX IF NOT EXISTS "knowledge_embedding_source_chunk_uq"
         ON "KnowledgeEmbedding" ("tenant_id", "source_type", "source_id", "chunk_index");
       CREATE INDEX IF NOT EXISTS "idx_knowledge_embedding_source"
         ON "KnowledgeEmbedding" ("tenant_id", "source_type", "source_id");
+      CREATE INDEX IF NOT EXISTS "idx_knowledge_embedding_tenant_org"
+        ON "KnowledgeEmbedding" ("tenant_id", "organization_id");
+      CREATE INDEX IF NOT EXISTS "idx_knowledge_embedding_article"
+        ON "KnowledgeEmbedding" ("source_id")
+        WHERE source_type = 'KB_ARTICLE';
+      CREATE INDEX IF NOT EXISTS "idx_knowledge_embedding_org"
+        ON "KnowledgeEmbedding" ("organization_id")
+        WHERE organization_id IS NOT NULL;
       CREATE INDEX IF NOT EXISTS "idx_knowledge_embedding_fts"
         ON "KnowledgeEmbedding" USING gin ("search_tsv");
     `);
+    // Idempotent backfill organization_id from parent KB articles (and org: tenants).
+    try {
+      await pgPool.query(`
+        UPDATE "KnowledgeEmbedding" ke
+           SET organization_id = COALESCE(
+                 NULLIF(TRIM(d.data->>'organizationId'), ''),
+                 NULLIF(TRIM(d.data->>'organization_id'), ''),
+                 CASE
+                   WHEN ke.tenant_id LIKE 'org:%' THEN NULLIF(TRIM(substring(ke.tenant_id from 5)), '')
+                   ELSE NULL
+                 END
+               ),
+               updated_at = CURRENT_TIMESTAMP
+          FROM geistdesk_documents d
+         WHERE ke.source_type = 'KB_ARTICLE'
+           AND ke.organization_id IS NULL
+           AND d.collection = 'kb_articles'
+           AND d.id = ke.source_id
+      `);
+      await pgPool.query(`
+        UPDATE "KnowledgeEmbedding" ke
+           SET organization_id = NULLIF(TRIM(substring(ke.tenant_id from 5)), ''),
+               updated_at = CURRENT_TIMESTAMP
+         WHERE ke.organization_id IS NULL
+           AND ke.tenant_id LIKE 'org:%'
+           AND length(trim(substring(ke.tenant_id from 5))) > 0
+      `);
+    } catch (backfillErr: any) {
+      safeLog(
+        'warn',
+        '[DB Engine] KnowledgeEmbedding organization_id backfill skipped:',
+        backfillErr?.message || backfillErr,
+      );
+    }
     // HNSW may fail on very old pgvector builds — non-fatal for boot.
     try {
       await pgPool.query(`
@@ -733,6 +778,7 @@ export async function initDb() {
           chunk_content AS content,
           embedding,
           tenant_id,
+          organization_id,
           metadata,
           created_at,
           updated_at

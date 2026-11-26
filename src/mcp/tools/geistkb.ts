@@ -23,9 +23,15 @@ export function registerGeistKbTools(server: McpServer): void {
       if (denied) return denied;
       const actor = getMcpActor();
       try {
+        const { organizationIdFromRagTenant } = await import(
+          '../../lib/ai/rag-org-scope.js'
+        );
+        const organizationId = organizationIdFromRagTenant(actor.tenantId);
         const hits = await hybridSearchKnowledge({
           query,
           tenantId: actor.tenantId,
+          organizationId,
+          includeSharedKb: false,
           limit: limit ?? 5,
           sourceTypes: ['KB_ARTICLE', 'KB_DOCUMENT', 'RESOLVED_TICKET'],
         });

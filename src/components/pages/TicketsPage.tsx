@@ -1414,11 +1414,15 @@ export default function TicketsPage() {
 
     setIsGhostDrafting(true);
     try {
-      // Feature: Hybrid RAG (pgvector + FTS) — grounding drafts in KB + resolved tickets
+      // Feature: Hybrid RAG (pgvector + FTS) — grounding drafts in KB + resolved tickets.
+      // When the ticket belongs to a client org, strictly filter vectors to that org.
+      const ticketOrgId =
+        (ticket as any).organizationId || (ticket as any).organization_id || null;
       const grounded = await ragService.findRelevantContextHybrid(
         `${ticket.subject} ${ticket.description}`,
         kbArticles,
         allTickets,
+        { organizationId: ticketOrgId },
       );
       const relevantContext = grounded.results;
       
@@ -1535,11 +1539,16 @@ export default function TicketsPage() {
     
     setIsAiDrafting(true);
     try {
-      // Feature: Hybrid RAG (pgvector + FTS)
+      // Feature: Hybrid RAG (pgvector + FTS) — org-scoped when ticket has organizationId
+      const selectedOrgId =
+        (selectedTicket as any).organizationId ||
+        (selectedTicket as any).organization_id ||
+        null;
       const grounded = await ragService.findRelevantContextHybrid(
         `${selectedTicket.subject} ${selectedTicket.description}`,
         kbArticles,
         allTickets,
+        { organizationId: selectedOrgId },
       );
       const relevantContext = grounded.results;
       

@@ -96,6 +96,14 @@ import {
 } from '../src/lib/client-portal/portal-kb-api.js';
 import { resolveTenantIdForOrganization as resolveTenantIdForOrganizationFromContext } from '../src/lib/tenant-context.js';
 import {
+  buildRagOrganizationSqlFilter,
+  embeddingMatchesOrgScope,
+  filterEmbeddingsByOrganization,
+  organizationIdFromRagTenant,
+  resolveArticleOrganizationId,
+  resolveIncludeSharedKbInRag,
+} from '../src/lib/ai/rag-org-scope.js';
+import {
   evaluatePortalKbCategoryWriteAccess,
   portalCategoryId,
 } from '../src/lib/kb/kb-categories.js';
@@ -1638,6 +1646,7 @@ function testPortalKbIsolation(): void {
   testPortalKbArticleEditAndPortalChrome();
   testPortalKbSharePointCsvImport();
   testPortalKbWorkspaceApiIsolation();
+  testPortalRagOrganizationIdIsolation();
 }
 
 /** Part 1 — portal KB workspace metrics, index_in_rag, ai-ask org tenant isolation. */
@@ -1869,6 +1878,254 @@ function testPortalKbWorkspaceApiIsolation(): void {
       !isPortalKbFrontendApiAllowed('/api/vectors/search') &&
       !isPortalKbFrontendApiAllowed('/api/db'),
     'portal frontend allowlist accepts new KB paths; blocks staff vectors/db',
+  );
+  assert(
+    kbRouteSrc.includes('organizationId') &&
+      kbRouteSrc.includes('resolveIncludeSharedKbInRag') &&
+      kbRouteSrc.includes('includeSharedKb'),
+    'ai-ask passes organizationId + include_shared_kb_in_rag (default exclusive)',
+  );
+}
+
+/**
+ * Part 1 — Strict KnowledgeEmbedding.organization_id isolation:
+ * same tenant_id pool with DPG vs OtherOrg chunks; DPG retrieval returns ONLY DPG.
+ */
+function testPortalRagOrganizationIdIsolation(): void {
+  console.log('\n[12f] KnowledgeEmbedding organization_id RAG isolation (DPG vs OtherOrg)');
+
+  const DPG = 'org-dpg-uuid-0001';
+  const OTHER = 'org-other-uuid-0002';
+  const sharedTenant = 'default'; // same tenant_id — isolation must come from organization_id
+
+  const seededChunks = [
+    {
+      id: 'emb-dpg-1',
+      tenant_id: sharedTenant,
+      organization_id: DPG,
+      source_id: 'kb-dpg-vpn',
+      source_type: 'KB_ARTICLE',
+      chunk_content: 'DPG VPN Anleitung',
+    },
+    {
+      id: 'emb-dpg-2',
+      tenant_id: sharedTenant,
+      organization_id: DPG,
+      source_id: 'kb-dpg-outlook',
+      source_type: 'KB_ARTICLE',
+      chunk_content: 'DPG Outlook Tipps',
+    },
+    {
+      id: 'emb-other-1',
+      tenant_id: sharedTenant,
+      organization_id: OTHER,
+      source_id: 'kb-other-secret',
+      source_type: 'KB_ARTICLE',
+      chunk_content: 'OtherOrg Geheimwissen',
+    },
+    {
+      id: 'emb-other-2',
+      tenant_id: sharedTenant,
+      organization_id: OTHER,
+      source_id: 'kb-other-hr',
+      source_type: 'KB_ARTICLE',
+      chunk_content: 'OtherOrg HR Policy',
+    },
+    {
+      id: 'emb-hubcom-global',
+      tenant_id: sharedTenant,
+      organization_id: null,
+      source_id: 'kb-hubcom-guide',
+      source_type: 'KB_ARTICLE',
+      chunk_content: 'Hubcom global shared guide',
+    },
+  ];
+
+  // Exclusive DPG RAG (include_shared_kb_in_rag default false)
+  const dpgExclusive = filterEmbeddingsByOrganization(seededChunks, {
+    organizationId: DPG,
+    includeSharedKb: false,
+  });
+  assert(
+    dpgExclusive.length === 2 &&
+      dpgExclusive.every((c) => c.organization_id === DPG) &&
+      !dpgExclusive.some((c) => c.organization_id === OTHER) &&
+      !dpgExclusive.some((c) => c.organization_id == null),
+    'DPG exclusive RAG returns ONLY DPG chunks (0 OtherOrg, 0 shared)',
+  );
+  assert(
+    dpgExclusive.filter((c) => c.organization_id === OTHER).length === 0,
+    'DPG retrieval yields 0 chunks from OtherOrg',
+  );
+
+  // OtherOrg exclusive — never sees DPG
+  const otherExclusive = filterEmbeddingsByOrganization(seededChunks, {
+    organizationId: OTHER,
+    includeSharedKb: false,
+  });
+  assert(
+    otherExclusive.length === 2 &&
+      otherExclusive.every((c) => c.organization_id === OTHER) &&
+      !otherExclusive.some((c) => c.organization_id === DPG),
+    'OtherOrg exclusive RAG returns ONLY OtherOrg (0 DPG)',
+  );
+
+  // Optional shared flag — DPG + NULL hubcom, still 0 OtherOrg
+  const dpgWithShared = filterEmbeddingsByOrganization(seededChunks, {
+    organizationId: DPG,
+    includeSharedKb: true,
+  });
+  assert(
+    dpgWithShared.length === 3 &&
+      dpgWithShared.every(
+        (c) => c.organization_id === DPG || c.organization_id == null,
+      ) &&
+      !dpgWithShared.some((c) => c.organization_id === OTHER),
+    'include_shared_kb_in_rag=true adds Hubcom-global NULL rows only — never OtherOrg',
+  );
+
+  // Staff / no org — only NULL organization_id (never customer private)
+  const staffHits = filterEmbeddingsByOrganization(seededChunks, {
+    organizationId: null,
+    includeSharedKb: false,
+  });
+  assert(
+    staffHits.length === 1 &&
+      staffHits[0].organization_id == null &&
+      !staffHits.some((c) => c.organization_id === DPG || c.organization_id === OTHER),
+    'Hubcom staff RAG excludes all customer org vectors',
+  );
+
+  assert(
+    embeddingMatchesOrgScope(
+      { organization_id: DPG },
+      { organizationId: DPG, includeSharedKb: false },
+    ) === true,
+    'embeddingMatchesOrgScope accepts matching org',
+  );
+  assert(
+    embeddingMatchesOrgScope(
+      { organization_id: OTHER },
+      { organizationId: DPG, includeSharedKb: false },
+    ) === false,
+    'embeddingMatchesOrgScope rejects cross-org chunk',
+  );
+  assert(
+    embeddingMatchesOrgScope(
+      { organization_id: null },
+      { organizationId: DPG, includeSharedKb: false },
+    ) === false,
+    'exclusive mode rejects shared NULL when includeSharedKb=false',
+  );
+
+  const sqlExclusive = buildRagOrganizationSqlFilter(
+    { organizationId: DPG, includeSharedKb: false },
+    6,
+  );
+  assert(
+    sqlExclusive.clause.includes('organization_id = $6') &&
+      sqlExclusive.values[0] === DPG &&
+      !sqlExclusive.clause.includes('IS NULL'),
+    'SQL exclusive filter is organization_id = $org only',
+  );
+
+  const sqlStaff = buildRagOrganizationSqlFilter({ organizationId: null }, 6);
+  assert(
+    sqlStaff.clause.includes('organization_id IS NULL') &&
+      sqlStaff.values.length === 0,
+    'SQL staff filter excludes org-owned rows (IS NULL)',
+  );
+
+  const sqlShared = buildRagOrganizationSqlFilter(
+    { organizationId: DPG, includeSharedKb: true },
+    5,
+  );
+  assert(
+    sqlShared.clause.includes('organization_id = $5') &&
+      sqlShared.clause.includes('IS NULL') &&
+      sqlShared.values[0] === DPG,
+    'SQL shared filter is org OR NULL',
+  );
+
+  assert(
+    resolveArticleOrganizationId({ organizationId: DPG }) === DPG &&
+      resolveArticleOrganizationId({ organization_id: OTHER }) === OTHER &&
+      resolveArticleOrganizationId({ organizationId: null }) === null,
+    'resolveArticleOrganizationId reads article.organization_id',
+  );
+  assert(
+    organizationIdFromRagTenant(`org:${DPG}`) === DPG &&
+      organizationIdFromRagTenant('default') === null,
+    'organizationIdFromRagTenant parses org:<uuid>',
+  );
+  assert(
+    resolveIncludeSharedKbInRag(null) === false &&
+      resolveIncludeSharedKbInRag({ settings: {} }) === false &&
+      resolveIncludeSharedKbInRag({
+        settings: { include_shared_kb_in_rag: true },
+      }) === true,
+    'include_shared_kb_in_rag defaults false; true only when org settings set',
+  );
+
+  // Source contracts: indexer stamps organization_id; queries filter; portal never /api/db
+  const vectorQueueSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/ai/vector-queue.ts'),
+    'utf8',
+  );
+  const kiSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/ai/ki-orchestrator.ts'),
+    'utf8',
+  );
+  const ragSearchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/ai/rag-search.ts'),
+    'utf8',
+  );
+  const portalTicketWsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/portal-ticket-workspace.ts'),
+    'utf8',
+  );
+  const kbRouteSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalKbRoutes.ts'),
+    'utf8',
+  );
+  const migrationSql = fs.readFileSync(
+    path.join(
+      process.cwd(),
+      'prisma/migrations/20261126170000_knowledge_embedding_organization_id/migration.sql',
+    ),
+    'utf8',
+  );
+
+  assert(
+    migrationSql.includes('ADD COLUMN IF NOT EXISTS organization_id') &&
+      migrationSql.includes('idx_knowledge_embedding_tenant_org') &&
+      migrationSql.includes('idx_knowledge_embedding_article') &&
+      migrationSql.includes("d.collection = 'kb_articles'"),
+    'migration adds organization_id + indexes + backfill from kb_articles',
+  );
+  assert(
+    vectorQueueSrc.includes('organization_id') &&
+      vectorQueueSrc.includes('resolveArticleOrganizationId') &&
+      /index_in_rag === false[\s\S]{0,200}deleteEmbeddingsForSource/.test(vectorQueueSrc),
+    'indexer stamps organization_id; index_in_rag=false deletes chunks',
+  );
+  assert(
+    kiSrc.includes('buildRagOrganizationSqlFilter') &&
+      kiSrc.includes('organizationId: params.organizationId') &&
+      ragSearchSrc.includes('buildRagOrganizationSqlFilter'),
+    'hybrid + cosine RAG queries apply organization_id SQL filter',
+  );
+  assert(
+    portalTicketWsSrc.includes('hybridSearchKnowledge') &&
+      portalTicketWsSrc.includes('organizationId') &&
+      portalTicketWsSrc.includes('includeSharedKb'),
+    'portal ticket ai-sync grounds with org-scoped RAG',
+  );
+  assert(
+    kbRouteSrc.includes('organizationId') &&
+      !kbRouteSrc.includes("'/api/db") &&
+      !kbRouteSrc.includes('"/api/db'),
+    'portal KB RAG never touches /api/db',
   );
 }
 

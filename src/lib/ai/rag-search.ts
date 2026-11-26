@@ -28,6 +28,8 @@ const DEFAULT_MIN_SIMILARITY = 0.65;
 export async function cosineSearchRagChunks(params: {
   query: string;
   tenantId: string;
+  organizationId?: string | null;
+  includeSharedKb?: boolean;
   limit?: number;
   minSimilarity?: number;
 }): Promise<RagSimilarityHit[]> {
@@ -44,6 +46,16 @@ export async function cosineSearchRagChunks(params: {
   if (!vec) return [];
   const literal = vectorToSqlLiteral(vec);
 
+  const { buildRagOrganizationSqlFilter } = await import('./rag-org-scope.js');
+  // $1 vector, $2 tenant, $3 min sim, $4 limit, $5+ org
+  const org = buildRagOrganizationSqlFilter(
+    {
+      organizationId: params.organizationId,
+      includeSharedKb: params.includeSharedKb === true,
+    },
+    5,
+  );
+
   const sql = `
     SELECT
       id::text AS id,
@@ -52,16 +64,24 @@ export async function cosineSearchRagChunks(params: {
       chunk_index,
       chunk_content AS content,
       metadata,
+      organization_id,
       1 - (embedding <=> $1::vector) AS similarity_score
     FROM "KnowledgeEmbedding"
     WHERE tenant_id = $2
       AND embedding IS NOT NULL
       AND 1 - (embedding <=> $1::vector) > $3
+      ${org.clause}
     ORDER BY embedding <=> $1::vector
     LIMIT $4
   `;
 
-  const res = await queryDb(sql, [literal, tenantId, minSimilarity, limit]);
+  const res = await queryDb(sql, [
+    literal,
+    tenantId,
+    minSimilarity,
+    limit,
+    ...org.values,
+  ]);
   return res.rows.map((row: any) => {
     const metadata =
       typeof row.metadata === 'string'

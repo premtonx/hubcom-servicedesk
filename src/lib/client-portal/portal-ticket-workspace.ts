@@ -413,7 +413,7 @@ export async function runPortalTicketAiSync(params: {
       content: String(m.content || ''),
     })),
   );
-  const prompt = buildTicketDeepDivePrompt(
+  let prompt = buildTicketDeepDivePrompt(
     {
       subject: String(params.ticket.subject || ''),
       description: String(params.ticket.description || ''),
@@ -421,6 +421,39 @@ export async function runPortalTicketAiSync(params: {
     },
     messagesText,
   );
+
+  // Strict per-org RAG grounding — never search another customer's vectors.
+  const organizationId = String(params.session.organizationId || '').trim();
+  if (organizationId) {
+    try {
+      const { resolveTenantIdForOrganization } = await import('./portal-kb-workspace.js');
+      const { getOrganization } = await import('./organizations.js');
+      const { resolveIncludeSharedKbInRag } = await import('../ai/rag-org-scope.js');
+      const { hybridSearchKnowledge } = await import('../ai/ki-orchestrator.js');
+      const org = await getOrganization(organizationId);
+      const includeSharedKb = resolveIncludeSharedKbInRag(org);
+      const ragTenantId = resolveTenantIdForOrganization(organizationId);
+      const hits = await hybridSearchKnowledge({
+        query: `${params.ticket.subject || ''} ${params.ticket.description || ''}`.slice(0, 4000),
+        tenantId: ragTenantId,
+        organizationId,
+        includeSharedKb,
+        limit: 5,
+        sourceTypes: ['KB_ARTICLE'],
+      });
+      if (hits.length > 0) {
+        const ragBlock = hits
+          .map(
+            (h, idx) =>
+              `[KB ${idx + 1}] ${h.title} (id=${h.sourceId})\n${String(h.chunkContent || '').slice(0, 800)}`,
+          )
+          .join('\n\n');
+        prompt = `${prompt}\n\n--- Org-scoped Wissensdatenbank (RAG) ---\n${ragBlock}`;
+      }
+    } catch {
+      /* RAG optional — AI sync still runs without vectors */
+    }
+  }
 
   const { executeAiFeatureRequest, requireLifecycleOutput } = await import(
     '../ai-orchestrator-service.js'
