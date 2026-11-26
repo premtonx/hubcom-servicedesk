@@ -1801,6 +1801,48 @@ function testReturnsListeKanbanKartenLifecycle(): void {
   );
 }
 
+function testReturnsDetailOverviewLifecycle(): void {
+  console.log('\n[24] Rücklieferung Detail Overview (Part 2)');
+
+  const overviewSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnDetailOverviewPage.tsx'),
+    'utf8',
+  );
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const editorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnEditorPage.tsx'),
+    'utf8',
+  );
+  const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
+
+  assert(
+    overviewSrc.includes('Bearbeiten') &&
+      overviewSrc.includes('Geräte-Informationen') &&
+      overviewSrc.includes('Mitarbeiter & Kontakt') &&
+      overviewSrc.includes('Versand- & Rückgabe-Tracking') &&
+      overviewSrc.includes('Erinnerung senden') &&
+      !overviewSrc.includes("'/api/db") &&
+      !overviewSrc.includes('"/api/db'),
+    'overview layout present; zero /api/db',
+  );
+  assert(
+    workbenchSrc.includes('openDetails') &&
+      !workbenchSrc.includes('/tickets/kunden/') &&
+      workbenchSrc.includes('/returns/${encodeURIComponent(id)}?organizationId='),
+    'staff Details opens /returns/:id overview',
+  );
+  assert(
+    editorSrc.includes('overviewPath') &&
+      appSrc.includes('returns/:id/edit') &&
+      appSrc.includes('ClientReturnDetailPage') &&
+      appSrc.includes('StaffReturnDetailPage'),
+    'edit route separate; save can return to overview',
+  );
+}
+
 function testReturnsShipmentStatusLifecycle(): void {
   console.log('\n[23] Rücksendestatus shipment_status — PATCH sync + pills (Part 1)');
 
@@ -2176,6 +2218,7 @@ async function main(): Promise<void> {
   testSharePointReturnsCsvImportApiLifecycle();
   testSharePointReturnsCsvImportUiLifecycle();
   testReturnsShipmentStatusLifecycle();
+  testReturnsDetailOverviewLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);

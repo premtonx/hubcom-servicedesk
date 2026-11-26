@@ -89,8 +89,12 @@ const ClientReturnsPage = lazy(
 const ClientReturnEditorPage = lazy(
   () => import('./components/pages/client-portal/ClientReturnEditorPage'),
 );
+const ClientReturnDetailPage = lazy(
+  () => import('./components/pages/client-portal/ClientReturnDetailPage'),
+);
 const StaffReturnsPage = lazy(() => import('./components/pages/StaffReturnsPage'));
 const StaffReturnEditorPage = lazy(() => import('./components/pages/StaffReturnEditorPage'));
+const StaffReturnDetailPage = lazy(() => import('./components/pages/StaffReturnDetailPage'));
 
 function RouteFallback() {
   return (
@@ -518,12 +522,24 @@ function AppRoutes() {
                         }
                       />
                       <Route
-                        path="returns/:id"
+                        path="returns/:id/edit"
                         element={
                           <ClientOrgWideRoute>
                             <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Rücklieferung" />}>
                               <LazyPage>
                                 <ClientReturnEditorPage />
+                              </LazyPage>
+                            </ErrorBoundary>
+                          </ClientOrgWideRoute>
+                        }
+                      />
+                      <Route
+                        path="returns/:id"
+                        element={
+                          <ClientOrgWideRoute>
+                            <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Rücklieferung" />}>
+                              <LazyPage>
+                                <ClientReturnDetailPage />
                               </LazyPage>
                             </ErrorBoundary>
                           </ClientOrgWideRoute>
@@ -566,6 +582,36 @@ function AppRoutes() {
                       }
                     />
                     <Route path="tickets/:ticketId" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Tickets" />}><LazyPage><TicketsPage /></LazyPage></ErrorBoundary>} />
+                    <Route
+                      path="returns/new"
+                      element={
+                        <ErrorBoundary fallback={<ModuleCrashFallback module="Rücklieferung" />}>
+                          <LazyPage>
+                            <StaffReturnEditorPage />
+                          </LazyPage>
+                        </ErrorBoundary>
+                      }
+                    />
+                    <Route
+                      path="returns/:id/edit"
+                      element={
+                        <ErrorBoundary fallback={<ModuleCrashFallback module="Rücklieferung" />}>
+                          <LazyPage>
+                            <StaffReturnEditorPage />
+                          </LazyPage>
+                        </ErrorBoundary>
+                      }
+                    />
+                    <Route
+                      path="returns/:id"
+                      element={
+                        <ErrorBoundary fallback={<ModuleCrashFallback module="Rücklieferung" />}>
+                          <LazyPage>
+                            <StaffReturnDetailPage />
+                          </LazyPage>
+                        </ErrorBoundary>
+                      }
+                    />
                     <Route path="returns" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Rücklieferungen" />}><LazyPage><StaffReturnsPage /></LazyPage></ErrorBoundary>} />
                     <Route path="customers" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Customers" />}><LazyPage><CustomersPage /></LazyPage></ErrorBoundary>} />
                     <Route path="kb" element={<ModuleRoute module="geistKB"><ErrorBoundary fallback={<ModuleCrashFallback module="GeistKB" />}><LazyPage><KBPage /></LazyPage></ErrorBoundary></ModuleRoute>} />

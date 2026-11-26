@@ -71,11 +71,11 @@ export default function ClientPortalLayout() {
   const isTicketDetail =
     !isTicketCreate && /^\/portal\/tickets\/[^/]+$/.test(location.pathname);
   const isTicketsWorkbench = location.pathname === '/portal/tickets' || isTicketDetail;
-  const isReturnsEditor =
+  const isReturnsDetailOrEditor =
     location.pathname === '/portal/returns/new' ||
-    /^\/portal\/returns\/[^/]+$/.test(location.pathname);
+    /^\/portal\/returns\/[^/]+(\/edit)?$/.test(location.pathname);
   const isReturnsWorkbench =
-    location.pathname === '/portal/returns' || isReturnsEditor;
+    location.pathname === '/portal/returns' || isReturnsDetailOrEditor;
 
   useEffect(() => {
     if (!session?.organizationId) {

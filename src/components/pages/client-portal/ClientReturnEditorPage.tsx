@@ -10,7 +10,7 @@ import { ReturnEditorPage } from '../../returns/ReturnEditorPage';
 
 /**
  * Portal full-page create/edit for Rücklieferungen.
- * Routes: /portal/returns/new · /portal/returns/:id
+ * Routes: /portal/returns/new · /portal/returns/:id/edit
  */
 export default function ClientReturnEditorPage() {
   const { id } = useParams();
@@ -70,12 +70,17 @@ export default function ClientReturnEditorPage() {
     return <Navigate to="/portal/dashboard" replace />;
   }
 
+  const overviewPath = returnId
+    ? `/portal/returns/${encodeURIComponent(returnId)}`
+    : '/portal/returns';
+
   return (
     <ReturnEditorPage
       mode="portal"
       organizationId={session.organizationId}
       returnId={returnId}
       listPath="/portal/returns"
+      overviewPath={overviewPath}
     />
   );
 }
