@@ -444,6 +444,7 @@ export async function initDb() {
       solution_summary TEXT,
       shipping_method TEXT,
       shipping_reference TEXT,
+      shipment_status TEXT,
       return_required BOOLEAN NOT NULL DEFAULT FALSE,
       delivery_date DATE,
       return_due_date DATE,
@@ -485,6 +486,7 @@ export async function initDb() {
     ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS mail1_scheduled_date DATE;
     ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS mail2_scheduled_date DATE;
     ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS mail3_scheduled_date DATE;
+    ALTER TABLE ticket_hardware_returns ADD COLUMN IF NOT EXISTS shipment_status TEXT;
     ALTER TABLE ticket_hardware_returns
       ADD COLUMN IF NOT EXISTS reminder_stages JSONB NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE ticket_hardware_returns

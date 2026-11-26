@@ -60,6 +60,8 @@ import {
   InlineStatusSelect,
   type DeviceFieldsPatch,
 } from './ReturnsInlineEditors';
+import { ShipmentStatusPill } from './ShipmentStatusPill';
+import type { ShipmentStatus } from '../../lib/client-portal/hardware-returns-shipment';
 import {
   hasEscalatedReminder,
   ReturnsReminderStepper,
@@ -804,10 +806,14 @@ export function ReturnsWorkbench({
       // Same PATCH path as Kanban DnD into Zurückgeliefert / Eingegangen.
       await patchReturnFields(
         it,
-        { returned: true, returned_at: nowIso },
+        { returned: true, returned_at: nowIso, shipment_status: 'eingegangen' },
         {
           successToast: 'Eingang bestätigt',
-          mergeLocal: { returned: true, returned_at: nowIso },
+          mergeLocal: {
+            returned: true,
+            returned_at: nowIso,
+            shipment_status: 'eingegangen',
+          },
         },
       );
       void load();
@@ -820,16 +826,39 @@ export function ReturnsWorkbench({
     try {
       await patchReturnFields(
         it,
-        { returned: false, returned_at: null },
+        { returned: false, returned_at: null, shipment_status: 'versendet' },
         {
           successToast: 'Eingang zurückgesetzt',
-          mergeLocal: { returned: false, returned_at: null },
+          mergeLocal: {
+            returned: false,
+            returned_at: null,
+            shipment_status: 'versendet',
+          },
         },
       );
       void load();
     } catch {
       /* rolled back */
     }
+  };
+
+  const patchShipmentStatus = async (it: ListItem, next: ShipmentStatus) => {
+    const payload =
+      next === 'eingegangen'
+        ? {
+            shipment_status: next,
+            returned: true,
+            returned_at: new Date().toISOString(),
+          }
+        : {
+            shipment_status: next,
+            returned: false,
+            returned_at: null,
+          };
+    await patchReturnFields(it, payload, {
+      successToast: 'Rücksendestatus aktualisiert',
+      mergeLocal: payload,
+    });
   };
 
   const assigneeOptions = useMemo(() => {
@@ -1318,6 +1347,7 @@ export function ReturnsWorkbench({
             onOpenDetails={openEdit}
             onMarkReturned={(it) => void markReturnedItem(it)}
             onUnreturn={(it) => void unreturnItem(it)}
+            onShipmentStatusChange={(it, status) => void patchShipmentStatus(it, status)}
             onOpenSend={(it, stage) => void openSend(returnRowId(it), stage)}
           />
         ) : layoutMode === 'cards' ? (
@@ -1329,6 +1359,7 @@ export function ReturnsWorkbench({
             onMarkReturned={(it) => void markReturnedItem(it)}
             onUnreturn={(it) => void unreturnItem(it)}
             onStatusChange={(it, status) => void patchReturnStatus(it, status)}
+            onShipmentStatusChange={(it, status) => void patchShipmentStatus(it, status)}
             onOpenSend={(it, stage) => void openSend(returnRowId(it), stage)}
           />
         ) : (
@@ -1459,9 +1490,14 @@ export function ReturnsWorkbench({
                         <p className="text-slate-800 font-semibold mt-0.5">
                           Fällig: {formatDateDeOnly(hw.return_due_date)}
                         </p>
-                        {hw.shipping_method ? (
-                          <p className="text-slate-500 mt-0.5">Versand: {hw.shipping_method}</p>
-                        ) : null}
+                        <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+                          <ShipmentStatusPill
+                            returned={Boolean(hw.returned)}
+                            shipmentStatus={hw.shipment_status}
+                            interactive
+                            onChange={(next) => void patchShipmentStatus(it, next)}
+                          />
+                        </div>
                         <DueCountdownPill
                           overdueDays={it.overdueDays}
                           dueDate={hw.return_due_date || hw.delivery_date}

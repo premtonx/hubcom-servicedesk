@@ -5,6 +5,7 @@ import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
 import { cn } from '../../lib/utils';
 import { toIsoDateOnly } from '../../lib/client-portal/hardware-returns-dates';
+import { resolveEffectiveShipmentStatus } from '../../lib/client-portal/hardware-returns-shipment';
 
 export interface HardwareReturnFormState {
   /** Betreff — unused in Part-3 UI (kept for legacy payload compat). */
@@ -29,6 +30,7 @@ export interface HardwareReturnFormState {
   time_sl3_minutes: number;
   shipping_method: string;
   shipping_reference: string;
+  shipment_status: string;
   solution_summary: string;
   exported: boolean;
   return_required: boolean;
@@ -87,6 +89,7 @@ export function emptyHardwareReturnForm(): HardwareReturnFormState {
     time_sl3_minutes: 0,
     shipping_method: '',
     shipping_reference: '',
+    shipment_status: 'versendet',
     solution_summary: '',
     exported: false,
     return_required: true,
@@ -141,6 +144,10 @@ export function hardwareFormFromRecord(raw: Record<string, unknown> | null | und
     time_sl3_minutes: Number(raw.time_sl3_minutes) || 0,
     shipping_method: String(raw.shipping_method || ''),
     shipping_reference: String(raw.shipping_reference || ''),
+    shipment_status: resolveEffectiveShipmentStatus({
+      returned: Boolean(raw.returned),
+      shipment_status: (raw.shipment_status as string | null) || null,
+    }),
     solution_summary: String(raw.solution_summary || ''),
     exported: Boolean(raw.exported),
     return_required: raw.return_required !== false && raw.return_required !== 'f',
@@ -229,6 +236,7 @@ export function hardwareFormToPayload(form: HardwareReturnFormState): Record<str
     time_sl3_minutes: form.time_sl3_minutes || 0,
     shipping_method: form.shipping_method || null,
     shipping_reference: form.shipping_reference || null,
+    shipment_status: form.shipment_status || null,
     solution_summary: form.solution_summary || null,
     exported: form.exported,
     return_required: form.return_required,

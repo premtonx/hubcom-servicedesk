@@ -1,4 +1,5 @@
 import type { ConfiguredReminderStage } from '../../lib/client-portal/hardware-returns-stages';
+import type { ShipmentStatus } from '../../lib/client-portal/hardware-returns-shipment';
 import {
   returnRowId,
   ReturnsItemCardBody,
@@ -13,6 +14,7 @@ interface ReturnsCardGridProps {
   onMarkReturned: (item: ReturnsListItem) => void;
   onUnreturn?: (item: ReturnsListItem) => void;
   onStatusChange: (item: ReturnsListItem, status: string) => void;
+  onShipmentStatusChange?: (item: ReturnsListItem, status: ShipmentStatus) => void;
   onOpenSend?: (item: ReturnsListItem, stage: number) => void;
 }
 
@@ -24,6 +26,7 @@ export function ReturnsCardGrid({
   onMarkReturned,
   onUnreturn,
   onStatusChange,
+  onShipmentStatusChange,
   onOpenSend,
 }: ReturnsCardGridProps) {
   return (
@@ -46,6 +49,11 @@ export function ReturnsCardGrid({
               onMarkReturned={() => onMarkReturned(item)}
               onUnreturn={onUnreturn ? () => onUnreturn(item) : undefined}
               onStatusChange={(status) => onStatusChange(item, status)}
+              onShipmentStatusChange={
+                onShipmentStatusChange
+                  ? (status) => onShipmentStatusChange(item, status)
+                  : undefined
+              }
               onOpenSend={onOpenSend ? (stage) => onOpenSend(item, stage) : undefined}
             />
           </button>

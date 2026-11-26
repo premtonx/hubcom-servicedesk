@@ -421,6 +421,7 @@ export async function markHardwareReturned(params: {
     `UPDATE ticket_hardware_returns
      SET returned = TRUE,
          returned_at = $2::timestamptz,
+         shipment_status = 'eingegangen',
          status = 'returned',
          updated_at = NOW()
      WHERE id = $1::uuid AND organization_id = $3

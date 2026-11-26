@@ -284,6 +284,7 @@ check('all 3 reminder stages render Outlook-safe branded HTML', () => {
       solution_summary: null,
       shipping_method: null,
       shipping_reference: null,
+      shipment_status: null,
       return_required: true,
       delivery_date: '2026-10-01',
       return_due_date: '2026-10-15',

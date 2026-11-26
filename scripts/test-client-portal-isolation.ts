@@ -135,6 +135,10 @@ import {
   type TicketHardwareReturnRecord,
 } from '../src/lib/client-portal/hardware-returns.js';
 import {
+  coerceShipmentStatus,
+  resolveEffectiveShipmentStatus,
+} from '../src/lib/client-portal/hardware-returns-shipment.js';
+import {
   formatDateDeOnly,
   toIsoDateOnly,
 } from '../src/lib/client-portal/hardware-returns-dates.js';
@@ -2232,6 +2236,7 @@ function baseHw(partial: Partial<TicketHardwareReturnRecord> = {}): TicketHardwa
     solution_summary: null,
     shipping_method: null,
     shipping_reference: null,
+    shipment_status: null,
     return_required: true,
     delivery_date: '2026-10-01',
     return_due_date: '2026-10-15',
@@ -2650,10 +2655,11 @@ function testHardwareReturnsDateSerializationAndMarkReturned(): void {
     markFn.includes('SET returned = TRUE') &&
       markFn.includes("status = 'returned'") &&
       markFn.includes('returned_at = $2::timestamptz') &&
+      markFn.includes("shipment_status = 'eingegangen'") &&
       !markFn.includes('updateHardwareReturnById') &&
       !/SET[\s\S]*delivery_date[\s\S]*WHERE/.test(markFn) &&
       !/SET[\s\S]*return_due_date[\s\S]*WHERE/.test(markFn),
-    'mark-returned updates only returned/returned_at/status (+ activity_log) — never delivery/due dates',
+    'mark-returned updates returned/returned_at/status/shipment_status (+ activity_log) — never delivery/due dates',
   );
 
   const workbenchSrc = fs.readFileSync(
@@ -2779,8 +2785,9 @@ function testHardwareReturnsSchemaCatalogsPart1(): void {
     stamped.returned === true &&
       typeof stamped.returned_at === 'string' &&
       !Number.isNaN(new Date(String(stamped.returned_at)).getTime()) &&
-      stamped.delivery_date === '2026-11-20',
-    'mark returned stamps ISO returned_at without touching delivery_date',
+      stamped.delivery_date === '2026-11-20' &&
+      stamped.shipment_status === 'eingegangen',
+    'mark returned stamps ISO returned_at + shipment_status=eingegangen without touching delivery_date',
   );
   const berlin = new Intl.DateTimeFormat('de-DE', {
     timeZone: 'Europe/Berlin',
@@ -2799,8 +2806,10 @@ function testHardwareReturnsSchemaCatalogsPart1(): void {
     { existing: baseHw({ returned: true, returned_at: stamped.returned_at as string }) },
   );
   assert(
-    unchecked.returned === false && unchecked.returned_at == null,
-    'uncheck returned clears returned_at',
+    unchecked.returned === false &&
+      unchecked.returned_at == null &&
+      unchecked.shipment_status === 'versendet',
+    'uncheck returned clears returned_at and reverts shipment_status to versendet',
   );
   const spoofedAt = normalizeHardwareReturnInput(
     { returned: false, returned_at: '2026-01-15T12:00:00.000Z' },
@@ -5205,6 +5214,165 @@ function testHardwareReturnsCollapsibleFilterBar(): void {
   );
 }
 
+function testHardwareReturnsShipmentStatusPart1(): void {
+  console.log('\n--- Hardware returns shipment_status pills (Part 1) ---');
+
+  assert(coerceShipmentStatus('ausstehend') === 'ausstehend', 'coerce ausstehend');
+  assert(coerceShipmentStatus('Versendet') === 'versendet', 'coerce versendet');
+  assert(coerceShipmentStatus('EINGEGANGEN') === 'eingegangen', 'coerce eingegangen');
+  assert(coerceShipmentStatus('') === null, 'empty → null');
+
+  assert(
+    resolveEffectiveShipmentStatus({ returned: true, shipment_status: 'ausstehend' }) ===
+      'eingegangen',
+    'returned wins over ausstehend → Eingegangen (legacy 888 DPG)',
+  );
+  assert(
+    resolveEffectiveShipmentStatus({ returned: false, shipment_status: 'ausstehend' }) ===
+      'ausstehend',
+    'Ausstehend when not returned',
+  );
+  assert(
+    resolveEffectiveShipmentStatus({ returned: false, shipment_status: null }) === 'versendet',
+    'null → Versendet without migration',
+  );
+
+  const versendet = normalizeHardwareReturnInput({ shipment_status: 'versendet' });
+  assert(versendet.shipment_status === 'versendet', 'PATCH versendet persists (staff+portal)');
+
+  const ausstehend = normalizeHardwareReturnInput(
+    { shipment_status: 'ausstehend' },
+    { existing: versendet as any },
+  );
+  assert(
+    ausstehend.shipment_status === 'ausstehend' && !ausstehend.returned,
+    'PATCH ausstehend persists',
+  );
+
+  const eingegangen = normalizeHardwareReturnInput(
+    { shipment_status: 'eingegangen' },
+    { existing: { ...(versendet as any), returned: false, returned_at: null } },
+  );
+  assert(
+    eingegangen.shipment_status === 'eingegangen' &&
+      eingegangen.returned === true &&
+      typeof eingegangen.returned_at === 'string',
+    'PATCH eingegangen syncs returned=true (Eingang bestätigen)',
+  );
+
+  const leave = normalizeHardwareReturnInput(
+    { shipment_status: 'ausstehend' },
+    {
+      existing: {
+        ...(versendet as any),
+        returned: true,
+        returned_at: eingegangen.returned_at,
+        shipment_status: 'eingegangen',
+      },
+    },
+  );
+  assert(
+    leave.shipment_status === 'ausstehend' && leave.returned === false && leave.returned_at == null,
+    'pill leave eingegangen → returned cleared',
+  );
+
+  const markIn = normalizeHardwareReturnInput(
+    { returned: true },
+    { existing: { ...(versendet as any), shipment_status: 'ausstehend' } },
+  );
+  assert(
+    markIn.shipment_status === 'eingegangen' && markIn.returned === true,
+    'Eingang bestätigen → shipment_status=eingegangen',
+  );
+  const markOut = normalizeHardwareReturnInput(
+    { returned: false },
+    {
+      existing: {
+        ...(versendet as any),
+        returned: true,
+        returned_at: markIn.returned_at,
+        shipment_status: 'eingegangen',
+      },
+    },
+  );
+  assert(
+    markOut.shipment_status === 'versendet' && markOut.returned === false,
+    'undo receipt → shipment_status=versendet',
+  );
+
+  const hwSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns.ts'),
+    'utf8',
+  );
+  const escalationSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-escalation.ts'),
+    'utf8',
+  );
+  const pgSrc = fs.readFileSync(path.join(process.cwd(), 'src/lib/postgres-backend.ts'), 'utf8');
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const pillSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ShipmentStatusPill.tsx'),
+    'utf8',
+  );
+  const editorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnEditorPage.tsx'),
+    'utf8',
+  );
+  const sharedSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/returns-layout-shared.tsx'),
+    'utf8',
+  );
+  const kanbanSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsKanbanBoard.tsx'),
+    'utf8',
+  );
+  const cardsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsCardGrid.tsx'),
+    'utf8',
+  );
+  const mig = fs.readFileSync(
+    path.join(
+      process.cwd(),
+      'prisma/migrations/20261126150000_hardware_returns_shipment_status/migration.sql',
+    ),
+    'utf8',
+  );
+
+  assert(
+    mig.includes('ADD COLUMN IF NOT EXISTS shipment_status TEXT') &&
+      pgSrc.includes('shipment_status TEXT') &&
+      hwSrc.includes('shipment_status = $38') &&
+      escalationSrc.includes("shipment_status = 'eingegangen'"),
+    'DB column + UPDATE/INSERT + mark-returned wire shipment_status',
+  );
+  assert(
+    pillSrc.includes('bg-blue-50 text-blue-600 border-blue-200') &&
+      pillSrc.includes('bg-amber-50 text-amber-600 border-amber-200') &&
+      pillSrc.includes('bg-emerald-50 text-emerald-700 border-emerald-200') &&
+      workbenchSrc.includes('ShipmentStatusPill') &&
+      workbenchSrc.includes('patchShipmentStatus') &&
+      !workbenchSrc.includes('Versand: {hw.') &&
+      !workbenchSrc.includes('shipping_method ||') &&
+      sharedSrc.includes('ShipmentStatusPill') &&
+      kanbanSrc.includes('onShipmentStatusChange') &&
+      cardsSrc.includes('onShipmentStatusChange') &&
+      editorSrc.includes('Rücksendestatus'),
+    'list/Kanban/Karten pills + form selector present',
+  );
+  assert(
+    workbenchSrc.includes("'/api/portal/returns'") &&
+      workbenchSrc.includes("'/api/returns'") &&
+      !workbenchSrc.includes("'/api/db") &&
+      !workbenchSrc.includes('"/api/db') &&
+      !editorSrc.includes("'/api/db") &&
+      !pillSrc.includes('/api/db'),
+    'staff + portal modes: zero /api/db calls',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -5236,6 +5404,7 @@ async function main(): Promise<void> {
   testHardwareReturnsListeKanbanKarten();
   testHardwareReturnsInlineListEditors();
   testHardwareReturnsCollapsibleFilterBar();
+  testHardwareReturnsShipmentStatusPart1();
   await testOrganizationDirectorySyncPart2();
   testSharePointReturnsCsvImportApiIsolation();
   testSharePointReturnsCsvImportUiIsolation();
