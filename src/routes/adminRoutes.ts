@@ -73,6 +73,12 @@ import {
   parseAndValidateDashboardBannerDataUrl,
   setDashboardBanner,
 } from "../lib/dashboard-banner.js";
+import {
+  clearSystemFavicon,
+  getSystemFavicon,
+  parseAndValidateSystemFaviconDataUrl,
+  setSystemFavicon,
+} from "../lib/system-favicon.js";
 import { isHubcomStaffRole } from "../lib/client-portal/roles.js";
 
 const router = Router();
@@ -186,6 +192,102 @@ router.delete(
         error instanceof Error ? error.message : error,
       );
       return res.status(500).json({ error: "Failed to clear dashboard banner." });
+    }
+  },
+);
+
+/**
+ * GET /api/admin/system-favicon
+ * Hubcom staff may read the main ServiceDesk favicon.
+ */
+router.get("/system-favicon", async (req: Request, res: Response): Promise<any> => {
+  const role = String(req.user?.role || "");
+  if (!isHubcomStaffRole(role) && role !== "SYSTEM_ADMIN" && !(req.user as any)?.is_admin) {
+    return res.status(403).json({ error: "Forbidden: Hubcom staff only." });
+  }
+  try {
+    const favicon = await getSystemFavicon();
+    return res.json({
+      imageDataUrl: favicon.imageDataUrl,
+      updatedAt: favicon.updatedAt,
+      updatedBy: favicon.updatedBy,
+    });
+  } catch (error: unknown) {
+    safeLog("error", "[System Favicon] get failed:", error instanceof Error ? error.message : error);
+    return res.status(500).json({ error: "Failed to load system favicon." });
+  }
+});
+
+/**
+ * POST /api/admin/system-favicon
+ * SYSTEM_ADMIN uploads / replaces the main Hubcom favicon (PNG/SVG/WebP/ICO ≤ 256 KB).
+ */
+router.post(
+  "/system-favicon",
+  requireRole(["SYSTEM_ADMIN"]),
+  async (req: Request, res: Response): Promise<any> => {
+    const parsed = z
+      .object({
+        imageDataUrl: z.string().min(1).max(400_000),
+        faviconDataUrl: z.string().min(1).max(400_000).optional(),
+      })
+      .safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid favicon payload",
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    const raw = parsed.data.faviconDataUrl || parsed.data.imageDataUrl;
+    const check = parseAndValidateSystemFaviconDataUrl(raw);
+    if (check.ok === false) {
+      return res.status(400).json({ error: check.error });
+    }
+    try {
+      const favicon = await setSystemFavicon({
+        imageDataUrl: check.dataUrl,
+        updatedBy: String(req.user?.id || "system"),
+      });
+      return res.json({
+        ok: true,
+        imageDataUrl: favicon.imageDataUrl,
+        updatedAt: favicon.updatedAt,
+        updatedBy: favicon.updatedBy,
+      });
+    } catch (error: unknown) {
+      safeLog(
+        "error",
+        "[System Favicon] upload failed:",
+        error instanceof Error ? error.message : error,
+      );
+      return res.status(500).json({ error: "Failed to save system favicon." });
+    }
+  },
+);
+
+/**
+ * DELETE /api/admin/system-favicon
+ * SYSTEM_ADMIN clears the custom favicon (falls back to /favicon.svg).
+ */
+router.delete(
+  "/system-favicon",
+  requireRole(["SYSTEM_ADMIN"]),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const favicon = await clearSystemFavicon(String(req.user?.id || "system"));
+      return res.json({
+        ok: true,
+        imageDataUrl: null,
+        updatedAt: favicon.updatedAt,
+        updatedBy: favicon.updatedBy,
+      });
+    } catch (error: unknown) {
+      safeLog(
+        "error",
+        "[System Favicon] delete failed:",
+        error instanceof Error ? error.message : error,
+      );
+      return res.status(500).json({ error: "Failed to clear system favicon." });
     }
   },
 );

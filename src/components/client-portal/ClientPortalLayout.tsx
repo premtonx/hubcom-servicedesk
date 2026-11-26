@@ -60,30 +60,6 @@ interface OrgBranding {
   enabledModules?: { hardwareReturns?: boolean };
 }
 
-const DEFAULT_PORTAL_FAVICON = '/favicon.svg';
-
-function applyPortalFavicon(href: string | null | undefined) {
-  if (typeof document === 'undefined') return;
-  const next = String(href || '').trim() || DEFAULT_PORTAL_FAVICON;
-  let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
-  if (!link) {
-    link = document.createElement('link');
-    link.rel = 'icon';
-    document.head.appendChild(link);
-  }
-  if (next.startsWith('data:image/png')) link.type = 'image/png';
-  else if (next.startsWith('data:image/jpeg')) link.type = 'image/jpeg';
-  else if (next.startsWith('data:image/webp')) link.type = 'image/webp';
-  else if (next.startsWith('data:image/x-icon') || next.startsWith('data:image/vnd.microsoft.icon')) {
-    link.type = 'image/x-icon';
-  } else if (next.endsWith('.svg') || next.includes('image/svg')) {
-    link.type = 'image/svg+xml';
-  } else {
-    link.removeAttribute('type');
-  }
-  link.href = next;
-}
-
 export default function ClientPortalLayout() {
   const { session, isClientAdmin, isOrgWide, loading } = useClientPortalSession();
   const navigate = useNavigate();
@@ -108,7 +84,6 @@ export default function ClientPortalLayout() {
     if (!session?.organizationId) {
       setOrg(null);
       setHardwareReturnsEnabled(false);
-      applyPortalFavicon(DEFAULT_PORTAL_FAVICON);
       return;
     }
     let active = true;
@@ -122,26 +97,16 @@ export default function ClientPortalLayout() {
         const nextOrg = orgRes.data?.organization || null;
         setOrg(nextOrg);
         setHardwareReturnsEnabled(resolveHardwareReturnsModuleFlag(meRes.data));
-        applyPortalFavicon(nextOrg?.favicon_url || DEFAULT_PORTAL_FAVICON);
       } catch {
         if (!active) return;
         setOrg(null);
         setHardwareReturnsEnabled(false);
-        applyPortalFavicon(DEFAULT_PORTAL_FAVICON);
       }
     })();
     return () => {
       active = false;
     };
   }, [session?.organizationId]);
-
-  // Keep document favicon in sync if org branding reloads with a new favicon_url.
-  useEffect(() => {
-    applyPortalFavicon(org?.favicon_url || DEFAULT_PORTAL_FAVICON);
-    return () => {
-      applyPortalFavicon(DEFAULT_PORTAL_FAVICON);
-    };
-  }, [org?.favicon_url]);
 
   if (loading || !session) {
     return (

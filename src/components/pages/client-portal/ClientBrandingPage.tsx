@@ -74,7 +74,7 @@ export default function ClientBrandingPage() {
           <div>
             <h1 className="text-xl font-black tracking-tight text-slate-900">Portal-Branding</h1>
             <p className="text-sm text-slate-500 font-medium mt-1">
-              Logo, Portal-Titel, Favicon und Dashboard-Banner für {org.name}
+              Logo, Browser-Tab-Titel, Favicon und Dashboard-Banner für {org.name}
               {session?.organizationId ? ` · ${session.organizationId.slice(0, 8)}…` : ''}
             </p>
           </div>
@@ -108,6 +108,7 @@ export default function ClientBrandingPage() {
                   );
                 }
                 await load();
+                window.dispatchEvent(new CustomEvent('hubcom-portal-branding-changed'));
               } finally {
                 setSaving(false);
               }
@@ -143,6 +144,7 @@ export default function ClientBrandingPage() {
                   { withCredentials: true },
                 );
                 await load();
+                window.dispatchEvent(new CustomEvent('hubcom-portal-branding-changed'));
               } finally {
                 setSaving(false);
               }
@@ -152,6 +154,7 @@ export default function ClientBrandingPage() {
               try {
                 await axios.delete('/api/portal/branding/favicon', { withCredentials: true });
                 await load();
+                window.dispatchEvent(new CustomEvent('hubcom-portal-branding-changed'));
               } finally {
                 setSaving(false);
               }

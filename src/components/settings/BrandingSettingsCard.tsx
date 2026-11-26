@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { ImagePlus, RotateCcw, Building2, Loader2, Image as ImageIcon } from 'lucide-react';
+import { ImagePlus, RotateCcw, Building2, Loader2, Image as ImageIcon, Globe } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
@@ -17,6 +17,12 @@ import {
   DASHBOARD_BANNER_MAX_BYTES,
   parseAndValidateDashboardBannerDataUrl,
 } from '../../lib/dashboard-banner-validate';
+import {
+  SYSTEM_FAVICON_ALLOWED_MIME,
+  SYSTEM_FAVICON_MAX_BYTES,
+  parseAndValidateSystemFaviconDataUrl,
+} from '../../lib/system-favicon-validate';
+import { applyDocumentFavicon, DEFAULT_SYSTEM_FAVICON_HREF } from '../../lib/document-branding';
 
 const MAX_LOGO_BYTES = 512 * 1024;
 
@@ -30,10 +36,14 @@ export function BrandingSettingsCard() {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
+  const faviconInputRef = useRef<HTMLInputElement>(null);
   const [logoUrl, setLogoUrl] = useState<string | null>(() => getCustomLogoUrl());
   const [bannerUrl, setBannerUrl] = useState<string | null>(null);
   const [bannerBusy, setBannerBusy] = useState(false);
   const [bannerLoaded, setBannerLoaded] = useState(false);
+  const [faviconUrl, setFaviconUrl] = useState<string | null>(null);
+  const [faviconBusy, setFaviconBusy] = useState(false);
+  const [faviconLoaded, setFaviconLoaded] = useState(false);
 
   const loadBanner = useCallback(async () => {
     try {
@@ -46,9 +56,21 @@ export function BrandingSettingsCard() {
     }
   }, []);
 
+  const loadFavicon = useCallback(async () => {
+    try {
+      const res = await axios.get('/api/admin/system-favicon', { withCredentials: true });
+      setFaviconUrl(res.data?.imageDataUrl || null);
+    } catch {
+      /* ignore */
+    } finally {
+      setFaviconLoaded(true);
+    }
+  }, []);
+
   useEffect(() => {
     void loadBanner();
-  }, [loadBanner]);
+    void loadFavicon();
+  }, [loadBanner, loadFavicon]);
 
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -138,6 +160,69 @@ export function BrandingSettingsCard() {
     }
   };
 
+  const onFaviconFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!SYSTEM_FAVICON_ALLOWED_MIME.has(file.type)) {
+      toast.error(
+        t(
+          'settings.branding.faviconType',
+          'Nur PNG, SVG, WebP oder ICO (max. 256 KB).',
+        ),
+      );
+      return;
+    }
+    if (file.size > SYSTEM_FAVICON_MAX_BYTES) {
+      toast.error(t('settings.branding.faviconTooLarge', 'Favicon zu groß (max. 256 KB).'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const imageDataUrl = String(reader.result || '');
+      const check = parseAndValidateSystemFaviconDataUrl(imageDataUrl);
+      if (check.ok === false) {
+        toast.error(check.error);
+        return;
+      }
+      setFaviconBusy(true);
+      try {
+        const res = await axios.post(
+          '/api/admin/system-favicon',
+          { imageDataUrl: check.dataUrl },
+          { withCredentials: true },
+        );
+        const next = res.data?.imageDataUrl || check.dataUrl;
+        setFaviconUrl(next);
+        applyDocumentFavicon(next);
+        window.dispatchEvent(new CustomEvent('hubcom-system-favicon-changed'));
+        toast.success(t('settings.branding.faviconSaved', 'System-Favicon gespeichert.'));
+      } catch (err: any) {
+        toast.error(err?.response?.data?.error || 'Favicon konnte nicht gespeichert werden.');
+      } finally {
+        setFaviconBusy(false);
+      }
+    };
+    reader.onerror = () =>
+      toast.error(t('settings.branding.faviconReadError', 'Favicon konnte nicht gelesen werden.'));
+    reader.readAsDataURL(file);
+  };
+
+  const resetFavicon = async () => {
+    setFaviconBusy(true);
+    try {
+      await axios.delete('/api/admin/system-favicon', { withCredentials: true });
+      setFaviconUrl(null);
+      applyDocumentFavicon(DEFAULT_SYSTEM_FAVICON_HREF);
+      window.dispatchEvent(new CustomEvent('hubcom-system-favicon-changed'));
+      toast.success(t('settings.branding.faviconReset', 'Favicon auf Standard zurückgesetzt.'));
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Favicon konnte nicht zurückgesetzt werden.');
+    } finally {
+      setFaviconBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <Card className="rounded-[2rem] border-slate-200/80 shadow-sm overflow-hidden">
@@ -214,6 +299,74 @@ export function BrandingSettingsCard() {
             <Button type="button" variant="outline" onClick={resetLogo} disabled={!logoUrl}>
               <RotateCcw className="w-4 h-4 mr-2" />
               {t('settings.branding.resetBtn', 'Platzhalter wiederherstellen')}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-[2rem] border-slate-200/80 shadow-sm overflow-hidden">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4 text-[#1B6CA8]" />
+            <CardTitle className="text-base">
+              {t('settings.branding.faviconTitle', 'Favicon (Browser-Tab)')}
+            </CardTitle>
+          </div>
+          <CardDescription>
+            {t(
+              'settings.branding.faviconDescription',
+              'Icon im Browser-Tab für Hubcom ServiceDesk (Staff). PNG, SVG, WebP oder ICO, max. 256 KB.',
+            )}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-xl border border-dashed border-slate-300 bg-white flex items-center justify-center overflow-hidden shrink-0">
+              {faviconLoaded && faviconUrl ? (
+                <img src={faviconUrl} alt="" className="max-w-full max-h-full object-contain" />
+              ) : (
+                <img
+                  src={DEFAULT_SYSTEM_FAVICON_HREF}
+                  alt=""
+                  className="max-w-[28px] max-h-[28px] object-contain opacity-70"
+                />
+              )}
+            </div>
+            <p className="text-xs text-slate-500">
+              {faviconUrl
+                ? t('settings.branding.faviconPreviewCustom', 'Aktuelles System-Favicon')
+                : t('settings.branding.faviconPreviewDefault', 'Standard-Favicon (/favicon.svg)')}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={faviconInputRef}
+              type="file"
+              accept="image/png,image/webp,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,.ico"
+              className="hidden"
+              onChange={onFaviconFile}
+            />
+            <Button
+              type="button"
+              className="bg-[#0B1F3A] hover:bg-[#061525] text-white"
+              disabled={faviconBusy}
+              onClick={() => faviconInputRef.current?.click()}
+            >
+              {faviconBusy ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <ImagePlus className="w-4 h-4 mr-2" />
+              )}
+              {t('settings.branding.faviconUpload', 'Favicon hochladen')}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={faviconBusy || !faviconUrl}
+              onClick={() => void resetFavicon()}
+            >
+              <RotateCcw className="w-4 h-4 mr-2" />
+              {t('settings.branding.faviconResetBtn', 'Auf Standard zurücksetzen')}
             </Button>
           </div>
         </CardContent>
