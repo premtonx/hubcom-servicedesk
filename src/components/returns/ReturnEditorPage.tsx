@@ -50,11 +50,17 @@ import {
 } from '../tickets/HardwareReturnSections';
 import {
   formatDateDeOnly,
+  parseDateDeOnly,
   toIsoDateOnly,
 } from '../../lib/client-portal/hardware-returns-dates';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../ui/dropdown-menu';
+import {
   defaultConfiguredReminderStages,
-  getStageSentAt,
   normalizeConfiguredReminderStages,
   reminderStageLabel,
   stageOverrideKey,
@@ -63,7 +69,6 @@ import {
 import {
   nextManualReminderStage,
   ReturnsReminderStepper,
-  visibleReminderStages,
 } from './ReturnsReminderStepper';
 
 function formatReturnNumberDisplay(returnNumber: string | null | undefined): string {
@@ -181,6 +186,59 @@ function Field({
       </Label>
       {children}
     </div>
+  );
+}
+
+/** German TT.MM.JJJJ text date — never browser mm/dd/yyyy. */
+function GermanDateInput({
+  value,
+  onChange,
+  className,
+}: {
+  value: string;
+  onChange: (iso: string) => void;
+  className?: string;
+}) {
+  const display = formatDateDeOnly(value);
+  const [text, setText] = useState(display === '—' ? '' : display);
+  useEffect(() => {
+    const next = formatDateDeOnly(value);
+    setText(next === '—' ? '' : next);
+  }, [value]);
+  return (
+    <Input
+      type="text"
+      inputMode="numeric"
+      autoComplete="off"
+      placeholder="TT.MM.JJJJ"
+      className={cn('h-10 font-medium tabular-nums', className)}
+      value={text}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setText(raw);
+        if (!raw.trim()) {
+          onChange('');
+          return;
+        }
+        const iso = parseDateDeOnly(raw);
+        if (iso) onChange(iso);
+      }}
+      onBlur={() => {
+        if (!text.trim()) {
+          onChange('');
+          setText('');
+          return;
+        }
+        const iso = parseDateDeOnly(text);
+        if (iso) {
+          onChange(iso);
+          setText(formatDateDeOnly(iso));
+          return;
+        }
+        const fallback = formatDateDeOnly(value);
+        setText(fallback === '—' ? '' : fallback);
+      }}
+    />
   );
 }
 
@@ -338,7 +396,9 @@ export function ReturnEditorPage({
   const [dirHits, setDirHits] = useState<DirectoryHit[]>([]);
   const [dirOpen, setDirOpen] = useState(false);
   const [dirLoading, setDirLoading] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [reminderDetailsOpen, setReminderDetailsOpen] = useState(false);
+  const [selectedReminderStage, setSelectedReminderStage] = useState(1);
+  const [extraReminderStages, setExtraReminderStages] = useState<number[]>([]);
   const [timeOpen, setTimeOpen] = useState(false);
   const [sendingStage, setSendingStage] = useState<number | null>(null);
   const [activeStep, setActiveStep] = useState(0);
@@ -440,9 +500,13 @@ export function ReturnEditorPage({
           const blank = emptyHardwareReturnForm();
           blank.status = 'Neu';
           blank.sla = 'Normal';
+          blank.auto_reminder_enabled = true;
           blank.assignee_user_id = String(user?.uid || '');
           blank.assignee_name = String(user?.displayName || user?.email || '');
           setForm(blank);
+          setReminderDetailsOpen(false);
+          setSelectedReminderStage(1);
+          setExtraReminderStages([]);
           setCustomerName('');
           setCustomerEmail('');
           setDirQuery('');
@@ -627,7 +691,9 @@ export function ReturnEditorPage({
     setCustomerName(snap.customerName);
     setCustomerEmail(snap.customerEmail);
     setDirQuery(snap.dirQuery);
-    setAdvancedOpen(false);
+    setReminderDetailsOpen(false);
+    setSelectedReminderStage(1);
+    setExtraReminderStages([]);
     setTimeOpen(false);
     toast.message('Formular zurückgesetzt');
   };
@@ -675,6 +741,28 @@ export function ReturnEditorPage({
     )
     .join(' · ')}`;
 
+  const planCompact = `${configuredStages.length || 4} Stufen: ${
+    configuredStages.length
+      ? configuredStages
+          .map((s, i) => (i === 0 ? `${s.delayDays}T` : `+${s.delayDays}T`))
+          .join(' → ')
+      : '14T → +7T → +7T → +7T'
+  }`;
+
+  const autoStatusPill = form.auto_reminder_enabled
+    ? `Automatisch aktiv · 1. Stufe nach ${
+        configuredStages[0]?.delayDays ?? 14
+      } Tagen, danach +${configuredStages[1]?.delayDays ?? 7} Tage`
+    : 'Automatischer Versand aus';
+
+  const editableReminderStages = useMemo(() => {
+    const base = configuredStages.map((s) => s.stage);
+    const merged = Array.from(new Set([...base, ...extraReminderStages])).sort(
+      (a, b) => a - b,
+    );
+    return merged.length ? merged : [1, 2, 3, 4];
+  }, [configuredStages, extraReminderStages]);
+
   const getScheduledDate = (stage: number): string => {
     if (stage === 1) return form.mail1_scheduled_date;
     if (stage === 2) return form.mail2_scheduled_date;
@@ -699,14 +787,6 @@ export function ReturnEditorPage({
 
   const overrideKeyFor = (stage: number) => stageOverrideKey(stage);
 
-  const verlaufStages = visibleReminderStages(configuredStages, {
-    returned: form.returned,
-    mail1_sent_at: form.mail1_sent_at,
-    mail2_sent_at: form.mail2_sent_at,
-    mail3_sent_at: form.mail3_sent_at,
-    reminder_stages: form.reminder_stages || [],
-    reminder_count: form.reminder_count || 0,
-  });
   const nextPlusStage = nextManualReminderStage(configuredStages, {
     returned: form.returned,
     mail1_sent_at: form.mail1_sent_at,
@@ -1188,66 +1268,151 @@ export function ReturnEditorPage({
                 </label>
               </div>
 
+            </SectionCard>
+
+            <SectionCard
+              id="section-erinnerung"
+              title="Erinnerungsmanagement & Empfänger"
+              tone="teal"
+              icon={<Clock className="w-4 h-4" />}
+            >
+              {/* Row 1 — auto toggle + plan + manual send */}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-3 min-w-0">
+                  <label className="inline-flex items-center gap-2 text-sm font-bold text-slate-800 shrink-0">
+                    Automatischer Versand
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.auto_reminder_enabled}
+                      className={cn(
+                        'relative h-7 w-12 rounded-full transition',
+                        form.auto_reminder_enabled ? 'bg-teal-500' : 'bg-slate-300',
+                      )}
+                      onClick={() =>
+                        setField('auto_reminder_enabled', !form.auto_reminder_enabled)
+                      }
+                    >
+                      <span
+                        className={cn(
+                          'absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition',
+                          form.auto_reminder_enabled ? 'left-5' : 'left-0.5',
+                        )}
+                      />
+                    </button>
+                  </label>
+                  <span
+                    className={cn(
+                      'inline-flex max-w-full truncate rounded-full border px-2.5 py-1 text-[11px] font-bold',
+                      form.auto_reminder_enabled
+                        ? 'border-teal-200 bg-teal-50 text-teal-800'
+                        : 'border-slate-200 bg-slate-50 text-slate-600',
+                    )}
+                    title={mailSummary}
+                  >
+                    {autoStatusPill}
+                  </span>
+                  <span className="hidden lg:inline text-[11px] font-semibold text-slate-500">
+                    {planCompact}
+                  </span>
+                </div>
+                {isEdit ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      disabled={form.returned}
+                      className={cn(
+                        'inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 shadow-sm hover:bg-slate-50',
+                        form.returned && 'opacity-50 cursor-not-allowed',
+                      )}
+                    >
+                      Manuelle Erinnerung senden
+                      <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-[12rem]">
+                      {editableReminderStages.map((stage) => (
+                        <DropdownMenuItem
+                          key={`send-${stage}`}
+                          disabled={sendingStage === stage || form.returned}
+                          onClick={() => void sendReminder(stage)}
+                        >
+                          {sendingStage === stage ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" />
+                          ) : null}
+                          {reminderStageLabel(stage)}
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuItem
+                        disabled={sendingStage === nextPlusStage || form.returned}
+                        onClick={() => void sendReminder(nextPlusStage)}
+                      >
+                        + Neue Stufe
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+              </div>
+
+              {/* Row 2 — collapsed stage editor */}
               <div className="rounded-xl border border-slate-200 overflow-hidden">
                 <button
                   type="button"
-                  className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50"
-                  onClick={() => setAdvancedOpen((v) => !v)}
+                  className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-slate-50"
+                  onClick={() => setReminderDetailsOpen((v) => !v)}
                 >
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                      {advancedOpen ? (
-                        <ChevronDown className="w-4 h-4" />
-                      ) : (
-                        <ChevronRight className="w-4 h-4" />
-                      )}
-                      Erweiterte Erinnerungstermine &amp; Empfänger
-                    </p>
-                    {!advancedOpen ? (
-                      <p className="text-[11px] text-slate-500 mt-1 truncate pl-6">{mailSummary}</p>
-                    ) : null}
-                  </div>
+                  <span className="text-sm font-bold text-slate-800 inline-flex items-center gap-2">
+                    {reminderDetailsOpen ? (
+                      <ChevronDown className="w-4 h-4" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4" />
+                    )}
+                    Termine &amp; Empfänger anpassen
+                  </span>
+                  {!reminderDetailsOpen ? (
+                    <span className="text-[11px] font-semibold text-slate-500 truncate">
+                      {planCompact}
+                    </span>
+                  ) : null}
                 </button>
-                {advancedOpen ? (
-                  <div className="border-t border-slate-100 p-4 space-y-4 bg-slate-50/40">
-                    <label className="flex items-center justify-between gap-3 text-sm font-semibold">
-                      Automatischer Versand
-                      <input
-                        type="checkbox"
-                        checked={form.auto_reminder_enabled}
-                        onChange={(e) => setField('auto_reminder_enabled', e.target.checked)}
+                {reminderDetailsOpen ? (
+                  <div className="border-t border-slate-100 p-4 space-y-3 bg-slate-50/50">
+                    <Field label="Stufe wählen">
+                      <select
+                        className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+                        value={selectedReminderStage}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === '__add__') {
+                            const next =
+                              Math.max(0, ...editableReminderStages) + 1;
+                            setExtraReminderStages((prev) =>
+                              prev.includes(next) ? prev : [...prev, next],
+                            );
+                            setSelectedReminderStage(next);
+                            return;
+                          }
+                          setSelectedReminderStage(Number(v) || 1);
+                        }}
+                      >
+                        {editableReminderStages.map((stage) => (
+                          <option key={`opt-${stage}`} value={stage}>
+                            {reminderStageLabel(stage)}
+                          </option>
+                        ))}
+                        <option value="__add__">+ Stufe hinzufügen</option>
+                      </select>
+                    </Field>
+                    <Field label={`${reminderStageLabel(selectedReminderStage)} Datum`}>
+                      <GermanDateInput
+                        value={getScheduledDate(selectedReminderStage)}
+                        onChange={(iso) => setScheduledDate(selectedReminderStage, iso)}
                       />
-                    </label>
-                    <div
-                      className={cn(
-                        'grid gap-3',
-                        configuredStages.length <= 3
-                          ? 'grid-cols-1 sm:grid-cols-3'
-                          : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4',
-                      )}
-                    >
-                      {configuredStages.map((s) => (
-                        <Field key={`date-${s.stage}`} label={`${s.stage}. Erinnerung Datum`}>
-                          <Input
-                            type="date"
-                            value={getScheduledDate(s.stage)}
-                            onChange={(e) => setScheduledDate(s.stage, e.target.value)}
-                          />
-                        </Field>
-                      ))}
-                    </div>
-                    {configuredStages.map((s) => {
-                      const key = overrideKeyFor(s.stage);
+                    </Field>
+                    {(() => {
+                      const key = overrideKeyFor(selectedReminderStage);
                       return (
-                        <div
-                          key={`rcpt-${s.stage}`}
-                          className="rounded-xl border border-slate-200 bg-white p-3 space-y-2"
-                        >
-                          <p className="text-xs font-black text-slate-700">
-                            {s.stage}. Erinnerung Empfänger
-                          </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <EmailChipInput
-                            label="An"
+                            label="AN (E-Mail)"
                             value={form.stage_recipients_override[key]?.to || ''}
                             onChange={(v) =>
                               setForm((prev) => ({
@@ -1263,7 +1428,7 @@ export function ReturnEditorPage({
                             }
                           />
                           <EmailChipInput
-                            label="CC"
+                            label="CC (E-Mail)"
                             value={form.stage_recipients_override[key]?.cc || ''}
                             onChange={(v) =>
                               setForm((prev) => ({
@@ -1280,50 +1445,45 @@ export function ReturnEditorPage({
                           />
                         </div>
                       );
-                    })}
+                    })()}
+                    <p className="text-[11px] text-slate-500 font-medium">{mailSummary}</p>
                   </div>
                 ) : null}
               </div>
+
+              {isEdit ? (
+                <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                    <Mail className="w-3.5 h-3.5 text-sky-600" />
+                    Erinnerungsverlauf
+                  </h3>
+                  <ReturnsReminderStepper
+                    hw={{
+                      returned: form.returned,
+                      mail1_sent_at: form.mail1_sent_at,
+                      mail2_sent_at: form.mail2_sent_at,
+                      mail3_sent_at: form.mail3_sent_at,
+                      mail1_sent_recipients: form.mail1_sent_recipients,
+                      mail2_sent_recipients: form.mail2_sent_recipients,
+                      mail3_sent_recipients: form.mail3_sent_recipients,
+                      reminder_stages: form.reminder_stages || [],
+                      reminder_count: form.reminder_count || 0,
+                    }}
+                    configuredStages={configuredStages}
+                    onOpenSend={(stage) => void sendReminder(stage)}
+                  />
+                </div>
+              ) : null}
             </SectionCard>
 
             <SectionCard
               id="section-abschluss"
-              title="Erinnerungsmanagement & Empfänger"
-              tone="teal"
-              icon={<Clock className="w-4 h-4" />}
+              title="Bearbeitung & Steuerung"
+              tone="amber"
+              icon={<Briefcase className="w-4 h-4" />}
             >
-              <div className="rounded-xl border border-teal-100 bg-teal-50/40 p-3 space-y-2">
-                <Field label="Erinnerungsintervall">
-                  <IconFieldShell icon={Clock}>
-                    <Input
-                      className="pl-9 h-11 bg-white"
-                      readOnly
-                      value={
-                        configuredStages[0]
-                          ? `${configuredStages[0].delayDays} Tage (1. Stufe)`
-                          : '14 Tage'
-                      }
-                    />
-                  </IconFieldShell>
-                </Field>
-                <p className="text-[11px] text-slate-600 font-medium leading-relaxed">
-                  {mailSummary}
-                </p>
-                <Field label="Empfänger (Mitarbeiter)">
-                  <IconFieldShell icon={User}>
-                    <Input
-                      className="pl-9 h-11 bg-white"
-                      readOnly
-                      value={customerName || customerEmail || '—'}
-                    />
-                  </IconFieldShell>
-                </Field>
-              </div>
-
-              <div className="pt-2 border-t border-slate-100 space-y-4">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-500">
-                  Bearbeitung &amp; Steuerung
-                </h3>
+              <div className="space-y-4">
+                <h3 className="sr-only">Bearbeitung &amp; Steuerung</h3>
                 <Field label="Bearbeiter">
                   <IconFieldShell icon={UserCircle2}>
                     <select
@@ -1465,85 +1625,6 @@ export function ReturnEditorPage({
 
               {isEdit ? (
                 <div className="space-y-4 pt-2 border-t border-slate-100">
-                  <section className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-3">
-                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                      <Mail className="w-4 h-4 text-sky-600" />
-                      Erinnerungsverlauf
-                    </h3>
-                    <ReturnsReminderStepper
-                      hw={{
-                        returned: form.returned,
-                        mail1_sent_at: form.mail1_sent_at,
-                        mail2_sent_at: form.mail2_sent_at,
-                        mail3_sent_at: form.mail3_sent_at,
-                        mail1_sent_recipients: form.mail1_sent_recipients,
-                        mail2_sent_recipients: form.mail2_sent_recipients,
-                        mail3_sent_recipients: form.mail3_sent_recipients,
-                        reminder_stages: form.reminder_stages || [],
-                        reminder_count: form.reminder_count || 0,
-                      }}
-                      configuredStages={configuredStages}
-                      onOpenSend={(stage) => void sendReminder(stage)}
-                    />
-                    <div className="space-y-2">
-                      {verlaufStages.map((stage) => {
-                        const sent = getStageSentAt(
-                          {
-                            reminder_stages: (form.reminder_stages || []) as any,
-                            mail1_sent_at: form.mail1_sent_at || null,
-                            mail2_sent_at: form.mail2_sent_at || null,
-                            mail3_sent_at: form.mail3_sent_at || null,
-                          },
-                          stage,
-                        );
-                        return (
-                          <div
-                            key={stage}
-                            className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-white px-3 py-2"
-                          >
-                            <div className="min-w-0">
-                              <p className="text-xs font-bold text-slate-800">
-                                {reminderStageLabel(stage)}
-                              </p>
-                              <p className="text-[11px] text-slate-500">
-                                {sent ? formatBerlinDateTime(sent) : 'Noch nicht gesendet'}
-                              </p>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="h-8 text-[11px] font-bold"
-                              disabled={sendingStage === stage || form.returned}
-                              onClick={() => void sendReminder(stage)}
-                            >
-                              {sendingStage === stage ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                `${stage}. senden`
-                              )}
-                            </Button>
-                          </div>
-                        );
-                      })}
-                      {!form.returned ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full h-9 text-[11px] font-bold border-dashed"
-                          disabled={sendingStage === nextPlusStage}
-                          onClick={() => void sendReminder(nextPlusStage)}
-                        >
-                          {sendingStage === nextPlusStage ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                          ) : (
-                            <Plus className="w-3.5 h-3.5 mr-1.5" />
-                          )}
-                          {reminderStageLabel(nextPlusStage)} hinzufügen
-                        </Button>
-                      ) : null}
-                    </div>
-                  </section>
-
                   <section className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-3">
                     <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
                       <Clock className="w-4 h-4 text-slate-600" />
