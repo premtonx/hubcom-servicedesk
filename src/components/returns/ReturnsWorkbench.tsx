@@ -15,9 +15,11 @@ import {
   Plug,
   PlugZap,
   Plus,
+  RotateCcw,
   Search,
   Settings2,
   ShieldAlert,
+  SlidersHorizontal,
   Tablet,
   Trash2,
   Undo2,
@@ -43,6 +45,16 @@ import {
 import { ReturnsKanbanBoard } from './ReturnsKanbanBoard';
 import { ReturnsCardGrid } from './ReturnsCardGrid';
 import { DEFAULT_RETURN_STATUSES } from '../../lib/client-portal/hardware-returns-layout';
+import {
+  countActiveReturnsAdvancedFilters,
+  dateRangeToApiParams,
+  hasActiveReturnsFilters,
+  resolveZeitraumPreset,
+  RETURNS_DATE_FIELD_OPTIONS,
+  RETURNS_ZEITRAUM_OPTIONS,
+  type ReturnsDateField,
+  type ReturnsZeitraumPreset,
+} from '../../lib/client-portal/hardware-returns-filters';
 import {
   DeviceSerialPopover,
   InlineStatusSelect,
@@ -397,6 +409,11 @@ export function ReturnsWorkbench({
   const [statusFilter, setStatusFilter] = useState('all');
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [sort, setSort] = useState('due_asc');
+  const [zeitraum, setZeitraum] = useState<ReturnsZeitraumPreset>('all');
+  const [dateField, setDateField] = useState<ReturnsDateField>('due');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSizeOption>(20);
   const [total, setTotal] = useState(0);
@@ -475,6 +492,8 @@ export function ReturnsWorkbench({
       if (shippingMethod !== 'all') params.set('shippingMethod', shippingMethod);
       if (statusFilter !== 'all') params.set('status', statusFilter);
       if (assigneeFilter !== 'all') params.set('assignee', assigneeFilter);
+      const dateParams = dateRangeToApiParams(dateField, dateFrom, dateTo);
+      for (const [k, v] of Object.entries(dateParams)) params.set(k, v);
       if (mode === 'staff') params.set('organizationId', organizationId);
       const res = await axios.get(`${base}?${params.toString()}`, { withCredentials: true });
       let nextItems = res.data?.items || [];
@@ -514,6 +533,9 @@ export function ReturnsWorkbench({
     statusFilter,
     assigneeFilter,
     sort,
+    dateField,
+    dateFrom,
+    dateTo,
     effectiveLimit,
     effectiveOffset,
     base,
@@ -537,9 +559,72 @@ export function ReturnsWorkbench({
     statusFilter,
     assigneeFilter,
     sort,
+    zeitraum,
+    dateField,
+    dateFrom,
+    dateTo,
     pageSize,
     layoutMode,
   ]);
+
+  const advancedFilterSnap = useMemo(
+    () => ({
+      mailStatus,
+      overdueBucket,
+      shippingMethod,
+      statusFilter,
+      assigneeFilter,
+      exportStatus,
+      dateFrom,
+      dateTo,
+      zeitraumActive: zeitraum !== 'all',
+    }),
+    [
+      mailStatus,
+      overdueBucket,
+      shippingMethod,
+      statusFilter,
+      assigneeFilter,
+      exportStatus,
+      dateFrom,
+      dateTo,
+      zeitraum,
+    ],
+  );
+  const activeAdvancedFilterCount = countActiveReturnsAdvancedFilters(advancedFilterSnap);
+  const showFilterReset = hasActiveReturnsFilters(q, advancedFilterSnap);
+
+  const applyZeitraum = (preset: ReturnsZeitraumPreset) => {
+    setZeitraum(preset);
+    if (preset === 'custom') {
+      setIsFilterOpen(true);
+      return;
+    }
+    const resolved = resolveZeitraumPreset(preset, new Date(), dateField);
+    setDateField(resolved.dateField);
+    setDateFrom(resolved.dateFrom);
+    setDateTo(resolved.dateTo);
+    if (resolved.forceOverdueBucket) {
+      setOverdueBucket('overdue');
+    } else if (preset === 'all' && overdueBucket === 'overdue') {
+      setOverdueBucket('all');
+    }
+  };
+
+  const resetAllFilters = () => {
+    setQ('');
+    setZeitraum('all');
+    setDateField('due');
+    setDateFrom('');
+    setDateTo('');
+    setMailStatus('all');
+    setOverdueBucket('all');
+    setExportStatus('all');
+    setShippingMethod('all');
+    setStatusFilter('all');
+    setAssigneeFilter('all');
+    setIsFilterOpen(false);
+  };
 
   const configuredStages: ConfiguredReminderStage[] =
     settings?.stages?.length > 0
@@ -979,96 +1064,223 @@ export function ReturnsWorkbench({
         <ReturnsViewModeSelector value={layoutMode} onChange={setLayoutMode} />
       </div>
 
+      {/* Compact primary toolbar — advanced filters collapsed by default. */}
       <div className="flex flex-wrap gap-2 items-center">
-        <div className="relative flex-1 min-w-[200px]">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <Input
-            className="pl-9"
-            placeholder="Suche: RL-Nr., Legacy-ID, Mitarbeiter, PM, Gerät…"
+            className="pl-9 h-10"
+            placeholder="Suche: RL-Nr., Legacy-ID, Mitarbeiter, S/N…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
         <select
-          className="h-10 rounded-md border border-slate-200 bg-white px-2 text-sm"
-          value={mailStatus}
-          onChange={(e) => setMailStatus(e.target.value)}
+          className="h-10 rounded-md border border-slate-200 bg-white px-2 text-sm min-w-[160px]"
+          value={zeitraum}
+          onChange={(e) => applyZeitraum(e.target.value as ReturnsZeitraumPreset)}
+          aria-label="Zeitraum"
         >
-          <option value="all">Erinnerungsstufe: Alle</option>
-          <option value="none">Keine Erinnerung gesendet</option>
-          <option value="mail1">1. Erinnerung</option>
-          <option value="mail2">2. Erinnerung</option>
-          <option value="mail3">3. Erinnerung</option>
-          <option value="mail4plus">4.+ Erinnerung</option>
-          <option value="missing_recipients">Empfänger fehlt</option>
-        </select>
-        <select
-          className="h-10 rounded-md border border-slate-200 bg-white px-2 text-sm"
-          value={overdueBucket}
-          onChange={(e) => setOverdueBucket(e.target.value)}
-        >
-          <option value="all">Überfälligkeit: Alle</option>
-          <option value="not_due">Noch nicht fällig</option>
-          <option value="1_7">1–7 Tage</option>
-          <option value="8_21">8–21 Tage</option>
-          <option value="gt_21">&gt; 21 Tage</option>
-        </select>
-        <select
-          className="h-10 rounded-md border border-slate-200 bg-white px-2 text-sm"
-          value={shippingMethod}
-          onChange={(e) => setShippingMethod(e.target.value)}
-        >
-          <option value="all">Versandart: Alle</option>
-          {catalogShipping.map((m) => (
-            <option key={m} value={m}>
-              {m}
+          {RETURNS_ZEITRAUM_OPTIONS.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
             </option>
           ))}
         </select>
-        <select
-          className="h-10 rounded-md border border-slate-200 bg-white px-2 text-sm"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+        <Button
+          type="button"
+          variant="outline"
+          className={cn(
+            'h-10 gap-1.5 border-slate-200',
+            isFilterOpen && 'border-sky-300 bg-sky-50 text-sky-800',
+          )}
+          onClick={() => setIsFilterOpen((v) => !v)}
+          aria-expanded={isFilterOpen}
+          aria-controls="returns-advanced-filters"
         >
-          <option value="all">Status: Alle</option>
-          {catalogStatuses.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+          <SlidersHorizontal className="w-4 h-4" />
+          {activeAdvancedFilterCount > 0
+            ? `Filter (${activeAdvancedFilterCount})`
+            : 'Filter'}
+        </Button>
         <select
-          className="h-10 rounded-md border border-slate-200 bg-white px-2 text-sm"
-          value={assigneeFilter}
-          onChange={(e) => setAssigneeFilter(e.target.value)}
-        >
-          <option value="all">Bearbeiter: Alle</option>
-          {assigneeOptions.map((a) => (
-            <option key={a.value} value={a.value}>
-              {a.label}
-            </option>
-          ))}
-        </select>
-        <select
-          className="h-10 rounded-md border border-slate-200 bg-white px-2 text-sm"
-          value={exportStatus}
-          onChange={(e) => setExportStatus(e.target.value)}
-        >
-          <option value="all">Export: Alle</option>
-          <option value="not_exported">Nicht exportiert</option>
-          <option value="exported">Exportiert</option>
-        </select>
-        <select
-          className="h-10 rounded-md border border-slate-200 bg-white px-2 text-sm"
+          className="h-10 rounded-md border border-slate-200 bg-white px-2 text-sm min-w-[180px]"
           value={sort}
           onChange={(e) => setSort(e.target.value)}
+          aria-label="Sortierung"
         >
           <option value="due_asc">Älteste Fälligkeit zuerst</option>
-          <option value="newest">Neueste zuerst</option>
-          <option value="employee">Mitarbeiter A–Z</option>
-          <option value="ticket">Rückgabe-Nr.</option>
+          <option value="due_desc">Neueste Fälligkeit zuerst</option>
+          <option value="newest">Neueste Erstellung zuerst</option>
+          <option value="ticket_desc">RL-Nr. absteigend</option>
         </select>
+        {showFilterReset ? (
+          <button
+            type="button"
+            onClick={resetAllFilters}
+            className="inline-flex items-center gap-1 h-10 px-2 text-xs font-semibold text-slate-500 hover:text-slate-800 transition"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            Filter zurücksetzen
+          </button>
+        ) : null}
       </div>
+
+      {isFilterOpen ? (
+        <div
+          id="returns-advanced-filters"
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all"
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            <div className="space-y-1">
+              <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                Datumsfeld
+              </Label>
+              <select
+                className="h-10 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+                value={dateField}
+                onChange={(e) => {
+                  setDateField(e.target.value as ReturnsDateField);
+                  setZeitraum('custom');
+                }}
+              >
+                {RETURNS_DATE_FIELD_OPTIONS.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                Von (Datum)
+              </Label>
+              <Input
+                type="date"
+                className="h-10"
+                value={dateFrom}
+                onChange={(e) => {
+                  setDateFrom(e.target.value);
+                  setZeitraum('custom');
+                }}
+                aria-label="Von Datum"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                Bis (Datum)
+              </Label>
+              <Input
+                type="date"
+                className="h-10"
+                value={dateTo}
+                onChange={(e) => {
+                  setDateTo(e.target.value);
+                  setZeitraum('custom');
+                }}
+                aria-label="Bis Datum"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                Erinnerungsstufe
+              </Label>
+              <select
+                className="h-10 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+                value={mailStatus}
+                onChange={(e) => setMailStatus(e.target.value)}
+              >
+                <option value="all">Alle</option>
+                <option value="none">Keine Erinnerung</option>
+                <option value="mail1">1. Erinnerung</option>
+                <option value="mail2">2. Erinnerung</option>
+                <option value="mail3">3. Erinnerung</option>
+                <option value="mail4plus">4.+ Erinnerung</option>
+                <option value="missing_recipients">Empfänger fehlt</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                Überfälligkeit
+              </Label>
+              <select
+                className="h-10 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+                value={overdueBucket}
+                onChange={(e) => setOverdueBucket(e.target.value)}
+              >
+                <option value="all">Alle</option>
+                <option value="overdue">Überfällig</option>
+                <option value="not_overdue">Nicht überfällig</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                Versandart
+              </Label>
+              <select
+                className="h-10 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+                value={shippingMethod}
+                onChange={(e) => setShippingMethod(e.target.value)}
+              >
+                <option value="all">Alle</option>
+                {catalogShipping.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                Status
+              </Label>
+              <select
+                className="h-10 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+              >
+                <option value="all">Alle</option>
+                {catalogStatuses.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                Bearbeiter
+              </Label>
+              <select
+                className="h-10 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+                value={assigneeFilter}
+                onChange={(e) => setAssigneeFilter(e.target.value)}
+              >
+                <option value="all">Alle</option>
+                {assigneeOptions.map((a) => (
+                  <option key={a.value} value={a.value}>
+                    {a.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                Export
+              </Label>
+              <select
+                className="h-10 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
+                value={exportStatus}
+                onChange={(e) => setExportStatus(e.target.value)}
+              >
+                <option value="all">Alle</option>
+                <option value="exported">Exportiert</option>
+                <option value="not_exported">Nicht exportiert</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
         {!loading && total > 0 && layoutMode === 'list' ? (

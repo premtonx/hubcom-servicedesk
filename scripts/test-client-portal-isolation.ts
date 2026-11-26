@@ -147,6 +147,12 @@ import {
   RETURNS_LIFECYCLE_COLUMNS,
 } from '../src/lib/client-portal/hardware-returns-layout.js';
 import {
+  countActiveReturnsAdvancedFilters,
+  dateRangeToApiParams,
+  hasActiveReturnsFilters,
+  resolveZeitraumPreset,
+} from '../src/lib/client-portal/hardware-returns-filters.js';
+import {
   evaluatePortalReturnsPageAccess,
   resolveHardwareReturnsModuleFlag,
 } from '../src/lib/client-portal/hardware-returns-nav.js';
@@ -3391,8 +3397,9 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
       workbenchSrc.includes('initialsFromName') &&
       workbenchSrc.includes('statusFilter') &&
       workbenchSrc.includes('assigneeFilter') &&
-      workbenchSrc.includes('Versandart: Alle'),
-    'table has Bearbeiter column + Status/Bearbeiter/Versandart filters',
+      workbenchSrc.includes('Versandart') &&
+      workbenchSrc.includes('isFilterOpen'),
+    'table has Bearbeiter column + Status/Bearbeiter/Versandart in collapsible filters',
   );
   assert(
     workbenchSrc.includes("kind === 'alt'") &&
@@ -4828,6 +4835,117 @@ function testHardwareReturnsInlineListEditors(): void {
   );
 }
 
+/** Collapsible filter bar + Zeitraum / Von–Bis date filtering (Part 3). */
+function testHardwareReturnsCollapsibleFilterBar(): void {
+  console.log('\n--- Hardware returns collapsible filter bar + date filtering ---');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const routesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/hardwareReturnsRoutes.ts'),
+    'utf8',
+  );
+  const escalationSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-escalation.ts'),
+    'utf8',
+  );
+
+  assert(
+    workbenchSrc.includes('const [isFilterOpen, setIsFilterOpen] = useState(false)') &&
+      workbenchSrc.includes('SlidersHorizontal') &&
+      workbenchSrc.includes('Filter zurücksetzen') &&
+      workbenchSrc.includes('RETURNS_ZEITRAUM_OPTIONS') &&
+      workbenchSrc.includes('dateRangeToApiParams'),
+    'filter panel starts collapsed (isFilterOpen=false) with Filter toggle',
+  );
+  assert(
+    workbenchSrc.includes('activeAdvancedFilterCount') &&
+      workbenchSrc.includes('countActiveReturnsAdvancedFilters') &&
+      workbenchSrc.includes('Filter (${activeAdvancedFilterCount})'),
+    'Filter (N) badge when advanced filters active',
+  );
+  const filtersSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-filters.ts'),
+    'utf8',
+  );
+  assert(
+    workbenchSrc.includes('RETURNS_DATE_FIELD_OPTIONS') &&
+      filtersSrc.includes('Fälligkeitsdatum') &&
+      filtersSrc.includes('Lieferdatum') &&
+      filtersSrc.includes('Eingangsdatum') &&
+      filtersSrc.includes('Benutzerdefiniert') &&
+      workbenchSrc.includes('Von (Datum)') &&
+      workbenchSrc.includes('Bis (Datum)') &&
+      workbenchSrc.includes('type="date"') &&
+      workbenchSrc.includes('dateFrom') &&
+      workbenchSrc.includes('dateTo') &&
+      workbenchSrc.includes('setPage(1)') &&
+      workbenchSrc.includes('dateField') &&
+      !workbenchSrc.includes("'/api/db"),
+    'advanced panel has date field + Von/Bis; page resets; zero /api/db',
+  );
+  assert(
+    routesSrc.includes('returnedFrom') &&
+      routesSrc.includes('returnedTo') &&
+      escalationSrc.includes('returnedFrom') &&
+      escalationSrc.includes('returned_at'),
+    'API supports returnedFrom/returnedTo against returned_at',
+  );
+
+  const today = resolveZeitraumPreset('due_today', new Date('2026-11-25T12:00:00.000Z'));
+  assert(
+    today.dateField === 'due' && today.dateFrom === '2026-11-25' && today.dateTo === '2026-11-25',
+    'Heute fällig → due from=to today',
+  );
+  const next7 = resolveZeitraumPreset('next_7', new Date('2026-11-25T12:00:00.000Z'));
+  assert(
+    next7.dateFrom === '2026-11-25' && next7.dateTo === '2026-12-02',
+    'Nächste 7 Tage → due range',
+  );
+  const overdue = resolveZeitraumPreset('overdue', new Date('2026-11-25T12:00:00.000Z'));
+  assert(
+    overdue.forceOverdueBucket === true && overdue.dateTo === '2026-11-24',
+    'Überfällig preset forces overdue bucket + due ≤ yesterday',
+  );
+  const apiDue = dateRangeToApiParams('due', '2026-11-01', '2026-11-30');
+  assert(
+    apiDue.dueFrom === '2026-11-01' && apiDue.dueTo === '2026-11-30',
+    'due field maps to dueFrom/dueTo',
+  );
+  const apiRet = dateRangeToApiParams('returned', '2026-11-01', '');
+  assert(apiRet.returnedFrom === '2026-11-01', 'returned field maps to returnedFrom');
+  assert(
+    countActiveReturnsAdvancedFilters({
+      mailStatus: 'mail1',
+      overdueBucket: 'all',
+      shippingMethod: 'all',
+      statusFilter: 'all',
+      assigneeFilter: 'all',
+      exportStatus: 'all',
+      dateFrom: '2026-11-01',
+      dateTo: '',
+      zeitraumActive: true,
+    }) === 2,
+    'active filter count = mail + date range',
+  );
+  assert(
+    hasActiveReturnsFilters('ada', {
+      mailStatus: 'all',
+      overdueBucket: 'all',
+      shippingMethod: 'all',
+      statusFilter: 'all',
+      assigneeFilter: 'all',
+      exportStatus: 'all',
+      dateFrom: '',
+      dateTo: '',
+      zeitraumActive: false,
+    }),
+    'search alone shows Filter zurücksetzen',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -4857,6 +4975,7 @@ async function main(): Promise<void> {
   testHardwareReturnsDynamicReminderUiPart2();
   testHardwareReturnsListeKanbanKarten();
   testHardwareReturnsInlineListEditors();
+  testHardwareReturnsCollapsibleFilterBar();
   await testOrganizationDirectorySyncPart2();
   testSharePointReturnsCsvImportApiIsolation();
   testSharePointReturnsCsvImportUiIsolation();

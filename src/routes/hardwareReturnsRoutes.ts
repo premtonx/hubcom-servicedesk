@@ -128,6 +128,8 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         deliveryTo: String(req.query.deliveryTo || '') || undefined,
         dueFrom: String(req.query.dueFrom || '') || undefined,
         dueTo: String(req.query.dueTo || '') || undefined,
+        returnedFrom: String(req.query.returnedFrom || '') || undefined,
+        returnedTo: String(req.query.returnedTo || '') || undefined,
         shippingMethod: String(req.query.shippingMethod || '') || undefined,
         status: String(req.query.status || '') || undefined,
         assignee: String(req.query.assignee || '') || undefined,

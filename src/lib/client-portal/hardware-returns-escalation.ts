@@ -447,18 +447,28 @@ export interface HardwareReturnsListFilters {
   view?: 'open' | 'overdue' | 'next_mail' | 'done' | 'all';
   search?: string;
   mailStatus?: 'all' | 'none' | 'mail1' | 'mail2' | 'mail3' | 'missing_recipients';
-  overdueBucket?: 'all' | 'not_due' | '1_7' | '8_21' | 'gt_21';
+  overdueBucket?:
+    | 'all'
+    | 'overdue'
+    | 'not_overdue'
+    | 'not_due'
+    | '1_7'
+    | '8_21'
+    | 'gt_21';
   deliveryFrom?: string;
   deliveryTo?: string;
   dueFrom?: string;
   dueTo?: string;
+  /** YYYY-MM-DD range against returned_at (Eingangsdatum). */
+  returnedFrom?: string;
+  returnedTo?: string;
   shippingMethod?: string;
   /** Exact status label from org catalogs (e.g. Neu). */
   status?: string;
   /** Match assignee_user_id or assignee_name (case-insensitive). */
   assignee?: string;
   exportStatus?: 'all' | 'exported' | 'not_exported';
-  sort?: 'due_asc' | 'newest' | 'employee' | 'ticket';
+  sort?: 'due_asc' | 'due_desc' | 'newest' | 'employee' | 'ticket' | 'ticket_desc';
   limit?: number;
   offset?: number;
 }
@@ -561,6 +571,8 @@ export async function listHardwareReturnsWorkbench(
     }
     if (filters.overdueBucket && filters.overdueBucket !== 'all') {
       const d = it.overdueDays;
+      if (filters.overdueBucket === 'overdue' && d <= 0) return false;
+      if (filters.overdueBucket === 'not_overdue' && d > 0) return false;
       if (filters.overdueBucket === 'not_due' && d > 0) return false;
       if (filters.overdueBucket === '1_7' && !(d >= 1 && d <= 7)) return false;
       if (filters.overdueBucket === '8_21' && !(d >= 8 && d <= 21)) return false;
@@ -577,6 +589,12 @@ export async function listHardwareReturnsWorkbench(
     }
     if (filters.dueTo && (!hw.return_due_date || hw.return_due_date > filters.dueTo)) {
       return false;
+    }
+    if (filters.returnedFrom || filters.returnedTo) {
+      if (!hw.returned || !hw.returned_at) return false;
+      const returnedDay = String(hw.returned_at).slice(0, 10);
+      if (filters.returnedFrom && returnedDay < filters.returnedFrom) return false;
+      if (filters.returnedTo && returnedDay > filters.returnedTo) return false;
     }
     if (q) {
       const hay = [
@@ -627,8 +645,14 @@ export async function listHardwareReturnsWorkbench(
         String(b.hardwareReturn.return_number || b.hardwareReturn.id),
       );
     }
+    if (sort === 'ticket_desc') {
+      return String(b.hardwareReturn.return_number || b.hardwareReturn.id).localeCompare(
+        String(a.hardwareReturn.return_number || a.hardwareReturn.id),
+      );
+    }
     const ad = a.hardwareReturn.return_due_date || a.hardwareReturn.delivery_date || '';
     const bd = b.hardwareReturn.return_due_date || b.hardwareReturn.delivery_date || '';
+    if (sort === 'due_desc') return bd.localeCompare(ad);
     return ad.localeCompare(bd);
   });
 

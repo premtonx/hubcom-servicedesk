@@ -67,6 +67,11 @@ import {
   RETURNS_LIFECYCLE_COLUMNS,
 } from '../src/lib/client-portal/hardware-returns-layout.js';
 import {
+  countActiveReturnsAdvancedFilters,
+  dateRangeToApiParams,
+  resolveZeitraumPreset,
+} from '../src/lib/client-portal/hardware-returns-filters.js';
+import {
   defaultConfiguredReminderStages,
   reminderCountFromStages,
   resolveConfiguredStage,
@@ -1480,6 +1485,70 @@ function testReturnsDynamicReminderStagesLifecycle(): void {
   assert(reminderCountFromStages(stages) === 6, 'reminder_count → 6 after stage 5+6');
 }
 
+function testReturnsCollapsibleFilterBarLifecycle(): void {
+  console.log('\n[19d2] Returns collapsible filter bar + Zeitraum date filtering');
+
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const filtersSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-filters.ts'),
+    'utf8',
+  );
+  assert(
+    workbenchSrc.includes('const [isFilterOpen, setIsFilterOpen] = useState(false)') &&
+      workbenchSrc.includes('SlidersHorizontal') &&
+      workbenchSrc.includes('RETURNS_ZEITRAUM_OPTIONS') &&
+      filtersSrc.includes('Benutzerdefiniert') &&
+      workbenchSrc.includes('Filter zurücksetzen') &&
+      workbenchSrc.includes('dateRangeToApiParams') &&
+      !workbenchSrc.includes("'/api/db"),
+    'compact toolbar + collapsed Filter panel; portal-safe',
+  );
+  assert(
+    workbenchSrc.includes('dateFrom') &&
+      workbenchSrc.includes('dateTo') &&
+      workbenchSrc.includes('dateField') &&
+      workbenchSrc.includes('RETURNS_DATE_FIELD_OPTIONS') &&
+      filtersSrc.includes('Eingangsdatum') &&
+      workbenchSrc.includes('setPage(1)'),
+    'Von/Bis + Datumsfeld; pagination resets on filter change',
+  );
+
+  const now = new Date('2026-11-25T12:00:00.000Z');
+  const last30 = resolveZeitraumPreset('last_30', now, 'due');
+  assert(
+    last30.dateFrom === '2026-10-26' && last30.dateTo === '2026-11-25',
+    'Letzte 30 Tage preset',
+  );
+  const month = resolveZeitraumPreset('this_month', now, 'delivery');
+  assert(
+    month.dateField === 'delivery' &&
+      month.dateFrom === '2026-11-01' &&
+      month.dateTo === '2026-11-25',
+    'Dieser Monat keeps dateField + month start',
+  );
+  assert(
+    dateRangeToApiParams('delivery', '2026-11-01', '2026-11-15').deliveryFrom === '2026-11-01',
+    'delivery maps to deliveryFrom',
+  );
+  assert(
+    countActiveReturnsAdvancedFilters({
+      mailStatus: 'all',
+      overdueBucket: 'overdue',
+      shippingMethod: 'Express',
+      statusFilter: 'all',
+      assigneeFilter: 'all',
+      exportStatus: 'all',
+      dateFrom: '',
+      dateTo: '',
+      zeitraumActive: true,
+    }) === 2,
+    'badge counts overdue + shipping',
+  );
+}
+
 function testReturnsInlineListEditorsLifecycle(): void {
   console.log('\n[19e] Returns inline Status / Geräte / Eingang bestätigen');
 
@@ -1795,6 +1864,7 @@ async function main(): Promise<void> {
   testPortalDashboardReturnsPerfLifecycle();
   testReturnsKpiConsistencyLifecycle();
   testReturnsListeKanbanKartenLifecycle();
+  testReturnsCollapsibleFilterBarLifecycle();
   testReturnsInlineListEditorsLifecycle();
   testReturnsDynamicReminderStagesLifecycle();
   testPortalKbSharePointCsvImportLifecycle();
