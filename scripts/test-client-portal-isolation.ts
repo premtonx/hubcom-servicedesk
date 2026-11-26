@@ -42,6 +42,7 @@ import type { EmailChannelConfig } from '../src/lib/email-ingestion/types.js';
 import { redactSecrets } from '../src/lib/safe-log.js';
 import { isClientAdmin, isClientPortalRole } from '../src/lib/client-portal/roles.js';
 import { parseAndValidateDashboardBannerDataUrl } from '../src/lib/dashboard-banner-validate.js';
+import { parseAndValidateFaviconDataUrl } from '../src/lib/client-portal/org-branding.js';
 import { ticketMatchesPortalStatusFilter } from '../src/lib/portal/status.js';
 import {
   assertPortalKbWriteRole,
@@ -972,12 +973,12 @@ function testPortalDashboardIsolation(): void {
 }
 
 /**
- * Portal branding endpoints (POST/DELETE /api/portal/branding/banner) are
+ * Portal branding endpoints (banner + favicon) are
  * wired with requireClientPortalRole(['CLIENT_ADMIN']) and stamp org from
  * session — CLIENT_USER / CLIENT_SUPPORTER must receive 403.
  */
 function testPortalBrandingBoundaries(): void {
-  console.log('\n[11] Portal branding banner role + validation boundaries');
+  console.log('\n[11] Portal branding banner/favicon role + validation boundaries');
 
   assert(isClientAdmin('CLIENT_ADMIN') === true, 'CLIENT_ADMIN may manage branding');
   assert(
@@ -1007,6 +1008,46 @@ function testPortalBrandingBoundaries(): void {
     'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGcP//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAQUCf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Bf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Bf//Z',
   );
   assert(jpeg.ok === true, 'JPEG banners are accepted');
+
+  const tinyPng =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const faviconOk = parseAndValidateFaviconDataUrl(tinyPng);
+  assert(faviconOk.ok === true, 'PNG favicons are accepted');
+  const faviconSvg = parseAndValidateFaviconDataUrl(
+    'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=',
+  );
+  assert(faviconSvg.ok === false, 'SVG favicons are rejected');
+
+  const portalRoutesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalRoutes.ts'),
+    'utf8',
+  );
+  const brandingCardSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/OrgPortalBrandingCard.tsx'),
+    'utf8',
+  );
+  const brandingPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientBrandingPage.tsx'),
+    'utf8',
+  );
+  const layoutSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/ClientPortalLayout.tsx'),
+    'utf8',
+  );
+  const pgSrc = fs.readFileSync(path.join(process.cwd(), 'src/lib/postgres-backend.ts'), 'utf8');
+  assert(
+    portalRoutesSrc.includes("'/branding/favicon'") &&
+      portalRoutesSrc.includes('parseAndValidateFaviconDataUrl') &&
+      portalRoutesSrc.includes('favicon_url') &&
+      brandingCardSrc.includes('onFaviconUpload') &&
+      brandingCardSrc.includes('Favicon (Browser-Tab)') &&
+      brandingPageSrc.includes('/api/portal/branding/favicon') &&
+      layoutSrc.includes('applyPortalFavicon') &&
+      pgSrc.includes('favicon_url TEXT') &&
+      !brandingPageSrc.includes('/api/db') &&
+      !portalRoutesSrc.includes("'/api/db"),
+    'favicon editor wired in branding UI + portal routes (no /api/db)',
+  );
 
   // Dashboard → tickets deep-link status sync helpers.
   assert(

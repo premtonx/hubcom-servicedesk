@@ -65,6 +65,7 @@ export default function CompanyPortalTab({
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<PortalUserRow[]>([]);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [faviconUrl, setFaviconUrl] = useState<string | null>(null);
   const [portalTitle, setPortalTitle] = useState<string | null>(null);
   const [bannerUrl, setBannerUrl] = useState<string | null>(null);
   const [hardwareEnabled, setHardwareEnabled] = useState(false);
@@ -109,6 +110,7 @@ export default function CompanyPortalTab({
       setLogoUrl(org?.logo_url || null);
       setPortalTitle(org?.portal_title || null);
       setBannerUrl(org?.portal_banner_url || null);
+      setFaviconUrl(org?.favicon_url || null);
       setHardwareEnabled(Boolean(org?.hardware_returns_enabled));
       setHardwareConfig(org?.hardware_returns_config || null);
       setUsers(usersRes.data?.users || []);
@@ -322,6 +324,7 @@ export default function CompanyPortalTab({
           logoUrl={logoUrl}
           portalTitle={portalTitle}
           bannerUrl={bannerUrl}
+          faviconUrl={faviconUrl}
           onSave={saveBranding}
           onBannerUpload={async (bannerDataUrl) => {
             const res = await axios.post(
@@ -337,6 +340,21 @@ export default function CompanyPortalTab({
               { withCredentials: true },
             );
             setBannerUrl(null);
+          }}
+          onFaviconUpload={async (faviconDataUrl) => {
+            const res = await axios.post(
+              `/api/admin/organizations/${encodeURIComponent(organizationId)}/favicon`,
+              { faviconDataUrl },
+              { withCredentials: true },
+            );
+            setFaviconUrl(res.data?.organization?.favicon_url || faviconDataUrl);
+          }}
+          onFaviconRemove={async () => {
+            await axios.delete(
+              `/api/admin/organizations/${encodeURIComponent(organizationId)}/favicon`,
+              { withCredentials: true },
+            );
+            setFaviconUrl(null);
           }}
         />
       </section>

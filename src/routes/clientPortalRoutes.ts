@@ -18,6 +18,7 @@ import {
   updateOrganizationBranding,
 } from '../lib/client-portal/organizations.js';
 import {
+  parseAndValidateFaviconDataUrl,
   parseAndValidateLogoDataUrl,
   resolvePortalTitle,
 } from '../lib/client-portal/org-branding.js';
@@ -37,6 +38,7 @@ async function loadOrgBranding(organizationId: string | null | undefined) {
     logo_url: org.logo_url,
     portal_title: org.portal_title,
     portal_banner_url: org.portal_banner_url,
+    favicon_url: org.favicon_url,
     resolved_portal_title: resolvePortalTitle(org.name, org.portal_title),
     hardware_returns_enabled: Boolean(org.hardware_returns_enabled),
     enabledModules: organizationEnabledModules(org),
@@ -196,6 +198,7 @@ router.post(
           logo_url: organization.logo_url,
           portal_title: organization.portal_title,
           portal_banner_url: organization.portal_banner_url,
+          favicon_url: organization.favicon_url,
           resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
         },
       });
@@ -227,11 +230,90 @@ router.delete(
           logo_url: organization.logo_url,
           portal_title: organization.portal_title,
           portal_banner_url: organization.portal_banner_url,
+          favicon_url: organization.favicon_url,
           resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
         },
       });
     } catch (err: any) {
       return res.status(500).json({ error: safeErrorMessage(err, 'Banner konnte nicht entfernt werden') });
+    }
+  },
+);
+
+/**
+ * POST /api/portal/branding/favicon — CLIENT_ADMIN, own organization only.
+ * Body: { faviconDataUrl } (PNG/JPEG/WebP/ICO, max 256 KB).
+ */
+router.post(
+  '/branding/favicon',
+  requireClientPortalRole(['CLIENT_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organization missing.' });
+      }
+      const raw =
+        (req.body as any)?.faviconDataUrl ??
+        (req.body as any)?.imageDataUrl ??
+        (req.body as any)?.favicon_url;
+      const validated = parseAndValidateFaviconDataUrl(raw);
+      if (validated.ok === false) {
+        return res.status(400).json({ error: validated.error });
+      }
+      const organization = await updateOrganizationBranding(organizationId, {
+        favicon_url: validated.dataUrl,
+      });
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({
+        organization: {
+          id: organization.id,
+          name: organization.name,
+          logo_url: organization.logo_url,
+          portal_title: organization.portal_title,
+          portal_banner_url: organization.portal_banner_url,
+          favicon_url: organization.favicon_url,
+          resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
+        },
+      });
+    } catch (err: any) {
+      safeLog('error', '[portal] favicon upload failed', err?.message || err);
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'Favicon konnte nicht gespeichert werden') });
+    }
+  },
+);
+
+/** DELETE /api/portal/branding/favicon — CLIENT_ADMIN, own organization only. */
+router.delete(
+  '/branding/favicon',
+  requireClientPortalRole(['CLIENT_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organization missing.' });
+      }
+      const organization = await updateOrganizationBranding(organizationId, {
+        favicon_url: null,
+      });
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({
+        organization: {
+          id: organization.id,
+          name: organization.name,
+          logo_url: organization.logo_url,
+          portal_title: organization.portal_title,
+          portal_banner_url: organization.portal_banner_url,
+          favicon_url: organization.favicon_url,
+          resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
+        },
+      });
+    } catch (err: any) {
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'Favicon konnte nicht entfernt werden') });
     }
   },
 );

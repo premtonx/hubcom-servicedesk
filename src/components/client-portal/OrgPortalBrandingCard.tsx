@@ -10,6 +10,8 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { useTranslation } from '../../lib/context/I18nContext';
 import {
+  ORG_FAVICON_ALLOWED_MIME,
+  ORG_FAVICON_MAX_BYTES,
   ORG_LOGO_ALLOWED_MIME,
   ORG_LOGO_MAX_BYTES,
   organizationInitials,
@@ -25,6 +27,7 @@ export interface OrgPortalBrandingCardProps {
   logoUrl: string | null;
   portalTitle: string | null;
   bannerUrl?: string | null;
+  faviconUrl?: string | null;
   saving?: boolean;
   onSave: (payload: {
     logoDataUrl?: string | null;
@@ -33,6 +36,8 @@ export interface OrgPortalBrandingCardProps {
   }) => Promise<void>;
   onBannerUpload?: (bannerDataUrl: string) => Promise<void>;
   onBannerRemove?: () => Promise<void>;
+  onFaviconUpload?: (faviconDataUrl: string) => Promise<void>;
+  onFaviconRemove?: () => Promise<void>;
 }
 
 export function OrgPortalBrandingCard({
@@ -40,14 +45,18 @@ export function OrgPortalBrandingCard({
   logoUrl,
   portalTitle,
   bannerUrl,
+  faviconUrl,
   saving,
   onSave,
   onBannerUpload,
   onBannerRemove,
+  onFaviconUpload,
+  onFaviconRemove,
 }: OrgPortalBrandingCardProps) {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
+  const faviconInputRef = useRef<HTMLInputElement>(null);
   const [titleDraft, setTitleDraft] = useState(portalTitle || '');
   const [busy, setBusy] = useState(false);
   const isBusy = Boolean(saving || busy);
@@ -164,6 +173,56 @@ export function OrgPortalBrandingCard({
         err?.response?.data?.error ||
           err?.message ||
           t('orgBranding.bannerClearFailed', 'Banner konnte nicht entfernt werden.'),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onFaviconFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !onFaviconUpload) return;
+    if (!ORG_FAVICON_ALLOWED_MIME.has(file.type) || file.type.includes('svg')) {
+      toast.error(
+        t(
+          'orgBranding.faviconInvalidType',
+          'Nur PNG, JPEG, WebP oder ICO sind erlaubt (kein SVG).',
+        ),
+      );
+      return;
+    }
+    if (file.size > ORG_FAVICON_MAX_BYTES) {
+      toast.error(t('orgBranding.faviconTooLarge', 'Favicon darf maximal 256 KB groß sein.'));
+      return;
+    }
+    setBusy(true);
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      await onFaviconUpload(dataUrl);
+      toast.success(t('orgBranding.faviconUploaded', 'Favicon gespeichert.'));
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.error ||
+          err?.message ||
+          t('orgBranding.faviconFailed', 'Favicon-Upload fehlgeschlagen.'),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearFavicon = async () => {
+    if (!onFaviconRemove) return;
+    setBusy(true);
+    try {
+      await onFaviconRemove();
+      toast.success(t('orgBranding.faviconCleared', 'Favicon entfernt.'));
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.error ||
+          err?.message ||
+          t('orgBranding.faviconClearFailed', 'Favicon konnte nicht entfernt werden.'),
       );
     } finally {
       setBusy(false);
@@ -312,6 +371,68 @@ export function OrgPortalBrandingCard({
                 {t('orgBranding.remove', 'Entfernen')}
               </Button>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {onFaviconUpload ? (
+        <div className="space-y-3 pt-2 border-t border-slate-200/80">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+              {t('orgBranding.faviconTitle', 'Favicon (Browser-Tab)')}
+            </p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {t(
+                'orgBranding.faviconHint',
+                'PNG, JPEG, WebP oder ICO, max. 256 KB — erscheint im Browser-Tab des Kunden-Portals.',
+              )}
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-4 items-start">
+            <div className="w-12 h-12 rounded-lg border border-dashed border-slate-300 bg-white flex items-center justify-center overflow-hidden shrink-0">
+              {faviconUrl ? (
+                <img src={faviconUrl} alt="" className="max-w-full max-h-full object-contain" />
+              ) : (
+                <span className="text-[10px] font-bold text-slate-400">ICO</span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                ref={faviconInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/x-icon,image/vnd.microsoft.icon,.ico"
+                className="hidden"
+                onChange={(e) => void onFaviconFile(e)}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={isBusy}
+                className="gap-1.5"
+                onClick={() => faviconInputRef.current?.click()}
+              >
+                {isBusy ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <ImagePlus className="w-3.5 h-3.5" />
+                )}
+                {t('orgBranding.faviconUpload', 'Favicon hochladen')}
+              </Button>
+              {faviconUrl && onFaviconRemove ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={isBusy}
+                  className="gap-1.5 text-rose-700"
+                  onClick={() => void clearFavicon()}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {t('orgBranding.remove', 'Entfernen')}
+                </Button>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}

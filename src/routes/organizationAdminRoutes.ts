@@ -30,6 +30,7 @@ import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 import { isClientPortalRole, isHubcomStaffRole } from '../lib/client-portal/roles.js';
 import {
+  parseAndValidateFaviconDataUrl,
   parseAndValidateLogoDataUrl,
   resolvePortalTitle,
 } from '../lib/client-portal/org-branding.js';
@@ -451,6 +452,59 @@ router.delete(
       return res.json({ organization });
     } catch (err: any) {
       return res.status(500).json({ error: safeErrorMessage(err, 'Banner konnte nicht entfernt werden') });
+    }
+  },
+);
+
+/**
+ * POST /api/admin/organizations/:id/favicon
+ * Upload portal favicon (SYSTEM_ADMIN). Body: { faviconDataUrl }.
+ */
+router.post(
+  '/:id/favicon',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const id = routeParam(req.params.id);
+    try {
+      const existing = await getOrganization(id);
+      if (!existing) return res.status(404).json({ error: 'Organization not found.' });
+
+      const raw =
+        (req.body as any)?.faviconDataUrl ??
+        (req.body as any)?.imageDataUrl ??
+        (req.body as any)?.favicon_url;
+      const validated = parseAndValidateFaviconDataUrl(raw);
+      if (validated.ok === false) {
+        return res.status(400).json({ error: validated.error });
+      }
+
+      const organization = await updateOrganizationBranding(id, {
+        favicon_url: validated.dataUrl,
+      });
+      return res.json({ organization });
+    } catch (err: any) {
+      safeLog('error', '[organizations] favicon upload failed', err?.message || err);
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'Favicon konnte nicht gespeichert werden') });
+    }
+  },
+);
+
+/** DELETE /api/admin/organizations/:id/favicon */
+router.delete(
+  '/:id/favicon',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const id = routeParam(req.params.id);
+    try {
+      const organization = await updateOrganizationBranding(id, { favicon_url: null });
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({ organization });
+    } catch (err: any) {
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'Favicon konnte nicht entfernt werden') });
     }
   },
 );
