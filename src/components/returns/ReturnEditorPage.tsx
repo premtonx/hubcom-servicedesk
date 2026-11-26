@@ -22,21 +22,19 @@ import {
   Mail,
   Package,
   Phone,
-  Plug,
   Plus,
   RotateCcw,
   Save,
   Search,
   Smartphone,
-  Tablet,
   Truck,
   User,
   UserCircle2,
   Users,
   X,
-  Zap,
   type LucideIcon,
 } from 'lucide-react';
+import { DeviceTypeSelect } from './DeviceTypeSelect';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -162,14 +160,6 @@ function slaBadgeClass(sla: string): string {
   if (s.includes('hoch') || s.includes('high')) return 'bg-rose-50 text-rose-700 border-rose-100';
   if (s.includes('niedrig') || s.includes('low')) return 'bg-slate-50 text-slate-600 border-slate-200';
   return 'bg-amber-50 text-amber-800 border-amber-100';
-}
-
-function resolveDeviceIcon(deviceType: string): LucideIcon {
-  const t = deviceType.toLowerCase();
-  if (/secutest|prüfgerät|pruefgeraet|mxtra|gossen|messgerät|messgeraet/.test(t)) return Zap;
-  if (/adapter|prcd|vl2e|\bbt\b|kabel|leitung/.test(t)) return Plug;
-  if (/tablet|dock|tastatur|laptop|getac|notebook/.test(t)) return Tablet;
-  return Package;
 }
 
 function Field({
@@ -739,9 +729,13 @@ export function ReturnEditorPage({
     const rueckgabe = Boolean(
       form.shipping_method.trim() || form.delivery_date || form.returned,
     );
-    const abschluss = Boolean(
-      form.assignee_user_id || form.assignee_name.trim() || form.status.trim(),
-    );
+    // Abschluss stays incomplete until prior steps are filled — default status
+    // alone must not paint a green check on /returns/new.
+    const abschluss =
+      kundendaten &&
+      geraete &&
+      rueckgabe &&
+      Boolean(form.assignee_user_id || form.assignee_name.trim());
     return [kundendaten, geraete, rueckgabe, abschluss] as const;
   }, [customerName, customerEmail, form]);
 
@@ -759,8 +753,6 @@ export function ReturnEditorPage({
   const deviceCount =
     (form.device_old_type || form.device_old_serial ? 1 : 0) +
     (form.device_new_type || form.device_new_serial ? 1 : 0);
-  const OldDeviceIcon = resolveDeviceIcon(form.device_old_type);
-  const NewDeviceIcon = resolveDeviceIcon(form.device_new_type);
   const assigneeLabel =
     form.assignee_name ||
     assignees.find((a) => a.id === form.assignee_user_id)?.name ||
@@ -1042,20 +1034,12 @@ export function ReturnEditorPage({
             >
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Bestehendes Gerät (Alt)">
-                  <IconFieldShell icon={OldDeviceIcon}>
-                    <select
-                      className="h-11 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm"
-                      value={form.device_old_type}
-                      onChange={(e) => setField('device_old_type', e.target.value)}
-                    >
-                      <option value="">— Keine Auswahl —</option>
-                      {catalogs.device_types.map((d) => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
-                      ))}
-                    </select>
-                  </IconFieldShell>
+                  <DeviceTypeSelect
+                    aria-label="Bestehendes Gerät (Alt)"
+                    value={form.device_old_type}
+                    onChange={(v) => setField('device_old_type', v)}
+                    options={catalogs.device_types}
+                  />
                 </Field>
                 <Field label="Seriennummer (Alt)">
                   <IconFieldShell icon={Hash}>
@@ -1067,20 +1051,12 @@ export function ReturnEditorPage({
                   </IconFieldShell>
                 </Field>
                 <Field label="Neues Gerät (Neu)">
-                  <IconFieldShell icon={NewDeviceIcon}>
-                    <select
-                      className="h-11 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm"
-                      value={form.device_new_type}
-                      onChange={(e) => setField('device_new_type', e.target.value)}
-                    >
-                      <option value="">— Keine Auswahl —</option>
-                      {catalogs.device_types.map((d) => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
-                      ))}
-                    </select>
-                  </IconFieldShell>
+                  <DeviceTypeSelect
+                    aria-label="Neues Gerät (Neu)"
+                    value={form.device_new_type}
+                    onChange={(v) => setField('device_new_type', v)}
+                    options={catalogs.device_types}
+                  />
                 </Field>
                 <Field label="Seriennummer (Neu)">
                   <IconFieldShell icon={Hash}>

@@ -3495,10 +3495,31 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
     'Bearbeiter defaults from logged-in user',
   );
   assert(
-    editorSrc.includes('— Keine Auswahl —') &&
+    editorSrc.includes('DeviceTypeSelect') &&
       editorSrc.includes('device_types') &&
       editorSrc.includes('Rücklieferung erfolgt'),
-    'device type empty default + returned toggle present',
+    'device type uses DeviceTypeSelect + returned toggle present',
+  );
+  const deviceSelectSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/DeviceTypeSelect.tsx'),
+    'utf8',
+  );
+  assert(
+    deviceSelectSrc.includes('— Keine Auswahl —') &&
+      deviceSelectSrc.includes('resolveDeviceTypeVisual') &&
+      deviceSelectSrc.includes('ScanBarcode') &&
+      deviceSelectSrc.includes('ArrowDown') &&
+      deviceSelectSrc.includes('listbox') &&
+      !deviceSelectSrc.includes('/api/db'),
+    'DeviceTypeSelect: icons + keyboard listbox, empty default, no /api/db',
+  );
+  assert(
+    editorSrc.includes('kundendaten &&') &&
+      editorSrc.includes('geraete &&') &&
+      editorSrc.includes('rueckgabe &&') &&
+      editorSrc.includes('assignee_user_id') &&
+      editorSrc.includes('Abschluss'),
+    'Abschluss step requires prior steps + assignee (not default status alone)',
   );
   assert(
     editorSrc.includes('Erweiterte Erinnerungstermine') &&
@@ -4996,7 +5017,7 @@ function testHardwareReturnsInlineListEditors(): void {
     workbenchSrc.includes('DeviceSerialPopover') &&
       inlineSrc.includes('Bestehendes Gerät (Alt)') &&
       inlineSrc.includes('Neues Gerät (Neu)') &&
-      inlineSrc.includes('— Keine Auswahl —') &&
+      inlineSrc.includes('DeviceTypeSelect') &&
       inlineSrc.includes('Seriennummer (Alt)') &&
       inlineSrc.includes('Seriennummer (Neu)') &&
       inlineSrc.includes('Speichern') &&
@@ -5004,7 +5025,7 @@ function testHardwareReturnsInlineListEditors(): void {
       workbenchSrc.includes('patchDeviceFields') &&
       workbenchSrc.includes('device_old_type') &&
       workbenchSrc.includes('device_new_serial'),
-    'device/serial popover saves ALT/NEU via PATCH',
+    'device/serial popover uses DeviceTypeSelect + PATCH',
   );
   assert(
     workbenchSrc.includes('bulk(') &&
