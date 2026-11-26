@@ -71,11 +71,13 @@ export default function ClientPortalLayout() {
   const isTicketDetail =
     !isTicketCreate && /^\/portal\/tickets\/[^/]+$/.test(location.pathname);
   const isTicketsWorkbench = location.pathname === '/portal/tickets' || isTicketDetail;
+  const isReturnsList = location.pathname === '/portal/returns';
   const isReturnsDetailOrEditor =
     location.pathname === '/portal/returns/new' ||
     /^\/portal\/returns\/[^/]+(\/edit)?$/.test(location.pathname);
-  const isReturnsWorkbench =
-    location.pathname === '/portal/returns' || isReturnsDetailOrEditor;
+  /** List keeps internal scroll; detail/edit must scroll the page itself. */
+  const isReturnsWorkbench = isReturnsList || isReturnsDetailOrEditor;
+  const returnsNeedsPageScroll = isReturnsDetailOrEditor;
 
   useEffect(() => {
     if (!session?.organizationId) {
@@ -204,7 +206,7 @@ export default function ClientPortalLayout() {
 
       <main
         className={
-          isTicketsWorkbench || isReturnsWorkbench
+          isTicketsWorkbench || (isReturnsList && !returnsNeedsPageScroll)
             ? 'flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col'
             : 'flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden flex flex-col'
         }
