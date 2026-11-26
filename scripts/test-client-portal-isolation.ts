@@ -65,11 +65,25 @@ import {
   sanitizeKbArticleForPortal,
 } from '../src/lib/client-portal/kb-visibility.js';
 import {
+  assertArticlesIsolatedToOrg,
+  assertPortalKbRagTenantMatchesOrg,
+  buildMissingArticles,
+  buildPopularArticles,
+  buildStaleArticles,
+  computePortalKbWorkspace,
+  extractPortalKbToc,
+  filterPortalVisibleArticles,
+  organizationIdFromPortalKbTenant,
+  portalKbKeywordSearch,
+  resolveTenantIdForOrganization,
+} from '../src/lib/client-portal/portal-kb-workspace.js';
+import {
   collectApiPathLiteralsFromSource,
   isPortalKbFrontendApiAllowed,
   portalKbListAuthStatus,
   portalKbRouterMountsAuthenticate,
 } from '../src/lib/client-portal/portal-kb-api.js';
+import { resolveTenantIdForOrganization as resolveTenantIdForOrganizationFromContext } from '../src/lib/tenant-context.js';
 import {
   evaluatePortalKbCategoryWriteAccess,
   portalCategoryId,
@@ -1592,6 +1606,239 @@ function testPortalKbIsolation(): void {
 
   testPortalKbArticleEditAndPortalChrome();
   testPortalKbSharePointCsvImport();
+  testPortalKbWorkspaceApiIsolation();
+}
+
+/** Part 1 — portal KB workspace metrics, index_in_rag, ai-ask org tenant isolation. */
+function testPortalKbWorkspaceApiIsolation(): void {
+  console.log('\n[12e] Portal KB workspace API — metrics + RAG tenant isolation');
+
+  const orgA = ORG_A;
+  const orgB = ORG_B;
+  const now = new Date().toISOString();
+  const staleDate = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString();
+
+  const orgAArticles = [
+    {
+      id: 'a1',
+      title: 'VPN Setup',
+      content: '<h2>Voraussetzungen</h2><p>VPN Client</p><h3>Schritte</h3><p>Installieren</p>',
+      status: 'Published',
+      views: 42,
+      tags: ['vpn'],
+      owner: 'Ada',
+      visibility: 'organization',
+      organizationId: orgA,
+      index_in_rag: true,
+      helpfulCount: 3,
+      updatedAt: now,
+      createdAt: now,
+    },
+    {
+      id: 'a2',
+      title: 'Draft FAQ',
+      content: 'draft body',
+      status: 'Draft',
+      views: 1,
+      tags: [],
+      owner: 'Ada',
+      visibility: 'organization',
+      organizationId: orgA,
+      index_in_rag: false,
+      updatedAt: staleDate,
+      createdAt: staleDate,
+    },
+    {
+      id: 'a3',
+      title: 'Outlook Tips',
+      content: 'outlook sync',
+      status: 'Published',
+      views: 100,
+      tags: ['outlook'],
+      owner: 'Ben',
+      visibility: 'organization',
+      organizationId: orgA,
+      updatedAt: now,
+      createdAt: now,
+    },
+  ];
+  const orgBLeak = {
+    id: 'b1',
+    title: 'Org B Secret',
+    content: 'should never appear',
+    status: 'Published',
+    views: 999,
+    tags: ['secret'],
+    owner: 'Eve',
+    visibility: 'organization',
+    organizationId: orgB,
+    updatedAt: now,
+  };
+  const shared = {
+    id: 's1',
+    title: 'Hubcom Guide',
+    content: 'shared guide',
+    status: 'Published',
+    views: 10,
+    tags: ['hubcom'],
+    owner: 'Hubcom',
+    visibility: 'shared_portal',
+    organizationId: null,
+    updatedAt: now,
+  };
+  const internal = {
+    id: 'i1',
+    title: 'Internal SOP',
+    content: 'secret',
+    status: 'Published',
+    views: 5,
+    visibility: 'internal',
+    organizationId: null,
+  };
+
+  const mixed = [...orgAArticles, orgBLeak, shared, internal];
+  const visibleA = filterPortalVisibleArticles(mixed, orgA, 'all');
+  assert(
+    assertArticlesIsolatedToOrg(visibleA, orgA) === true,
+    'filterPortalVisibleArticles keeps only Org A + shared_portal',
+  );
+  assert(
+    visibleA.every((a) => a.id !== 'b1' && a.id !== 'i1'),
+    'Org B + internal articles excluded from Org A workspace',
+  );
+  assert(
+    visibleA.some((a) => a.id === 's1') && visibleA.some((a) => a.id === 'a1'),
+    'Org A workspace includes own articles + Hubcom shared guides',
+  );
+
+  const workspace = computePortalKbWorkspace(visibleA, orgA);
+  assert(workspace.publishedCount === 3, 'publishedCount = Org A published + shared');
+  assert(workspace.draftCount === 1, 'draftCount = 1');
+  assert(typeof workspace.kbHealthScore === 'number' && workspace.kbHealthScore >= 0, 'kbHealthScore present');
+  assert(workspace.monthlyViews === 42 + 1 + 100 + 10, 'monthlyViews sums org-visible views');
+  assert(workspace.topContributors.length >= 1, 'topContributors populated');
+  assert(workspace.recentActivity.length >= 1, 'recentActivity populated');
+  assert(
+    workspace.popularArticles[0]?.id === 'a3',
+    'popularArticles / mostViewed ranks by views (Outlook Tips)',
+  );
+  assert(
+    buildPopularArticles(visibleA)[0]?.id === 'a3',
+    'buildPopularArticles prefers highest views',
+  );
+  assert(
+    buildMissingArticles(visibleA).some((a) => a.id === 'a2'),
+    'missingArticles includes untagged draft',
+  );
+  assert(
+    buildStaleArticles(visibleA).some((a) => a.id === 'a2'),
+    'staleArticles includes old draft',
+  );
+  assert(
+    workspace.aiInsights.missingTags >= 1 && workspace.aiInsights.recommendations >= 1,
+    'aiInsights recommendations derived from org-visible set',
+  );
+
+  const tenantA = resolveTenantIdForOrganization(orgA);
+  const tenantB = resolveTenantIdForOrganization(orgB);
+  assert(tenantA === `org:${orgA}`, 'RAG tenant for Org A is org:<uuid>');
+  assert(tenantB === `org:${orgB}`, 'RAG tenant for Org B is org:<uuid>');
+  assert(tenantA !== tenantB, 'Org A and Org B RAG tenants never collide');
+  assert(
+    assertPortalKbRagTenantMatchesOrg(tenantA, orgA) === true,
+    'assertPortalKbRagTenantMatchesOrg accepts matching tenant',
+  );
+  assert(
+    assertPortalKbRagTenantMatchesOrg(tenantA, orgB) === false,
+    'assertPortalKbRagTenantMatchesOrg rejects cross-org tenant',
+  );
+  assert(
+    organizationIdFromPortalKbTenant(tenantA) === orgA,
+    'organizationIdFromPortalKbTenant round-trips',
+  );
+  assert(
+    resolveTenantIdForOrganizationFromContext(orgA) === tenantA,
+    'tenant-context helper matches portal-kb-workspace helper',
+  );
+
+  // Keyword search never returns cross-tenant articles when fed filtered set.
+  const hits = portalKbKeywordSearch('VPN', visibleA, 5);
+  assert(
+    hits.every((h) => visibleA.some((a) => a.id === h.sourceId)),
+    'ai-ask keyword grounding stays inside org-visible articles',
+  );
+  assert(
+    hits.some((h) => h.sourceId === 'a1') && !hits.some((h) => h.sourceId === 'b1'),
+    'VPN query hits Org A article, never Org B secret',
+  );
+
+  const toc = extractPortalKbToc(orgAArticles[0].content);
+  assert(
+    toc.some((h) => h.text === 'Voraussetzungen') && toc.some((h) => h.text === 'Schritte'),
+    'extractPortalKbToc parses HTML headings for editor',
+  );
+
+  const sanitized = sanitizeKbArticleForPortal(orgAArticles[0] as any, {
+    categoryName: 'Netzwerk',
+    toc,
+  });
+  assert(
+    sanitized.index_in_rag === true &&
+      sanitized.helpful_count === 3 &&
+      sanitized.category_name === 'Netzwerk' &&
+      Array.isArray(sanitized.toc) &&
+      (sanitized.toc as any[]).length >= 2 &&
+      sanitized.view_count === 42 &&
+      sanitized.author_name === 'Ada',
+    'sanitize exposes index_in_rag, helpful_count, category_name, toc, view_count, author_name',
+  );
+  const optedOut = sanitizeKbArticleForPortal({
+    ...orgAArticles[1],
+    index_in_rag: false,
+  } as any);
+  assert(optedOut.index_in_rag === false, 'index_in_rag false preserved when opted out');
+
+  const kbRouteSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalKbRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    kbRouteSrc.includes('computePortalKbWorkspace') &&
+      kbRouteSrc.includes('resolveTenantIdForOrganization') &&
+      kbRouteSrc.includes("'/ai-ask'") &&
+      kbRouteSrc.includes("'/ai-generate'") &&
+      kbRouteSrc.includes("'/import'") &&
+      kbRouteSrc.includes('index_in_rag') &&
+      kbRouteSrc.includes('enqueueKbArticleIndex') &&
+      kbRouteSrc.includes('deleteEmbeddingsForSource') &&
+      kbRouteSrc.includes('hybridSearchKnowledge') &&
+      kbRouteSrc.includes('tenantId: ragTenantId') &&
+      !kbRouteSrc.includes("'/api/db") &&
+      !kbRouteSrc.includes('"/api/db'),
+    'portal KB routes expose workspace + ai-ask/generate + RAG toggle with org tenant (no /api/db)',
+  );
+  assert(
+    kbRouteSrc.includes('assertPortalKbWriteRole') &&
+      /ai-generate[\s\S]*CLIENT_ADMIN[\s\S]*CLIENT_SUPPORTER/.test(kbRouteSrc) &&
+      /ai-ask[\s\S]*CLIENT_USER/.test(kbRouteSrc),
+    'ai-generate writers-only; ai-ask open to CLIENT_USER',
+  );
+  // Cross-tenant vector isolation: ai-ask must never pass default tenant for portal orgs.
+  assert(
+    !/hybridSearchKnowledge\([\s\S]{0,200}tenantId:\s*['"]default['"]/.test(kbRouteSrc) &&
+      kbRouteSrc.includes('resolveTenantIdForOrganization(organizationId)'),
+    'ai-ask vector search uses org tenant — never hardcoded default',
+  );
+
+  assert(
+    isPortalKbFrontendApiAllowed('/api/portal/kb/ai-ask') &&
+      isPortalKbFrontendApiAllowed('/api/portal/kb/ai-generate') &&
+      isPortalKbFrontendApiAllowed('/api/portal/kb/import') &&
+      !isPortalKbFrontendApiAllowed('/api/kb/ai-ask') &&
+      !isPortalKbFrontendApiAllowed('/api/vectors/search') &&
+      !isPortalKbFrontendApiAllowed('/api/db'),
+    'portal frontend allowlist accepts new KB paths; blocks staff vectors/db',
+  );
 }
 
 /** Portal article Edit→Save via adapter + Kategorie quick-assign + portal chrome. */

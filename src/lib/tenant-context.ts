@@ -70,6 +70,17 @@ export function documentBelongsToTenant(
   return documentTenantId(doc) === (tenantId || DEFAULT_TENANT_ID);
 }
 
+/**
+ * RAG / vector tenant for a Kunden-Portal organization.
+ * Prefer `org:<organizationId>` so portal embeddings never share the Hubcom default tenant.
+ */
+export function resolveTenantIdForOrganization(organizationId: string): string {
+  const id = String(organizationId || '').trim();
+  if (!id) return DEFAULT_TENANT_ID;
+  if (id.startsWith('org:')) return id;
+  return `org:${id}`;
+}
+
 /** Stamp / overwrite tenantId on outgoing write payloads. */
 export function stampTenantId<T extends Record<string, unknown>>(
   data: T | null | undefined,
