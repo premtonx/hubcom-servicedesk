@@ -1,0 +1,295 @@
+/**
+ * SQL-side portal returns KPIs + trends (no row-by-row JS aggregation).
+ * Dashboard: one COUNT(*) FILTER query.
+ * Trends: generate_series buckets + indexed joins — returns ≤90 points.
+ */
+
+import { queryDb } from '../postgres-backend.js';
+import type { HardwareReturnsKpiCounts } from './hardware-returns-kpis.js';
+
+export type PortalReturnsTrendRange = '7d' | '30d' | '90d' | '12m' | 'all';
+
+export type PortalDashboardReturnsKpis = HardwareReturnsKpiCounts;
+
+export interface PortalReturnsTrendPoint {
+  date: string;
+  name: string;
+  offen: number;
+  ueberfaellig: number;
+  zurueckgeliefert: number;
+  /** Compat aliases for existing chart shapes. */
+  open: number;
+  overdue: number;
+  returned: number;
+}
+
+const BERLIN_TODAY = `(CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Berlin')::date`;
+
+/** Shared open/overdue/escalated predicates (Part 1 KPI rules). */
+const SQL_STAGE1_SENT = `(
+  mail1_sent_at IS NOT NULL
+  OR COALESCE((
+    SELECT bool_or(
+      COALESCE((elem->>'stage')::int, 0) = 1
+      AND NULLIF(TRIM(elem->>'sentAt'), '') IS NOT NULL
+    )
+    FROM jsonb_array_elements(COALESCE(reminder_stages, '[]'::jsonb)) AS elem
+  ), FALSE)
+)`;
+
+const SQL_ESCALATED = `(
+  COALESCE(reminder_count, 0) >= 4
+  OR COALESCE((
+    SELECT bool_or(
+      COALESCE((elem->>'stage')::int, 0) >= 4
+      AND NULLIF(TRIM(elem->>'sentAt'), '') IS NOT NULL
+    )
+    FROM jsonb_array_elements(COALESCE(reminder_stages, '[]'::jsonb)) AS elem
+  ), FALSE)
+)`;
+
+const SQL_OVERDUE = `(
+  (return_due_date IS NOT NULL AND return_due_date < ${BERLIN_TODAY})
+  OR ${SQL_STAGE1_SENT}
+)`;
+
+/**
+ * Single indexed SQL — 4 KPI counts, no row transfer to Node.
+ */
+export async function fetchPortalReturnsKpisSql(
+  organizationId: string,
+): Promise<PortalDashboardReturnsKpis> {
+  const res = await queryDb(
+    `SELECT
+       COUNT(*) FILTER (WHERE returned = FALSE)::int AS open_count,
+       COUNT(*) FILTER (
+         WHERE returned = FALSE AND (${SQL_OVERDUE})
+       )::int AS overdue_count,
+       COUNT(*) FILTER (
+         WHERE returned = FALSE AND (${SQL_ESCALATED})
+       )::int AS escalated_count,
+       COUNT(*) FILTER (
+         WHERE returned = TRUE
+           AND returned_at IS NOT NULL
+           AND returned_at >= NOW() - INTERVAL '30 days'
+       )::int AS returned_30d_count
+     FROM ticket_hardware_returns
+     WHERE organization_id = $1::uuid
+       AND return_required = TRUE`,
+    [organizationId],
+  );
+  const row = (res.rows && res.rows[0]) || {};
+  return {
+    open: Number(row.open_count) || 0,
+    overdue: Number(row.overdue_count) || 0,
+    stage3: Number(row.escalated_count) || 0,
+    returnedLast30: Number(row.returned_30d_count) || 0,
+  };
+}
+
+function berlinDayLabel(isoDate: string): string {
+  const d = new Date(`${isoDate}T00:00:00.000Z`);
+  return d.toLocaleDateString('de-DE', {
+    timeZone: 'UTC',
+    day: '2-digit',
+    month: '2-digit',
+  });
+}
+
+function berlinMonthLabel(isoMonth: string): string {
+  const d = new Date(`${isoMonth}-01T00:00:00.000Z`);
+  return d.toLocaleDateString('de-DE', {
+    timeZone: 'UTC',
+    month: 'short',
+    year: '2-digit',
+  });
+}
+
+function mapTrendRows(
+  rows: Array<Record<string, unknown>>,
+  kind: 'day' | 'month',
+): PortalReturnsTrendPoint[] {
+  return (rows || []).map((r) => {
+    const date = String(r.bucket_date || r.date || '').slice(0, kind === 'month' ? 7 : 10);
+    const offen = Number(r.offen) || 0;
+    const ueberfaellig = Number(r.ueberfaellig) || 0;
+    const zurueckgeliefert = Number(r.zurueckgeliefert) || 0;
+    return {
+      date,
+      name: kind === 'month' ? berlinMonthLabel(date) : berlinDayLabel(date),
+      offen,
+      ueberfaellig,
+      zurueckgeliefert,
+      open: offen,
+      overdue: ueberfaellig,
+      returned: zurueckgeliefert,
+    };
+  });
+}
+
+/**
+ * SQL generate_series daily buckets (7d / 30d / 90d).
+ * offen = open as-of bucket date; ueberfaellig = overdue subset; zurueckgeliefert = returned that day.
+ */
+export async function fetchPortalReturnsTrendsDailySql(
+  organizationId: string,
+  days: number,
+): Promise<PortalReturnsTrendPoint[]> {
+  const res = await queryDb(
+    `WITH bounds AS (
+       SELECT
+         (${BERLIN_TODAY} - ($2::int - 1)) AS start_d,
+         ${BERLIN_TODAY} AS end_d
+     ),
+     days AS (
+       SELECT generate_series(b.start_d, b.end_d, '1 day'::interval)::date AS d
+       FROM bounds b
+     ),
+     base AS (
+       SELECT
+         COALESCE(created_at AT TIME ZONE 'Europe/Berlin', delivery_date::timestamp)::date AS created_d,
+         CASE
+           WHEN returned AND returned_at IS NOT NULL
+             THEN (returned_at AT TIME ZONE 'Europe/Berlin')::date
+           ELSE NULL
+         END AS closed_d,
+         return_due_date AS due_d,
+         CASE
+           WHEN mail1_sent_at IS NOT NULL
+             THEN (mail1_sent_at AT TIME ZONE 'Europe/Berlin')::date
+           ELSE (
+             SELECT MIN((NULLIF(TRIM(elem->>'sentAt'), '')::timestamptz AT TIME ZONE 'Europe/Berlin')::date)
+             FROM jsonb_array_elements(COALESCE(reminder_stages, '[]'::jsonb)) AS elem
+             WHERE COALESCE((elem->>'stage')::int, 0) = 1
+               AND NULLIF(TRIM(elem->>'sentAt'), '') IS NOT NULL
+           )
+         END AS mail1_d
+       FROM ticket_hardware_returns
+       WHERE organization_id = $1::uuid
+         AND return_required = TRUE
+     )
+     SELECT
+       d.d::text AS bucket_date,
+       COUNT(*) FILTER (
+         WHERE b.created_d IS NOT NULL
+           AND b.created_d <= d.d
+           AND (b.closed_d IS NULL OR b.closed_d > d.d)
+       )::int AS offen,
+       COUNT(*) FILTER (
+         WHERE b.created_d IS NOT NULL
+           AND b.created_d <= d.d
+           AND (b.closed_d IS NULL OR b.closed_d > d.d)
+           AND (
+             (b.due_d IS NOT NULL AND b.due_d < d.d)
+             OR (b.mail1_d IS NOT NULL AND b.mail1_d <= d.d)
+           )
+       )::int AS ueberfaellig,
+       COUNT(*) FILTER (
+         WHERE b.closed_d IS NOT NULL AND b.closed_d = d.d
+       )::int AS zurueckgeliefert
+     FROM days d
+     LEFT JOIN base b ON TRUE
+     GROUP BY d.d
+     ORDER BY d.d ASC`,
+    [organizationId, days],
+  );
+  return mapTrendRows(res.rows || [], 'day');
+}
+
+/**
+ * SQL monthly buckets (12m / all, capped at 36 months).
+ */
+export async function fetchPortalReturnsTrendsMonthlySql(
+  organizationId: string,
+  months: number,
+): Promise<PortalReturnsTrendPoint[]> {
+  const capped = Math.max(1, Math.min(36, months));
+  const res = await queryDb(
+    `WITH bounds AS (
+       SELECT
+         date_trunc('month', ${BERLIN_TODAY})::date AS end_m,
+         (date_trunc('month', ${BERLIN_TODAY}) - (($2::int - 1) * INTERVAL '1 month'))::date AS start_m
+     ),
+     months AS (
+       SELECT generate_series(b.start_m, b.end_m, '1 month'::interval)::date AS m
+       FROM bounds b
+     ),
+     base AS (
+       SELECT
+         date_trunc(
+           'month',
+           COALESCE(created_at AT TIME ZONE 'Europe/Berlin', delivery_date::timestamp)
+         )::date AS created_m,
+         CASE
+           WHEN returned AND returned_at IS NOT NULL
+             THEN date_trunc('month', returned_at AT TIME ZONE 'Europe/Berlin')::date
+           ELSE NULL
+         END AS closed_m,
+         CASE
+           WHEN return_due_date IS NOT NULL
+             THEN date_trunc('month', return_due_date::timestamp)::date
+           ELSE NULL
+         END AS due_m,
+         CASE
+           WHEN mail1_sent_at IS NOT NULL
+             THEN date_trunc('month', mail1_sent_at AT TIME ZONE 'Europe/Berlin')::date
+           ELSE (
+             SELECT date_trunc(
+               'month',
+               MIN((NULLIF(TRIM(elem->>'sentAt'), '')::timestamptz AT TIME ZONE 'Europe/Berlin'))
+             )::date
+             FROM jsonb_array_elements(COALESCE(reminder_stages, '[]'::jsonb)) AS elem
+             WHERE COALESCE((elem->>'stage')::int, 0) = 1
+               AND NULLIF(TRIM(elem->>'sentAt'), '') IS NOT NULL
+           )
+         END AS mail1_m
+       FROM ticket_hardware_returns
+       WHERE organization_id = $1::uuid
+         AND return_required = TRUE
+     )
+     SELECT
+       to_char(m.m, 'YYYY-MM') AS bucket_date,
+       COUNT(*) FILTER (
+         WHERE b.created_m IS NOT NULL
+           AND b.created_m <= m.m
+           AND (b.closed_m IS NULL OR b.closed_m > m.m)
+       )::int AS offen,
+       COUNT(*) FILTER (
+         WHERE b.created_m IS NOT NULL
+           AND b.created_m <= m.m
+           AND (b.closed_m IS NULL OR b.closed_m > m.m)
+           AND (
+             (b.due_m IS NOT NULL AND b.due_m < m.m)
+             OR (b.mail1_m IS NOT NULL AND b.mail1_m <= m.m)
+           )
+       )::int AS ueberfaellig,
+       COUNT(*) FILTER (
+         WHERE b.closed_m IS NOT NULL AND b.closed_m = m.m
+       )::int AS zurueckgeliefert
+     FROM months m
+     LEFT JOIN base b ON TRUE
+     GROUP BY m.m
+     ORDER BY m.m ASC`,
+    [organizationId, capped],
+  );
+  return mapTrendRows(res.rows || [], 'month');
+}
+
+export async function loadPortalReturnsTrendsSql(
+  organizationId: string,
+  timeframe: PortalReturnsTrendRange,
+): Promise<PortalReturnsTrendPoint[]> {
+  if (timeframe === '7d') return fetchPortalReturnsTrendsDailySql(organizationId, 7);
+  if (timeframe === '90d') return fetchPortalReturnsTrendsDailySql(organizationId, 90);
+  if (timeframe === '12m') return fetchPortalReturnsTrendsMonthlySql(organizationId, 12);
+  if (timeframe === 'all') return fetchPortalReturnsTrendsMonthlySql(organizationId, 36);
+  return fetchPortalReturnsTrendsDailySql(organizationId, 30);
+}
+
+export function parsePortalReturnsTrendTimeframe(
+  raw: unknown,
+): PortalReturnsTrendRange {
+  const s = String(raw || '30d').trim();
+  if (s === '7d' || s === '30d' || s === '90d' || s === '12m' || s === 'all') return s;
+  return '30d';
+}

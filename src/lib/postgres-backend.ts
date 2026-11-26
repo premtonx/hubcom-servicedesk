@@ -53,9 +53,20 @@ export async function initDb() {
     DATABASE_URL.includes('sslmode=disable');
   const allowInsecureTls = process.env.DATABASE_SSL_INSECURE === 'true';
 
+  // Multi-user concurrency guardrails — never let one slow query starve the pool.
   pgPool = new Pool({
     connectionString: DATABASE_URL,
-    ssl: isLocal ? false : { rejectUnauthorized: !allowInsecureTls }
+    ssl: isLocal ? false : { rejectUnauthorized: !allowInsecureTls },
+    max: 20,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+    // Per-connection statement timeout (5s) — applied on every new session.
+    options: '-c statement_timeout=5000',
+  });
+
+  // Defense in depth if connection `options` is stripped by a proxy.
+  pgPool.on('connect', (client) => {
+    void client.query('SET statement_timeout = 5000').catch(() => undefined);
   });
 
   // Ping check — surface failures instead of falling back.
@@ -538,6 +549,15 @@ export async function initDb() {
       ON ticket_hardware_returns (organization_id, status);
     CREATE INDEX IF NOT EXISTS idx_ticket_hw_returns_org_req_returned_due
       ON ticket_hardware_returns (organization_id, return_required, returned, return_due_date);
+    CREATE INDEX IF NOT EXISTS idx_ticket_hw_returns_org_dashboard_trends
+      ON ticket_hardware_returns (
+        organization_id,
+        return_required,
+        returned,
+        return_due_date,
+        returned_at,
+        created_at
+      );
     CREATE TABLE IF NOT EXISTS organization_directory_users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

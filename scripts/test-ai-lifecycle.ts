@@ -117,6 +117,14 @@ import {
   kpiRowFromHardwareRecord,
   kpiRowFromLean,
 } from '../src/lib/client-portal/hardware-returns-kpis.js';
+import {
+  clearPortalReturnsCacheForTests,
+  getCachedPortalDashboardReturns,
+  getCachedPortalReturnsTrends,
+  invalidatePortalReturnsCache,
+  setCachedPortalDashboardReturns,
+  setCachedPortalReturnsTrends,
+} from '../src/lib/client-portal/portal-returns-cache.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -1208,10 +1216,10 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
       dashboardPageSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
       dashboardRouteSrc.includes('loadPortalDashboardReturnsStats') &&
       !dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
-      dashboardRouteSrc.includes('returnsActivityByRange') &&
+      dashboardRouteSrc.includes('returnsActivityByRange = null') &&
       !dashboardPageSrc.includes('/api/db') &&
       !dashboardRouteSrc.includes("'/api/db"),
-    'portal Übersicht returns top KPIs + trends via lean stats (no N+1 workbench)',
+    'portal Übersicht KPIs via SQL loader; trends detached from dashboard',
   );
   // FE must not cascade-refetch dashboard on trend range changes.
   assert(
@@ -1221,11 +1229,11 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
 }
 
 function testPortalDashboardReturnsPerfLifecycle(): void {
-  console.log('\n[19c2] Portal dashboard returns stats perf (500+ rows, all timeframes)');
+  console.log('\n[19c2] Portal dashboard returns SQL/cache perf (900+ rows, all timeframes)');
 
   const now = new Date('2026-11-25T12:00:00.000Z');
   const rows = [];
-  for (let i = 0; i < 600; i += 1) {
+  for (let i = 0; i < 900; i += 1) {
     const year = 2024 + (i % 3);
     const month = (i % 12) + 1;
     const day = (i % 27) + 1;
@@ -1250,11 +1258,16 @@ function testPortalDashboardReturnsPerfLifecycle(): void {
 
   const t0 = Date.now();
   const kpis = computePortalReturnsKpis(rows, now);
-  const byRange = buildReturnsActivityByRangeFast(rows, now);
-  const elapsed = Date.now() - t0;
-
-  assert(rows.length >= 500, 'seeded ≥500 returns spanning 2024–2026');
+  const dashElapsed = Date.now() - t0;
+  assert(rows.length >= 900, 'seeded ≥900 returns spanning 2024–2026');
   assert(kpis.open + kpis.returnedLast30 >= 0, 'KPIs computed');
+  assert(
+    dashElapsed < 100,
+    `dashboard KPI compute for 900 rows <100ms (was ${dashElapsed}ms)`,
+  );
+
+  // Offline builders remain for fixtures; live path is SQL generate_series.
+  const byRange = buildReturnsActivityByRangeFast(rows, now);
   assert(
     byRange['7d'].length === 7 &&
       byRange['30d'].length === 30 &&
@@ -1264,9 +1277,73 @@ function testPortalDashboardReturnsPerfLifecycle(): void {
       byRange.all.length <= 90,
     'all timeframes produce ≤90 buckets',
   );
+
+  // Concurrent cache reads (simulates 10 parallel dashboard + trends requests).
+  clearPortalReturnsCacheForTests();
+  const orgId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  setCachedPortalDashboardReturns(orgId, {
+    returnsKpis: kpis,
+    returnsActivityByRange: null,
+  });
+  for (const tf of ['7d', '30d', '90d', '12m', 'all'] as const) {
+    setCachedPortalReturnsTrends(orgId, tf, {
+      timeframe: tf,
+      points: byRange[tf],
+    });
+  }
+  const t2 = Date.now();
+  const concurrent = Array.from({ length: 10 }, () => ({
+    open: getCachedPortalDashboardReturns<{ returnsKpis: { open: number } }>(orgId)
+      ?.returnsKpis?.open,
+    n30: getCachedPortalReturnsTrends<{ points: unknown[] }>(orgId, '30d')?.points
+      ?.length,
+    n7: getCachedPortalReturnsTrends<{ points: unknown[] }>(orgId, '7d')?.points?.length,
+    n90: getCachedPortalReturnsTrends<{ points: unknown[] }>(orgId, '90d')?.points?.length,
+    n12: getCachedPortalReturnsTrends<{ points: unknown[] }>(orgId, '12m')?.points?.length,
+    nAll: getCachedPortalReturnsTrends<{ points: unknown[] }>(orgId, 'all')?.points?.length,
+  }));
+  const concurrentElapsed = Date.now() - t2;
   assert(
-    elapsed < 500,
-    `KPI + all trend ranges for 600 rows finish in <500ms (was ${elapsed}ms)`,
+    concurrent.every(
+      (r) =>
+        r.open === kpis.open &&
+        r.n30 === 30 &&
+        r.n7 === 7 &&
+        r.n90 === 90 &&
+        r.n12 === 12 &&
+        (r.nAll || 0) >= 1,
+    ) && concurrentElapsed < 150,
+    `10 concurrent dashboard+trends (all timeframes) <150ms (was ${concurrentElapsed}ms)`,
+  );
+
+  invalidatePortalReturnsCache(orgId);
+  assert(
+    getCachedPortalDashboardReturns(orgId) == null &&
+      getCachedPortalReturnsTrends(orgId, '30d') == null,
+    'mutation invalidates org dashboard + trends cache',
+  );
+
+  const pgSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/postgres-backend.ts'),
+    'utf8',
+  );
+  const sqlSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/portal-returns-sql-stats.ts'),
+    'utf8',
+  );
+  const routesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/hardwareReturnsRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    pgSrc.includes('max: 20') &&
+      pgSrc.includes('statement_timeout=5000') &&
+      pgSrc.includes('idx_ticket_hw_returns_org_dashboard_trends') &&
+      sqlSrc.includes('COUNT(*) FILTER') &&
+      sqlSrc.includes('generate_series') &&
+      routesSrc.includes("router.get('/trends'") &&
+      routesSrc.includes('invalidatePortalReturnsCache'),
+    'pool/timeout/index + SQL KPI/trends + /trends route + invalidation',
   );
 }
 

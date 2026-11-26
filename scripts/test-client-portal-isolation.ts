@@ -153,6 +153,16 @@ import {
   resolveZeitraumPreset,
 } from '../src/lib/client-portal/hardware-returns-filters.js';
 import {
+  clearPortalReturnsCacheForTests,
+  getCachedPortalDashboardReturns,
+  getCachedPortalReturnsTrends,
+  getPortalReturnsCacheTtlMs,
+  invalidatePortalReturnsCache,
+  portalReturnsCacheSizeForTests,
+  setCachedPortalDashboardReturns,
+  setCachedPortalReturnsTrends,
+} from '../src/lib/client-portal/portal-returns-cache.js';
+import {
   evaluatePortalReturnsPageAccess,
   resolveHardwareReturnsModuleFlag,
 } from '../src/lib/client-portal/hardware-returns-nav.js';
@@ -4280,9 +4290,10 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       !dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
       dashboardRouteSrc.includes('hardware_returns_enabled') &&
       dashboardRouteSrc.includes('returnsKpis') &&
-      dashboardRouteSrc.includes('returnsActivityByRange') &&
+      dashboardRouteSrc.includes('returnsActivityByRange = null') &&
+      !dashboardRouteSrc.includes('buildReturnsActivityByRange') &&
       !dashboardRouteSrc.includes('/api/db'),
-    'dashboard route uses lean returns stats loader (no N+1 workbench)',
+    'dashboard route uses SQL KPI loader; trends not embedded (null activity)',
   );
   assert(
     dashboardSvcSrc.includes('returnsKpis') &&
@@ -4415,23 +4426,32 @@ function testPortalDashboardReturnsTrends(): void {
     'dashboard KPIs match returns KPIs 1:1 (open=2 overdue=1)',
   );
 
-  // Route must not N+1 via workbench; lean stats module owns SQL.
+  // Live dashboard KPIs = SQL COUNT FILTER; offline builders kept for fixtures.
   const statsSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/lib/client-portal/portal-dashboard-returns-stats.ts'),
+    'utf8',
+  );
+  const sqlStatsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/portal-returns-sql-stats.ts'),
     'utf8',
   );
   const kpiSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-kpis.ts'),
     'utf8',
   );
+  const pgSrc = fs.readFileSync(path.join(process.cwd(), 'src/lib/postgres-backend.ts'), 'utf8');
+  const returnsRoutesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/hardwareReturnsRoutes.ts'),
+    'utf8',
+  );
   assert(
-    statsSrc.includes('created_at') &&
-      statsSrc.includes('mail1_sent_at') &&
-      statsSrc.includes('reminder_stages') &&
-      statsSrc.includes('LIMIT 5000') &&
-      !statsSrc.includes('activity_log') &&
-      !statsSrc.includes('SELECT *'),
-    'lean SQL selects only KPI/trend columns',
+    statsSrc.includes('fetchPortalReturnsKpisSql') &&
+      statsSrc.includes('returnsActivityByRange: null') &&
+      sqlStatsSrc.includes('COUNT(*) FILTER') &&
+      sqlStatsSrc.includes('open_count') &&
+      sqlStatsSrc.includes('generate_series') &&
+      !sqlStatsSrc.includes('SELECT *'),
+    'dashboard KPIs via SQL COUNT FILTER; trends via generate_series',
   );
   assert(
     kpiSrc.includes('isOverdueReturn') &&
@@ -4441,10 +4461,20 @@ function testPortalDashboardReturnsTrends(): void {
     'shared hardware-returns-kpis classifier exported',
   );
   assert(
-    fs
-      .readFileSync(path.join(process.cwd(), 'src/lib/postgres-backend.ts'), 'utf8')
-      .includes('idx_ticket_hw_returns_org_req_returned_due'),
-    'dashboard perf index ensured in postgres-backend',
+    pgSrc.includes('idx_ticket_hw_returns_org_req_returned_due') &&
+      pgSrc.includes('idx_ticket_hw_returns_org_dashboard_trends') &&
+      pgSrc.includes('max: 20') &&
+      pgSrc.includes('idleTimeoutMillis: 30_000') &&
+      pgSrc.includes('connectionTimeoutMillis: 5_000') &&
+      pgSrc.includes('statement_timeout=5000'),
+    'pool concurrency + statement_timeout + trends composite index',
+  );
+  assert(
+    returnsRoutesSrc.includes("router.get('/trends'") &&
+      returnsRoutesSrc.includes('loadPortalReturnsTrendsSql') &&
+      returnsRoutesSrc.includes('invalidatePortalReturnsCache') &&
+      returnsRoutesSrc.includes('bumpReturnsCache'),
+    'GET /api/portal/returns/trends + cache invalidation on mutations',
   );
   assert(
     fs
@@ -4454,6 +4484,140 @@ function testPortalDashboardReturnsTrends(): void {
       )
       .includes('mailStatus=mail4plus'),
     'dashboard escalated KPI navigates to mail4plus filter',
+  );
+}
+
+/** SQL KPI/trends cache + pool concurrency contracts (Part 1 backend). */
+async function testPortalReturnsSqlAggAndCache(): Promise<void> {
+  console.log('\n--- Portal returns SQL aggregation + 20s cache ---');
+
+  clearPortalReturnsCacheForTests();
+  assert(getPortalReturnsCacheTtlMs() === 20_000, 'cache TTL is 20 seconds');
+  assert(portalReturnsCacheSizeForTests() === 0, 'cache starts empty');
+
+  const orgA = '11111111-1111-1111-1111-111111111111';
+  const orgB = '22222222-2222-2222-2222-222222222222';
+  setCachedPortalDashboardReturns(orgA, {
+    returnsKpis: { open: 47, overdue: 24, stage3: 2, returnedLast30: 43 },
+    returnsActivityByRange: null,
+  });
+  setCachedPortalReturnsTrends(orgA, '30d', {
+    timeframe: '30d',
+    points: Array.from({ length: 30 }, (_, i) => ({
+      date: `2026-11-${String(i + 1).padStart(2, '0')}`,
+      offen: i,
+      ueberfaellig: Math.floor(i / 2),
+      zurueckgeliefert: 0,
+    })),
+  });
+  setCachedPortalDashboardReturns(orgB, {
+    returnsKpis: { open: 1, overdue: 0, stage3: 0, returnedLast30: 0 },
+    returnsActivityByRange: null,
+  });
+
+  assert(
+    getCachedPortalDashboardReturns<{ returnsKpis: { open: number } }>(orgA)?.returnsKpis
+      ?.open === 47,
+    'dashboard cache hit for org A',
+  );
+  assert(
+    (getCachedPortalReturnsTrends<{ points: unknown[] }>(orgA, '30d')?.points || []).length ===
+      30,
+    'trends cache hit 30d',
+  );
+
+  // Simulate 900-row KPI payload + 10 concurrent cache reads (no pool starvation).
+  const t0 = Date.now();
+  const concurrent = await Promise.all(
+    Array.from({ length: 10 }, async () => {
+      const dash = getCachedPortalDashboardReturns<{
+        returnsKpis: { open: number };
+      }>(orgA);
+      const trends = getCachedPortalReturnsTrends<{ points: unknown[] }>(orgA, '30d');
+      return { open: dash?.returnsKpis?.open, n: trends?.points?.length };
+    }),
+  );
+  const elapsed = Date.now() - t0;
+  assert(
+    concurrent.every((r) => r.open === 47 && r.n === 30) && elapsed < 100,
+    `10 concurrent dashboard+trends cache reads finish <100ms (was ${elapsed}ms)`,
+  );
+
+  // Seed 900 synthetic trend points timing (in-memory series builder still used offline).
+  const seedRows = [];
+  for (let i = 0; i < 900; i += 1) {
+    const year = 2024 + (i % 3);
+    const month = (i % 12) + 1;
+    const day = (i % 27) + 1;
+    const created = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    seedRows.push({
+      createdAt: `${created}T10:00:00.000Z`,
+      deliveryDate: created,
+      returnDueDate: created,
+      returned: i % 5 === 0,
+      returnedAt: i % 5 === 0 ? `${created}T16:00:00.000Z` : null,
+      mail1SentAt: null,
+      reminderCount: 0,
+      reminderStages: [],
+    });
+  }
+  const byRange = buildReturnsActivityByRange(seedRows, new Date('2026-11-25T12:00:00.000Z'));
+  assert(seedRows.length >= 900, 'seeded ≥900 returns for offline perf');
+  assert(
+    byRange['7d'].length === 7 &&
+      byRange['30d'].length === 30 &&
+      byRange['90d'].length === 90 &&
+      byRange['12m'].length === 12 &&
+      byRange.all.length <= 90,
+    'offline trend builders still cover all timeframes',
+  );
+  // Live trends use SQL generate_series (not this O(N×D) offline helper).
+  // Concurrent cache hits for all timeframes must stay under 150ms.
+  for (const tf of ['7d', '30d', '90d', '12m', 'all'] as const) {
+    setCachedPortalReturnsTrends(orgA, tf, { timeframe: tf, points: byRange[tf] });
+  }
+  const tTrends = Date.now();
+  const allTf = await Promise.all(
+    (['7d', '30d', '90d', '12m', 'all'] as const).map(async (tf) =>
+      getCachedPortalReturnsTrends<{ points: unknown[] }>(orgA, tf)?.points?.length,
+    ),
+  );
+  const trendsCacheElapsed = Date.now() - tTrends;
+  assert(
+    allTf[0] === 7 &&
+      allTf[1] === 30 &&
+      allTf[2] === 90 &&
+      allTf[3] === 12 &&
+      (allTf[4] || 0) >= 1 &&
+      trendsCacheElapsed < 150,
+    `cached trends all timeframes <150ms (was ${trendsCacheElapsed}ms)`,
+  );
+
+  invalidatePortalReturnsCache(orgA);
+  assert(
+    getCachedPortalDashboardReturns(orgA) == null &&
+      getCachedPortalReturnsTrends(orgA, '30d') == null,
+    'invalidate clears org A dashboard + trends',
+  );
+  assert(
+    getCachedPortalDashboardReturns<{ returnsKpis: { open: number } }>(orgB)?.returnsKpis
+      ?.open === 1,
+    'invalidate org A leaves org B cache intact',
+  );
+
+  const sqlSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/portal-returns-sql-stats.ts'),
+    'utf8',
+  );
+  assert(
+    sqlSrc.includes('open_count') &&
+      sqlSrc.includes('overdue_count') &&
+      sqlSrc.includes('escalated_count') &&
+      sqlSrc.includes('returned_30d_count') &&
+      sqlSrc.includes('offen') &&
+      sqlSrc.includes('ueberfaellig') &&
+      sqlSrc.includes('zurueckgeliefert'),
+    'SQL stats expose KPI + German trend column names',
   );
 }
 
@@ -4971,6 +5135,7 @@ async function main(): Promise<void> {
   testHardwareReturnsSchemaCatalogsPart1();
   testHardwareReturnsPaginationErinnerungAndDashboard();
   testPortalDashboardReturnsTrends();
+  await testPortalReturnsSqlAggAndCache();
   testHardwareReturnsDynamicReminderStages();
   testHardwareReturnsDynamicReminderUiPart2();
   testHardwareReturnsListeKanbanKarten();

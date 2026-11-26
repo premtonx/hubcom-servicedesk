@@ -419,14 +419,14 @@ router.get(
         (role === 'CLIENT_ADMIN' || role === 'CLIENT_SUPPORTER')
       ) {
         try {
-          // Lean single SQL + O(N+D) aggregation — never the N+1 workbench loader
-          // (that path hydrates tickets and pulls full-row blobs).
+          // Single SQL COUNT(*) FILTER + 20s org cache — trends live on
+          // GET /api/portal/returns/trends (never N+1 workbench / row loops).
           const { loadPortalDashboardReturnsStats } = await import(
             '../lib/client-portal/portal-dashboard-returns-stats.js'
           );
           const stats = await loadPortalDashboardReturnsStats(organizationId);
           returnsKpis = stats.returnsKpis;
-          returnsActivityByRange = stats.returnsActivityByRange;
+          returnsActivityByRange = null;
         } catch (err: any) {
           safeLog('warn', '[portal] dashboard returns KPIs skipped', err?.message || err);
           returnsKpis = null;

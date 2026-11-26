@@ -52,9 +52,22 @@ import {
   isValidReminderStage,
   type ReminderStage,
 } from '../lib/client-portal/hardware-returns-recipients.js';
+import {
+  getCachedPortalReturnsTrends,
+  invalidatePortalReturnsCache,
+  setCachedPortalReturnsTrends,
+} from '../lib/client-portal/portal-returns-cache.js';
+import {
+  loadPortalReturnsTrendsSql,
+  parsePortalReturnsTrendTimeframe,
+} from '../lib/client-portal/portal-returns-sql-stats.js';
 
 function stageFromQuery(raw: unknown): ReminderStage | null {
   return isValidReminderStage(raw) ? Number(raw) : null;
+}
+
+function bumpReturnsCache(organizationId: string): void {
+  invalidatePortalReturnsCache(organizationId);
 }
 
 async function resolveOrgForReturns(
@@ -155,6 +168,50 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
 
   router.get('/', listHandler);
 
+  /**
+   * GET /trends?timeframe=7d|30d|90d|12m|all
+   * SQL generate_series buckets + 20s org cache. Portal CLIENT_USER / disabled module → 403.
+   */
+  router.get('/trends', async (req: Request, res: Response): Promise<any> => {
+    try {
+      const ctx = await resolveOrgForReturns(
+        req,
+        res,
+        mode === 'staff' ? String(req.query.organizationId || '') : null,
+      );
+      if (!ctx) return;
+      const timeframe = parsePortalReturnsTrendTimeframe(
+        req.query.timeframe || req.query.range,
+      );
+      const cached = getCachedPortalReturnsTrends<{
+        timeframe: string;
+        points: unknown[];
+      }>(ctx.organizationId, timeframe);
+      if (cached) {
+        return res.json({
+          organizationId: ctx.organizationId,
+          timeframe: cached.timeframe,
+          points: cached.points,
+          cached: true,
+        });
+      }
+      const points = await loadPortalReturnsTrendsSql(ctx.organizationId, timeframe);
+      const payload = { timeframe, points };
+      setCachedPortalReturnsTrends(ctx.organizationId, timeframe, payload);
+      return res.json({
+        organizationId: ctx.organizationId,
+        timeframe,
+        points,
+        cached: false,
+      });
+    } catch (err: any) {
+      const status = err?.status || 500;
+      return res.status(status).json({
+        error: safeErrorMessage(err, 'Trends konnten nicht geladen werden'),
+      });
+    }
+  });
+
   const createSchema = z.object({
     organizationId: z.string().uuid().optional(),
     /** Betreff — optional (no longer required). */
@@ -196,6 +253,7 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         customerEmail: parsed.data.customerEmail,
         hardwareReturn: parsed.data.hardwareReturn as any,
       });
+      bumpReturnsCache(ctx.organizationId);
       return res.status(201).json({
         success: true,
         id: result.id,
@@ -282,6 +340,7 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         actor: req.user?.name || req.user?.email || null,
         message: activityMessage,
       });
+      bumpReturnsCache(ctx.organizationId);
       return res.json({
         success: true,
         id: hardwareReturn.id,
@@ -568,6 +627,9 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         action: parsed.data.action,
         actorName: req.user?.name || req.user?.email || 'Benutzer',
       });
+      if (parsed.data.action !== 'csv_export') {
+        bumpReturnsCache(ctx.organizationId);
+      }
       return res.json({ success: true, ...result });
     } catch (err: any) {
       return res
@@ -667,6 +729,7 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         actorId: req.user?.id,
         actorName: req.user?.name || req.user?.email || 'CSV-Import',
       });
+      bumpReturnsCache(ctx.organizationId);
       return res.json({ success: true, ...result });
     } catch (err: any) {
       return res
@@ -728,6 +791,7 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         organizationId: ctx.organizationId,
       });
       if (!ok) return res.status(404).json({ error: 'Rücklieferung nicht gefunden.' });
+      bumpReturnsCache(ctx.organizationId);
       return res.json({ success: true, id: existing.id });
     } catch (err: any) {
       return res
@@ -789,6 +853,7 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         auto: false,
         actorName: req.user?.name || req.user?.email || 'Benutzer',
       });
+      bumpReturnsCache(ctx.organizationId);
       return res.json({ success: true, ...result });
     } catch (err: any) {
       return res
@@ -821,6 +886,7 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
         note: parsed.data.note,
         actorName: req.user?.name || req.user?.email || 'Benutzer',
       });
+      bumpReturnsCache(ctx.organizationId);
       return res.json({ success: true, hardwareReturn });
     } catch (err: any) {
       return res
