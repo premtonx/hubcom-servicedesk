@@ -494,6 +494,11 @@ export interface HardwareReturnsKpis {
   nextMailDue: number;
   stage3: number;
   returnedLast30: number;
+  openAddedLast7d: number;
+  overdueAddedToday: number;
+  overdueAddedLast7d: number;
+  escalatedLast7d: number;
+  returnedLast7d: number;
 }
 
 function mapHwRow(row: any): TicketHardwareReturnRecord {
@@ -677,6 +682,11 @@ export async function listHardwareReturnsWorkbench(
     nextMailDue: openItems.filter((i) => i.nextDueStage != null).length,
     stage3: shared.stage3,
     returnedLast30: shared.returnedLast30,
+    openAddedLast7d: shared.openAddedLast7d,
+    overdueAddedToday: shared.overdueAddedToday,
+    overdueAddedLast7d: shared.overdueAddedLast7d,
+    escalatedLast7d: shared.escalatedLast7d,
+    returnedLast7d: shared.returnedLast7d,
   };
 
   return { items: page, kpis, total };

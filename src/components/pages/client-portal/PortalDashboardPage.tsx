@@ -23,12 +23,9 @@ import {
   Image,
   Loader2,
   Mail,
-  Package,
-  PackageCheck,
   PackageOpen,
   Palette,
   Plus,
-  ShieldAlert,
   Ticket as TicketIcon,
   Truck,
   Users,
@@ -51,6 +48,12 @@ import {
 } from '../../../lib/dashboard-format-utils';
 import { portalStatusLabel } from '../../../lib/portal/status';
 import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
+import {
+  ReturnKpiStrip,
+  returnKpiFilterHref,
+  type ReturnKpiFilterId,
+} from '../../returns/ReturnKpiStrip';
+import { emptyHardwareReturnsKpis } from '../../../lib/client-portal/hardware-returns-kpis';
 
 const RETURNS_TREND_OPTIONS: Array<{ id: PortalReturnsTrendRange; label: string }> = [
   { id: '7d', label: '7 Tage' },
@@ -73,12 +76,7 @@ const KPI_ICON_TONES = {
   amber: 'bg-amber-100 text-amber-700',
 } as const;
 
-const ZERO_RETURNS_KPIS: PortalDashboardReturnsKpis = {
-  open: 0,
-  overdue: 0,
-  stage3: 0,
-  returnedLast30: 0,
-};
+const ZERO_RETURNS_KPIS: PortalDashboardReturnsKpis = emptyHardwareReturnsKpis();
 
 const ZERO_STATUS_BREAKDOWN: NonNullable<
   PortalDashboardResponse['returnStatusBreakdown']
@@ -414,42 +412,13 @@ function PortalDashboardShell({
                     Zur Übersicht →
                   </button>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-                  <HeroKpiCard
-                    label="Offene Rücklieferungen"
-                    value={returnsKpis.open}
-                    loading={dashboardLoading}
-                    icon={<Package className="w-4 h-4" />}
-                    iconTone="blue"
-                    onClick={() => navigate('/portal/returns?view=open')}
-                  />
-                  <HeroKpiCard
-                    label="Überfällig"
-                    value={returnsKpis.overdue}
-                    loading={dashboardLoading}
-                    icon={<AlertTriangle className="w-4 h-4" />}
-                    iconTone="amber"
-                    onClick={() => navigate('/portal/returns?view=overdue')}
-                  />
-                  <HeroKpiCard
-                    label="Letzte Stufe / Eskaliert (4.+ Erinnerung)"
-                    value={returnsKpis.stage3}
-                    loading={dashboardLoading}
-                    icon={<ShieldAlert className="w-4 h-4" />}
-                    iconTone="purple"
-                    onClick={() =>
-                      navigate('/portal/returns?view=open&mailStatus=mail4plus')
-                    }
-                  />
-                  <HeroKpiCard
-                    label="Zurückgeliefert (30 Tage)"
-                    value={returnsKpis.returnedLast30}
-                    loading={dashboardLoading}
-                    icon={<PackageCheck className="w-4 h-4" />}
-                    iconTone="green"
-                    onClick={() => navigate('/portal/returns?view=done')}
-                  />
-                </div>
+                <ReturnKpiStrip
+                  kpis={returnsKpis}
+                  loading={dashboardLoading}
+                  onSelect={(filter: ReturnKpiFilterId) =>
+                    navigate(returnKpiFilterHref(filter))
+                  }
+                />
               </div>
             ) : null}
           </div>

@@ -21,6 +21,7 @@ export interface HardwareReturnKpiRow {
   returned: boolean;
   returnDueDate: string | null;
   returnedAt: string | null;
+  createdAt: string | null;
   mail1SentAt: string | null;
   reminderStages: ReminderStageSentLike[];
   reminderCount: number;
@@ -32,6 +33,34 @@ export interface HardwareReturnsKpiCounts {
   /** Escalated: open + highest sent stage ≥ 4 (API field name kept as stage3). */
   stage3: number;
   returnedLast30: number;
+  /** Open returns created in the last 7 days. */
+  openAddedLast7d: number;
+  /** Open overdue whose overdue start day is today (Europe/Berlin). */
+  overdueAddedToday: number;
+  /** Open overdue whose overdue start day is within the last 7 Berlin days. */
+  overdueAddedLast7d: number;
+  /** Open escalated (4.+) that reached stage ≥4 in the last 7 days. */
+  escalatedLast7d: number;
+  /** Returns marked returned with returned_at in the last 7 days. */
+  returnedLast7d: number;
+}
+
+export const ZERO_HARDWARE_RETURNS_KPI_DELTAS = {
+  openAddedLast7d: 0,
+  overdueAddedToday: 0,
+  overdueAddedLast7d: 0,
+  escalatedLast7d: 0,
+  returnedLast7d: 0,
+} as const;
+
+export function emptyHardwareReturnsKpis(): HardwareReturnsKpiCounts {
+  return {
+    open: 0,
+    overdue: 0,
+    stage3: 0,
+    returnedLast30: 0,
+    ...ZERO_HARDWARE_RETURNS_KPI_DELTAS,
+  };
 }
 
 function berlinDayKey(d: Date): string {
@@ -152,6 +181,31 @@ export function isReturnedLast30(
   return t >= now.getTime() - 30 * MS_DAY;
 }
 
+function withinLastMs(iso: string | null | undefined, now: Date, windowMs: number): boolean {
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return false;
+  return t >= now.getTime() - windowMs;
+}
+
+/** Earliest sentAt among stages ≥ 4 (null if none). */
+export function stage4PlusReachedAt(
+  row: Pick<HardwareReturnKpiRow, 'reminderStages'>,
+): string | null {
+  let earliest: number | null = null;
+  let earliestIso: string | null = null;
+  for (const s of row.reminderStages || []) {
+    if (s.stage < 4 || !s.sentAt) continue;
+    const t = new Date(s.sentAt).getTime();
+    if (Number.isNaN(t)) continue;
+    if (earliest == null || t < earliest) {
+      earliest = t;
+      earliestIso = String(s.sentAt);
+    }
+  }
+  return earliestIso;
+}
+
 /**
  * First Berlin-day ms when a still-open return becomes overdue for trend buckets.
  * Due: day AFTER return_due_date. Mail1: day mail1 was sent. Earliest wins.
@@ -183,16 +237,47 @@ export function computeHardwareReturnsKpis(
   let overdue = 0;
   let stage3 = 0;
   let returnedLast30 = 0;
+  let openAddedLast7d = 0;
+  let overdueAddedToday = 0;
+  let overdueAddedLast7d = 0;
+  let escalatedLast7d = 0;
+  let returnedLast7d = 0;
+  const todayMs = berlinTodayMs(now);
+  const weekStartMs = todayMs - 6 * MS_DAY;
+
   for (const row of rows) {
     if (isOpenReturn(row)) {
       open += 1;
-      if (isOverdueReturn(row, now)) overdue += 1;
-      if (isEscalatedReturn(row)) stage3 += 1;
-    } else if (isReturnedLast30(row, now)) {
-      returnedLast30 += 1;
+      if (withinLastMs(row.createdAt, now, 7 * MS_DAY)) openAddedLast7d += 1;
+      if (isOverdueReturn(row, now)) {
+        overdue += 1;
+        const start = overdueStartBerlinMs(row);
+        if (start != null) {
+          if (start === todayMs) overdueAddedToday += 1;
+          if (start >= weekStartMs && start <= todayMs) overdueAddedLast7d += 1;
+        }
+      }
+      if (isEscalatedReturn(row)) {
+        stage3 += 1;
+        const reachedAt = stage4PlusReachedAt(row);
+        if (withinLastMs(reachedAt, now, 7 * MS_DAY)) escalatedLast7d += 1;
+      }
+    } else if (row.returned) {
+      if (isReturnedLast30(row, now)) returnedLast30 += 1;
+      if (withinLastMs(row.returnedAt, now, 7 * MS_DAY)) returnedLast7d += 1;
     }
   }
-  return { open, overdue, stage3, returnedLast30 };
+  return {
+    open,
+    overdue,
+    stage3,
+    returnedLast30,
+    openAddedLast7d,
+    overdueAddedToday,
+    overdueAddedLast7d,
+    escalatedLast7d,
+    returnedLast7d,
+  };
 }
 
 /** Adapt lean dashboard row (camelCase). */
@@ -201,6 +286,7 @@ export function kpiRowFromLean(row: {
   returned: boolean;
   returnDueDate?: string | null;
   returnedAt?: string | null;
+  createdAt?: string | null;
   mail1SentAt?: string | null;
   reminderStages?: ReminderStageSentLike[] | null;
   reminderCount?: number | null;
@@ -210,6 +296,7 @@ export function kpiRowFromLean(row: {
     returned: Boolean(row.returned),
     returnDueDate: row.returnDueDate || null,
     returnedAt: row.returnedAt || null,
+    createdAt: row.createdAt || null,
     mail1SentAt: row.mail1SentAt || null,
     reminderStages: normalizeStages(row.reminderStages),
     reminderCount: Number(row.reminderCount) || 0,
@@ -222,6 +309,7 @@ export function kpiRowFromHardwareRecord(hw: {
   returned?: boolean;
   return_due_date?: string | null;
   returned_at?: string | null;
+  created_at?: string | null;
   mail1_sent_at?: string | null;
   reminder_stages?: ReminderStageSentLike[] | null;
   reminder_count?: number | null;
@@ -231,8 +319,44 @@ export function kpiRowFromHardwareRecord(hw: {
     returned: Boolean(hw.returned),
     returnDueDate: hw.return_due_date || null,
     returnedAt: hw.returned_at || null,
+    createdAt: hw.created_at || null,
     mail1SentAt: hw.mail1_sent_at || null,
     reminderStages: normalizeStages(hw.reminder_stages),
     reminderCount: Number(hw.reminder_count) || 0,
   };
+}
+
+/** German delta labels for the 4 KPI cards. */
+export function formatReturnKpiDelta(
+  kind: 'open' | 'overdue' | 'escalated' | 'returned',
+  kpis: Pick<
+    HardwareReturnsKpiCounts,
+    | 'openAddedLast7d'
+    | 'overdueAddedToday'
+    | 'overdueAddedLast7d'
+    | 'escalatedLast7d'
+    | 'returnedLast7d'
+  >,
+): { label: string; tone: 'sky' | 'rose' | 'violet' | 'emerald' | 'slate' } {
+  if (kind === 'open') {
+    const n = kpis.openAddedLast7d || 0;
+    return {
+      label: n === 0 ? '±0 seit letzter Woche' : `+${n} seit letzter Woche`,
+      tone: n > 0 ? 'sky' : 'slate',
+    };
+  }
+  if (kind === 'overdue') {
+    if ((kpis.overdueAddedToday || 0) > 0) {
+      return { label: `+ ${kpis.overdueAddedToday} heute`, tone: 'rose' };
+    }
+    const n = kpis.overdueAddedLast7d || 0;
+    return { label: `+${n} seit 7 Tagen`, tone: n > 0 ? 'rose' : 'slate' };
+  }
+  if (kind === 'escalated') {
+    const n = kpis.escalatedLast7d || 0;
+    if (n > 0) return { label: `+${n} diese Woche`, tone: 'violet' };
+    return { label: 'Aktuell stabil', tone: 'slate' };
+  }
+  const n = kpis.returnedLast7d || 0;
+  return { label: `+${n} diese Woche`, tone: n > 0 ? 'emerald' : 'slate' };
 }

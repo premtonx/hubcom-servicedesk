@@ -100,6 +100,7 @@ import {
 } from '../src/lib/client-portal/portal-dashboard-service.js';
 import {
   computeHardwareReturnsKpis,
+  formatReturnKpiDelta,
   isOpenReturn,
   isOverdueReturn,
   kpiRowFromHardwareRecord,
@@ -829,7 +830,17 @@ function testPortalDashboardIsolation(): void {
       hardwareReturnsEnabled: true,
     },
     tickets: mixedTickets,
-    returnsKpis: { open: 4, overdue: 2, stage3: 1, returnedLast30: 3 },
+    returnsKpis: {
+      open: 4,
+      overdue: 2,
+      stage3: 1,
+      returnedLast30: 3,
+      openAddedLast7d: 1,
+      overdueAddedToday: 0,
+      overdueAddedLast7d: 1,
+      escalatedLast7d: 0,
+      returnedLast7d: 2,
+    },
     returnsActivityByRange: buildReturnsActivityByRange([
       {
         createdAt: '2026-10-01T10:00:00.000Z',
@@ -4339,22 +4350,28 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
   assert(slice(100, 9).from === 801 && slice(100, 9).to === 888, 'last page @100 → 801–888');
   assert(slice('all', 1).len === 888, 'Alle shows full 888');
 
-  // KPI strip: no Nächste Mail; Erinnerung labels; 4 cards.
+  // KPI strip: shared ReturnKpiStrip; no Nächste Mail; Erinnerung labels.
+  const returnKpiStripSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnKpiStrip.tsx'),
+    'utf8',
+  );
   assert(
     !workbenchSrc.includes('Nächste Mail fällig') &&
-      workbenchSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
+      workbenchSrc.includes('ReturnKpiStrip') &&
       workbenchSrc.includes('Erinnerungsverlauf') &&
       workbenchSrc.includes('Erinnerungsstufe') &&
-      workbenchSrc.includes('lg:grid-cols-4') &&
-      !workbenchSrc.includes('lg:grid-cols-5'),
+      returnKpiStripSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
+      returnKpiStripSrc.includes('xl:grid-cols-4') &&
+      !returnKpiStripSrc.includes('lg:grid-cols-5'),
     'KPI strip drops Nächste Mail; uses Erinnerung labels + 4 columns',
   );
   assert(
     workbenchSrc.includes('applyViewFilter') &&
       workbenchSrc.includes('applyEscalatedFilter') &&
+      workbenchSrc.includes('applyKpiFilter') &&
       workbenchSrc.includes("setMailStatus('all')") &&
+      workbenchSrc.includes("setMailStatus('mail4plus')") &&
       workbenchSrc.includes("setOverdueBucket('all')") &&
-      workbenchSrc.includes("prev === 'mail4plus' ? 'all' : 'mail4plus'") &&
       workbenchSrc.includes('applyViewFilter(v.id)') &&
       workbenchSrc.includes("applyViewFilter('open')") &&
       workbenchSrc.includes("applyViewFilter('overdue')") &&
@@ -4385,8 +4402,8 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       dashboardPageSrc.includes('returnsKpis') &&
       dashboardPageSrc.includes('hardwareReturnsEnabled') &&
       dashboardPageSrc.includes('/portal/returns') &&
-      dashboardPageSrc.includes('Offene Rücklieferungen') &&
-      dashboardPageSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
+      returnKpiStripSrc.includes('Offene Rücklieferungen') &&
+      returnKpiStripSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
       dashboardPageSrc.includes('Rücklieferungen-Trends') &&
       dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('7d')") &&
       dashboardPageSrc.includes('7 Tage') &&
@@ -4404,8 +4421,6 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       dashboardPageSrc.includes('dataKey="ueberfaellig"') &&
       dashboardPageSrc.includes('dataKey="letzteStufeEskaliert"') &&
       dashboardPageSrc.includes('dataKey="zurueckgeliefert"') &&
-      dashboardPageSrc.includes('Offene Rücklieferungen') &&
-      dashboardPageSrc.includes('Letzte Stufe / Eskaliert') &&
       dashboardPageSrc.includes('Rückgabe-Status') &&
       dashboardPageSrc.includes('HardwareReturnsExecutiveBody') &&
       dashboardPageSrc.includes('ReturnStatusDonutCard') &&
@@ -4417,6 +4432,8 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       dashboardPageSrc.includes('CheckCircle2') &&
       dashboardPageSrc.includes('Truck') &&
       dashboardPageSrc.includes('Alle anzeigen') &&
+      dashboardPageSrc.includes('ReturnKpiStrip') &&
+      dashboardPageSrc.includes('returnKpiFilterHref') &&
       !dashboardPageSrc.includes('/api/db'),
     'portal Übersicht executive returns layout + 4 trend series (no /api/db)',
   );
@@ -4595,8 +4612,41 @@ function testPortalDashboardReturnsTrends(): void {
   assert(
     JSON.stringify(leanKpis) === JSON.stringify(hwKpis) &&
       leanKpis.open === 2 &&
-      leanKpis.overdue === 1,
-    'dashboard KPIs match returns KPIs 1:1 (open=2 overdue=1)',
+      leanKpis.overdue === 1 &&
+      typeof leanKpis.openAddedLast7d === 'number' &&
+      typeof leanKpis.returnedLast7d === 'number',
+    'dashboard KPIs match returns KPIs 1:1 (open=2 overdue=1 + deltas)',
+  );
+  assert(
+    formatReturnKpiDelta('open', {
+      openAddedLast7d: 0,
+      overdueAddedToday: 0,
+      overdueAddedLast7d: 0,
+      escalatedLast7d: 0,
+      returnedLast7d: 0,
+    }).label === '±0 seit letzter Woche' &&
+      formatReturnKpiDelta('overdue', {
+        openAddedLast7d: 0,
+        overdueAddedToday: 2,
+        overdueAddedLast7d: 5,
+        escalatedLast7d: 0,
+        returnedLast7d: 0,
+      }).label === '+ 2 heute' &&
+      formatReturnKpiDelta('escalated', {
+        openAddedLast7d: 0,
+        overdueAddedToday: 0,
+        overdueAddedLast7d: 0,
+        escalatedLast7d: 0,
+        returnedLast7d: 0,
+      }).label === 'Aktuell stabil' &&
+      formatReturnKpiDelta('returned', {
+        openAddedLast7d: 0,
+        overdueAddedToday: 0,
+        overdueAddedLast7d: 0,
+        escalatedLast7d: 0,
+        returnedLast7d: 3,
+      }).label === '+3 diese Woche',
+    'formatReturnKpiDelta German labels',
   );
 
   // Live dashboard KPIs = SQL COUNT FILTER; offline builders kept for fixtures.
@@ -4622,9 +4672,13 @@ function testPortalDashboardReturnsTrends(): void {
       statsSrc.includes('returnsActivityByRange: null') &&
       sqlStatsSrc.includes('COUNT(*) FILTER') &&
       sqlStatsSrc.includes('open_count') &&
+      sqlStatsSrc.includes('open_added_7d') &&
+      sqlStatsSrc.includes('overdue_added_today') &&
+      sqlStatsSrc.includes('escalated_7d') &&
+      sqlStatsSrc.includes('returned_7d_count') &&
       sqlStatsSrc.includes('generate_series') &&
       !sqlStatsSrc.includes('SELECT *'),
-    'dashboard KPIs via SQL COUNT FILTER; trends via generate_series',
+    'dashboard KPIs via SQL COUNT FILTER + deltas; trends via generate_series',
   );
   assert(
     kpiSrc.includes('isOverdueReturn') &&
@@ -4655,8 +4709,46 @@ function testPortalDashboardReturnsTrends(): void {
         path.join(process.cwd(), 'src/components/pages/client-portal/PortalDashboardPage.tsx'),
         'utf8',
       )
-      .includes('mailStatus=mail4plus'),
-    'dashboard escalated KPI navigates to mail4plus filter',
+      .includes('ReturnKpiStrip') ||
+      fs
+        .readFileSync(
+          path.join(process.cwd(), 'src/components/returns/ReturnKpiStrip.tsx'),
+          'utf8',
+        )
+        .includes("filter=${encodeURIComponent(filter)}"),
+    'dashboard returns KPIs use shared ReturnKpiStrip deep-links',
+  );
+
+  const kpiStripSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnKpiStrip.tsx'),
+    'utf8',
+  );
+  const workbenchSrc2 = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const kpiHelperSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/hardware-returns-kpis.ts'),
+    'utf8',
+  );
+  assert(
+    kpiStripSrc.includes('group cursor-pointer') &&
+      kpiStripSrc.includes('hover:-translate-y-0.5') &&
+      kpiStripSrc.includes('w-12 h-12 rounded-2xl') &&
+      kpiStripSrc.includes('w-8 h-8 rounded-full') &&
+      kpiStripSrc.includes('ArrowRight') &&
+      kpiStripSrc.includes('formatReturnKpiDelta') &&
+      workbenchSrc2.includes('ReturnKpiStrip') &&
+      workbenchSrc2.includes('parseReturnKpiFilterParam') &&
+      workbenchSrc2.includes('activeKpiFilter') &&
+      kpiHelperSrc.includes('openAddedLast7d') &&
+      kpiHelperSrc.includes('overdueAddedToday') &&
+      kpiHelperSrc.includes('escalatedLast7d') &&
+      kpiHelperSrc.includes('returnedLast7d') &&
+      kpiHelperSrc.includes('formatReturnKpiDelta') &&
+      !kpiStripSrc.includes('/api/db') &&
+      !workbenchSrc2.includes("'/api/db"),
+    'shared ReturnKpiStrip 3-zone cards + real delta helpers (no /api/db)',
   );
 }
 
@@ -4671,7 +4763,17 @@ async function testPortalReturnsSqlAggAndCache(): Promise<void> {
   const orgA = '11111111-1111-1111-1111-111111111111';
   const orgB = '22222222-2222-2222-2222-222222222222';
   setCachedPortalDashboardReturns(orgA, {
-    returnsKpis: { open: 47, overdue: 24, stage3: 2, returnedLast30: 43 },
+    returnsKpis: {
+      open: 47,
+      overdue: 24,
+      stage3: 2,
+      returnedLast30: 43,
+      openAddedLast7d: 5,
+      overdueAddedToday: 1,
+      overdueAddedLast7d: 4,
+      escalatedLast7d: 0,
+      returnedLast7d: 6,
+    },
     returnsActivityByRange: null,
     returnStatusBreakdown: {
       openTotal: 47,
@@ -4698,7 +4800,17 @@ async function testPortalReturnsSqlAggAndCache(): Promise<void> {
     })),
   });
   setCachedPortalDashboardReturns(orgB, {
-    returnsKpis: { open: 1, overdue: 0, stage3: 0, returnedLast30: 0 },
+    returnsKpis: {
+      open: 1,
+      overdue: 0,
+      stage3: 0,
+      returnedLast30: 0,
+      openAddedLast7d: 0,
+      overdueAddedToday: 0,
+      overdueAddedLast7d: 0,
+      escalatedLast7d: 0,
+      returnedLast7d: 0,
+    },
     returnsActivityByRange: null,
     returnStatusBreakdown: {
       openTotal: 1,

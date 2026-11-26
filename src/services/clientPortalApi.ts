@@ -72,6 +72,11 @@ export interface PortalDashboardReturnsKpis {
   overdue: number;
   stage3: number;
   returnedLast30: number;
+  openAddedLast7d?: number;
+  overdueAddedToday?: number;
+  overdueAddedLast7d?: number;
+  escalatedLast7d?: number;
+  returnedLast7d?: number;
 }
 
 export type PortalReturnsTrendRange = '7d' | '30d' | '90d' | '12m' | 'all';
