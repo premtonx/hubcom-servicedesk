@@ -3522,17 +3522,32 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
     'Abschluss step requires prior steps + assignee (not default status alone)',
   );
   assert(
-    editorSrc.includes('Erweiterte Erinnerungstermine') &&
-      editorSrc.includes('advancedOpen') &&
-      editorSrc.includes('Standard-Erinnerungsplan aktiv'),
-    'mail 1/2/3 overrides collapsed by default with summary',
+    (editorSrc.includes('Erinnerungsmanagement & Empfänger') ||
+      editorSrc.includes('Erinnerungsmanagement &amp; Empfänger')) &&
+      (editorSrc.includes('Termine & Empfänger anpassen') ||
+        editorSrc.includes('Termine &amp; Empfänger anpassen')) &&
+      editorSrc.includes('reminderDetailsOpen') &&
+      editorSrc.includes('Automatischer Versand') &&
+      editorSrc.includes('auto_reminder_enabled = true') &&
+      editorSrc.includes('Manuelle Erinnerung senden') &&
+      editorSrc.includes('GermanDateInput') &&
+      editorSrc.includes('TT.MM.JJJJ') &&
+      editorSrc.includes('Standard-Erinnerungsplan aktiv') &&
+      !editorSrc.includes('Erweiterte Erinnerungstermine') &&
+      !editorSrc.includes('/api/db'),
+    'unified compact Erinnerungsmanagement card (auto ON, collapsed stages, DE dates)',
+  );
+  assert(
+    (editorSrc.match(/Erinnerungsmanagement & Empfänger/g) || []).length === 1,
+    'exactly one Erinnerungsmanagement & Empfänger card title',
   );
   assert(
     (editorSrc.includes('Verlauf & E-Mail-Protokoll') ||
       editorSrc.includes('Verlauf &amp; E-Mail-Protokoll')) &&
       editorSrc.includes('activity_log') &&
       editorSrc.includes('Erinnerungsverlauf') &&
-      (editorSrc.includes('. senden') || editorSrc.includes('Mail senden')),
+      editorSrc.includes('Manuelle Erinnerung senden') &&
+      editorSrc.includes('ReturnsReminderStepper'),
     'edit mode renders Erinnerungsverlauf + Verlauf & E-Mail-Protokoll',
   );
 
@@ -4722,11 +4737,13 @@ function testHardwareReturnsDynamicReminderUiPart2(): void {
     'settings add/remove stages + 4.+ filter/KPI',
   );
   assert(
-    editorSrc.includes('configuredStages.map') &&
+    editorSrc.includes('editableReminderStages') &&
+      editorSrc.includes('selectedReminderStage') &&
       editorSrc.includes('stageOverrideKey') &&
       editorSrc.includes('ReturnsReminderStepper') &&
-      editorSrc.includes('nextPlusStage'),
-    'editor advanced overrides + Verlauf are dynamic 1..N',
+      editorSrc.includes('nextPlusStage') &&
+      editorSrc.includes('+ Stufe hinzufügen'),
+    'editor stage selector + single-stage overrides + Verlauf are dynamic 1..N',
   );
   assert(
     !workbenchSrc.includes('/api/db') && !editorSrc.includes('/api/db'),

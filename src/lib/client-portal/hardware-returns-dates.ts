@@ -45,3 +45,30 @@ export function formatDateDeOnly(val: unknown): string {
     year: 'numeric',
   });
 }
+
+/**
+ * Parse German `TT.MM.JJJJ` (or ISO `YYYY-MM-DD`) into `YYYY-MM-DD`.
+ * Returns null when empty/invalid — never accepts US mm/dd/yyyy ambiguously.
+ */
+export function parseDateDeOnly(raw: unknown): string | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  const iso = toIsoDateOnly(s);
+  if (iso) return iso;
+  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (!m) return null;
+  const day = Number(m[1]);
+  const mo = Number(m[2]);
+  const y = Number(m[3]);
+  if (mo < 1 || mo > 12 || day < 1 || day > 31) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, day));
+  if (
+    dt.getUTCFullYear() !== y ||
+    dt.getUTCMonth() !== mo - 1 ||
+    dt.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return `${y}-${String(mo).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
