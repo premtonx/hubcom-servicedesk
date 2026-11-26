@@ -4,7 +4,12 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  Cell,
   Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -25,6 +30,7 @@ import {
   Plus,
   ShieldAlert,
   Ticket as TicketIcon,
+  Truck,
   Users,
   Zap,
 } from 'lucide-react';
@@ -73,6 +79,29 @@ const ZERO_RETURNS_KPIS: PortalDashboardReturnsKpis = {
   stage3: 0,
   returnedLast30: 0,
 };
+
+const ZERO_STATUS_BREAKDOWN: NonNullable<
+  PortalDashboardResponse['returnStatusBreakdown']
+> = {
+  openTotal: 0,
+  versendet: 0,
+  ueberfaellig: 0,
+  eingegangen30d: 0,
+  versendetPct: 0,
+  ueberfaelligPct: 0,
+  eingegangenPct: 0,
+};
+
+const ZERO_WEEKLY: NonNullable<PortalDashboardResponse['weeklyPerformance']> = {
+  weeks: [],
+  overallPuenktlichPct: 0,
+};
+
+const DONUT_COLORS = {
+  versendet: '#2563EB',
+  ueberfaellig: '#F59E0B',
+  eingegangen: '#059669',
+} as const;
 
 function isAbortError(err: unknown): boolean {
   const e = err as { name?: string; code?: string };
@@ -179,15 +208,25 @@ export default function PortalDashboardPage() {
     email: null,
     returnsKpis: ZERO_RETURNS_KPIS,
     returnsActivityByRange: null,
+    returnStatusBreakdown: ZERO_STATUS_BREAKDOWN,
+    weeklyPerformance: ZERO_WEEKLY,
+    recentActivities: [],
   };
 
   const returnsKpis: PortalDashboardReturnsKpis =
     data?.returnsKpis || ZERO_RETURNS_KPIS;
+  const returnStatusBreakdown =
+    data?.returnStatusBreakdown || ZERO_STATUS_BREAKDOWN;
+  const weeklyPerformance = data?.weeklyPerformance || ZERO_WEEKLY;
+  const recentActivities = data?.recentActivities || [];
 
   return (
     <PortalDashboardShell
       data={shellData}
       returnsKpis={returnsKpis}
+      returnStatusBreakdown={returnStatusBreakdown}
+      weeklyPerformance={weeklyPerformance}
+      recentActivities={recentActivities}
       showReturns={Boolean(showReturns)}
       dashboardLoading={dashboardLoading}
       dashboardError={dashboardError}
@@ -205,6 +244,9 @@ export default function PortalDashboardPage() {
 function PortalDashboardShell({
   data,
   returnsKpis,
+  returnStatusBreakdown,
+  weeklyPerformance,
+  recentActivities,
   showReturns,
   dashboardLoading,
   dashboardError,
@@ -218,6 +260,9 @@ function PortalDashboardShell({
 }: {
   data: PortalDashboardResponse;
   returnsKpis: PortalDashboardReturnsKpis;
+  returnStatusBreakdown: NonNullable<PortalDashboardResponse['returnStatusBreakdown']>;
+  weeklyPerformance: NonNullable<PortalDashboardResponse['weeklyPerformance']>;
+  recentActivities: NonNullable<PortalDashboardResponse['recentActivities']>;
   showReturns: boolean;
   dashboardLoading: boolean;
   dashboardError: string | null;
@@ -241,7 +286,9 @@ function PortalDashboardShell({
 
   const openCount = Number(data.kpis.openTickets ?? data.kpis.openCompanyTickets ?? 0);
   const inProgressCount = Number(data.kpis.inProgressTickets ?? 0);
-  const resolvedCount = Number(data.kpis.resolvedLast30Days ?? data.kpis.recentlyResolvedCount ?? 0);
+  const resolvedCount = Number(
+    data.kpis.resolvedLast30Days ?? data.kpis.recentlyResolvedCount ?? 0,
+  );
   const avgResponse = String(data.kpis.avgResponseTime ?? '—');
 
   const listedTickets = useMemo(() => {
@@ -408,270 +455,795 @@ function PortalDashboardShell({
           </div>
         </section>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
-          <div className="lg:col-span-2 flex flex-col gap-4 min-w-0">
-            <CardShell className="flex flex-col min-h-[28rem]">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 shrink-0">
-                <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">
-                  Aktuelle Tickets
-                </h2>
-                {isOrgWide ? (
-                  <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
-                    {(
-                      [
-                        { id: 'all' as const, label: 'Alle Firmen-Tickets' },
-                        { id: 'mine' as const, label: 'Meine Tickets' },
-                      ] as const
-                    ).map((tab) => (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => setTicketTab(tab.id)}
-                        className={cn(
-                          'px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors',
-                          ticketTab === tab.id
-                            ? 'bg-white text-slate-900 shadow-sm'
-                            : 'text-slate-500 hover:text-slate-800',
-                        )}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="text-[11px] font-bold text-slate-500">Meine Tickets</span>
-                )}
-              </div>
-              {dashboardLoading ? (
-                <div className="flex-1 flex items-center justify-center gap-2 text-slate-400 text-sm py-16">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Tickets werden geladen…
-                </div>
-              ) : (
-                <TicketList tickets={listedTickets} navigate={navigate} showRequester={isOrgWide} />
-              )}
-
-              {data.activity && data.activity.length > 0 ? (
-                <div className="mt-6 pt-5 border-t border-slate-100">
-                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3">
-                    Ticket-Trends
-                  </h3>
-                  <div className="h-48">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={data.activity}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                        <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={4} />
-                        <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                        <Tooltip />
-                        <Legend wrapperStyle={{ fontSize: 11 }} />
-                        <Area
-                          type="monotone"
-                          dataKey="created"
-                          name="Eingehend"
-                          stroke="#1B6CA8"
-                          fill="#1B6CA822"
-                          strokeWidth={2}
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="resolved"
-                          name="Gelöst"
-                          stroke="#059669"
-                          fill="#05966922"
-                          strokeWidth={2}
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              ) : null}
-            </CardShell>
-
-            {showReturns ? (
-              <CardShell>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 flex items-center gap-2">
-                    <PackageOpen className="w-4 h-4 text-sky-600" />
-                    Rücklieferungen-Trends
-                    {trendsLoading ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" aria-label="Trends laden" />
-                    ) : null}
-                  </h3>
-                  <div className="flex flex-wrap items-center gap-1 rounded-xl bg-slate-100 p-1">
-                    {RETURNS_TREND_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => setReturnsTrendRange(opt.id)}
-                        className={cn(
-                          'px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-colors',
-                          returnsTrendRange === opt.id
-                            ? 'bg-white text-slate-900 shadow-sm'
-                            : 'text-slate-500 hover:text-slate-800',
-                        )}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="h-56 relative">
-                  {trendsLoading && returnsTrendData.length === 0 ? (
-                    <div className="absolute inset-0 flex items-center justify-center gap-2 text-slate-400 text-sm">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Trends werden geladen…
-                    </div>
-                  ) : returnsTrendData.length > 0 ? (
-                    <>
-                      {trendsLoading ? (
-                        <div className="absolute inset-0 z-10 bg-white/40 flex items-start justify-end p-2 pointer-events-none">
-                          <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
-                        </div>
-                      ) : null}
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={returnsTrendData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                          <XAxis
-                            dataKey="name"
-                            tick={{ fontSize: 10 }}
-                            interval={
-                              returnsTrendRange === '90d'
-                                ? 6
-                                : returnsTrendRange === '7d'
-                                  ? 0
-                                  : 4
-                            }
-                          />
-                          <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                          <Tooltip />
-                          <Legend wrapperStyle={{ fontSize: 11 }} />
-                          <Area
-                            type="monotone"
-                            dataKey="offeneRuecklieferungen"
-                            name="Offene Rücklieferungen"
-                            stroke="#1B6CA8"
-                            fill="#1B6CA822"
-                            strokeWidth={2}
-                          />
-                          <Area
-                            type="monotone"
-                            dataKey="ueberfaellig"
-                            name="Überfällig"
-                            stroke="#D97706"
-                            fill="#D9770622"
-                            strokeWidth={2}
-                          />
-                          <Area
-                            type="monotone"
-                            dataKey="letzteStufeEskaliert"
-                            name="Letzte Stufe / Eskaliert"
-                            stroke="#7C3AED"
-                            fill="#7C3AED22"
-                            strokeWidth={2}
-                          />
-                          <Area
-                            type="monotone"
-                            dataKey="zurueckgeliefert"
-                            name="Zurückgeliefert"
-                            stroke="#059669"
-                            fill="#05966922"
-                            strokeWidth={2}
-                          />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </>
-                  ) : (
-                    <p className="text-sm text-slate-500 py-16 text-center">
-                      Noch keine Rücklieferungsdaten für diesen Zeitraum.
-                    </p>
-                  )}
-                </div>
-              </CardShell>
-            ) : null}
-          </div>
-
-          <div className="space-y-4">
-            {isAdmin ? (
-              <>
-                <CardShell>
-                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
-                    <Users className="w-4 h-4 text-sky-600" /> Mitarbeiter & Rollen
-                  </h3>
-                  <dl className="space-y-2 text-sm">
-                    <SummaryRow label="Aktive Nutzer" value={data.team?.totalActive ?? 0} />
-                    <SummaryRow label="Admins" value={data.team?.clientAdmins ?? 0} />
-                    <SummaryRow label="Supporter" value={data.team?.clientSupporters ?? 0} />
-                    <SummaryRow label="Benutzer" value={data.team?.clientUsers ?? 0} />
-                  </dl>
-                  <Button
-                    variant="outline"
-                    className="w-full mt-4 rounded-xl font-bold"
-                    onClick={() => navigate('/portal/members')}
-                  >
-                    Zum Team
-                  </Button>
-                </CardShell>
-                <CardShell>
-                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-emerald-600" /> E-Mail & M365
-                  </h3>
-                  <p className="text-sm font-bold text-slate-900">
-                    {data.email?.configured
-                      ? data.email.healthy
-                        ? 'Send-As verbunden'
-                        : 'Kanal prüfen'
-                      : 'Noch nicht eingerichtet'}
-                  </p>
-                  <p className="text-xs text-slate-500 mt-1 truncate">
-                    {data.email?.mailbox || 'Kein Postfach verknüpft'}
-                  </p>
-                  <Button
-                    variant="outline"
-                    className="w-full mt-4 rounded-xl font-bold"
-                    onClick={() => navigate('/portal/email')}
-                  >
-                    Integration verwalten
-                  </Button>
-                </CardShell>
-                <CardShell>
-                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
-                    <Palette className="w-4 h-4 text-violet-600" /> Portal-Branding
-                  </h3>
-                  <p className="text-xs text-slate-500 font-medium">
-                    Logo, Portal-Titel und Dashboard-Banner für Ihr Kunden-Portal.
-                  </p>
-                  <Button
-                    className="w-full mt-4 rounded-xl font-bold bg-[#1B6CA8] hover:bg-[#155a8a] text-white gap-2"
-                    onClick={() => navigate('/portal/branding')}
-                  >
-                    <Image className="w-4 h-4" />
-                    Branding öffnen
-                  </Button>
-                </CardShell>
-              </>
-            ) : (
-              <CardShell>
-                <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3">
-                  {data.role === 'CLIENT_SUPPORTER' ? 'Ihr Support-Team' : 'Schnelles Ticket'}
-                </h3>
-                <p className="text-sm text-slate-600 font-medium leading-relaxed">
-                  {data.role === 'CLIENT_SUPPORTER'
-                    ? 'Erstellen Sie Tickets für Kollegen und behalten Sie offene Firmen-Anfragen im Blick.'
-                    : 'Melden Sie ein Problem oder stellen Sie eine Anfrage an Hubcom Support.'}
-                </p>
-                <Button
-                  className="w-full mt-4 rounded-xl font-bold bg-[#1B6CA8] hover:bg-[#155a8a] text-white gap-2"
-                  onClick={() => navigate('/portal/tickets/new')}
-                >
-                  <Plus className="w-4 h-4" />
-                  Neues Ticket erstellen
-                </Button>
-              </CardShell>
-            )}
-          </div>
-        </div>
+        {showReturns ? (
+          <HardwareReturnsExecutiveBody
+            data={data}
+            returnStatusBreakdown={returnStatusBreakdown}
+            weeklyPerformance={weeklyPerformance}
+            recentActivities={recentActivities}
+            listedTickets={listedTickets}
+            isAdmin={isAdmin}
+            isOrgWide={isOrgWide}
+            dashboardLoading={dashboardLoading}
+            navigate={navigate}
+            ticketTab={ticketTab}
+            setTicketTab={setTicketTab}
+            returnsTrendRange={returnsTrendRange}
+            setReturnsTrendRange={setReturnsTrendRange}
+            returnsTrendData={returnsTrendData}
+            trendsLoading={trendsLoading}
+          />
+        ) : (
+          <StandardPortalDashboardBody
+            data={data}
+            listedTickets={listedTickets}
+            isAdmin={isAdmin}
+            isOrgWide={isOrgWide}
+            dashboardLoading={dashboardLoading}
+            navigate={navigate}
+            ticketTab={ticketTab}
+            setTicketTab={setTicketTab}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+/** Executive layout when hardware_returns_enabled — no Email/Branding cards. */
+function HardwareReturnsExecutiveBody({
+  data,
+  returnStatusBreakdown,
+  weeklyPerformance,
+  recentActivities,
+  listedTickets,
+  isAdmin,
+  isOrgWide,
+  dashboardLoading,
+  navigate,
+  ticketTab,
+  setTicketTab,
+  returnsTrendRange,
+  setReturnsTrendRange,
+  returnsTrendData,
+  trendsLoading,
+}: {
+  data: PortalDashboardResponse;
+  returnStatusBreakdown: NonNullable<PortalDashboardResponse['returnStatusBreakdown']>;
+  weeklyPerformance: NonNullable<PortalDashboardResponse['weeklyPerformance']>;
+  recentActivities: NonNullable<PortalDashboardResponse['recentActivities']>;
+  listedTickets: PortalDashboardResponse['tickets'];
+  isAdmin: boolean;
+  isOrgWide: boolean;
+  dashboardLoading: boolean;
+  navigate: ReturnType<typeof useNavigate>;
+  ticketTab: 'all' | 'mine';
+  setTicketTab: (t: 'all' | 'mine') => void;
+  returnsTrendRange: PortalReturnsTrendRange;
+  setReturnsTrendRange: (r: PortalReturnsTrendRange) => void;
+  returnsTrendData: PortalDashboardReturnsActivityPoint[];
+  trendsLoading: boolean;
+}) {
+  return (
+    <>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <CardShell className="lg:col-span-5">
+          <ReturnStatusDonutCard
+            breakdown={returnStatusBreakdown}
+            loading={dashboardLoading}
+          />
+        </CardShell>
+        <CardShell className="lg:col-span-7">
+          <WeeklyPerformanceCard
+            weekly={weeklyPerformance}
+            loading={dashboardLoading}
+          />
+        </CardShell>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+        <div className="lg:col-span-8 flex flex-col gap-4 min-w-0">
+          <CardShell>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                <PackageOpen className="w-4 h-4 text-sky-600" />
+                Rücklieferungen-Trends
+                {trendsLoading ? (
+                  <Loader2
+                    className="w-3.5 h-3.5 animate-spin text-slate-400"
+                    aria-label="Trends laden"
+                  />
+                ) : null}
+              </h3>
+              <div className="flex flex-wrap items-center gap-1 rounded-xl bg-slate-100 p-1">
+                {RETURNS_TREND_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setReturnsTrendRange(opt.id)}
+                    className={cn(
+                      'px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-colors',
+                      returnsTrendRange === opt.id
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800',
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <ReturnsTrendsChart
+              returnsTrendData={returnsTrendData}
+              returnsTrendRange={returnsTrendRange}
+              trendsLoading={trendsLoading}
+            />
+          </CardShell>
+
+          {data.activity && data.activity.length > 0 ? (
+            <CardShell>
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3">
+                Ticket-Trends
+              </h3>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={data.activity}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={4} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                    <Tooltip />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Area
+                      type="monotone"
+                      dataKey="created"
+                      name="Eingehend"
+                      stroke="#1B6CA8"
+                      fill="#1B6CA822"
+                      strokeWidth={2}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="resolved"
+                      name="Gelöst"
+                      stroke="#059669"
+                      fill="#05966922"
+                      strokeWidth={2}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </CardShell>
+          ) : null}
+
+          <CardShell>
+            <div className="flex items-center justify-between gap-2 mb-4">
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-800">
+                Aktuelle Aktivitäten
+              </h3>
+              <button
+                type="button"
+                className="text-[11px] font-bold text-sky-700 hover:text-sky-900"
+                onClick={() => navigate('/portal/returns')}
+              >
+                Alle anzeigen →
+              </button>
+            </div>
+            <RecentActivitiesFeed
+              items={recentActivities}
+              loading={dashboardLoading}
+              navigate={navigate}
+            />
+          </CardShell>
+        </div>
+
+        <div className="lg:col-span-4 space-y-4">
+          <CardShell className="flex flex-col min-h-[22rem]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 shrink-0">
+              <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">
+                Aktuelle Tickets
+              </h2>
+              {isOrgWide ? (
+                <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+                  {(
+                    [
+                      { id: 'all' as const, label: 'Alle Firmen-Tickets' },
+                      { id: 'mine' as const, label: 'Meine Tickets' },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setTicketTab(tab.id)}
+                      className={cn(
+                        'px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-colors',
+                        ticketTab === tab.id
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-800',
+                      )}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-[11px] font-bold text-slate-500">Meine Tickets</span>
+              )}
+            </div>
+            {dashboardLoading ? (
+              <div className="flex-1 flex items-center justify-center gap-2 text-slate-400 text-sm py-12">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Tickets werden geladen…
+              </div>
+            ) : (
+              <TicketList
+                tickets={listedTickets}
+                navigate={navigate}
+                showRequester={isOrgWide}
+              />
+            )}
+          </CardShell>
+
+          {isAdmin ? (
+            <CardShell>
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
+                <Users className="w-4 h-4 text-sky-600" /> Mitarbeiter & Rollen
+              </h3>
+              <dl className="space-y-2 text-sm">
+                <SummaryRow label="Aktive Nutzer" value={data.team?.totalActive ?? 0} />
+                <SummaryRow label="Admins" value={data.team?.clientAdmins ?? 0} />
+                <SummaryRow label="Supporter" value={data.team?.clientSupporters ?? 0} />
+                <SummaryRow label="Benutzer" value={data.team?.clientUsers ?? 0} />
+              </dl>
+              <Button
+                variant="outline"
+                className="w-full mt-4 rounded-xl font-bold"
+                onClick={() => navigate('/portal/members')}
+              >
+                Zum Team
+              </Button>
+            </CardShell>
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** Standard portal dashboard (no hardware returns) — keeps Email/Branding admin cards. */
+function StandardPortalDashboardBody({
+  data,
+  listedTickets,
+  isAdmin,
+  isOrgWide,
+  dashboardLoading,
+  navigate,
+  ticketTab,
+  setTicketTab,
+}: {
+  data: PortalDashboardResponse;
+  listedTickets: PortalDashboardResponse['tickets'];
+  isAdmin: boolean;
+  isOrgWide: boolean;
+  dashboardLoading: boolean;
+  navigate: ReturnType<typeof useNavigate>;
+  ticketTab: 'all' | 'mine';
+  setTicketTab: (t: 'all' | 'mine') => void;
+}) {
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
+      <div className="lg:col-span-2 flex flex-col gap-4 min-w-0">
+        <CardShell className="flex flex-col min-h-[28rem]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 shrink-0">
+            <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">
+              Aktuelle Tickets
+            </h2>
+            {isOrgWide ? (
+              <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+                {(
+                  [
+                    { id: 'all' as const, label: 'Alle Firmen-Tickets' },
+                    { id: 'mine' as const, label: 'Meine Tickets' },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setTicketTab(tab.id)}
+                    className={cn(
+                      'px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors',
+                      ticketTab === tab.id
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800',
+                    )}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <span className="text-[11px] font-bold text-slate-500">Meine Tickets</span>
+            )}
+          </div>
+          {dashboardLoading ? (
+            <div className="flex-1 flex items-center justify-center gap-2 text-slate-400 text-sm py-16">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Tickets werden geladen…
+            </div>
+          ) : (
+            <TicketList tickets={listedTickets} navigate={navigate} showRequester={isOrgWide} />
+          )}
+
+          {data.activity && data.activity.length > 0 ? (
+            <div className="mt-6 pt-5 border-t border-slate-100">
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3">
+                Ticket-Trends
+              </h3>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={data.activity}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={4} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                    <Tooltip />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Area
+                      type="monotone"
+                      dataKey="created"
+                      name="Eingehend"
+                      stroke="#1B6CA8"
+                      fill="#1B6CA822"
+                      strokeWidth={2}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="resolved"
+                      name="Gelöst"
+                      stroke="#059669"
+                      fill="#05966922"
+                      strokeWidth={2}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          ) : null}
+        </CardShell>
+      </div>
+
+      <div className="space-y-4">
+        {isAdmin ? (
+          <>
+            <CardShell>
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
+                <Users className="w-4 h-4 text-sky-600" /> Mitarbeiter & Rollen
+              </h3>
+              <dl className="space-y-2 text-sm">
+                <SummaryRow label="Aktive Nutzer" value={data.team?.totalActive ?? 0} />
+                <SummaryRow label="Admins" value={data.team?.clientAdmins ?? 0} />
+                <SummaryRow label="Supporter" value={data.team?.clientSupporters ?? 0} />
+                <SummaryRow label="Benutzer" value={data.team?.clientUsers ?? 0} />
+              </dl>
+              <Button
+                variant="outline"
+                className="w-full mt-4 rounded-xl font-bold"
+                onClick={() => navigate('/portal/members')}
+              >
+                Zum Team
+              </Button>
+            </CardShell>
+            <CardShell>
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
+                <Mail className="w-4 h-4 text-emerald-600" /> E-Mail & M365
+              </h3>
+              <p className="text-sm font-bold text-slate-900">
+                {data.email?.configured
+                  ? data.email.healthy
+                    ? 'Send-As verbunden'
+                    : 'Kanal prüfen'
+                  : 'Noch nicht eingerichtet'}
+              </p>
+              <p className="text-xs text-slate-500 mt-1 truncate">
+                {data.email?.mailbox || 'Kein Postfach verknüpft'}
+              </p>
+              <Button
+                variant="outline"
+                className="w-full mt-4 rounded-xl font-bold"
+                onClick={() => navigate('/portal/email')}
+              >
+                Integration verwalten
+              </Button>
+            </CardShell>
+            <CardShell>
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3 flex items-center gap-2">
+                <Palette className="w-4 h-4 text-violet-600" /> Portal-Branding
+              </h3>
+              <p className="text-xs text-slate-500 font-medium">
+                Logo, Portal-Titel und Dashboard-Banner für Ihr Kunden-Portal.
+              </p>
+              <Button
+                className="w-full mt-4 rounded-xl font-bold bg-[#1B6CA8] hover:bg-[#155a8a] text-white gap-2"
+                onClick={() => navigate('/portal/branding')}
+              >
+                <Image className="w-4 h-4" />
+                Branding öffnen
+              </Button>
+            </CardShell>
+          </>
+        ) : (
+          <CardShell>
+            <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3">
+              {data.role === 'CLIENT_SUPPORTER' ? 'Ihr Support-Team' : 'Schnelles Ticket'}
+            </h3>
+            <p className="text-sm text-slate-600 font-medium leading-relaxed">
+              {data.role === 'CLIENT_SUPPORTER'
+                ? 'Erstellen Sie Tickets für Kollegen und behalten Sie offene Firmen-Anfragen im Blick.'
+                : 'Melden Sie ein Problem oder stellen Sie eine Anfrage an Hubcom Support.'}
+            </p>
+            <Button
+              className="w-full mt-4 rounded-xl font-bold bg-[#1B6CA8] hover:bg-[#155a8a] text-white gap-2"
+              onClick={() => navigate('/portal/tickets/new')}
+            >
+              <Plus className="w-4 h-4" />
+              Neues Ticket erstellen
+            </Button>
+          </CardShell>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ReturnStatusDonutCard({
+  breakdown,
+  loading,
+}: {
+  breakdown: NonNullable<PortalDashboardResponse['returnStatusBreakdown']>;
+  loading: boolean;
+}) {
+  const pieData = useMemo(() => {
+    const slices = [
+      {
+        key: 'versendet',
+        name: 'Versendet',
+        value: breakdown.versendet,
+        pct: breakdown.versendetPct,
+        color: DONUT_COLORS.versendet,
+      },
+      {
+        key: 'ueberfaellig',
+        name: 'Überfällig',
+        value: breakdown.ueberfaellig,
+        pct: breakdown.ueberfaelligPct,
+        color: DONUT_COLORS.ueberfaellig,
+      },
+      {
+        key: 'eingegangen',
+        name: 'Eingegangen (30T)',
+        value: breakdown.eingegangen30d,
+        pct: breakdown.eingegangenPct,
+        color: DONUT_COLORS.eingegangen,
+      },
+    ];
+    const hasAny = slices.some((s) => s.value > 0);
+    if (!hasAny) {
+      return [{ key: 'empty', name: 'Keine Daten', value: 1, pct: 0, color: '#E2E8F0' }];
+    }
+    return slices.filter((s) => s.value > 0);
+  }, [breakdown]);
+
+  const legend = [
+    {
+      name: 'Versendet',
+      value: breakdown.versendet,
+      pct: breakdown.versendetPct,
+      color: DONUT_COLORS.versendet,
+    },
+    {
+      name: 'Überfällig',
+      value: breakdown.ueberfaellig,
+      pct: breakdown.ueberfaelligPct,
+      color: DONUT_COLORS.ueberfaellig,
+    },
+    {
+      name: 'Eingegangen (30T)',
+      value: breakdown.eingegangen30d,
+      pct: breakdown.eingegangenPct,
+      color: DONUT_COLORS.eingegangen,
+    },
+  ];
+
+  return (
+    <div>
+      <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 mb-3">
+        Rückgabe-Status
+      </h3>
+      <div className="flex flex-col sm:flex-row items-center gap-4">
+        <div className="relative w-44 h-44 shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={pieData}
+                dataKey="value"
+                nameKey="name"
+                innerRadius={52}
+                outerRadius={72}
+                paddingAngle={2}
+                stroke="none"
+              >
+                {pieData.map((entry) => (
+                  <Cell key={entry.key} fill={entry.color} />
+                ))}
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+            <p
+              className={cn(
+                'text-2xl font-black text-slate-900 leading-none',
+                loading && 'animate-pulse',
+              )}
+            >
+              {breakdown.openTotal}
+            </p>
+            <p className="text-[11px] font-bold text-slate-500 mt-1">Offen</p>
+          </div>
+        </div>
+        <ul className="flex-1 w-full space-y-2.5">
+          {legend.map((row) => (
+            <li key={row.name} className="flex items-center justify-between gap-2 text-sm">
+              <span className="flex items-center gap-2 min-w-0">
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: row.color }}
+                />
+                <span className="font-semibold text-slate-700 truncate">{row.name}</span>
+              </span>
+              <span className="font-bold text-slate-900 tabular-nums shrink-0">
+                {row.value}{' '}
+                <span className="text-slate-400 font-semibold">({row.pct}%)</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function WeeklyPerformanceCard({
+  weekly,
+  loading,
+}: {
+  weekly: NonNullable<PortalDashboardResponse['weeklyPerformance']>;
+  loading: boolean;
+}) {
+  const chartData = weekly.weeks.length
+    ? weekly.weeks
+    : [
+        { kwLabel: 'KW —', puenktlichPct: 0, ueberfaelligPct: 0 },
+      ];
+
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <h3 className="text-sm font-black uppercase tracking-wider text-slate-800">
+          Performance
+        </h3>
+        <span
+          className={cn(
+            'inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold px-2.5 py-1',
+            loading && 'animate-pulse',
+          )}
+        >
+          {weekly.overallPuenktlichPct} % pünktlich
+        </span>
+      </div>
+      <div className="h-56">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+            <XAxis dataKey="kwLabel" tick={{ fontSize: 11 }} />
+            <YAxis
+              domain={[0, 100]}
+              tick={{ fontSize: 10 }}
+              tickFormatter={(v) => `${v}%`}
+            />
+            <Tooltip
+              formatter={(value: number, name: string) => [
+                `${value}%`,
+                name === 'puenktlichPct' ? 'Pünktlich' : 'Überfällig',
+              ]}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: 11 }}
+              formatter={(value) =>
+                value === 'puenktlichPct' ? 'Pünktlich' : 'Überfällig'
+              }
+            />
+            <Line
+              type="monotone"
+              dataKey="puenktlichPct"
+              name="puenktlichPct"
+              stroke="#2563EB"
+              strokeWidth={2.5}
+              dot={{ r: 3 }}
+              activeDot={{ r: 5 }}
+            />
+            <Line
+              type="monotone"
+              dataKey="ueberfaelligPct"
+              name="ueberfaelligPct"
+              stroke="#DC2626"
+              strokeWidth={2.5}
+              dot={{ r: 3 }}
+              activeDot={{ r: 5 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function ReturnsTrendsChart({
+  returnsTrendData,
+  returnsTrendRange,
+  trendsLoading,
+}: {
+  returnsTrendData: PortalDashboardReturnsActivityPoint[];
+  returnsTrendRange: PortalReturnsTrendRange;
+  trendsLoading: boolean;
+}) {
+  return (
+    <div className="h-56 relative">
+      {trendsLoading && returnsTrendData.length === 0 ? (
+        <div className="absolute inset-0 flex items-center justify-center gap-2 text-slate-400 text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Trends werden geladen…
+        </div>
+      ) : returnsTrendData.length > 0 ? (
+        <>
+          {trendsLoading ? (
+            <div className="absolute inset-0 z-10 bg-white/40 flex items-start justify-end p-2 pointer-events-none">
+              <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+            </div>
+          ) : null}
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={returnsTrendData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+              <XAxis
+                dataKey="name"
+                tick={{ fontSize: 10 }}
+                interval={
+                  returnsTrendRange === '90d'
+                    ? 6
+                    : returnsTrendRange === '7d'
+                      ? 0
+                      : 4
+                }
+              />
+              <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+              <Tooltip />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Area
+                type="monotone"
+                dataKey="offeneRuecklieferungen"
+                name="Offene Rücklieferungen"
+                stroke="#1B6CA8"
+                fill="#1B6CA822"
+                strokeWidth={2}
+              />
+              <Area
+                type="monotone"
+                dataKey="ueberfaellig"
+                name="Überfällig"
+                stroke="#D97706"
+                fill="#D9770622"
+                strokeWidth={2}
+              />
+              <Area
+                type="monotone"
+                dataKey="letzteStufeEskaliert"
+                name="Letzte Stufe / Eskaliert"
+                stroke="#7C3AED"
+                fill="#7C3AED22"
+                strokeWidth={2}
+              />
+              <Area
+                type="monotone"
+                dataKey="zurueckgeliefert"
+                name="Zurückgeliefert"
+                stroke="#059669"
+                fill="#05966922"
+                strokeWidth={2}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </>
+      ) : (
+        <p className="text-sm text-slate-500 py-16 text-center">
+          Noch keine Rücklieferungsdaten für diesen Zeitraum.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function activityIcon(type: string) {
+  if (type === 'return_completed') {
+    return (
+      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+        <CheckCircle2 className="w-3.5 h-3.5" />
+      </span>
+    );
+  }
+  if (type === 'return_reminder') {
+    return (
+      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-50 text-violet-700 border border-violet-100">
+        <Mail className="w-3.5 h-3.5" />
+      </span>
+    );
+  }
+  if (type === 'return_created') {
+    return (
+      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-sky-50 text-sky-700 border border-sky-100">
+        <Truck className="w-3.5 h-3.5" />
+      </span>
+    );
+  }
+  return (
+    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-50 text-slate-600 border border-slate-200">
+      <TicketIcon className="w-3.5 h-3.5" />
+    </span>
+  );
+}
+
+function RecentActivitiesFeed({
+  items,
+  loading,
+  navigate,
+}: {
+  items: NonNullable<PortalDashboardResponse['recentActivities']>;
+  loading: boolean;
+  navigate: ReturnType<typeof useNavigate>;
+}) {
+  if (loading && items.length === 0) {
+    return (
+      <div className="flex items-center justify-center gap-2 text-slate-400 text-sm py-10">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Aktivitäten werden geladen…
+      </div>
+    );
+  }
+  if (!items.length) {
+    return (
+      <p className="text-sm text-slate-500 py-8 text-center">
+        Noch keine aktuellen Aktivitäten.
+      </p>
+    );
+  }
+  return (
+    <ul className="divide-y divide-slate-100">
+      {items.map((item) => (
+        <li key={item.id}>
+          <button
+            type="button"
+            onClick={() => navigate(item.href)}
+            className="w-full text-left py-3 flex items-start gap-3 hover:bg-slate-50 rounded-xl px-2 -mx-2 transition-colors"
+          >
+            {activityIcon(item.type)}
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-slate-900 leading-snug">
+                {item.title}
+              </p>
+              <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                {formatRelativeTime(item.timestamp, 'de')}
+              </p>
+            </div>
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 
