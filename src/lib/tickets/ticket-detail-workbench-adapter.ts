@@ -3,7 +3,7 @@
  * Staff → TicketsPage / ticketService; portal → /api/portal/tickets* only.
  */
 
-import type { Ticket, TicketStatus } from '../../types';
+import type { Ticket, TicketPriority, TicketStatus } from '../../types';
 import type { PortalMember, PortalTicketAttachment } from '../../services/clientPortalApi';
 
 export type TicketDetailWorkbenchMode = 'staff' | 'portal';
@@ -52,6 +52,8 @@ export type TicketDetailWorkbenchCapabilities = {
   canUpdatePriority: boolean;
   canEditAssignee: boolean;
   canEditTags: boolean;
+  /** Editable Kategorie / Tickettyp / SLA / Kontogesundheit */
+  canEditProperties: boolean;
 };
 
 export const STAFF_TICKET_DETAIL_CAPABILITIES: TicketDetailWorkbenchCapabilities = {
@@ -84,27 +86,32 @@ export const STAFF_TICKET_DETAIL_CAPABILITIES: TicketDetailWorkbenchCapabilities
   canUpdatePriority: true,
   canEditAssignee: true,
   canEditTags: true,
+  canEditProperties: true,
 };
 
+/**
+ * Base portal capabilities — full workspace tabs.
+ * Role gates (CLIENT_USER vs org-wide) are applied in ClientTicketDetailPage.
+ */
 export const PORTAL_TICKET_DETAIL_CAPABILITIES: TicketDetailWorkbenchCapabilities = {
-  aiSync: false,
-  convertToKb: false,
-  internalNotes: false,
+  aiSync: true,
+  convertToKb: true,
+  internalNotes: true,
   merge: false,
   spam: false,
   sentimentGlyph: false,
   swarmBanner: false,
-  tabCustomer: false,
-  tabTimeline: false,
-  tabAiInsights: false,
-  tabAssets: false,
-  tabRelatedTickets: false,
-  tabTasks: false,
-  tabTime: false,
-  aiSummaryCard: false,
+  tabCustomer: true,
+  tabTimeline: true,
+  tabAiInsights: true,
+  tabAssets: true,
+  tabRelatedTickets: true,
+  tabTasks: true,
+  tabTime: true,
+  aiSummaryCard: true,
   emailComposer: false,
   portalPublicReply: true,
-  ticketKindFields: false,
+  ticketKindFields: true,
   smartContextMobile: false,
   staffContextPane: false,
   portalPropertiesPane: true,
@@ -113,9 +120,69 @@ export const PORTAL_TICKET_DETAIL_CAPABILITIES: TicketDetailWorkbenchCapabilitie
   statusActions: true,
   canMarkClosed: false,
   canUpdateStatus: true,
+  canUpdatePriority: true,
+  canEditAssignee: true,
+  canEditTags: false,
+  canEditProperties: true,
+};
+
+/** CLIENT_USER: read-only Eigenschaften, no Interne Notiz / KI-Sync / In KB. */
+export const PORTAL_TICKET_DETAIL_CAPABILITIES_CLIENT_USER: TicketDetailWorkbenchCapabilities = {
+  ...PORTAL_TICKET_DETAIL_CAPABILITIES,
+  aiSync: false,
+  convertToKb: false,
+  internalNotes: false,
   canUpdatePriority: false,
   canEditAssignee: false,
-  canEditTags: false,
+  canEditProperties: false,
+  canManageParticipants: false,
+  canMarkClosed: false,
+};
+
+export type PortalTicketWorkspaceMeta = {
+  agents: Array<{ id: string; name: string; email: string; role: string }>;
+  statuses: Array<{
+    id: string;
+    key: string;
+    name: string;
+    color: string;
+    workflowKind?: string;
+    sortOrder?: number;
+  }>;
+  priorities: Array<{
+    id: string;
+    key: string;
+    name: string;
+    color: string;
+    sortOrder?: number;
+  }>;
+  categories: Array<{ id: string; name: string; slug?: string; color?: string | null }>;
+  ticket_types: Array<{
+    id: string;
+    key: string;
+    name: string;
+    color?: string;
+    sortOrder?: number;
+  }>;
+};
+
+export type PortalTicketWorkspaceExtras = {
+  customer: Record<string, unknown> | null;
+  verlauf: Array<Record<string, unknown>>;
+  aiInsights: {
+    summary?: string | null;
+    insights?: unknown[];
+    rootCause?: string | null;
+    sentiment?: string | null;
+    suggestedReply?: string | null;
+    accountHealth?: string | null;
+  } | null;
+  assets: Array<Record<string, unknown>>;
+  neuralLinks: Array<Record<string, unknown>>;
+  tasks: Array<{ id: string; task: string; completed: boolean; source?: string }>;
+  timeEntries: Array<Record<string, unknown>>;
+  timeSummary?: { totalHours?: number; totalAmount?: number; count?: number } | null;
+  meta: PortalTicketWorkspaceMeta | null;
 };
 
 export type PortalTicketDetailPayload = {
@@ -129,6 +196,19 @@ export type PortalTicketDetailPayload = {
   }>;
   attachments: PortalTicketAttachment[];
   members: PortalMember[];
+} & PortalTicketWorkspaceExtras;
+
+export type PortalTicketFieldPatch = {
+  status?: TicketStatus;
+  priority?: TicketPriority;
+  assignee_id?: string | null;
+  categoryId?: string | null;
+  category?: string | null;
+  ticket_type?: string | null;
+  type?: string | null;
+  sla_tier?: string | null;
+  account_health?: string | null;
+  escalated?: boolean;
 };
 
 export interface TicketDetailWorkbenchAdapter {
@@ -141,14 +221,46 @@ export interface TicketDetailWorkbenchAdapter {
       content: string;
       senderName?: string;
       attachments?: PortalTicketAttachment[];
+      is_internal?: boolean;
     },
   ): Promise<void>;
 
   updateStatus?(ticketId: string, status: TicketStatus): Promise<Ticket | null>;
+
+  updateFields?(ticketId: string, patch: PortalTicketFieldPatch): Promise<Ticket | null>;
+
+  aiSync?(ticketId: string, options?: { forceRefresh?: boolean }): Promise<{
+    ticket: Ticket;
+    aiInsights?: PortalTicketWorkspaceExtras['aiInsights'];
+  }>;
+
+  addTask?(ticketId: string, task: string): Promise<PortalTicketWorkspaceExtras['tasks']>;
+
+  updateTask?(
+    ticketId: string,
+    taskId: string,
+    patch: { task?: string; completed?: boolean },
+  ): Promise<PortalTicketWorkspaceExtras['tasks']>;
+
+  deleteTask?(ticketId: string, taskId: string): Promise<PortalTicketWorkspaceExtras['tasks']>;
+
+  addTimeEntry?(
+    ticketId: string,
+    payload: {
+      hours: number;
+      kuerzel?: string;
+      description?: string;
+      date?: string;
+      sonderzahlung?: boolean;
+    },
+  ): Promise<Record<string, unknown>>;
 
   addParticipant?(ticketId: string, userId: string): Promise<void>;
 
   removeParticipant?(ticketId: string, userId: string): Promise<void>;
 
   openBack(): void;
+
+  /** Optional: navigate to portal KB create (In KB). */
+  openConvertToKb?(ticket: Ticket): void;
 }
