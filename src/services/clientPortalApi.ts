@@ -134,6 +134,36 @@ export interface PortalDashboardResponse {
   returnsActivityByRange?: Partial<
     Record<PortalReturnsTrendRange, PortalDashboardReturnsActivityPoint[]>
   > | null;
+  returnStatusBreakdown?: {
+    openTotal: number;
+    versendet: number;
+    ueberfaellig: number;
+    eingegangen30d: number;
+    versendetPct: number;
+    ueberfaelligPct: number;
+    eingegangenPct: number;
+  } | null;
+  weeklyPerformance?: {
+    weeks: Array<{
+      kwLabel: string;
+      isoWeek: number;
+      isoYear: number;
+      weekStart: string;
+      puenktlichPct: number;
+      ueberfaelligPct: number;
+      puenktlichCount: number;
+      ueberfaelligCount: number;
+      totalCompleted: number;
+    }>;
+    overallPuenktlichPct: number;
+  } | null;
+  recentActivities?: Array<{
+    id: string;
+    type: 'return_completed' | 'return_reminder' | 'return_created' | 'ticket';
+    title: string;
+    timestamp: string;
+    href: string;
+  }> | null;
 }
 
 export const clientPortalApi = {

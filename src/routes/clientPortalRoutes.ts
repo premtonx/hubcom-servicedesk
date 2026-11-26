@@ -413,24 +413,40 @@ router.get(
 
       let returnsKpis = null;
       let returnsActivityByRange = null;
+      let returnStatusBreakdown = null;
+      let weeklyPerformance = null;
+      let recentActivities = null;
       const hardwareReturnsEnabled = Boolean(org.hardware_returns_enabled);
       if (
         hardwareReturnsEnabled &&
         (role === 'CLIENT_ADMIN' || role === 'CLIENT_SUPPORTER')
       ) {
         try {
-          // Single SQL COUNT(*) FILTER + 20s org cache — trends live on
-          // GET /api/portal/returns/trends (never N+1 workbench / row loops).
-          const { loadPortalDashboardReturnsStats } = await import(
-            '../lib/client-portal/portal-dashboard-returns-stats.js'
-          );
+          // Parallel SQL COUNT/FILTER + KW series + return events; 20s org cache.
+          // Trends stay on GET /api/portal/returns/trends (never N+1 workbench).
+          const {
+            loadPortalDashboardReturnsStats,
+            buildTicketRecentActivities,
+            mergePortalRecentActivities,
+          } = await import('../lib/client-portal/portal-dashboard-returns-stats.js');
           const stats = await loadPortalDashboardReturnsStats(organizationId);
           returnsKpis = stats.returnsKpis;
           returnsActivityByRange = null;
+          returnStatusBreakdown = stats.returnStatusBreakdown;
+          weeklyPerformance = stats.weeklyPerformance;
+          const ticketActs = buildTicketRecentActivities(orgTickets, organizationId, 10);
+          recentActivities = mergePortalRecentActivities(
+            stats.returnRecentActivities || [],
+            ticketActs,
+            10,
+          );
         } catch (err: any) {
           safeLog('warn', '[portal] dashboard returns KPIs skipped', err?.message || err);
           returnsKpis = null;
           returnsActivityByRange = null;
+          returnStatusBreakdown = null;
+          weeklyPerformance = null;
+          recentActivities = null;
         }
       }
 
@@ -453,6 +469,9 @@ router.get(
         emailStatus,
         returnsKpis,
         returnsActivityByRange,
+        returnStatusBreakdown,
+        weeklyPerformance,
+        recentActivities,
       });
 
       return res.json(payload);
