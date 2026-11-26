@@ -50,15 +50,25 @@ export type {
   PortalDashboardReturnsActivityPoint,
   PortalReturnsTrendRange,
   PortalReturnsTrendSourceRow,
+  PortalReturnStatusBreakdown,
+  PortalWeeklyPerformance,
+  PortalRecentActivity,
 } from './portal-dashboard-returns-stats.js';
 
-export { PORTAL_RETURNS_TREND_RANGES } from './portal-dashboard-returns-stats.js';
+export {
+  PORTAL_RETURNS_TREND_RANGES,
+  buildTicketRecentActivities,
+  mergePortalRecentActivities,
+} from './portal-dashboard-returns-stats.js';
 
 import type {
   PortalDashboardReturnsKpis,
   PortalDashboardReturnsActivityPoint,
   PortalReturnsTrendRange,
   PortalReturnsTrendSourceRow,
+  PortalReturnStatusBreakdown,
+  PortalWeeklyPerformance,
+  PortalRecentActivity,
 } from './portal-dashboard-returns-stats.js';
 
 export interface PortalDashboardPayload {
@@ -88,6 +98,12 @@ export interface PortalDashboardPayload {
   returnsActivityByRange?: Partial<
     Record<PortalReturnsTrendRange, PortalDashboardReturnsActivityPoint[]>
   > | null;
+  /** Rückgabe-Status donut — present with returns KPIs. */
+  returnStatusBreakdown?: PortalReturnStatusBreakdown | null;
+  /** Performance KW series (last 4–6 ISO weeks). */
+  weeklyPerformance?: PortalWeeklyPerformance | null;
+  /** Combined Rücklieferungen + Tickets feed (tenant-scoped). */
+  recentActivities?: PortalRecentActivity[] | null;
 }
 
 function parseTs(value: unknown): number {
@@ -220,6 +236,9 @@ export function buildPortalDashboardPayload(params: {
   returnsActivityByRange?: Partial<
     Record<PortalReturnsTrendRange, PortalDashboardReturnsActivityPoint[]>
   > | null;
+  returnStatusBreakdown?: PortalReturnStatusBreakdown | null;
+  weeklyPerformance?: PortalWeeklyPerformance | null;
+  recentActivities?: PortalRecentActivity[] | null;
 }): PortalDashboardPayload {
   if (!isClientPortalRole(params.role)) {
     throw Object.assign(new Error('Not a client portal role'), { status: 403 });
@@ -298,8 +317,17 @@ export function buildPortalDashboardPayload(params: {
       ? {
           returnsKpis: params.returnsKpis,
           returnsActivityByRange: params.returnsActivityByRange || null,
+          returnStatusBreakdown: params.returnStatusBreakdown || null,
+          weeklyPerformance: params.weeklyPerformance || null,
+          recentActivities: params.recentActivities || null,
         }
-      : { returnsKpis: null, returnsActivityByRange: null };
+      : {
+          returnsKpis: null,
+          returnsActivityByRange: null,
+          returnStatusBreakdown: null,
+          weeklyPerformance: null,
+          recentActivities: null,
+        };
 
   if (role === 'CLIENT_USER') {
     const myOpen = sortedOpen

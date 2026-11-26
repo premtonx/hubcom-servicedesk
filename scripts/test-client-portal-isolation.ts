@@ -167,6 +167,14 @@ import {
   setCachedPortalReturnsTrends,
 } from '../src/lib/client-portal/portal-returns-cache.js';
 import {
+  buildTicketRecentActivities,
+  computeReturnStatusBreakdownFromRows,
+  computeWeeklyPerformanceFromRows,
+  formatReturnCompletedTitle,
+  mergePortalRecentActivities,
+  buildReturnRecentActivities,
+} from '../src/lib/client-portal/portal-dashboard-overview-agg.js';
+import {
   evaluatePortalReturnsPageAccess,
   resolveHardwareReturnsModuleFlag,
 } from '../src/lib/client-portal/hardware-returns-nav.js';
@@ -802,8 +810,12 @@ function testPortalDashboardIsolation(): void {
     'dashboard payload strips AI internal fields',
   );
   assert(
-    adminDash.returnsKpis == null && adminDash.returnsActivityByRange == null,
-    'returns KPIs/trends omitted when hardwareReturnsEnabled is false',
+    adminDash.returnsKpis == null &&
+      adminDash.returnsActivityByRange == null &&
+      adminDash.returnStatusBreakdown == null &&
+      adminDash.weeklyPerformance == null &&
+      adminDash.recentActivities == null,
+    'returns KPIs/trends/overview omitted when hardwareReturnsEnabled is false',
   );
 
   const adminReturnsDash = buildPortalDashboardPayload({
@@ -827,11 +839,48 @@ function testPortalDashboardIsolation(): void {
         returnedAt: null,
       },
     ]),
+    returnStatusBreakdown: {
+      openTotal: 47,
+      versendet: 23,
+      ueberfaellig: 24,
+      eingegangen30d: 10,
+      versendetPct: 40.4,
+      ueberfaelligPct: 42.1,
+      eingegangenPct: 17.5,
+    },
+    weeklyPerformance: {
+      weeks: [
+        {
+          kwLabel: 'KW 43',
+          isoWeek: 43,
+          isoYear: 2026,
+          weekStart: '2026-10-19',
+          puenktlichPct: 80,
+          ueberfaelligPct: 20,
+          puenktlichCount: 8,
+          ueberfaelligCount: 2,
+          totalCompleted: 10,
+        },
+      ],
+      overallPuenktlichPct: 80,
+    },
+    recentActivities: [
+      {
+        id: 'return_completed:r1:2026-11-01T10:00:00.000Z',
+        type: 'return_completed',
+        title: 'Rücklieferung #DPG-872 wurde erfolgreich abgeschlossen',
+        timestamp: '2026-11-01T10:00:00.000Z',
+        href: '/portal/returns/r1',
+      },
+    ],
   });
   assert(
     adminReturnsDash.returnsKpis?.open === 4 &&
-      adminReturnsDash.returnsActivityByRange?.['30d']?.length === 30,
-    'enabled org receives returns KPIs + 30d trend series',
+      adminReturnsDash.returnsActivityByRange?.['30d']?.length === 30 &&
+      adminReturnsDash.returnStatusBreakdown?.openTotal === 47 &&
+      adminReturnsDash.weeklyPerformance?.weeks[0]?.kwLabel === 'KW 43' &&
+      adminReturnsDash.recentActivities?.[0]?.type === 'return_completed',
+    'enabled org receives returns KPIs + overview aggregates',
   );
 
   const isolation = assertPortalDashboardTenantIsolation(adminDash, ORG_A, mixedTickets);
@@ -4381,17 +4430,24 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       !dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
       dashboardRouteSrc.includes('hardware_returns_enabled') &&
       dashboardRouteSrc.includes('returnsKpis') &&
+      dashboardRouteSrc.includes('returnStatusBreakdown') &&
+      dashboardRouteSrc.includes('weeklyPerformance') &&
+      dashboardRouteSrc.includes('recentActivities') &&
+      dashboardRouteSrc.includes('mergePortalRecentActivities') &&
       dashboardRouteSrc.includes('returnsActivityByRange = null') &&
       !dashboardRouteSrc.includes('buildReturnsActivityByRange') &&
       !dashboardRouteSrc.includes('/api/db'),
-    'dashboard route uses SQL KPI loader; trends not embedded (null activity)',
+    'dashboard route uses SQL KPI + overview aggregates; trends not embedded',
   );
   assert(
     dashboardSvcSrc.includes('returnsKpis') &&
       dashboardSvcSrc.includes('hardwareReturnsEnabled') &&
       dashboardSvcSrc.includes('buildReturnsActivitySeries') &&
-      dashboardSvcSrc.includes('returnsActivityByRange'),
-    'dashboard payload carries hardwareReturnsEnabled + returns KPIs/trends',
+      dashboardSvcSrc.includes('returnsActivityByRange') &&
+      dashboardSvcSrc.includes('returnStatusBreakdown') &&
+      dashboardSvcSrc.includes('weeklyPerformance') &&
+      dashboardSvcSrc.includes('recentActivities'),
+    'dashboard payload carries hardwareReturnsEnabled + returns KPIs/overview',
   );
 }
 
@@ -4591,6 +4647,20 @@ async function testPortalReturnsSqlAggAndCache(): Promise<void> {
   setCachedPortalDashboardReturns(orgA, {
     returnsKpis: { open: 47, overdue: 24, stage3: 2, returnedLast30: 43 },
     returnsActivityByRange: null,
+    returnStatusBreakdown: {
+      openTotal: 47,
+      versendet: 23,
+      ueberfaellig: 24,
+      eingegangen30d: 43,
+      versendetPct: 20.9,
+      ueberfaelligPct: 21.8,
+      eingegangenPct: 39.1,
+    },
+    weeklyPerformance: {
+      weeks: [{ kwLabel: 'KW 46', isoWeek: 46, isoYear: 2026, weekStart: '2026-11-09', puenktlichPct: 70, ueberfaelligPct: 30, puenktlichCount: 7, ueberfaelligCount: 3, totalCompleted: 10 }],
+      overallPuenktlichPct: 70,
+    },
+    returnRecentActivities: [],
   });
   setCachedPortalReturnsTrends(orgA, '30d', {
     timeframe: '30d',
@@ -4604,12 +4674,28 @@ async function testPortalReturnsSqlAggAndCache(): Promise<void> {
   setCachedPortalDashboardReturns(orgB, {
     returnsKpis: { open: 1, overdue: 0, stage3: 0, returnedLast30: 0 },
     returnsActivityByRange: null,
+    returnStatusBreakdown: {
+      openTotal: 1,
+      versendet: 1,
+      ueberfaellig: 0,
+      eingegangen30d: 0,
+      versendetPct: 100,
+      ueberfaelligPct: 0,
+      eingegangenPct: 0,
+    },
+    weeklyPerformance: { weeks: [], overallPuenktlichPct: 0 },
+    returnRecentActivities: [],
   });
 
   assert(
-    getCachedPortalDashboardReturns<{ returnsKpis: { open: number } }>(orgA)?.returnsKpis
-      ?.open === 47,
-    'dashboard cache hit for org A',
+    getCachedPortalDashboardReturns<{
+      returnsKpis: { open: number };
+      returnStatusBreakdown: { openTotal: number };
+    }>(orgA)?.returnsKpis?.open === 47 &&
+      getCachedPortalDashboardReturns<{
+        returnStatusBreakdown: { openTotal: number };
+      }>(orgA)?.returnStatusBreakdown?.openTotal === 47,
+    'dashboard cache hit for org A (KPIs + status breakdown)',
   );
   assert(
     (getCachedPortalReturnsTrends<{ points: unknown[] }>(orgA, '30d')?.points || []).length ===
@@ -4714,6 +4800,21 @@ async function testPortalReturnsSqlAggAndCache(): Promise<void> {
       !sqlSrc.includes('/api/db'),
     'SQL trends: 4 distinct series + 7d default (no /api/db)',
   );
+  const overviewAggSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/portal-dashboard-overview-agg.ts'),
+    'utf8',
+  );
+  assert(
+    overviewAggSrc.includes('fetchPortalReturnStatusBreakdownSql') &&
+      overviewAggSrc.includes('fetchPortalWeeklyPerformanceSql') &&
+      overviewAggSrc.includes('fetchPortalReturnRecentActivitiesSql') &&
+      overviewAggSrc.includes('kwLabel') &&
+      overviewAggSrc.includes('Europe/Berlin') &&
+      overviewAggSrc.includes('/portal/returns/') &&
+      overviewAggSrc.includes('/portal/tickets/') &&
+      !overviewAggSrc.includes('/api/db'),
+    'overview aggregates SQL helpers present (no /api/db)',
+  );
   const { parsePortalReturnsTrendTimeframe } = await import(
     '../src/lib/client-portal/portal-returns-sql-stats.js'
   );
@@ -4723,6 +4824,133 @@ async function testPortalReturnsSqlAggAndCache(): Promise<void> {
       parsePortalReturnsTrendTimeframe('bogus') === '7d' &&
       parsePortalReturnsTrendTimeframe('30d') === '30d',
     'parsePortalReturnsTrendTimeframe defaults to 7d',
+  );
+}
+
+/** Part 1 — returnStatusBreakdown + weeklyPerformance + recentActivities. */
+function testPortalDashboardOverviewAggregates(): void {
+  console.log('\n--- Portal dashboard overview aggregates (donut / KW / feed) ---');
+
+  const now = new Date('2026-11-25T12:00:00.000Z');
+  const seedRows = [];
+  for (let i = 0; i < 900; i += 1) {
+    const year = 2024 + (i % 3);
+    const month = (i % 12) + 1;
+    const day = (i % 27) + 1;
+    const created = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dueDay = Math.min(28, day + 7);
+    const due = `${year}-${String(month).padStart(2, '0')}-${String(dueDay).padStart(2, '0')}`;
+    const returned = i % 5 === 0;
+    const returnedAt = returned
+      ? `${year}-${String(month).padStart(2, '0')}-${String(Math.min(28, day + (i % 3 === 0 ? 10 : 3))).padStart(2, '0')}T16:00:00.000Z`
+      : null;
+    seedRows.push({
+      id: `ret-${i}`,
+      returnNumber: `DPG-${i + 1}`,
+      employeeName: i % 11 === 0 ? 'Torsten Gaede' : null,
+      serial: i % 13 === 0 ? `SN-${1000 + i}` : null,
+      createdAt: `${created}T10:00:00.000Z`,
+      deliveryDate: created,
+      returnDueDate: due,
+      returned,
+      returnedAt,
+      mail1SentAt: !returned && i % 9 === 0 ? `${created}T12:00:00.000Z` : null,
+      reminderStages:
+        !returned && i % 9 === 0
+          ? [{ stage: 1, sentAt: `${created}T12:00:00.000Z` }]
+          : [],
+      reminderCount: !returned && i % 9 === 0 ? 1 : 0,
+    });
+  }
+
+  const t0 = Date.now();
+  const breakdown = computeReturnStatusBreakdownFromRows(seedRows, now);
+  const weekly = computeWeeklyPerformanceFromRows(seedRows, now, 6);
+  const returnActs = buildReturnRecentActivities(seedRows, 20);
+  const elapsed = Date.now() - t0;
+
+  assert(seedRows.length >= 900, 'seeded ≥900 returns for overview agg');
+  assert(
+    breakdown.openTotal === breakdown.versendet + breakdown.ueberfaellig &&
+      breakdown.versendetPct + breakdown.ueberfaelligPct + breakdown.eingegangenPct <= 100.1 &&
+      breakdown.openTotal > 0,
+    'status breakdown: open = versendet + ueberfaellig; pcts sane',
+  );
+  assert(
+    weekly.weeks.length === 6 &&
+      weekly.weeks.every((w) => /^KW \d+$/.test(w.kwLabel)) &&
+      typeof weekly.overallPuenktlichPct === 'number',
+    'weeklyPerformance has 6 KW labels',
+  );
+  assert(
+    elapsed < 100,
+    `overview aggregates for 900 rows <100ms (was ${elapsed}ms)`,
+  );
+
+  assert(
+    formatReturnCompletedTitle({
+      id: 'x',
+      returnNumber: 'DPG-872',
+      serial: null,
+    }) === 'Rücklieferung #DPG-872 wurde erfolgreich abgeschlossen' &&
+      formatReturnCompletedTitle({
+        id: 'x',
+        returnNumber: 'DPG-1',
+        serial: 'ABC123',
+      }) === 'Wareneingang: Gerät #SN-ABC123 bestätigt',
+    'return activity titles formatted',
+  );
+
+  const orgA = '11111111-1111-1111-1111-111111111111';
+  const orgB = '22222222-2222-2222-2222-222222222222';
+  const ticketActs = buildTicketRecentActivities(
+    [
+      {
+        id: 't-a1',
+        customId: 'HC-100',
+        organizationId: orgA,
+        createdAt: '2026-11-24T10:00:00.000Z',
+        updatedAt: '2026-11-24T10:00:00.000Z',
+      },
+      {
+        id: 't-b1',
+        customId: 'HC-999',
+        organizationId: orgB,
+        createdAt: '2026-11-25T10:00:00.000Z',
+        updatedAt: '2026-11-25T10:00:00.000Z',
+      },
+    ],
+    orgA,
+    10,
+  );
+  assert(
+    ticketActs.length === 1 &&
+      ticketActs[0]!.href === '/portal/tickets/t-a1' &&
+      !JSON.stringify(ticketActs).includes('HC-999'),
+    'ticket activities tenant-isolated to organization_id',
+  );
+
+  const merged = mergePortalRecentActivities(returnActs.slice(0, 8), ticketActs, 10);
+  assert(
+    merged.length >= 1 &&
+      merged.length <= 10 &&
+      merged.every((e) => e.href.startsWith('/portal/')) &&
+      !JSON.stringify(merged).includes(orgB) &&
+      !JSON.stringify(merged).includes('/api/db'),
+    'recentActivities merged feed ≤10, portal hrefs, tenant-safe',
+  );
+
+  const statsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/portal-dashboard-returns-stats.ts'),
+    'utf8',
+  );
+  assert(
+    statsSrc.includes('returnStatusBreakdown') &&
+      statsSrc.includes('weeklyPerformance') &&
+      statsSrc.includes('returnRecentActivities') &&
+      statsSrc.includes('fetchPortalReturnStatusBreakdownSql') &&
+      statsSrc.includes('Promise.all'),
+    'loadPortalDashboardReturnsStats loads overview aggregates in parallel',
   );
 }
 
@@ -5510,6 +5738,7 @@ async function main(): Promise<void> {
   testHardwareReturnsPaginationErinnerungAndDashboard();
   testPortalDashboardReturnsTrends();
   await testPortalReturnsSqlAggAndCache();
+  testPortalDashboardOverviewAggregates();
   testHardwareReturnsDynamicReminderStages();
   testHardwareReturnsDynamicReminderUiPart2();
   testHardwareReturnsListeKanbanKarten();

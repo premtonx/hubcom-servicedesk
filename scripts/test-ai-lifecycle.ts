@@ -113,6 +113,13 @@ import {
   computePortalReturnsKpis,
 } from '../src/lib/client-portal/portal-dashboard-returns-stats.js';
 import {
+  buildReturnRecentActivities,
+  buildTicketRecentActivities,
+  computeReturnStatusBreakdownFromRows,
+  computeWeeklyPerformanceFromRows,
+  mergePortalRecentActivities,
+} from '../src/lib/client-portal/portal-dashboard-overview-agg.js';
+import {
   computeHardwareReturnsKpis,
   isEscalatedReturn,
   isOpenReturn,
@@ -1234,9 +1241,13 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
       dashboardRouteSrc.includes('loadPortalDashboardReturnsStats') &&
       !dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
       dashboardRouteSrc.includes('returnsActivityByRange = null') &&
+      dashboardRouteSrc.includes('returnStatusBreakdown') &&
+      dashboardRouteSrc.includes('weeklyPerformance') &&
+      dashboardRouteSrc.includes('recentActivities') &&
+      dashboardRouteSrc.includes('mergePortalRecentActivities') &&
       !dashboardPageSrc.includes('/api/db') &&
       !dashboardRouteSrc.includes("'/api/db"),
-    'portal Übersicht 7d default + 4-series trends + independent fetch',
+    'portal Übersicht 7d default + 4-series trends + overview aggregates',
   );
   // FE must not cascade-refetch dashboard on trend range changes.
   assert(
@@ -1304,9 +1315,66 @@ function testPortalDashboardReturnsPerfLifecycle(): void {
   // Concurrent cache reads (simulates 10 parallel dashboard + trends requests).
   clearPortalReturnsCacheForTests();
   const orgId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const tOverview = Date.now();
+  const breakdown = computeReturnStatusBreakdownFromRows(rows, now);
+  const weekly = computeWeeklyPerformanceFromRows(rows, now, 6);
+  const returnActs = buildReturnRecentActivities(
+    rows.map((r, i) => ({
+      id: `r-${i}`,
+      returnNumber: `DPG-${i}`,
+      employeeName: null,
+      serial: null,
+      createdAt: r.createdAt,
+      returned: r.returned,
+      returnedAt: r.returnedAt,
+      mail1SentAt: r.mail1SentAt,
+      reminderStages: r.reminderStages,
+    })),
+    20,
+  );
+  const overviewElapsed = Date.now() - tOverview;
+  assert(
+    breakdown.openTotal === breakdown.versendet + breakdown.ueberfaellig &&
+      weekly.weeks.length === 6 &&
+      weekly.weeks.every((w) => w.kwLabel.startsWith('KW ')) &&
+      returnActs.every((a) => a.href.startsWith('/portal/returns/')) &&
+      overviewElapsed < 100,
+    `overview aggregates (donut/KW/feed) for 900 rows <100ms (was ${overviewElapsed}ms)`,
+  );
+  const ticketActs = buildTicketRecentActivities(
+    [
+      {
+        id: 'tick-a',
+        customId: 'HC-1',
+        organizationId: orgId,
+        createdAt: '2026-11-24T08:00:00.000Z',
+        updatedAt: '2026-11-24T08:00:00.000Z',
+      },
+      {
+        id: 'tick-b',
+        customId: 'HC-OTHER',
+        organizationId: '00000000-0000-0000-0000-000000000099',
+        createdAt: '2026-11-25T08:00:00.000Z',
+        updatedAt: '2026-11-25T08:00:00.000Z',
+      },
+    ],
+    orgId,
+    10,
+  );
+  const merged = mergePortalRecentActivities(returnActs, ticketActs, 10);
+  assert(
+    ticketActs.length === 1 &&
+      merged.length <= 10 &&
+      !JSON.stringify(merged).includes('HC-OTHER'),
+    'recentActivities tenant-isolated + capped at 10',
+  );
+
   setCachedPortalDashboardReturns(orgId, {
     returnsKpis: kpis,
     returnsActivityByRange: null,
+    returnStatusBreakdown: breakdown,
+    weeklyPerformance: weekly,
+    returnRecentActivities: returnActs.slice(0, 10),
   });
   for (const tf of ['7d', '30d', '90d', '12m', 'all'] as const) {
     setCachedPortalReturnsTrends(orgId, tf, {
@@ -1318,6 +1386,12 @@ function testPortalDashboardReturnsPerfLifecycle(): void {
   const concurrent = Array.from({ length: 10 }, () => ({
     open: getCachedPortalDashboardReturns<{ returnsKpis: { open: number } }>(orgId)
       ?.returnsKpis?.open,
+    openTotal: getCachedPortalDashboardReturns<{
+      returnStatusBreakdown: { openTotal: number };
+    }>(orgId)?.returnStatusBreakdown?.openTotal,
+    kw: getCachedPortalDashboardReturns<{
+      weeklyPerformance: { weeks: unknown[] };
+    }>(orgId)?.weeklyPerformance?.weeks?.length,
     n30: getCachedPortalReturnsTrends<{ points: unknown[] }>(orgId, '30d')?.points
       ?.length,
     n7: getCachedPortalReturnsTrends<{ points: unknown[] }>(orgId, '7d')?.points?.length,
@@ -1330,13 +1404,15 @@ function testPortalDashboardReturnsPerfLifecycle(): void {
     concurrent.every(
       (r) =>
         r.open === kpis.open &&
+        r.openTotal === breakdown.openTotal &&
+        r.kw === 6 &&
         r.n30 === 30 &&
         r.n7 === 7 &&
         r.n90 === 90 &&
         r.n12 === 12 &&
         (r.nAll || 0) >= 1,
     ) && concurrentElapsed < 150,
-    `10 concurrent dashboard+trends (all timeframes) <150ms (was ${concurrentElapsed}ms)`,
+    `10 concurrent dashboard+trends+overview <150ms (was ${concurrentElapsed}ms)`,
   );
 
   invalidatePortalReturnsCache(orgId);

@@ -19,6 +19,33 @@ import {
   setCachedPortalDashboardReturns,
 } from './portal-returns-cache.js';
 import { fetchPortalReturnsKpisSql } from './portal-returns-sql-stats.js';
+import {
+  fetchPortalReturnRecentActivitiesSql,
+  fetchPortalReturnStatusBreakdownSql,
+  fetchPortalWeeklyPerformanceSql,
+  type PortalRecentActivity,
+  type PortalReturnStatusBreakdown,
+  type PortalWeeklyPerformance,
+} from './portal-dashboard-overview-agg.js';
+
+export type {
+  PortalRecentActivity,
+  PortalReturnStatusBreakdown,
+  PortalWeeklyPerformance,
+  PortalWeeklyPerformancePoint,
+  PortalRecentActivityType,
+} from './portal-dashboard-overview-agg.js';
+
+export {
+  buildReturnStatusBreakdown,
+  computeReturnStatusBreakdownFromRows,
+  computeWeeklyPerformanceFromRows,
+  buildReturnRecentActivities,
+  buildTicketRecentActivities,
+  mergePortalRecentActivities,
+  formatReturnActivityTitle,
+  formatReturnCompletedTitle,
+} from './portal-dashboard-overview-agg.js';
 
 const MS_DAY = 86_400_000;
 /** Hard cap so "Alle" never exceeds ~90 monthly buckets. */
@@ -365,23 +392,42 @@ export async function fetchPortalReturnsLeanRows(
   }));
 }
 
-/**
- * Dashboard returns KPIs only — single SQL COUNT FILTER + 20s org cache.
- * Trends are served by GET /api/portal/returns/trends (not embedded here).
- */
-export async function loadPortalDashboardReturnsStats(organizationId: string): Promise<{
+export interface PortalDashboardReturnsStatsPayload {
   returnsKpis: PortalDashboardReturnsKpis;
   /** Always null — trends moved to /api/portal/returns/trends. */
   returnsActivityByRange: null;
-}> {
-  const cached = getCachedPortalDashboardReturns<{
-    returnsKpis: PortalDashboardReturnsKpis;
-    returnsActivityByRange: null;
-  }>(organizationId);
-  if (cached) return cached;
+  returnStatusBreakdown: PortalReturnStatusBreakdown;
+  weeklyPerformance: PortalWeeklyPerformance;
+  /** Return-side events only; route merges tickets before response. */
+  returnRecentActivities: PortalRecentActivity[];
+}
 
-  const returnsKpis = await fetchPortalReturnsKpisSql(organizationId);
-  const payload = { returnsKpis, returnsActivityByRange: null as null };
+/**
+ * Dashboard returns KPIs + overview aggregates — parallel SQL + 20s org cache.
+ * Trends stay on GET /api/portal/returns/trends (not embedded here).
+ */
+export async function loadPortalDashboardReturnsStats(
+  organizationId: string,
+): Promise<PortalDashboardReturnsStatsPayload> {
+  const cached =
+    getCachedPortalDashboardReturns<PortalDashboardReturnsStatsPayload>(organizationId);
+  if (cached?.returnStatusBreakdown && cached?.weeklyPerformance) return cached;
+
+  const [returnsKpis, returnStatusBreakdown, weeklyPerformance, returnRecentActivities] =
+    await Promise.all([
+      fetchPortalReturnsKpisSql(organizationId),
+      fetchPortalReturnStatusBreakdownSql(organizationId),
+      fetchPortalWeeklyPerformanceSql(organizationId, 6),
+      fetchPortalReturnRecentActivitiesSql(organizationId, 20),
+    ]);
+
+  const payload: PortalDashboardReturnsStatsPayload = {
+    returnsKpis,
+    returnsActivityByRange: null,
+    returnStatusBreakdown,
+    weeklyPerformance,
+    returnRecentActivities,
+  };
   setCachedPortalDashboardReturns(organizationId, payload);
   return payload;
 }
