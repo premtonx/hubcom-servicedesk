@@ -4395,6 +4395,7 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       dashboardPageSrc.includes('12 Monate') &&
       dashboardPageSrc.includes("id: 'all', label: 'Alle'") &&
       dashboardPageSrc.includes('ZERO_RETURNS_KPIS') &&
+      dashboardPageSrc.includes('ZERO_STATUS_BREAKDOWN') &&
       dashboardPageSrc.includes('dashboardLoading') &&
       dashboardPageSrc.includes('getReturnsTrends') &&
       dashboardPageSrc.includes('AbortController') &&
@@ -4405,8 +4406,33 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       dashboardPageSrc.includes('dataKey="zurueckgeliefert"') &&
       dashboardPageSrc.includes('Offene Rücklieferungen') &&
       dashboardPageSrc.includes('Letzte Stufe / Eskaliert') &&
+      dashboardPageSrc.includes('Rückgabe-Status') &&
+      dashboardPageSrc.includes('HardwareReturnsExecutiveBody') &&
+      dashboardPageSrc.includes('ReturnStatusDonutCard') &&
+      dashboardPageSrc.includes('WeeklyPerformanceCard') &&
+      dashboardPageSrc.includes('Aktuelle Aktivitäten') &&
+      dashboardPageSrc.includes('recentActivities') &&
+      dashboardPageSrc.includes('overallPuenktlichPct') &&
+      dashboardPageSrc.includes('puenktlichPct') &&
+      dashboardPageSrc.includes('CheckCircle2') &&
+      dashboardPageSrc.includes('Truck') &&
+      dashboardPageSrc.includes('Alle anzeigen') &&
       !dashboardPageSrc.includes('/api/db'),
-    'portal Übersicht 7d default + 4 distinct trend series (no /api/db)',
+    'portal Übersicht executive returns layout + 4 trend series (no /api/db)',
+  );
+  assert(
+    dashboardPageSrc.includes('HardwareReturnsExecutiveBody') &&
+      dashboardPageSrc.includes('StandardPortalDashboardBody') &&
+      /function HardwareReturnsExecutiveBody[\s\S]*?Mitarbeiter & Rollen/.test(
+        dashboardPageSrc,
+      ) &&
+      !/function HardwareReturnsExecutiveBody[\s\S]*?E-Mail & M365[\s\S]*?function StandardPortalDashboardBody/.test(
+        dashboardPageSrc,
+      ) &&
+      /function StandardPortalDashboardBody[\s\S]*?E-Mail & M365[\s\S]*?Portal-Branding/.test(
+        dashboardPageSrc,
+      ),
+    'returns dashboard drops Email/Branding; standard orgs keep them',
   );
   assert(
     dashboardPageSrc.includes('showReturns') &&

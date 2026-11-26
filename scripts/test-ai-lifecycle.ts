@@ -1233,10 +1233,15 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
       dashboardPageSrc.includes('getReturnsTrends') &&
       dashboardPageSrc.includes('AbortController') &&
       dashboardPageSrc.includes('ZERO_RETURNS_KPIS') &&
+      dashboardPageSrc.includes('ZERO_STATUS_BREAKDOWN') &&
       dashboardPageSrc.includes('dashboardLoading') &&
       dashboardPageSrc.includes('animate-pulse') &&
       dashboardPageSrc.includes('dataKey="offeneRuecklieferungen"') &&
       dashboardPageSrc.includes('dataKey="letzteStufeEskaliert"') &&
+      dashboardPageSrc.includes('Rückgabe-Status') &&
+      dashboardPageSrc.includes('HardwareReturnsExecutiveBody') &&
+      dashboardPageSrc.includes('Aktuelle Aktivitäten') &&
+      dashboardPageSrc.includes('WeeklyPerformanceCard') &&
       !dashboardPageSrc.includes('returnsActivityByRange[') &&
       dashboardRouteSrc.includes('loadPortalDashboardReturnsStats') &&
       !dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
@@ -1247,7 +1252,19 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
       dashboardRouteSrc.includes('mergePortalRecentActivities') &&
       !dashboardPageSrc.includes('/api/db') &&
       !dashboardRouteSrc.includes("'/api/db"),
-    'portal Übersicht 7d default + 4-series trends + overview aggregates',
+    'portal Übersicht executive FE + 4-series trends + overview aggregates',
+  );
+  assert(
+    /function HardwareReturnsExecutiveBody[\s\S]*?Mitarbeiter & Rollen/.test(
+      dashboardPageSrc,
+    ) &&
+      !/function HardwareReturnsExecutiveBody[\s\S]*?E-Mail & M365[\s\S]*?function StandardPortalDashboardBody/.test(
+        dashboardPageSrc,
+      ) &&
+      /function StandardPortalDashboardBody[\s\S]*?Portal-Branding/.test(
+        dashboardPageSrc,
+      ),
+    'returns executive dashboard removes Email/Branding cards',
   );
   // FE must not cascade-refetch dashboard on trend range changes.
   assert(
