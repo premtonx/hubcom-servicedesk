@@ -1,7 +1,7 @@
 /**
- * Fast portal-dashboard hardware-returns KPIs + trends.
- * One lean SQL query + O(N + D) aggregation (D ≤ 90 buckets).
- * KPI rules live in hardware-returns-kpis.ts (single source of truth).
+ * Portal-dashboard hardware-returns helpers.
+ * Live dashboard KPIs use SQL COUNT FILTER (portal-returns-sql-stats.ts).
+ * In-memory builders below remain for unit tests / offline fixtures.
  */
 
 import { queryDb } from '../postgres-backend.js';
@@ -14,6 +14,11 @@ import {
   type HardwareReturnsKpiCounts,
   type ReminderStageSentLike,
 } from './hardware-returns-kpis.js';
+import {
+  getCachedPortalDashboardReturns,
+  setCachedPortalDashboardReturns,
+} from './portal-returns-cache.js';
+import { fetchPortalReturnsKpisSql } from './portal-returns-sql-stats.js';
 
 const MS_DAY = 86_400_000;
 /** Hard cap so "Alle" never exceeds ~90 monthly buckets. */
@@ -360,18 +365,23 @@ export async function fetchPortalReturnsLeanRows(
   }));
 }
 
-/** Load KPIs + all trend ranges for the portal dashboard in one shot. */
+/**
+ * Dashboard returns KPIs only — single SQL COUNT FILTER + 20s org cache.
+ * Trends are served by GET /api/portal/returns/trends (not embedded here).
+ */
 export async function loadPortalDashboardReturnsStats(organizationId: string): Promise<{
   returnsKpis: PortalDashboardReturnsKpis;
-  returnsActivityByRange: Record<
-    PortalReturnsTrendRange,
-    PortalDashboardReturnsActivityPoint[]
-  >;
+  /** Always null — trends moved to /api/portal/returns/trends. */
+  returnsActivityByRange: null;
 }> {
-  const rows = await fetchPortalReturnsLeanRows(organizationId);
-  const now = new Date();
-  return {
-    returnsKpis: computePortalReturnsKpis(rows, now),
-    returnsActivityByRange: buildReturnsActivityByRangeFast(rows, now),
-  };
+  const cached = getCachedPortalDashboardReturns<{
+    returnsKpis: PortalDashboardReturnsKpis;
+    returnsActivityByRange: null;
+  }>(organizationId);
+  if (cached) return cached;
+
+  const returnsKpis = await fetchPortalReturnsKpisSql(organizationId);
+  const payload = { returnsKpis, returnsActivityByRange: null as null };
+  setCachedPortalDashboardReturns(organizationId, payload);
+  return payload;
 }
