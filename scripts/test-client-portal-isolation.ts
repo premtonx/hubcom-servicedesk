@@ -3398,8 +3398,10 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
   assert(
     workbenchSrc.includes('isLegacyOrUuidReturnNumber') &&
       workbenchSrc.includes("return '#—'") &&
-      workbenchSrc.includes('text-blue-800'),
-    'ID column never shows UUID slices; uses navy/blue #DPG-N monospace',
+      workbenchSrc.includes('text-blue-800') &&
+      workbenchSrc.includes('whitespace-nowrap') &&
+      !workbenchSrc.includes('PA {hw.external_ref_id}'),
+    'ID column single-line #DPG-N (whitespace-nowrap), no PA sub-pill',
   );
   assert(
     workbenchSrc.includes('Bearbeiter') &&
@@ -4274,7 +4276,7 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       dashboardPageSrc.includes('Offene Rücklieferungen') &&
       dashboardPageSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
       dashboardPageSrc.includes('Rücklieferungen-Trends') &&
-      dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('30d')") &&
+      dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('7d')") &&
       dashboardPageSrc.includes('7 Tage') &&
       dashboardPageSrc.includes('30 Tage') &&
       dashboardPageSrc.includes('90 Tage') &&
@@ -4285,8 +4287,14 @@ function testHardwareReturnsPaginationErinnerungAndDashboard(): void {
       dashboardPageSrc.includes('getReturnsTrends') &&
       dashboardPageSrc.includes('AbortController') &&
       dashboardPageSrc.includes('animate-pulse') &&
+      dashboardPageSrc.includes('dataKey="offeneRuecklieferungen"') &&
+      dashboardPageSrc.includes('dataKey="ueberfaellig"') &&
+      dashboardPageSrc.includes('dataKey="letzteStufeEskaliert"') &&
+      dashboardPageSrc.includes('dataKey="zurueckgeliefert"') &&
+      dashboardPageSrc.includes('Offene Rücklieferungen') &&
+      dashboardPageSrc.includes('Letzte Stufe / Eskaliert') &&
       !dashboardPageSrc.includes('/api/db'),
-    'portal Übersicht 0-first KPIs + independent trends (no /api/db)',
+    'portal Übersicht 7d default + 4 distinct trend series (no /api/db)',
   );
   assert(
     dashboardPageSrc.includes('showReturns') &&
@@ -4634,10 +4642,24 @@ async function testPortalReturnsSqlAggAndCache(): Promise<void> {
       sqlSrc.includes('overdue_count') &&
       sqlSrc.includes('escalated_count') &&
       sqlSrc.includes('returned_30d_count') &&
-      sqlSrc.includes('offen') &&
+      sqlSrc.includes('offene_ruecklieferungen') &&
       sqlSrc.includes('ueberfaellig') &&
-      sqlSrc.includes('zurueckgeliefert'),
-    'SQL stats expose KPI + German trend column names',
+      sqlSrc.includes('letzte_stufe_eskaliert') &&
+      sqlSrc.includes('zurueckgeliefert') &&
+      sqlSrc.includes("raw || '7d'") &&
+      sqlSrc.includes("return '7d'") &&
+      !sqlSrc.includes('/api/db'),
+    'SQL trends: 4 distinct series + 7d default (no /api/db)',
+  );
+  const { parsePortalReturnsTrendTimeframe } = await import(
+    '../src/lib/client-portal/portal-returns-sql-stats.js'
+  );
+  assert(
+    parsePortalReturnsTrendTimeframe(undefined) === '7d' &&
+      parsePortalReturnsTrendTimeframe('') === '7d' &&
+      parsePortalReturnsTrendTimeframe('bogus') === '7d' &&
+      parsePortalReturnsTrendTimeframe('30d') === '30d',
+    'parsePortalReturnsTrendTimeframe defaults to 7d',
   );
 }
 

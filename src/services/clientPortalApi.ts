@@ -79,12 +79,15 @@ export type PortalReturnsTrendRange = '7d' | '30d' | '90d' | '12m' | 'all';
 export interface PortalDashboardReturnsActivityPoint {
   date: string;
   name: string;
+  offeneRuecklieferungen: number;
+  ueberfaellig: number;
+  letzteStufeEskaliert: number;
+  zurueckgeliefert: number;
   open: number;
   overdue: number;
+  escalated: number;
   returned: number;
   offen?: number;
-  ueberfaellig?: number;
-  zurueckgeliefert?: number;
 }
 
 export interface PortalReturnsTrendsResponse {
@@ -164,18 +167,24 @@ export const clientPortalApi = {
       organizationId: String(res.data?.organizationId || ''),
       timeframe: (res.data?.timeframe || timeframe) as PortalReturnsTrendRange,
       points: points.map((p: Record<string, unknown>) => {
-        const open = Number(p.open ?? p.offen) || 0;
-        const overdue = Number(p.overdue ?? p.ueberfaellig) || 0;
-        const returned = Number(p.returned ?? p.zurueckgeliefert) || 0;
+        const open =
+          Number(p.offeneRuecklieferungen ?? p.open ?? p.offen) || 0;
+        const overdue = Number(p.ueberfaellig ?? p.overdue) || 0;
+        const escalated =
+          Number(p.letzteStufeEskaliert ?? p.escalated ?? p.stage3) || 0;
+        const returned = Number(p.zurueckgeliefert ?? p.returned) || 0;
         return {
           date: String(p.date || ''),
           name: String(p.name || p.date || ''),
+          offeneRuecklieferungen: open,
+          ueberfaellig: overdue,
+          letzteStufeEskaliert: escalated,
+          zurueckgeliefert: returned,
           open,
           overdue,
+          escalated,
           returned,
           offen: open,
-          ueberfaellig: overdue,
-          zurueckgeliefert: returned,
         };
       }),
       cached: Boolean(res.data?.cached),

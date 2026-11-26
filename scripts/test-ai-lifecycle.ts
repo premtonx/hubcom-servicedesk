@@ -1212,20 +1212,22 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
     dashboardPageSrc.includes('returnsKpis') &&
       dashboardPageSrc.includes('hardwareReturnsEnabled') &&
       dashboardPageSrc.includes('Rücklieferungen-Trends') &&
-      dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('30d')") &&
+      dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('7d')") &&
       dashboardPageSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
       dashboardPageSrc.includes('getReturnsTrends') &&
       dashboardPageSrc.includes('AbortController') &&
       dashboardPageSrc.includes('ZERO_RETURNS_KPIS') &&
       dashboardPageSrc.includes('dashboardLoading') &&
       dashboardPageSrc.includes('animate-pulse') &&
+      dashboardPageSrc.includes('dataKey="offeneRuecklieferungen"') &&
+      dashboardPageSrc.includes('dataKey="letzteStufeEskaliert"') &&
       !dashboardPageSrc.includes('returnsActivityByRange[') &&
       dashboardRouteSrc.includes('loadPortalDashboardReturnsStats') &&
       !dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
       dashboardRouteSrc.includes('returnsActivityByRange = null') &&
       !dashboardPageSrc.includes('/api/db') &&
       !dashboardRouteSrc.includes("'/api/db"),
-    'portal Übersicht 0-first KPIs + independent /returns/trends fetch',
+    'portal Übersicht 7d default + 4-series trends + independent fetch',
   );
   // FE must not cascade-refetch dashboard on trend range changes.
   assert(

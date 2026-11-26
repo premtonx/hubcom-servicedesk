@@ -1367,17 +1367,9 @@ export function ReturnsWorkbench({
                         />
                       </td>
                       <td className="p-3">
-                        <div className="flex flex-col items-start gap-1">
-                          <span className="font-mono text-xs font-black text-blue-800 tracking-tight">
-                            {formatReturnNumber(hw)}
-                          </span>
-                          {hw.external_ref_id &&
-                          String(hw.external_ref_id) !== String(hw.return_number || '') ? (
-                            <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600 border border-slate-200">
-                              PA {hw.external_ref_id}
-                            </span>
-                          ) : null}
-                        </div>
+                        <span className="font-mono text-xs font-black text-blue-800 tracking-tight whitespace-nowrap">
+                          {formatReturnNumber(hw)}
+                        </span>
                       </td>
                       <td className="p-3">
                         <p className="font-semibold text-slate-900">{employeeName}</p>

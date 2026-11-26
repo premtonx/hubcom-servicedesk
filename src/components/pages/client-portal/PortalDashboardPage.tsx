@@ -88,7 +88,7 @@ export default function PortalDashboardPage() {
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [ticketTab, setTicketTab] = useState<'all' | 'mine'>('all');
   const [returnsTrendRange, setReturnsTrendRange] =
-    useState<PortalReturnsTrendRange>('30d');
+    useState<PortalReturnsTrendRange>('7d');
   const [returnsTrendData, setReturnsTrendData] = useState<
     PortalDashboardReturnsActivityPoint[]
   >([]);
@@ -547,15 +547,15 @@ function PortalDashboardShell({
                           <Legend wrapperStyle={{ fontSize: 11 }} />
                           <Area
                             type="monotone"
-                            dataKey="open"
-                            name="Offen"
+                            dataKey="offeneRuecklieferungen"
+                            name="Offene Rücklieferungen"
                             stroke="#1B6CA8"
                             fill="#1B6CA822"
                             strokeWidth={2}
                           />
                           <Area
                             type="monotone"
-                            dataKey="overdue"
+                            dataKey="ueberfaellig"
                             name="Überfällig"
                             stroke="#D97706"
                             fill="#D9770622"
@@ -563,7 +563,15 @@ function PortalDashboardShell({
                           />
                           <Area
                             type="monotone"
-                            dataKey="returned"
+                            dataKey="letzteStufeEskaliert"
+                            name="Letzte Stufe / Eskaliert"
+                            stroke="#7C3AED"
+                            fill="#7C3AED22"
+                            strokeWidth={2}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="zurueckgeliefert"
                             name="Zurückgeliefert"
                             stroke="#059669"
                             fill="#05966922"

@@ -14,12 +14,19 @@ export type PortalDashboardReturnsKpis = HardwareReturnsKpiCounts;
 export interface PortalReturnsTrendPoint {
   date: string;
   name: string;
-  offen: number;
+  /** Open returns as-of bucket (on-time + overdue). */
+  offeneRuecklieferungen: number;
+  /** Overdue subset of open — always ≤ offeneRuecklieferungen, never forced equal. */
   ueberfaellig: number;
+  /** Open returns with 4.+ Erinnerung sent as-of bucket. */
+  letzteStufeEskaliert: number;
+  /** Returns marked received within the bucket. */
   zurueckgeliefert: number;
-  /** Compat aliases for existing chart shapes. */
+  /** Compat aliases. */
+  offen: number;
   open: number;
   overdue: number;
+  escalated: number;
   returned: number;
 }
 
@@ -111,17 +118,23 @@ function mapTrendRows(
 ): PortalReturnsTrendPoint[] {
   return (rows || []).map((r) => {
     const date = String(r.bucket_date || r.date || '').slice(0, kind === 'month' ? 7 : 10);
-    const offen = Number(r.offen) || 0;
+    const offeneRuecklieferungen =
+      Number(r.offene_ruecklieferungen ?? r.offeneRuecklieferungen ?? r.offen) || 0;
     const ueberfaellig = Number(r.ueberfaellig) || 0;
+    const letzteStufeEskaliert =
+      Number(r.letzte_stufe_eskaliert ?? r.letzteStufeEskaliert ?? r.escalated) || 0;
     const zurueckgeliefert = Number(r.zurueckgeliefert) || 0;
     return {
       date,
       name: kind === 'month' ? berlinMonthLabel(date) : berlinDayLabel(date),
-      offen,
+      offeneRuecklieferungen,
       ueberfaellig,
+      letzteStufeEskaliert,
       zurueckgeliefert,
-      open: offen,
+      offen: offeneRuecklieferungen,
+      open: offeneRuecklieferungen,
       overdue: ueberfaellig,
+      escalated: letzteStufeEskaliert,
       returned: zurueckgeliefert,
     };
   });
@@ -129,7 +142,7 @@ function mapTrendRows(
 
 /**
  * SQL generate_series daily buckets (7d / 30d / 90d).
- * offen = open as-of bucket date; ueberfaellig = overdue subset; zurueckgeliefert = returned that day.
+ * 4 distinct series: open, overdue subset, escalated (4.+), returned-in-bucket.
  */
 export async function fetchPortalReturnsTrendsDailySql(
   organizationId: string,
@@ -163,7 +176,13 @@ export async function fetchPortalReturnsTrendsDailySql(
              WHERE COALESCE((elem->>'stage')::int, 0) = 1
                AND NULLIF(TRIM(elem->>'sentAt'), '') IS NOT NULL
            )
-         END AS mail1_d
+         END AS mail1_d,
+         (
+           SELECT MIN((NULLIF(TRIM(elem->>'sentAt'), '')::timestamptz AT TIME ZONE 'Europe/Berlin')::date)
+           FROM jsonb_array_elements(COALESCE(reminder_stages, '[]'::jsonb)) AS elem
+           WHERE COALESCE((elem->>'stage')::int, 0) >= 4
+             AND NULLIF(TRIM(elem->>'sentAt'), '') IS NOT NULL
+         ) AS escalated_d
        FROM ticket_hardware_returns
        WHERE organization_id = $1::uuid
          AND return_required = TRUE
@@ -174,7 +193,7 @@ export async function fetchPortalReturnsTrendsDailySql(
          WHERE b.created_d IS NOT NULL
            AND b.created_d <= d.d
            AND (b.closed_d IS NULL OR b.closed_d > d.d)
-       )::int AS offen,
+       )::int AS offene_ruecklieferungen,
        COUNT(*) FILTER (
          WHERE b.created_d IS NOT NULL
            AND b.created_d <= d.d
@@ -184,6 +203,13 @@ export async function fetchPortalReturnsTrendsDailySql(
              OR (b.mail1_d IS NOT NULL AND b.mail1_d <= d.d)
            )
        )::int AS ueberfaellig,
+       COUNT(*) FILTER (
+         WHERE b.created_d IS NOT NULL
+           AND b.created_d <= d.d
+           AND (b.closed_d IS NULL OR b.closed_d > d.d)
+           AND b.escalated_d IS NOT NULL
+           AND b.escalated_d <= d.d
+       )::int AS letzte_stufe_eskaliert,
        COUNT(*) FILTER (
          WHERE b.closed_d IS NOT NULL AND b.closed_d = d.d
        )::int AS zurueckgeliefert
@@ -242,7 +268,16 @@ export async function fetchPortalReturnsTrendsMonthlySql(
              WHERE COALESCE((elem->>'stage')::int, 0) = 1
                AND NULLIF(TRIM(elem->>'sentAt'), '') IS NOT NULL
            )
-         END AS mail1_m
+         END AS mail1_m,
+         (
+           SELECT date_trunc(
+             'month',
+             MIN((NULLIF(TRIM(elem->>'sentAt'), '')::timestamptz AT TIME ZONE 'Europe/Berlin'))
+           )::date
+           FROM jsonb_array_elements(COALESCE(reminder_stages, '[]'::jsonb)) AS elem
+           WHERE COALESCE((elem->>'stage')::int, 0) >= 4
+             AND NULLIF(TRIM(elem->>'sentAt'), '') IS NOT NULL
+         ) AS escalated_m
        FROM ticket_hardware_returns
        WHERE organization_id = $1::uuid
          AND return_required = TRUE
@@ -253,7 +288,7 @@ export async function fetchPortalReturnsTrendsMonthlySql(
          WHERE b.created_m IS NOT NULL
            AND b.created_m <= m.m
            AND (b.closed_m IS NULL OR b.closed_m > m.m)
-       )::int AS offen,
+       )::int AS offene_ruecklieferungen,
        COUNT(*) FILTER (
          WHERE b.created_m IS NOT NULL
            AND b.created_m <= m.m
@@ -263,6 +298,13 @@ export async function fetchPortalReturnsTrendsMonthlySql(
              OR (b.mail1_m IS NOT NULL AND b.mail1_m <= m.m)
            )
        )::int AS ueberfaellig,
+       COUNT(*) FILTER (
+         WHERE b.created_m IS NOT NULL
+           AND b.created_m <= m.m
+           AND (b.closed_m IS NULL OR b.closed_m > m.m)
+           AND b.escalated_m IS NOT NULL
+           AND b.escalated_m <= m.m
+       )::int AS letzte_stufe_eskaliert,
        COUNT(*) FILTER (
          WHERE b.closed_m IS NOT NULL AND b.closed_m = m.m
        )::int AS zurueckgeliefert
@@ -279,17 +321,18 @@ export async function loadPortalReturnsTrendsSql(
   organizationId: string,
   timeframe: PortalReturnsTrendRange,
 ): Promise<PortalReturnsTrendPoint[]> {
-  if (timeframe === '7d') return fetchPortalReturnsTrendsDailySql(organizationId, 7);
+  if (timeframe === '30d') return fetchPortalReturnsTrendsDailySql(organizationId, 30);
   if (timeframe === '90d') return fetchPortalReturnsTrendsDailySql(organizationId, 90);
   if (timeframe === '12m') return fetchPortalReturnsTrendsMonthlySql(organizationId, 12);
   if (timeframe === 'all') return fetchPortalReturnsTrendsMonthlySql(organizationId, 36);
-  return fetchPortalReturnsTrendsDailySql(organizationId, 30);
+  // Default + explicit 7d
+  return fetchPortalReturnsTrendsDailySql(organizationId, 7);
 }
 
 export function parsePortalReturnsTrendTimeframe(
   raw: unknown,
 ): PortalReturnsTrendRange {
-  const s = String(raw || '30d').trim();
+  const s = String(raw || '7d').trim();
   if (s === '7d' || s === '30d' || s === '90d' || s === '12m' || s === 'all') return s;
-  return '30d';
+  return '7d';
 }
