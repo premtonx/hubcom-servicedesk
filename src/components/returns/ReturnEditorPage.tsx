@@ -372,6 +372,8 @@ export interface ReturnEditorPageProps {
   /** null = create; return UUID = edit */
   returnId: string | null;
   listPath: string;
+  /** After successful save, go to overview (falls back to listPath). */
+  overviewPath?: string;
 }
 
 export function ReturnEditorPage({
@@ -379,6 +381,7 @@ export function ReturnEditorPage({
   organizationId,
   returnId,
   listPath,
+  overviewPath,
 }: ReturnEditorPageProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -671,7 +674,7 @@ export function ReturnEditorPage({
           { withCredentials: true },
         );
         toast.success('Rücklieferung gespeichert.');
-        navigate(listPath);
+        navigate(overviewPath || listPath);
       } else {
         const res = await axios.post(
           `${base}${mode === 'staff' ? `?organizationId=${encodeURIComponent(organizationId)}` : ''}`,
@@ -691,7 +694,7 @@ export function ReturnEditorPage({
           navigate(
             mode === 'portal'
               ? `/portal/returns/${newId}`
-              : `/tickets/kunden/${organizationId}/returns/${newId}`,
+              : `/returns/${newId}?organizationId=${encodeURIComponent(organizationId)}`,
             { replace: true },
           );
         } else {
@@ -872,17 +875,21 @@ export function ReturnEditorPage({
     );
   }
 
+  const backPath = isEdit && overviewPath ? overviewPath : listPath;
+
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-[#f6f8fb]">
       <header className="shrink-0 border-b border-slate-200 bg-white/95 backdrop-blur px-4 sm:px-6 py-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex items-start gap-3">
             <Link
-              to={listPath}
+              to={backPath}
               className="mt-0.5 inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-slate-900"
             >
               <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Zurück zu Rücklieferungen</span>
+              <span className="hidden sm:inline">
+                {isEdit ? 'Zurück zur Übersicht' : 'Zurück zu Rücklieferungen'}
+              </span>
             </Link>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -897,7 +904,7 @@ export function ReturnEditorPage({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Button type="button" variant="outline" onClick={() => navigate(listPath)}>
+            <Button type="button" variant="outline" onClick={() => navigate(backPath)}>
               Abbrechen
             </Button>
             <Button

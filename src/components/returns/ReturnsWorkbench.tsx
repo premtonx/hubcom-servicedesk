@@ -450,10 +450,13 @@ export function ReturnsWorkbench({
       navigate('/portal/returns/new');
       return;
     }
-    navigate(`/tickets/kunden/${encodeURIComponent(organizationId)}/returns/new`);
+    navigate(
+      `/returns/new?organizationId=${encodeURIComponent(organizationId)}`,
+    );
   };
 
-  const openEdit = (it: ListItem) => {
+  /** Opens the read-only detail overview (not the edit form). */
+  const openDetails = (it: ListItem) => {
     const id = returnRowId(it);
     if (!id) {
       toast.error('Rücklieferung ohne ID — bitte neu laden.');
@@ -464,7 +467,7 @@ export function ReturnsWorkbench({
       return;
     }
     navigate(
-      `/tickets/kunden/${encodeURIComponent(organizationId)}/returns/${encodeURIComponent(id)}`,
+      `/returns/${encodeURIComponent(id)}?organizationId=${encodeURIComponent(organizationId)}`,
     );
   };
 
@@ -1344,7 +1347,7 @@ export function ReturnsWorkbench({
             items={items}
             includeAllReturned={view === 'done' || view === 'all'}
             configuredStages={configuredStages}
-            onOpenDetails={openEdit}
+            onOpenDetails={openDetails}
             onMarkReturned={(it) => void markReturnedItem(it)}
             onUnreturn={(it) => void unreturnItem(it)}
             onShipmentStatusChange={(it, status) => void patchShipmentStatus(it, status)}
@@ -1355,7 +1358,7 @@ export function ReturnsWorkbench({
             items={items}
             catalogStatuses={catalogStatuses}
             configuredStages={configuredStages}
-            onOpenDetails={openEdit}
+            onOpenDetails={openDetails}
             onMarkReturned={(it) => void markReturnedItem(it)}
             onUnreturn={(it) => void unreturnItem(it)}
             onStatusChange={(it, status) => void patchReturnStatus(it, status)}
@@ -1401,7 +1404,7 @@ export function ReturnsWorkbench({
                     <tr
                       key={id}
                       className="align-top hover:bg-slate-50/60 cursor-pointer"
-                      onClick={() => openEdit(it)}
+                      onClick={() => openDetails(it)}
                     >
                       <td className="p-3" onClick={(e) => e.stopPropagation()}>
                         <input
@@ -1519,7 +1522,7 @@ export function ReturnsWorkbench({
                             size="sm"
                             variant="outline"
                             className="h-8"
-                            onClick={() => openEdit(it)}
+                            onClick={() => openDetails(it)}
                             title="Details öffnen"
                           >
                             <PanelRight className="w-3.5 h-3.5 mr-1" />

@@ -3395,10 +3395,10 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
   );
   assert(
     workbenchSrc.includes('/portal/returns/new') &&
-      workbenchSrc.includes('/tickets/kunden/') &&
-      workbenchSrc.includes('/returns/new') &&
+      workbenchSrc.includes('/returns/new?organizationId=') &&
+      workbenchSrc.includes('openDetails') &&
       !workbenchSrc.includes('ReturnCreateEditDrawer'),
-    'workbench create/edit navigates to full-page editor routes (no slide-over drawer)',
+    'workbench create → editor; Details → overview routes (no slide-over drawer)',
   );
   assert(
     workbenchSrc.includes('formatReturnNumber') && workbenchSrc.includes('return_number'),
@@ -3464,11 +3464,14 @@ function testHardwareReturnsWorkbenchDrawerContract(): void {
   assert(
     appSrc.includes('returns/new') &&
       appSrc.includes('returns/:id') &&
+      appSrc.includes('returns/:id/edit') &&
       appSrc.includes('tickets/kunden/:orgId/returns/new') &&
       appSrc.includes('tickets/kunden/:orgId/returns/:returnId') &&
       appSrc.includes('ClientReturnEditorPage') &&
-      appSrc.includes('StaffReturnEditorPage'),
-    'App registers portal + staff full-page return editor routes',
+      appSrc.includes('ClientReturnDetailPage') &&
+      appSrc.includes('StaffReturnEditorPage') &&
+      appSrc.includes('StaffReturnDetailPage'),
+    'App registers portal + staff overview + edit routes',
   );
 
   assert(
@@ -5214,6 +5217,93 @@ function testHardwareReturnsCollapsibleFilterBar(): void {
   );
 }
 
+function testHardwareReturnsDetailOverviewPart2(): void {
+  console.log('\n--- Hardware returns detail overview page (Part 2) ---');
+
+  const overviewSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnDetailOverviewPage.tsx'),
+    'utf8',
+  );
+  const workbenchSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const editorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnEditorPage.tsx'),
+    'utf8',
+  );
+  const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
+  const portalDetailSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientReturnDetailPage.tsx'),
+    'utf8',
+  );
+  const portalEditorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientReturnEditorPage.tsx'),
+    'utf8',
+  );
+  const staffDetailSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/StaffReturnDetailPage.tsx'),
+    'utf8',
+  );
+  const layoutSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/ClientPortalLayout.tsx'),
+    'utf8',
+  );
+
+  assert(
+    overviewSrc.includes('Zurück zur Übersicht') &&
+      overviewSrc.includes('Bearbeiten') &&
+      overviewSrc.includes('Aktion wählen') &&
+      overviewSrc.includes('Eingang bestätigen') &&
+      overviewSrc.includes('Erinnerung senden') &&
+      overviewSrc.includes('CSV-Zeile exportieren') &&
+      overviewSrc.includes('Geräte-Informationen') &&
+      overviewSrc.includes('Mitarbeiter & Kontakt') &&
+      overviewSrc.includes('Versand- & Rückgabe-Tracking') &&
+      overviewSrc.includes('Notizen & Verlauf') &&
+      overviewSrc.includes('resolveLifecycleStep') &&
+      overviewSrc.includes("'Versendet'") &&
+      overviewSrc.includes('Rückgabe offen') &&
+      overviewSrc.includes("'Eingegangen'") &&
+      overviewSrc.includes("'Abgeschlossen'"),
+    'overview page header + 3-zone layout + lifecycle stepper',
+  );
+  assert(
+    overviewSrc.includes("'/api/portal/returns'") &&
+      overviewSrc.includes("'/api/returns'") &&
+      !overviewSrc.includes("'/api/db") &&
+      !overviewSrc.includes('"/api/db'),
+    'overview uses staff/portal returns APIs — zero /api/db',
+  );
+  assert(
+    workbenchSrc.includes('openDetails') &&
+      workbenchSrc.includes('/portal/returns/') &&
+      workbenchSrc.includes('/returns/') &&
+      workbenchSrc.includes('organizationId='),
+    'list/Details navigates to overview (not edit)',
+  );
+  assert(
+    editorSrc.includes('overviewPath') &&
+      editorSrc.includes('navigate(overviewPath || listPath)'),
+    'save returns to overview page',
+  );
+  assert(
+    portalDetailSrc.includes('ReturnDetailOverviewPage') &&
+      portalEditorSrc.includes('/edit') &&
+      portalEditorSrc.includes('overviewPath') &&
+      staffDetailSrc.includes('ReturnDetailOverviewPage') &&
+      appSrc.includes('returns/:id/edit') &&
+      appSrc.includes('ClientReturnDetailPage') &&
+      appSrc.includes('StaffReturnDetailPage'),
+    'portal /:id overview + /:id/edit; staff /returns/:id + /edit',
+  );
+  assert(
+    layoutSrc.includes('isReturnsDetailOrEditor') &&
+      layoutSrc.includes('/edit'),
+    'portal layout treats overview + edit as returns chrome',
+  );
+}
+
 function testHardwareReturnsShipmentStatusPart1(): void {
   console.log('\n--- Hardware returns shipment_status pills (Part 1) ---');
 
@@ -5405,6 +5495,7 @@ async function main(): Promise<void> {
   testHardwareReturnsInlineListEditors();
   testHardwareReturnsCollapsibleFilterBar();
   testHardwareReturnsShipmentStatusPart1();
+  testHardwareReturnsDetailOverviewPart2();
   await testOrganizationDirectorySyncPart2();
   testSharePointReturnsCsvImportApiIsolation();
   testSharePointReturnsCsvImportUiIsolation();
