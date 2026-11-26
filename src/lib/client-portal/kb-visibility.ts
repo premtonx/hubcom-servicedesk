@@ -75,27 +75,55 @@ export function matchesPortalKbScope(
   return false;
 }
 
+export type SanitizePortalKbOptions = {
+  /** Resolved display name for category slug/id. */
+  categoryName?: string | null;
+  /** Precomputed TOC headings. */
+  toc?: Array<{ id: string; text: string; level: number }>;
+};
+
 /** Fields safe to return to CLIENT_* roles (no Hubcom-only AI/trust internals). */
 export function sanitizeKbArticleForPortal<T extends Record<string, unknown>>(
   article: T,
+  options?: SanitizePortalKbOptions,
 ): Record<string, unknown> {
   const visibility = normalizeKbVisibility(article.visibility);
+  const helpful =
+    typeof article.helpfulCount === 'number'
+      ? article.helpfulCount
+      : typeof article.helpful_count === 'number'
+        ? article.helpful_count
+        : 0;
+  const category = article.category || article.category_id || '';
+  const authorName =
+    article.owner || article.authorName || article.author_name || article.author || null;
   return {
     id: article.id,
     title: article.title,
     content: article.content,
-    category: article.category,
+    category,
+    category_id: category,
+    category_name: options?.categoryName ?? article.category_name ?? category ?? null,
     subCategory: article.subCategory || '',
     tags: Array.isArray(article.tags) ? article.tags : [],
     visibility,
     organizationId: articleOrganizationId(article),
     status: article.status || 'Published',
     authorId: article.authorId || null,
+    author_name: authorName,
     owner: article.owner || null,
     createdAt: article.createdAt || null,
+    created_at: article.createdAt || article.created_at || null,
     updatedAt: article.updatedAt || null,
+    updated_at: article.updatedAt || article.updated_at || null,
     views: typeof article.views === 'number' ? article.views : 0,
+    view_count: typeof article.views === 'number' ? article.views : 0,
+    helpful_count: helpful,
+    helpfulCount: helpful,
+    // Staff convention: missing field ⇒ indexed; explicit false ⇒ opted out.
+    index_in_rag: article.index_in_rag !== false,
     language: article.language || 'de',
+    toc: Array.isArray(options?.toc) ? options!.toc : Array.isArray(article.toc) ? article.toc : [],
   };
 }
 
