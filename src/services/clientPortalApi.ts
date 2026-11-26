@@ -374,6 +374,21 @@ export const clientPortalApi = {
     attachments: PortalTicketAttachment[];
     hardwareReturn?: Record<string, unknown> | null;
     enabledModules?: { hardwareReturns?: boolean };
+    customer?: Record<string, unknown> | null;
+    verlauf?: Array<Record<string, unknown>>;
+    aiInsights?: Record<string, unknown> | null;
+    assets?: Array<Record<string, unknown>>;
+    neuralLinks?: Array<Record<string, unknown>>;
+    tasks?: Array<{ id: string; task: string; completed: boolean; source?: string }>;
+    timeEntries?: Array<Record<string, unknown>>;
+    timeSummary?: { totalHours?: number; totalAmount?: number; count?: number } | null;
+    meta?: {
+      agents: Array<{ id: string; name: string; email: string; role: string }>;
+      statuses: Array<Record<string, unknown>>;
+      priorities: Array<Record<string, unknown>>;
+      categories: Array<Record<string, unknown>>;
+      ticket_types: Array<Record<string, unknown>>;
+    } | null;
   }> {
     const path = `/api/portal/tickets/${encodeURIComponent(id)}`;
     assertNeverDb(path);
@@ -385,6 +400,50 @@ export const clientPortalApi = {
       attachments: Array.isArray(res.data?.attachments) ? res.data.attachments : [],
       hardwareReturn: res.data?.hardwareReturn ?? null,
       enabledModules: res.data?.enabledModules,
+      customer: res.data?.customer ?? null,
+      verlauf: Array.isArray(res.data?.verlauf)
+        ? res.data.verlauf
+        : Array.isArray(res.data?.activity_log)
+          ? res.data.activity_log
+          : [],
+      aiInsights: (res.data?.aiInsights || res.data?.ai_insights || null) as Record<
+        string,
+        unknown
+      > | null,
+      assets: Array.isArray(res.data?.assets) ? res.data.assets : [],
+      neuralLinks: Array.isArray(res.data?.neuralLinks)
+        ? res.data.neuralLinks
+        : Array.isArray(res.data?.related_tickets)
+          ? res.data.related_tickets
+          : [],
+      tasks: Array.isArray(res.data?.tasks) ? res.data.tasks : [],
+      timeEntries: Array.isArray(res.data?.timeEntries)
+        ? res.data.timeEntries
+        : Array.isArray(res.data?.time_entries)
+          ? res.data.time_entries
+          : [],
+      timeSummary: res.data?.timeSummary || null,
+      meta: res.data?.meta || null,
+    };
+  },
+
+  async getTicketMeta(): Promise<{
+    agents: Array<{ id: string; name: string; email: string; role: string }>;
+    statuses: Array<Record<string, unknown>>;
+    priorities: Array<Record<string, unknown>>;
+    categories: Array<Record<string, unknown>>;
+    ticket_types: Array<Record<string, unknown>>;
+  }> {
+    const path = '/api/portal/tickets/meta';
+    assertNeverDb(path);
+    const res = await axios.get(path, { withCredentials: true });
+    const meta = res.data?.meta || {};
+    return {
+      agents: Array.isArray(meta.agents) ? meta.agents : [],
+      statuses: Array.isArray(meta.statuses) ? meta.statuses : [],
+      priorities: Array.isArray(meta.priorities) ? meta.priorities : [],
+      categories: Array.isArray(meta.categories) ? meta.categories : [],
+      ticket_types: Array.isArray(meta.ticket_types) ? meta.ticket_types : [],
     };
   },
 
@@ -448,6 +507,7 @@ export const clientPortalApi = {
       senderId?: string;
       senderName?: string;
       attachments?: PortalTicketAttachment[];
+      is_internal?: boolean;
     },
   ) {
     const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}/messages`;
@@ -457,7 +517,8 @@ export const clientPortalApi = {
       {
         content: payload.content,
         senderName: payload.senderName,
-        attachments: payload.attachments || [],
+        attachments: payload.is_internal ? [] : payload.attachments || [],
+        is_internal: payload.is_internal === true,
       },
       { withCredentials: true },
     );
@@ -473,16 +534,105 @@ export const clientPortalApi = {
 
   async updateTicketFields(
     ticketId: string,
-    patch: { status?: TicketStatus; priority?: TicketPriority },
+    patch: {
+      status?: TicketStatus;
+      priority?: TicketPriority;
+      assignee_id?: string | null;
+      categoryId?: string | null;
+      category?: string | null;
+      ticket_type?: string | null;
+      type?: string | null;
+      sla_tier?: string | null;
+      account_health?: string | null;
+      escalated?: boolean;
+    },
   ) {
     const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}`;
     assertNeverDb(path);
     const body: Record<string, unknown> = {};
     if (patch.status != null) body.status = patch.status;
     if (patch.priority != null) body.priority = patch.priority;
+    if (patch.assignee_id !== undefined) body.assignee_id = patch.assignee_id;
+    if (patch.categoryId !== undefined) body.categoryId = patch.categoryId;
+    if (patch.category !== undefined) body.category = patch.category;
+    if (patch.ticket_type !== undefined) body.ticket_type = patch.ticket_type;
+    if (patch.type !== undefined) body.type = patch.type;
+    if (patch.sla_tier !== undefined) body.sla_tier = patch.sla_tier;
+    if (patch.account_health !== undefined) body.account_health = patch.account_health;
+    if (patch.escalated !== undefined) body.escalated = patch.escalated;
     if (Object.keys(body).length === 0) return null;
     const res = await axios.patch(path, body, { withCredentials: true });
     return res.data?.ticket;
+  },
+
+  async aiSyncTicket(ticketId: string, options?: { forceRefresh?: boolean }) {
+    const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}/ai-sync`;
+    assertNeverDb(path);
+    const res = await axios.post(
+      path,
+      { forceRefresh: options?.forceRefresh === true },
+      { withCredentials: true },
+    );
+    return {
+      ticket: res.data?.ticket as Ticket,
+      aiInsights: res.data?.aiInsights || null,
+    };
+  },
+
+  async addTicketTask(ticketId: string, task: string) {
+    const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}/tasks`;
+    assertNeverDb(path);
+    const res = await axios.post(path, { task }, { withCredentials: true });
+    return (Array.isArray(res.data?.tasks) ? res.data.tasks : []) as Array<{
+      id: string;
+      task: string;
+      completed: boolean;
+      source?: string;
+    }>;
+  },
+
+  async updateTicketTask(
+    ticketId: string,
+    taskId: string,
+    patch: { task?: string; completed?: boolean },
+  ) {
+    const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}/tasks/${encodeURIComponent(taskId)}`;
+    assertNeverDb(path);
+    const res = await axios.patch(path, patch, { withCredentials: true });
+    return (Array.isArray(res.data?.tasks) ? res.data.tasks : []) as Array<{
+      id: string;
+      task: string;
+      completed: boolean;
+      source?: string;
+    }>;
+  },
+
+  async deleteTicketTask(ticketId: string, taskId: string) {
+    const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}/tasks/${encodeURIComponent(taskId)}`;
+    assertNeverDb(path);
+    const res = await axios.delete(path, { withCredentials: true });
+    return (Array.isArray(res.data?.tasks) ? res.data.tasks : []) as Array<{
+      id: string;
+      task: string;
+      completed: boolean;
+      source?: string;
+    }>;
+  },
+
+  async addTicketTimeEntry(
+    ticketId: string,
+    payload: {
+      hours: number;
+      kuerzel?: string;
+      description?: string;
+      date?: string;
+      sonderzahlung?: boolean;
+    },
+  ) {
+    const path = `/api/portal/tickets/${encodeURIComponent(ticketId)}/time-entries`;
+    assertNeverDb(path);
+    const res = await axios.post(path, payload, { withCredentials: true });
+    return (res.data?.entry || null) as Record<string, unknown> | null;
   },
 
   async listParticipants(ticketId: string) {

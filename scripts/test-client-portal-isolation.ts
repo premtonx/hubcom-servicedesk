@@ -4358,12 +4358,20 @@ function testTicketDetailWorkbenchSharedUiIsolation(): void {
     path.join(process.cwd(), 'src/components/tickets/TicketDetailWorkbench.tsx'),
     'utf8',
   );
+  const portalWorkspaceSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/PortalTicketDetailWorkspace.tsx'),
+    'utf8',
+  );
   const adapterSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/lib/tickets/ticket-detail-workbench-adapter.ts'),
     'utf8',
   );
   const portalAdapterSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/hooks/usePortalTicketDetailAdapter.ts'),
+    'utf8',
+  );
+  const portalApiSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/services/clientPortalApi.ts'),
     'utf8',
   );
   const staffPageSrc = fs.readFileSync(
@@ -4382,7 +4390,8 @@ function testTicketDetailWorkbenchSharedUiIsolation(): void {
     'TicketDetailWorkbench accepts mode + adapter with staff/portal branches',
   );
   assert(
-    !workbenchSrc.includes('/api/db') &&
+    !workbenchSrc.includes("'/api/db") &&
+      !workbenchSrc.includes('"/api/db') &&
       !workbenchSrc.includes("from '../../services/ticketService'") &&
       !workbenchSrc.includes("from '../services/ticketService'") &&
       !workbenchSrc.includes("from 'axios'") &&
@@ -4391,27 +4400,76 @@ function testTicketDetailWorkbenchSharedUiIsolation(): void {
     'TicketDetailWorkbench has zero /api/db, ticketService import, or axios calls',
   );
   assert(
+    !portalWorkspaceSrc.includes("'/api/db") &&
+      !portalWorkspaceSrc.includes('"/api/db') &&
+      !portalWorkspaceSrc.includes('ticketService') &&
+      !portalWorkspaceSrc.includes("from 'axios'") &&
+      !portalWorkspaceSrc.includes('/api/admin/'),
+    'PortalTicketDetailWorkspace has zero /api/db, ticketService, axios, or /api/admin',
+  );
+  assert(
     !workbenchSrc.includes('HardwareReturn') &&
       !workbenchSrc.includes('hardwareReturn') &&
-      !workbenchSrc.includes('Service-Level') &&
-      !workbenchSrc.includes('SL1'),
+      !portalWorkspaceSrc.includes('HardwareReturn'),
     'detail workbench has zero Hardware & Service-Level / RMA fields',
   );
   assert(
-    adapterSrc.includes('internalNotes: false') &&
-      adapterSrc.includes('tabAiInsights: false') &&
-      adapterSrc.includes('emailComposer: false') &&
-      adapterSrc.includes('staffContextPane: false') &&
+    adapterSrc.includes('tabCustomer: true') &&
+      adapterSrc.includes('tabTimeline: true') &&
+      adapterSrc.includes('tabAiInsights: true') &&
+      adapterSrc.includes('tabAssets: true') &&
+      adapterSrc.includes('tabRelatedTickets: true') &&
+      adapterSrc.includes('tabTasks: true') &&
+      adapterSrc.includes('tabTime: true') &&
       adapterSrc.includes('portalPublicReply: true') &&
-      adapterSrc.includes('participantsPanel: true'),
-    'portal capabilities hide staff-only chrome and keep public reply + participants',
+      adapterSrc.includes('PORTAL_TICKET_DETAIL_CAPABILITIES_CLIENT_USER') &&
+      adapterSrc.includes('emailComposer: false') &&
+      adapterSrc.includes('staffContextPane: false'),
+    'portal capabilities enable all 8 workspace tabs; CLIENT_USER variant exists; no staff email/context pane',
+  );
+  assert(
+    portalWorkspaceSrc.includes("'Übersicht'") &&
+      portalWorkspaceSrc.includes("'Kunde'") &&
+      portalWorkspaceSrc.includes("'Verlauf'") &&
+      portalWorkspaceSrc.includes("'KI-Erkenntnisse'") &&
+      portalWorkspaceSrc.includes("'Assets'") &&
+      portalWorkspaceSrc.includes("'Neuronale Verknüpfungen'") &&
+      portalWorkspaceSrc.includes("'Aufgaben'") &&
+      portalWorkspaceSrc.includes("'Zeiterfassung'") &&
+      portalWorkspaceSrc.includes('Eigenschaften') &&
+      portalWorkspaceSrc.includes('AGENTEN-ZUWEISUNG') &&
+      portalWorkspaceSrc.includes('PRIORITÄT') &&
+      portalWorkspaceSrc.includes('FALLSTATUS') &&
+      portalWorkspaceSrc.includes('KATEGORIE') &&
+      portalWorkspaceSrc.includes('TICKETTYP') &&
+      portalWorkspaceSrc.includes('SLA-STUFE') &&
+      portalWorkspaceSrc.includes('KONTOGESUNDHEIT') &&
+      portalWorkspaceSrc.includes('KI-Copilot') &&
+      portalWorkspaceSrc.includes('KI-Sync') &&
+      portalWorkspaceSrc.includes('Öffentliche Antwort') &&
+      portalWorkspaceSrc.includes('Interne Notiz'),
+    '/portal/tickets/:id renders all 8 tabs + full Eigenschaften sidebar + composer modes',
   );
   assert(
     portalAdapterSrc.includes('clientPortalApi') &&
       portalAdapterSrc.includes('getTicket') &&
+      portalAdapterSrc.includes('aiSync') &&
+      portalAdapterSrc.includes('updateFields') &&
+      portalAdapterSrc.includes('addTask') &&
+      portalAdapterSrc.includes('addTimeEntry') &&
       !portalAdapterSrc.includes('/api/db') &&
       !portalAdapterSrc.includes("from '../services/ticketService'"),
     'usePortalTicketDetailAdapter uses clientPortalApi only (no /api/db or staff ticketService)',
+  );
+  assert(
+    portalApiSrc.includes('/api/portal/tickets/meta') &&
+      portalApiSrc.includes('/ai-sync') &&
+      portalApiSrc.includes('/time-entries') &&
+      portalApiSrc.includes('assertNeverDb') &&
+      portalApiSrc.includes("path.includes('/api/db')") &&
+      !portalApiSrc.includes("axios.get('/api/db") &&
+      !portalApiSrc.includes('axios.post(\'/api/db'),
+    'clientPortalApi ticket workspace helpers stay on /api/portal/tickets*',
   );
   assert(
     staffPageSrc.includes('TicketDetailWorkbench') &&
@@ -4424,17 +4482,17 @@ function testTicketDetailWorkbenchSharedUiIsolation(): void {
     portalDetailSrc.includes('TicketDetailWorkbench') &&
       portalDetailSrc.includes('mode="portal"') &&
       portalDetailSrc.includes('usePortalTicketDetailAdapter') &&
+      portalDetailSrc.includes('PORTAL_TICKET_DETAIL_CAPABILITIES_CLIENT_USER') &&
       !portalDetailSrc.includes('/api/db') &&
       !portalDetailSrc.includes('ticketService') &&
       !portalDetailSrc.includes('HardwareReturn') &&
       !portalDetailSrc.includes('hardwareReturn'),
-    'ClientTicketDetailPage is thin portal shell (no /api/db, no RMA)',
+    'ClientTicketDetailPage is thin portal shell with CLIENT_USER capability gate (no /api/db, no RMA)',
   );
   assert(
-    workbenchSrc.includes('ConversationTimeline') &&
-      workbenchSrc.includes('Eigenschaften') &&
-      workbenchSrc.includes('Beteiligte'),
-    'portal branch reuses staff conversation timeline + properties/participants rail',
+    portalWorkspaceSrc.includes('ConversationTimeline') &&
+      portalWorkspaceSrc.includes('Beteiligte'),
+    'portal branch reuses staff conversation timeline + participants rail',
   );
 }
 
