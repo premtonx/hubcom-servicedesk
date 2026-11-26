@@ -23,6 +23,7 @@ import {
   resolvePortalTitle,
 } from '../lib/client-portal/org-branding.js';
 import { parseAndValidateDashboardBannerDataUrl } from '../lib/dashboard-banner-validate.js';
+import { getSystemFavicon } from '../lib/system-favicon.js';
 
 const router = Router();
 
@@ -74,6 +75,25 @@ router.get(
       return res.json({ organization });
     } catch (err: any) {
       return res.status(500).json({ error: safeErrorMessage(err, 'Failed to load organization') });
+    }
+  },
+);
+
+/**
+ * GET /api/portal/branding/system-favicon
+ * Fallback Hubcom favicon when the org has none (portal DocumentBrandingSync).
+ */
+router.get(
+  '/branding/system-favicon',
+  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
+  async (_req: Request, res: Response): Promise<any> => {
+    try {
+      const favicon = await getSystemFavicon();
+      return res.json({ imageDataUrl: favicon.imageDataUrl });
+    } catch (err: any) {
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'System-Favicon konnte nicht geladen werden') });
     }
   },
 );

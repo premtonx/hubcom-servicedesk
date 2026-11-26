@@ -19,7 +19,7 @@ import { SidebarProvider } from './lib/context/SidebarContext';
 import { WorkspaceProvider } from './lib/context/WorkspaceContext';
 import { ThemeProvider } from './lib/context/ThemeContext';
 import { I18nProvider } from './lib/context/I18nContext';
-import { brandConfig } from './lib/brandConfig';
+import { DocumentBrandingSync } from './components/DocumentBrandingSync';
 
 const DashboardPage = lazy(() => import('./components/pages/DashboardPage'));
 const TicketsPage = lazy(() => import('./components/pages/TicketsPage'));
@@ -253,7 +253,6 @@ function ModuleRoute({
 
 export default function App() {
   useEffect(() => {
-    document.title = brandConfig.documentTitle;
     document.documentElement.lang = document.documentElement.lang || 'de';
   }, []);
 
@@ -261,6 +260,7 @@ export default function App() {
     <I18nProvider>
       <ThemeProvider>
         <AuthProvider>
+          <DocumentBrandingSync />
           <AppRoutes />
         </AuthProvider>
       </ThemeProvider>

@@ -50,6 +50,12 @@ import { redactSecrets } from '../src/lib/safe-log.js';
 import { isClientAdmin, isClientPortalRole } from '../src/lib/client-portal/roles.js';
 import { parseAndValidateDashboardBannerDataUrl } from '../src/lib/dashboard-banner-validate.js';
 import { parseAndValidateFaviconDataUrl } from '../src/lib/client-portal/org-branding.js';
+import { parseAndValidateSystemFaviconDataUrl } from '../src/lib/system-favicon-validate.js';
+import {
+  buildPortalDocumentTitle,
+  isPortalPath,
+  portalRouteSegmentLabel,
+} from '../src/lib/document-branding.js';
 import { ticketMatchesPortalStatusFilter } from '../src/lib/portal/status.js';
 import {
   assertPortalKbWriteRole,
@@ -1207,7 +1213,30 @@ function testPortalBrandingBoundaries(): void {
   const faviconSvg = parseAndValidateFaviconDataUrl(
     'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=',
   );
-  assert(faviconSvg.ok === false, 'SVG favicons are rejected');
+  assert(faviconSvg.ok === false, 'SVG org portal favicons are rejected');
+
+  const sysPng = parseAndValidateSystemFaviconDataUrl(tinyPng);
+  assert(sysPng.ok === true, 'system PNG favicons are accepted');
+  const sysSvg = parseAndValidateSystemFaviconDataUrl(
+    'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=',
+  );
+  assert(sysSvg.ok === true, 'system SVG favicons are accepted for /admin/branding');
+
+  assert(isPortalPath('/portal/returns') === true, '/portal/returns is portal path');
+  assert(isPortalPath('/tickets') === false, '/tickets is staff path');
+  assert(
+    portalRouteSegmentLabel('/portal/returns/new') === 'Rücklieferungen',
+    'returns segment label',
+  );
+  assert(
+    buildPortalDocumentTitle('DPG ServiceDesk', '/portal/returns') ===
+      'Rücklieferungen · DPG ServiceDesk',
+    'portal document title uses org title across /portal/returns',
+  );
+  assert(
+    buildPortalDocumentTitle('DPG ServiceDesk', '/portal/dashboard') === 'DPG ServiceDesk',
+    'portal dashboard title is org title without Hubcom ServiceDesk',
+  );
 
   const portalRoutesSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/routes/clientPortalRoutes.ts'),
@@ -1221,23 +1250,50 @@ function testPortalBrandingBoundaries(): void {
     path.join(process.cwd(), 'src/components/pages/client-portal/ClientBrandingPage.tsx'),
     'utf8',
   );
-  const layoutSrc = fs.readFileSync(
-    path.join(process.cwd(), 'src/components/client-portal/ClientPortalLayout.tsx'),
+  const adminBrandingSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/settings/BrandingSettingsCard.tsx'),
     'utf8',
   );
+  const adminRoutesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/adminRoutes.ts'),
+    'utf8',
+  );
+  const syncSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/DocumentBrandingSync.tsx'),
+    'utf8',
+  );
+  const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
   const pgSrc = fs.readFileSync(path.join(process.cwd(), 'src/lib/postgres-backend.ts'), 'utf8');
   assert(
     portalRoutesSrc.includes("'/branding/favicon'") &&
+      portalRoutesSrc.includes("'/branding/system-favicon'") &&
       portalRoutesSrc.includes('parseAndValidateFaviconDataUrl') &&
       portalRoutesSrc.includes('favicon_url') &&
       brandingCardSrc.includes('onFaviconUpload') &&
       brandingCardSrc.includes('Favicon (Browser-Tab)') &&
+      brandingCardSrc.includes('Browser-Tab-Titel / Portal-Titel') &&
       brandingPageSrc.includes('/api/portal/branding/favicon') &&
-      layoutSrc.includes('applyPortalFavicon') &&
+      brandingPageSrc.includes('hubcom-portal-branding-changed') &&
       pgSrc.includes('favicon_url TEXT') &&
       !brandingPageSrc.includes('/api/db') &&
-      !portalRoutesSrc.includes("'/api/db"),
-    'favicon editor wired in branding UI + portal routes (no /api/db)',
+      !portalRoutesSrc.includes("'/api/db") &&
+      !syncSrc.includes("'/api/db") &&
+      !syncSrc.includes('"/api/db'),
+    'favicon editor + Browser-Tab-Titel wired in portal branding (no /api/db)',
+  );
+  assert(
+    adminRoutesSrc.includes('"/system-favicon"') &&
+      adminRoutesSrc.includes('parseAndValidateSystemFaviconDataUrl') &&
+      adminRoutesSrc.includes('setSystemFavicon') &&
+      adminBrandingSrc.includes('/api/admin/system-favicon') &&
+      adminBrandingSrc.includes('Favicon (Browser-Tab)') &&
+      adminBrandingSrc.includes('image/svg+xml') &&
+      syncSrc.includes('DocumentBrandingSync') &&
+      syncSrc.includes('/api/portal/organization') &&
+      syncSrc.includes('/api/admin/system-favicon') &&
+      appSrc.includes('DocumentBrandingSync') &&
+      !adminBrandingSrc.includes('/api/db'),
+    '/admin/branding saves/serves system favicon; DocumentBrandingSync covers portal + staff',
   );
 
   // Dashboard → tickets deep-link status sync helpers.

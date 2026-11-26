@@ -295,8 +295,14 @@ export function OrgPortalBrandingCard({
 
       <div className="space-y-1.5">
         <Label className="text-[10px] font-bold uppercase text-slate-400">
-          {t('orgBranding.portalTitle', 'Portal-Titel')}
+          {t('orgBranding.portalTitle', 'Browser-Tab-Titel / Portal-Titel')}
         </Label>
+        <p className="text-[11px] text-slate-500">
+          {t(
+            'orgBranding.portalTitleHint',
+            'Erscheint im Browser-Tab auf allen /portal/*-Seiten (z. B. „DPG ServiceDesk“).',
+          )}
+        </p>
         <div className="flex gap-2">
           <Input
             value={titleDraft}

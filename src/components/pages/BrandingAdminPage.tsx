@@ -23,7 +23,7 @@ export default function BrandingAdminPage() {
             <p className="text-sm text-slate-500 mt-1 leading-relaxed">
               {t(
                 'admin.branding.subtitle',
-                'Logo, Firmenangaben und Dashboard-Banner für Hubcom – Citadelle AG.',
+                'Logo, Favicon, Firmenangaben und Dashboard-Banner für Hubcom – Citadelle AG.',
               )}
             </p>
           </div>
