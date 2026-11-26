@@ -16,6 +16,7 @@ import {
   getOrganization,
   organizationEnabledModules,
   updateOrganizationBranding,
+  updateOrganizationPortalModules,
 } from '../lib/client-portal/organizations.js';
 import {
   parseAndValidateFaviconDataUrl,
@@ -42,6 +43,8 @@ async function loadOrgBranding(organizationId: string | null | undefined) {
     favicon_url: org.favicon_url,
     resolved_portal_title: resolvePortalTitle(org.name, org.portal_title),
     hardware_returns_enabled: Boolean(org.hardware_returns_enabled),
+    secure_exchange_enabled: org.secure_exchange_enabled !== false,
+    vault_enabled: org.vault_enabled !== false,
     enabledModules: organizationEnabledModules(org),
   };
 }
@@ -59,7 +62,11 @@ router.get('/me', requireClientPortalRole(), async (req: Request, res: Response)
       organizationId,
     },
     organization,
-    enabledModules: organization?.enabledModules || { hardwareReturns: false },
+    enabledModules: organization?.enabledModules || {
+      hardwareReturns: false,
+      secureExchange: true,
+      vault: true,
+    },
   });
 });
 
@@ -103,6 +110,60 @@ const portalBrandingSchema = z.object({
   portal_title: z.string().max(120).optional().nullable(),
   clearLogo: z.boolean().optional(),
 });
+
+const portalModulesSchema = z.object({
+  secure_exchange_enabled: z.boolean().optional(),
+  vault_enabled: z.boolean().optional(),
+});
+
+/**
+ * PUT /api/portal/organization/modules
+ * CLIENT_ADMIN only — toggle Sicherer Austausch / Tresor for own org.
+ */
+router.put(
+  '/organization/modules',
+  requireClientPortalRole(['CLIENT_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    const parsed = portalModulesSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Invalid portal-modules payload',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    if (
+      parsed.data.secure_exchange_enabled === undefined &&
+      parsed.data.vault_enabled === undefined
+    ) {
+      return res.status(400).json({ error: 'No module flags provided.' });
+    }
+    try {
+      const organizationId = resolveOrganizationIdFromUser(req.user!);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Organization missing.' });
+      }
+      const organization = await updateOrganizationPortalModules(organizationId, {
+        secure_exchange_enabled: parsed.data.secure_exchange_enabled,
+        vault_enabled: parsed.data.vault_enabled,
+      });
+      if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      return res.json({
+        organization: {
+          id: organization.id,
+          name: organization.name,
+          secure_exchange_enabled: organization.secure_exchange_enabled !== false,
+          vault_enabled: organization.vault_enabled !== false,
+          enabledModules: organizationEnabledModules(organization),
+        },
+      });
+    } catch (err: any) {
+      safeLog('error', '[portal] modules update failed', err?.message || err);
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'Portal-Module konnten nicht gespeichert werden') });
+    }
+  },
+);
 
 /**
  * PUT /api/portal/organization/branding

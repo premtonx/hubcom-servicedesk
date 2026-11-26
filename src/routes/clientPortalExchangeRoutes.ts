@@ -8,7 +8,7 @@
  * POST   /api/portal/exchange/:id/revoke
  */
 
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import {
   addDocDirect,
@@ -17,7 +17,11 @@ import {
   getDocsDirect,
   updateDocDirect,
 } from '../lib/postgres-backend.js';
-import { requireClientPortalRole } from '../middleware/clientPortalMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import {
+  attachClientOrganizationContext,
+  requireClientPortalRole,
+} from '../middleware/clientPortalMiddleware.js';
 import { resolveOrganizationIdFromUser } from '../lib/client-portal/ticket-visibility.js';
 import {
   canPortalUserAccessVaultItem,
@@ -31,6 +35,8 @@ import {
   encryptExchangeAtRest,
   hashPassword,
 } from '../lib/crypto.js';
+import { getOrganization } from '../lib/client-portal/organizations.js';
+import { evaluateSecureExchangeModuleAccess } from '../lib/client-portal/portal-modules-nav.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 import { appendExchangeAuditLog } from '../lib/exchange-audit-log.js';
@@ -39,6 +45,33 @@ const VAULT_ITEMS = 'vault_items';
 const VAULT_SECRETS = 'vault_item_secrets';
 
 const router = Router();
+
+router.use(authenticate, attachClientOrganizationContext);
+
+/** 403 when Sicherer Austausch is disabled for the session organization. */
+async function requireSecureExchangeModule(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<any> {
+  try {
+    const organizationId = resolveOrganizationIdFromUser(req.user!);
+    const org = organizationId ? await getOrganization(organizationId) : null;
+    const gate = evaluateSecureExchangeModuleAccess({
+      orgEnabled: org == null ? true : org.secure_exchange_enabled !== false,
+      sessionOrgId: organizationId,
+      role: req.user?.role,
+    });
+    if (gate.ok === false) {
+      return res.status(gate.status).json({ error: gate.error });
+    }
+    return next();
+  } catch (err: any) {
+    return res
+      .status(500)
+      .json({ error: safeErrorMessage(err, 'Module gate failed') });
+  }
+}
 
 const createSchema = z.object({
   content: z.string().min(1),
@@ -77,9 +110,13 @@ function isBurnedOrExpired(item: any): boolean {
   return Number.isFinite(maxViews) && views >= maxViews;
 }
 
+router.use(
+  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
+  requireSecureExchangeModule,
+);
+
 router.get(
   '/',
-  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
   async (req: Request, res: Response): Promise<any> => {
     try {
       const organizationId = sessionOrg(req);
@@ -107,7 +144,6 @@ router.get(
 
 router.get(
   '/:id',
-  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
   async (req: Request, res: Response): Promise<any> => {
     try {
       const id = routeParam(req.params.id);
@@ -124,7 +160,6 @@ router.get(
 
 router.post(
   '/',
-  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
   async (req: Request, res: Response): Promise<any> => {
     const organizationId = sessionOrg(req);
     if (!organizationId) {
@@ -220,7 +255,6 @@ router.post(
 
 router.post(
   '/:id/reveal',
-  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
   async (req: Request, res: Response): Promise<any> => {
     try {
       const id = routeParam(req.params.id);
@@ -282,7 +316,6 @@ router.post(
 
 router.post(
   '/:id/revoke',
-  requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
   async (req: Request, res: Response): Promise<any> => {
     try {
       const organizationId = sessionOrg(req);

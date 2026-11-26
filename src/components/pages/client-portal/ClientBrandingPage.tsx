@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Loader2, Palette } from 'lucide-react';
 import { toast } from 'sonner';
 import { OrgPortalBrandingCard } from '../../client-portal/OrgPortalBrandingCard';
+import { PortalModulesCard } from '../../client-portal/PortalModulesCard';
 import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
 
 type OrgBranding = {
@@ -12,6 +13,9 @@ type OrgBranding = {
   portal_title: string | null;
   portal_banner_url: string | null;
   favicon_url: string | null;
+  secure_exchange_enabled?: boolean;
+  vault_enabled?: boolean;
+  enabledModules?: { secureExchange?: boolean; vault?: boolean };
 };
 
 /**
@@ -79,6 +83,33 @@ export default function ClientBrandingPage() {
             </p>
           </div>
         </div>
+
+        <PortalModulesCard
+          mode="portal"
+          secureExchangeEnabled={
+            org.enabledModules?.secureExchange !== false &&
+            org.secure_exchange_enabled !== false
+          }
+          vaultEnabled={
+            org.enabledModules?.vault !== false && org.vault_enabled !== false
+          }
+          onSaved={(next) => {
+            setOrg((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    secure_exchange_enabled: next.secure_exchange_enabled,
+                    vault_enabled: next.vault_enabled,
+                    enabledModules: {
+                      ...(prev.enabledModules || {}),
+                      secureExchange: next.secure_exchange_enabled,
+                      vault: next.vault_enabled,
+                    },
+                  }
+                : prev,
+            );
+          }}
+        />
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
           <OrgPortalBrandingCard

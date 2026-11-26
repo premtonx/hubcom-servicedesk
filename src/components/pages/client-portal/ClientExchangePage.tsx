@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import {
   Copy,
   Loader2,
@@ -15,6 +16,10 @@ import { Input } from '../../ui/input';
 import { Label } from '../../ui/label';
 import { cn } from '../../../lib/utils';
 import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
+import {
+  evaluatePortalExchangePageAccess,
+  resolveSecureExchangeModuleFlag,
+} from '../../../lib/client-portal/portal-modules-nav';
 
 type ExchangeItem = {
   id: string;
@@ -59,9 +64,11 @@ function formatExpiry(item: ExchangeItem): string {
 }
 
 export default function ClientExchangePage() {
-  const { session, isOrgWide } = useClientPortalSession();
+  const { session, isClient, isOrgWide, loading: sessionLoading } = useClientPortalSession();
   const [items, setItems] = useState<ExchangeItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [moduleEnabled, setModuleEnabled] = useState<boolean | null>(null);
+  const [moduleLoading, setModuleLoading] = useState(true);
   const [tab, setTab] = useState<'active' | 'expired'>('active');
   const [composerOpen, setComposerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -72,6 +79,39 @@ export default function ClientExchangePage() {
   const [passphrase, setPassphrase] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
   const [revealed, setRevealed] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (sessionLoading) return;
+    if (!session?.organizationId) {
+      setModuleEnabled(false);
+      setModuleLoading(false);
+      return;
+    }
+    let active = true;
+    setModuleLoading(true);
+    void axios
+      .get('/api/portal/me', { withCredentials: true })
+      .then((res) => {
+        if (!active) return;
+        setModuleEnabled(resolveSecureExchangeModuleFlag(res.data));
+      })
+      .catch(() => {
+        if (active) setModuleEnabled(false);
+      })
+      .finally(() => {
+        if (active) setModuleLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [session?.organizationId, sessionLoading]);
+
+  const gate = evaluatePortalExchangePageAccess({
+    sessionLoading,
+    moduleLoading,
+    isClient,
+    moduleEnabled,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -87,8 +127,9 @@ export default function ClientExchangePage() {
   }, []);
 
   useEffect(() => {
+    if (gate.action !== 'allow') return;
     void load();
-  }, [load]);
+  }, [load, gate.action]);
 
   const { active, expired } = useMemo(() => {
     const a: ExchangeItem[] = [];
@@ -101,6 +142,18 @@ export default function ClientExchangePage() {
   }, [items]);
 
   const listed = tab === 'active' ? active : expired;
+
+  if (gate.action === 'spinner') {
+    return (
+      <div className="p-10 flex justify-center" aria-busy="true" aria-label="Laden">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-800" />
+      </div>
+    );
+  }
+
+  if (gate.action === 'redirect') {
+    return <Navigate to={gate.to || '/portal/dashboard'} replace />;
+  }
 
   const createTransfer = async () => {
     if (!content.trim()) {

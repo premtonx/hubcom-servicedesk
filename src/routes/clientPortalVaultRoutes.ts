@@ -6,9 +6,13 @@
  * CLIENT_SUPPORTER → list/create/reveal/update (no delete)
  */
 
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
-import { requireClientPortalRole } from '../middleware/clientPortalMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import {
+  attachClientOrganizationContext,
+  requireClientPortalRole,
+} from '../middleware/clientPortalMiddleware.js';
 import { resolveOrganizationIdFromUser } from '../lib/client-portal/ticket-visibility.js';
 import {
   appendOrgVaultAudit,
@@ -23,10 +27,38 @@ import {
   toOrgVaultListItem,
   updateOrgVaultSecret,
 } from '../lib/client-portal/organization-vault.js';
+import { getOrganization } from '../lib/client-portal/organizations.js';
+import { evaluateVaultModuleAccess } from '../lib/client-portal/portal-modules-nav.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 
 const router = Router();
+
+router.use(authenticate, attachClientOrganizationContext);
+
+/** 403 when Tresor is disabled for the session organization. */
+async function requireVaultModule(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<any> {
+  try {
+    const organizationId = resolveOrganizationIdFromUser(req.user!);
+    const org = organizationId ? await getOrganization(organizationId) : null;
+    // Role checks stay in requirePortalVaultWriter; this gate is module-only.
+    const gate = evaluateVaultModuleAccess({
+      orgEnabled: org == null ? true : org.vault_enabled !== false,
+      sessionOrgId: organizationId,
+      role: 'CLIENT_ADMIN',
+    });
+    if (gate.ok === false) {
+      return res.status(gate.status).json({ error: gate.error });
+    }
+    return next();
+  } catch (err: any) {
+    return res.status(500).json({ error: safeErrorMessage(err, 'Module gate failed') });
+  }
+}
 
 const writeSchema = z.object({
   name: z.string().min(1).max(200),
@@ -68,6 +100,7 @@ function requirePortalVaultWriter(
 
 router.use(
   requireClientPortalRole(['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']),
+  requireVaultModule,
 );
 
 router.get(

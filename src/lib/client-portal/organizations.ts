@@ -57,6 +57,10 @@ export interface OrganizationRecord {
   hardware_returns_enabled: boolean;
   /** Module config (recipients, templates, delays). */
   hardware_returns_config: HardwareReturnsConfig;
+  /** Per-org Sicherer Austausch module (default true). */
+  secure_exchange_enabled: boolean;
+  /** Per-org Tresor module (default true). */
+  vault_enabled: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -87,6 +91,8 @@ export interface OrganizationInput {
   crm_company_id?: string | null;
   hardware_returns_enabled?: boolean;
   hardware_returns_config?: Partial<HardwareReturnsConfig> | HardwareReturnsConfig | null;
+  secure_exchange_enabled?: boolean;
+  vault_enabled?: boolean;
 }
 
 function slugify(input: string): string {
@@ -182,6 +188,15 @@ function mapRow(row: any): OrganizationRecord {
     hardware_returns_config: normalizeHardwareReturnsConfig(
       row.hardware_returns_config ?? defaultHardwareReturnsConfig(),
     ),
+    // Missing column / null → default true (legacy orgs keep Exchange + Tresor).
+    secure_exchange_enabled:
+      row.secure_exchange_enabled == null
+        ? true
+        : row.secure_exchange_enabled === true || row.secure_exchange_enabled === 't',
+    vault_enabled:
+      row.vault_enabled == null
+        ? true
+        : row.vault_enabled === true || row.vault_enabled === 't',
     created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
     updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : '',
   };
@@ -312,15 +327,19 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
   const hardwareReturnsConfig = normalizeHardwareReturnsConfig(
     input.hardware_returns_config ?? defaultHardwareReturnsConfig(),
   );
+  const secureExchangeEnabled =
+    input.secure_exchange_enabled === undefined ? true : Boolean(input.secure_exchange_enabled);
+  const vaultEnabled = input.vault_enabled === undefined ? true : Boolean(input.vault_enabled);
 
   const res = await queryDb(
     `INSERT INTO organizations (
        id, name, slug, domain, is_active, settings, m365_tenant_id, sso_enabled,
        logo_url, portal_title, portal_banner_url, favicon_url, industry, website, tier, sla,
        contract_renewal, monthly_rate, contract_reference, contract_notes, contract_term,
-       is_demo, crm_company_id, hardware_returns_enabled, hardware_returns_config
+       is_demo, crm_company_id, hardware_returns_enabled, hardware_returns_config,
+       secure_exchange_enabled, vault_enabled
      )
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25::jsonb)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25::jsonb, $26, $27)
      RETURNING *`,
     [
       id,
@@ -348,6 +367,8 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
       crmCompanyId,
       hardwareReturnsEnabled,
       JSON.stringify(hardwareReturnsConfig),
+      secureExchangeEnabled,
+      vaultEnabled,
     ],
   );
   return mapRow(res.rows[0]);
@@ -481,6 +502,14 @@ export async function updateOrganization(
           ...(input.hardware_returns_config || {}),
         })
       : existing.hardware_returns_config;
+  const secureExchangeEnabled =
+    input.secure_exchange_enabled !== undefined
+      ? Boolean(input.secure_exchange_enabled)
+      : existing.secure_exchange_enabled;
+  const vaultEnabled =
+    input.vault_enabled !== undefined
+      ? Boolean(input.vault_enabled)
+      : existing.vault_enabled;
 
   const res = await queryDb(
     `UPDATE organizations
@@ -508,6 +537,8 @@ export async function updateOrganization(
             crm_company_id = $23,
             hardware_returns_enabled = $24,
             hardware_returns_config = $25::jsonb,
+            secure_exchange_enabled = $26,
+            vault_enabled = $27,
             updated_at = NOW()
       WHERE id = $1
       RETURNING *`,
@@ -537,6 +568,8 @@ export async function updateOrganization(
       crmCompanyId,
       hardwareReturnsEnabled,
       JSON.stringify(hardwareReturnsConfig),
+      secureExchangeEnabled,
+      vaultEnabled,
     ],
   );
   if (!res.rowCount) return null;
@@ -601,11 +634,29 @@ export async function updateOrganizationHardwareModule(
   });
 }
 
+export async function updateOrganizationPortalModules(
+  id: string,
+  input: {
+    secure_exchange_enabled?: boolean;
+    vault_enabled?: boolean;
+  },
+): Promise<OrganizationRecord | null> {
+  return updateOrganization(id, {
+    secure_exchange_enabled: input.secure_exchange_enabled,
+    vault_enabled: input.vault_enabled,
+  });
+}
+
 /** Public module flags exposed on /api/portal/me and /api/organizations/:id. */
 export function organizationEnabledModules(org: OrganizationRecord | null | undefined): {
   hardwareReturns: boolean;
+  secureExchange: boolean;
+  vault: boolean;
 } {
   return {
     hardwareReturns: Boolean(org?.hardware_returns_enabled),
+    // Default ON when org missing (keeps existing always-on behaviour).
+    secureExchange: org == null ? true : org.secure_exchange_enabled !== false,
+    vault: org == null ? true : org.vault_enabled !== false,
   };
 }
