@@ -5,10 +5,14 @@
  * role=customer handlers in portalRoutes.ts still work.
  *
  * GET    /tickets
- * GET    /tickets/:id          — ticket + public messages + participants
+ * GET    /tickets/meta         — Eigenschaften dropdowns (agents/statuses/…)
+ * GET    /tickets/:id          — full workspace detail (tabs + meta)
  * POST   /tickets
- * POST   /tickets/:id/messages — alias: /tickets/:id/replies
- * PATCH  /tickets/:id          — status close/reopen (limited fields)
+ * POST   /tickets/:id/messages — public reply or Interne Notiz (org-wide)
+ * PATCH  /tickets/:id          — Eigenschaften fields (org-scoped)
+ * POST   /tickets/:id/ai-sync
+ * POST|PATCH|DELETE /tickets/:id/tasks[/:taskId]
+ * POST   /tickets/:id/time-entries
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
@@ -30,12 +34,21 @@ import {
 import {
   assertPortalTicketAccess,
   buildPortalTicketCounts,
-  buildPortalTicketDetailResponse,
   filterPortalTicketsByScope,
   listVisiblePortalTickets,
   loadPortalTicketParticipants,
   type PortalTicketScope,
 } from '../lib/client-portal/portal-ticket-api.js';
+import {
+  addPortalTicketTask,
+  addPortalTimeEntry,
+  buildPortalTicketWorkspaceDetail,
+  deletePortalTicketTask,
+  loadPortalTicketMeta,
+  patchPortalTicketTask,
+  portalCanSeeInternalNotes,
+  runPortalTicketAiSync,
+} from '../lib/client-portal/portal-ticket-workspace.js';
 import { listTicketIdsForParticipant } from '../lib/client-portal/ticket-participants.js';
 import {
   getHardwareReturnByTicketId,
@@ -47,6 +60,7 @@ import { ticketMatchesPortalStatusFilter } from '../lib/portal/status.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 import { listTicketCategories } from '../lib/ticket-categories/store.js';
+import { normalizeAccountHealth } from '../lib/account-health.js';
 
 const router = Router();
 
@@ -169,6 +183,21 @@ router.get('/tickets', async (req: Request, res: Response): Promise<any> => {
   }
 });
 
+/** GET /api/portal/tickets/meta — Eigenschaften dropdowns (org agents + global taxonomies). */
+router.get('/tickets/meta', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const session = sessionCtx(req);
+    if (!session.organizationId) {
+      return res.status(403).json({ error: 'Organization missing.' });
+    }
+    const meta = await loadPortalTicketMeta(session.organizationId);
+    return res.json({ meta });
+  } catch (err: any) {
+    safeLog('error', '[portal/tickets] meta failed', err?.message || err);
+    return res.status(500).json({ error: safeErrorMessage(err, 'Ticket-Metadaten konnten nicht geladen werden') });
+  }
+});
+
 router.get('/tickets/:id', async (req: Request, res: Response): Promise<any> => {
   try {
     const session = sessionCtx(req);
@@ -187,7 +216,8 @@ router.get('/tickets/:id', async (req: Request, res: Response): Promise<any> => 
       loadPortalTicketParticipants(id),
     ]);
 
-    const payload = buildPortalTicketDetailResponse({
+    const workspace = await buildPortalTicketWorkspaceDetail({
+      session,
       ticket: access.ticket,
       messages: rawMessages as Array<Record<string, unknown>>,
       participants,
@@ -201,7 +231,7 @@ router.get('/tickets/:id', async (req: Request, res: Response): Promise<any> => 
     }
 
     return res.json({
-      ...payload,
+      ...workspace,
       hardwareReturn,
       enabledModules: { hardwareReturns: Boolean(org?.hardware_returns_enabled) },
     });
@@ -377,6 +407,8 @@ const replySchema = z.object({
   content: z.string().trim().min(1).max(100_000),
   attachments: z.array(z.any()).max(MAX_ATTACHMENTS).optional(),
   senderName: z.string().trim().max(255).optional(),
+  is_internal: z.boolean().optional(),
+  isInternal: z.boolean().optional(),
 });
 
 async function handlePortalReply(req: Request, res: Response): Promise<any> {
@@ -405,41 +437,54 @@ async function handlePortalReply(req: Request, res: Response): Promise<any> {
       return res.status(404).json({ error: 'Ticket nicht gefunden.' });
     }
 
+    const wantsInternal =
+      parsed.data.is_internal === true || parsed.data.isInternal === true;
+    if (wantsInternal && !portalCanSeeInternalNotes(session.role)) {
+      return res.status(403).json({
+        error: 'Forbidden: Interne Notizen nur für CLIENT_ADMIN / CLIENT_SUPPORTER.',
+      });
+    }
+
     const now = new Date().toISOString();
-    const attachments = parseAttachments(parsed.data.attachments);
+    const attachments = wantsInternal ? [] : parseAttachments(parsed.data.attachments);
     const messageRecord = await addDocDirect(`tickets/${id}/messages`, {
       ticketId: id,
       senderId: session.id,
-      senderType: 'customer',
+      senderType: wantsInternal ? 'internal' : 'customer',
       senderName: parsed.data.senderName || req.user!.name || req.user!.email || 'Kunde',
       content: parsed.data.content,
       attachments,
-      deliveryStatus: 'delivered',
-      is_internal: false,
-      isInternal: false,
+      deliveryStatus: wantsInternal ? 'internal' : 'delivered',
+      is_internal: wantsInternal,
+      isInternal: wantsInternal,
+      type: wantsInternal ? 'internal_note' : 'reply',
       createdAt: now,
       updatedAt: now,
     });
 
-    const prevStatus = String(access.ticket.status || '').toLowerCase();
-    const ticketPatch: Record<string, unknown> = {
-      updatedAt: now,
-      lastReplyAt: now,
-      lastReplyBy: 'customer',
-    };
-    if (prevStatus === 'waiting_customer' || prevStatus === 'waiting' || prevStatus === 'on_hold') {
-      ticketPatch.status = 'open';
+    if (!wantsInternal) {
+      const prevStatus = String(access.ticket.status || '').toLowerCase();
+      const ticketPatch: Record<string, unknown> = {
+        updatedAt: now,
+        lastReplyAt: now,
+        lastReplyBy: 'customer',
+      };
+      if (prevStatus === 'waiting_customer' || prevStatus === 'waiting' || prevStatus === 'on_hold') {
+        ticketPatch.status = 'open';
+      }
+      await updateDocDirect('tickets', id, ticketPatch);
+    } else {
+      await updateDocDirect('tickets', id, { updatedAt: now });
     }
-    await updateDocDirect('tickets', id, ticketPatch);
 
     return res.status(201).json({
       success: true,
-      message: sanitizeTicketForClient({
+      message: {
         id: messageRecord.id,
         ...messageRecord,
-        is_internal: false,
-        isInternal: false,
-      } as any),
+        is_internal: wantsInternal,
+        isInternal: wantsInternal,
+      },
     });
   } catch (err: any) {
     safeLog('error', '[portal/tickets] reply failed', err?.message || err);
@@ -455,6 +500,18 @@ const patchSchema = z.object({
     .enum(['open', 'pending', 'in_progress', 'resolved', 'closed', 'waiting_customer', 'on_hold', 'paused'])
     .optional(),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
+  assignee_id: z.string().trim().max(128).optional().nullable(),
+  assigneeId: z.string().trim().max(128).optional().nullable(),
+  category: z.string().trim().max(128).optional().nullable(),
+  categoryId: z.string().trim().max(128).optional().nullable(),
+  categoryName: z.string().trim().max(128).optional().nullable(),
+  ticket_type: z.string().trim().max(128).optional().nullable(),
+  type: z.string().trim().max(128).optional().nullable(),
+  sla_tier: z.string().trim().max(64).optional().nullable(),
+  slaTier: z.string().trim().max(64).optional().nullable(),
+  account_health: z.string().trim().max(32).optional().nullable(),
+  accountHealth: z.string().trim().max(32).optional().nullable(),
+  escalated: z.boolean().optional(),
   hardwareReturn: hardwareReturnSchema,
 });
 
@@ -483,13 +540,89 @@ router.patch('/tickets/:id', async (req: Request, res: Response): Promise<any> =
       return res.status(404).json({ error: 'Ticket nicht gefunden.' });
     }
 
+    const data = parsed.data;
     const patch: Record<string, unknown> = {
       updatedAt: new Date().toISOString(),
     };
-    if (parsed.data.status) patch.status = parsed.data.status;
-    if (parsed.data.priority) patch.priority = parsed.data.priority;
-    if (parsed.data.status === 'resolved' || parsed.data.status === 'closed') {
+    if (data.status) patch.status = data.status;
+    if (data.priority) patch.priority = data.priority;
+    if (data.status === 'resolved' || data.status === 'closed') {
       patch.resolvedAt = new Date().toISOString();
+    }
+
+    const assigneeRaw =
+      data.assignee_id !== undefined ? data.assignee_id : data.assigneeId;
+    if (assigneeRaw !== undefined) {
+      if (!isClientOrgWideTicketRole(session.role)) {
+        return res.status(403).json({ error: 'Forbidden: Bearbeiter nur für Kunden-Admin/Supporter.' });
+      }
+      const assigneeId = assigneeRaw ? String(assigneeRaw).trim() : null;
+      if (assigneeId) {
+        const meta = await loadPortalTicketMeta(session.organizationId);
+        const allowed = meta.agents.some((a) => a.id === assigneeId);
+        if (!allowed) {
+          return res.status(400).json({
+            error: 'assignee_id must be a CLIENT_ADMIN or CLIENT_SUPPORTER in your organization.',
+          });
+        }
+      }
+      patch.assigneeId = assigneeId;
+      patch.assignee_id = assigneeId;
+      patch.assignedTo = assigneeId;
+    }
+
+    if (data.categoryId !== undefined || data.category !== undefined || data.categoryName !== undefined) {
+      let categoryId = data.categoryId ?? null;
+      let categoryName = data.categoryName ?? data.category ?? null;
+      let categorySlug: string | null = null;
+      if (categoryId) {
+        const cat = await getDocDirect('ticket_categories', categoryId);
+        if (cat && cat.isActive !== false) {
+          categoryName = String(cat.name || categoryName || '');
+          categorySlug = cat.slug || null;
+        } else {
+          categoryId = null;
+        }
+      } else if (categoryName) {
+        const cats = await listTicketCategories({ activeOnly: true });
+        const match = cats.find(
+          (c) => String(c.name || '').toLowerCase() === String(categoryName).toLowerCase(),
+        );
+        if (match) {
+          categoryId = match.id;
+          categorySlug = match.slug || null;
+          categoryName = match.name;
+        }
+      }
+      patch.categoryId = categoryId;
+      patch.categoryName = categoryName;
+      patch.categorySlug = categorySlug;
+      patch.category = categoryName;
+    }
+
+    const typeRaw = data.ticket_type !== undefined ? data.ticket_type : data.type;
+    if (typeRaw !== undefined) {
+      patch.type = typeRaw;
+      patch.ticket_type = typeRaw;
+    }
+
+    const slaRaw = data.sla_tier !== undefined ? data.sla_tier : data.slaTier;
+    if (slaRaw !== undefined) {
+      patch.slaTier = slaRaw;
+      patch.sla_tier = slaRaw;
+    }
+
+    const healthRaw =
+      data.account_health !== undefined ? data.account_health : data.accountHealth;
+    if (healthRaw !== undefined) {
+      const normalized = healthRaw ? normalizeAccountHealth(String(healthRaw)) : null;
+      patch.accountHealth = normalized;
+      patch.account_health = normalized;
+    }
+
+    if (data.escalated !== undefined) {
+      patch.escalated = Boolean(data.escalated);
+      patch.isEscalated = Boolean(data.escalated);
     }
 
     if (Object.keys(patch).length > 1) {
@@ -498,7 +631,7 @@ router.patch('/tickets/:id', async (req: Request, res: Response): Promise<any> =
 
     let hardwareReturn = null;
     const org = await getOrganization(session.organizationId);
-    if (parsed.data.hardwareReturn !== undefined) {
+    if (data.hardwareReturn !== undefined) {
       if (!org?.hardware_returns_enabled) {
         return res.status(404).json({ error: 'Hardware-Rücklieferungen sind für diese Organisation nicht aktiv.' });
       }
@@ -509,7 +642,7 @@ router.patch('/tickets/:id', async (req: Request, res: Response): Promise<any> =
         await upsertHardwareReturn({
           ticketId: id,
           organizationId: session.organizationId,
-          input: (parsed.data.hardwareReturn || {}) as any,
+          input: (data.hardwareReturn || {}) as any,
           mail1Days: org.hardware_returns_config.mail1_days_after_delivery,
         }),
       );
@@ -519,15 +652,249 @@ router.patch('/tickets/:id', async (req: Request, res: Response): Promise<any> =
     }
 
     const updated = await getDocDirect('tickets', id);
+    const { sanitizeTicketForPortalWorkspace } = await import(
+      '../lib/client-portal/portal-ticket-workspace.js'
+    );
     return res.json({
       success: true,
-      ticket: sanitizeTicketForClient({ ...(updated || access.ticket), id, ...patch }),
+      ticket: sanitizeTicketForPortalWorkspace({ ...(updated || access.ticket), id, ...patch }),
       hardwareReturn,
       enabledModules: { hardwareReturns: Boolean(org?.hardware_returns_enabled) },
     });
   } catch (err: any) {
     safeLog('error', '[portal/tickets] patch failed', err?.message || err);
     return res.status(500).json({ error: safeErrorMessage(err, 'Ticket konnte nicht aktualisiert werden') });
+  }
+});
+
+const aiSyncSchema = z.object({
+  forceRefresh: z.boolean().optional(),
+});
+
+router.post('/tickets/:id/ai-sync', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const session = sessionCtx(req);
+    if (!session.organizationId) {
+      return res.status(403).json({ error: 'Organization missing.' });
+    }
+    const id = routeParam(req.params.id);
+    const parsed = aiSyncSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Ungültige Eingabe' });
+    }
+
+    const raw = await getDocDirect('tickets', id);
+    const access = await assertPortalTicketAccess(session, raw, id);
+    if (access.ok === false) {
+      return res.status(access.status).json({ error: 'Ticket nicht gefunden.' });
+    }
+    const canMutate = await clientCanMutateTicket(session, access.ticket);
+    if (!canMutate) {
+      return res.status(404).json({ error: 'Ticket nicht gefunden.' });
+    }
+
+    const messages = (await getDocsDirect(`tickets/${id}/messages`, [])) as Array<
+      Record<string, unknown>
+    >;
+    const result = await runPortalTicketAiSync({
+      session,
+      ticket: access.ticket,
+      messages,
+      forceRefresh: parsed.data.forceRefresh === true,
+    });
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    safeLog('error', '[portal/tickets] ai-sync failed', err?.message || err);
+    return res.status(500).json({
+      error: safeErrorMessage(err, 'KI-Sync fehlgeschlagen'),
+    });
+  }
+});
+
+const taskCreateSchema = z.object({
+  task: z.string().trim().min(1).max(2000),
+});
+const taskPatchSchema = z.object({
+  task: z.string().trim().min(1).max(2000).optional(),
+  completed: z.boolean().optional(),
+});
+
+router.post('/tickets/:id/tasks', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const session = sessionCtx(req);
+    if (!session.organizationId) {
+      return res.status(403).json({ error: 'Organization missing.' });
+    }
+    const id = routeParam(req.params.id);
+    const parsed = taskCreateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Ungültige Eingabe', details: parsed.error.flatten() });
+    }
+    const raw = await getDocDirect('tickets', id);
+    const access = await assertPortalTicketAccess(session, raw, id);
+    if (access.ok === false) {
+      return res.status(access.status).json({ error: 'Ticket nicht gefunden.' });
+    }
+    if (!(await clientCanMutateTicket(session, access.ticket))) {
+      return res.status(404).json({ error: 'Ticket nicht gefunden.' });
+    }
+    const tasks = await addPortalTicketTask(access.ticket, parsed.data.task);
+    return res.status(201).json({ success: true, tasks });
+  } catch (err: any) {
+    return res.status(500).json({ error: safeErrorMessage(err, 'Aufgabe konnte nicht angelegt werden') });
+  }
+});
+
+router.patch('/tickets/:id/tasks/:taskId', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const session = sessionCtx(req);
+    if (!session.organizationId) {
+      return res.status(403).json({ error: 'Organization missing.' });
+    }
+    const id = routeParam(req.params.id);
+    const taskId = routeParam(req.params.taskId);
+    const parsed = taskPatchSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Ungültige Eingabe', details: parsed.error.flatten() });
+    }
+    const raw = await getDocDirect('tickets', id);
+    const access = await assertPortalTicketAccess(session, raw, id);
+    if (access.ok === false) {
+      return res.status(access.status).json({ error: 'Ticket nicht gefunden.' });
+    }
+    if (!(await clientCanMutateTicket(session, access.ticket))) {
+      return res.status(404).json({ error: 'Ticket nicht gefunden.' });
+    }
+    const tasks = await patchPortalTicketTask(access.ticket, taskId, parsed.data);
+    return res.json({ success: true, tasks });
+  } catch (err: any) {
+    const msg = err?.message || '';
+    const status = msg.includes('nicht gefunden') ? 404 : 500;
+    return res.status(status).json({ error: safeErrorMessage(err, 'Aufgabe konnte nicht aktualisiert werden') });
+  }
+});
+
+router.delete('/tickets/:id/tasks/:taskId', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const session = sessionCtx(req);
+    if (!session.organizationId) {
+      return res.status(403).json({ error: 'Organization missing.' });
+    }
+    const id = routeParam(req.params.id);
+    const taskId = routeParam(req.params.taskId);
+    const raw = await getDocDirect('tickets', id);
+    const access = await assertPortalTicketAccess(session, raw, id);
+    if (access.ok === false) {
+      return res.status(access.status).json({ error: 'Ticket nicht gefunden.' });
+    }
+    if (!(await clientCanMutateTicket(session, access.ticket))) {
+      return res.status(404).json({ error: 'Ticket nicht gefunden.' });
+    }
+    const tasks = await deletePortalTicketTask(access.ticket, taskId);
+    return res.json({ success: true, tasks });
+  } catch (err: any) {
+    return res.status(500).json({ error: safeErrorMessage(err, 'Aufgabe konnte nicht gelöscht werden') });
+  }
+});
+
+/** PATCH /tickets/:id/tasks — body must include taskId (alias without path param). */
+router.patch('/tickets/:id/tasks', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const session = sessionCtx(req);
+    if (!session.organizationId) {
+      return res.status(403).json({ error: 'Organization missing.' });
+    }
+    const id = routeParam(req.params.id);
+    const taskId = String((req.body as any)?.taskId || (req.body as any)?.id || '').trim();
+    if (!taskId) return res.status(400).json({ error: 'taskId is required.' });
+    const parsed = taskPatchSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Ungültige Eingabe', details: parsed.error.flatten() });
+    }
+    const raw = await getDocDirect('tickets', id);
+    const access = await assertPortalTicketAccess(session, raw, id);
+    if (access.ok === false) {
+      return res.status(access.status).json({ error: 'Ticket nicht gefunden.' });
+    }
+    if (!(await clientCanMutateTicket(session, access.ticket))) {
+      return res.status(404).json({ error: 'Ticket nicht gefunden.' });
+    }
+    const tasks = await patchPortalTicketTask(access.ticket, taskId, parsed.data);
+    return res.json({ success: true, tasks });
+  } catch (err: any) {
+    const msg = err?.message || '';
+    const status = msg.includes('nicht gefunden') ? 404 : 500;
+    return res.status(status).json({ error: safeErrorMessage(err, 'Aufgabe konnte nicht aktualisiert werden') });
+  }
+});
+
+router.delete('/tickets/:id/tasks', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const session = sessionCtx(req);
+    if (!session.organizationId) {
+      return res.status(403).json({ error: 'Organization missing.' });
+    }
+    const id = routeParam(req.params.id);
+    const taskId = String((req.body as any)?.taskId || (req.body as any)?.id || req.query.taskId || '').trim();
+    if (!taskId) return res.status(400).json({ error: 'taskId is required.' });
+    const raw = await getDocDirect('tickets', id);
+    const access = await assertPortalTicketAccess(session, raw, id);
+    if (access.ok === false) {
+      return res.status(access.status).json({ error: 'Ticket nicht gefunden.' });
+    }
+    if (!(await clientCanMutateTicket(session, access.ticket))) {
+      return res.status(404).json({ error: 'Ticket nicht gefunden.' });
+    }
+    const tasks = await deletePortalTicketTask(access.ticket, taskId);
+    return res.json({ success: true, tasks });
+  } catch (err: any) {
+    return res.status(500).json({ error: safeErrorMessage(err, 'Aufgabe konnte nicht gelöscht werden') });
+  }
+});
+
+const timeEntrySchema = z.object({
+  hours: z.number().positive().max(24),
+  kuerzel: z.string().trim().max(16).optional(),
+  description: z.string().trim().max(2000).optional(),
+  date: z.string().trim().max(32).optional(),
+  sonderzahlung: z.boolean().optional(),
+});
+
+router.post('/tickets/:id/time-entries', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const session = sessionCtx(req);
+    if (!session.organizationId) {
+      return res.status(403).json({ error: 'Organization missing.' });
+    }
+    const id = routeParam(req.params.id);
+    const parsed = timeEntrySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Ungültige Eingabe', details: parsed.error.flatten() });
+    }
+    const raw = await getDocDirect('tickets', id);
+    const access = await assertPortalTicketAccess(session, raw, id);
+    if (access.ok === false) {
+      return res.status(access.status).json({ error: 'Ticket nicht gefunden.' });
+    }
+    if (!(await clientCanMutateTicket(session, access.ticket))) {
+      return res.status(404).json({ error: 'Ticket nicht gefunden.' });
+    }
+    const entry = await addPortalTimeEntry({
+      ticket: access.ticket,
+      session,
+      agentName: req.user!.name || req.user!.email || session.id,
+      input: {
+        ticketId: id,
+        hours: parsed.data.hours,
+        kuerzel: parsed.data.kuerzel || 'XX',
+        description: parsed.data.description,
+        date: parsed.data.date,
+        sonderzahlung: parsed.data.sonderzahlung,
+      },
+    });
+    return res.status(201).json({ success: true, entry });
+  } catch (err: any) {
+    return res.status(400).json({ error: safeErrorMessage(err, 'Zeiteintrag konnte nicht gespeichert werden') });
   }
 });
 

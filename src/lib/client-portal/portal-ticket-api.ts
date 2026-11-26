@@ -100,8 +100,9 @@ export function sanitizeMessageForClientPortal<T extends Record<string, unknown>
 }
 
 /**
- * Pure builder for GET /api/portal/tickets/:id payload (after I/O).
- * Strips internals and sorts public messages chronologically.
+ * Pure builder for GET /api/portal/tickets/:id base payload (after I/O).
+ * By default strips internals and sorts public messages chronologically.
+ * Pass includeInternalNotes for CLIENT_ADMIN / CLIENT_SUPPORTER.
  */
 export function buildPortalTicketDetailResponse(params: {
   ticket: Record<string, unknown>;
@@ -112,6 +113,7 @@ export function buildPortalTicketDetailResponse(params: {
     added_by: string | null;
     created_at: string;
   }>;
+  includeInternalNotes?: boolean;
 }): {
   ticket: Record<string, unknown>;
   messages: Array<Record<string, unknown>>;
@@ -119,9 +121,23 @@ export function buildPortalTicketDetailResponse(params: {
   attachments: unknown[];
 } {
   const ticket = sanitizeTicketForClient(params.ticket);
-  const messages = sortMessagesOldestFirst(filterMessagesForClient(params.messages)).map(
-    sanitizeMessageForClientPortal,
-  );
+  const sorted = sortMessagesOldestFirst(params.messages);
+  const messages = params.includeInternalNotes
+    ? sorted.map((m) => {
+        const clone = { ...m } as Record<string, unknown>;
+        const internal =
+          m.is_internal === true ||
+          m.isInternal === true ||
+          m.visibility === 'internal' ||
+          m.channel === 'internal' ||
+          m.senderType === 'internal' ||
+          m.type === 'internal_note';
+        clone.is_internal = internal;
+        clone.isInternal = internal;
+        delete clone.aiCritiqueLog;
+        return clone;
+      })
+    : filterMessagesForClient(sorted).map(sanitizeMessageForClientPortal);
   const attachments = Array.isArray(ticket.attachments) ? ticket.attachments : [];
   return {
     ticket,
@@ -157,6 +173,15 @@ export const PORTAL_TICKET_ALLOWED_API_PREFIXES = [
   '/api/portal/team',
   '/api/portal/organization',
   '/api/auth/',
+] as const;
+
+/** Subpaths under /api/portal/tickets/:id used by the full workspace. */
+export const PORTAL_TICKET_WORKSPACE_SUBPATHS = [
+  '/messages',
+  '/replies',
+  '/ai-sync',
+  '/tasks',
+  '/time-entries',
 ] as const;
 
 export function isPortalTicketFrontendApiAllowed(url: string): boolean {
