@@ -12,6 +12,7 @@ import {
 } from '../ui/dropdown-menu';
 import { cn } from '../../lib/utils';
 import { statusBadgeClass } from './returns-layout-shared';
+import { DeviceTypeSelect } from './DeviceTypeSelect';
 
 /** Interactive status pill — saves immediately on select. */
 export function InlineStatusSelect({
@@ -150,21 +151,13 @@ export function DeviceSerialPopover({
           </p>
           <div className="space-y-1">
             <Label className="text-[10px] text-slate-500">Gerätetyp</Label>
-            <select
-              className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs"
+            <DeviceTypeSelect
+              size="sm"
+              aria-label="Bestehendes Gerät (Alt)"
               value={oldType}
-              onChange={(e) => setOldType(e.target.value)}
-            >
-              <option value="">— Keine Auswahl —</option>
-              {deviceTypes.map((t) => (
-                <option key={`old-${t}`} value={t}>
-                  {t}
-                </option>
-              ))}
-              {oldType && !deviceTypes.includes(oldType) ? (
-                <option value={oldType}>{oldType}</option>
-              ) : null}
-            </select>
+              onChange={setOldType}
+              options={deviceTypes}
+            />
           </div>
           <div className="space-y-1">
             <Label className="text-[10px] text-slate-500">Seriennummer (Alt)</Label>
@@ -182,21 +175,13 @@ export function DeviceSerialPopover({
           </p>
           <div className="space-y-1">
             <Label className="text-[10px] text-slate-500">Gerätetyp</Label>
-            <select
-              className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs"
+            <DeviceTypeSelect
+              size="sm"
+              aria-label="Neues Gerät (Neu)"
               value={newType}
-              onChange={(e) => setNewType(e.target.value)}
-            >
-              <option value="">— Keine Auswahl —</option>
-              {deviceTypes.map((t) => (
-                <option key={`new-${t}`} value={t}>
-                  {t}
-                </option>
-              ))}
-              {newType && !deviceTypes.includes(newType) ? (
-                <option value={newType}>{newType}</option>
-              ) : null}
-            </select>
+              onChange={setNewType}
+              options={deviceTypes}
+            />
           </div>
           <div className="space-y-1">
             <Label className="text-[10px] text-slate-500">Seriennummer (Neu)</Label>
