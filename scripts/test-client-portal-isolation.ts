@@ -25,6 +25,13 @@ import {
   sortMessagesOldestFirst,
 } from '../src/lib/client-portal/portal-ticket-api.js';
 import {
+  buildPortalCustomerSummary,
+  buildPortalVerlauf,
+  filterMessagesForPortalRole,
+  portalCanSeeInternalNotes,
+  sanitizeTicketForPortalWorkspace,
+} from '../src/lib/client-portal/portal-ticket-workspace.js';
+import {
   enforceClientDbTicketAccess,
   postFilterClientDbResult,
 } from '../src/lib/client-portal/db-ticket-guard.js';
@@ -360,13 +367,13 @@ function testCrossTenantBlock(): void {
 }
 
 function testInternalNotesBlock(): void {
-  console.log('\n[2] Internal notes never returned to CLIENT_* roles');
+  console.log('\n[2] List sanitizer strips Hubcom internals; CLIENT_USER never sees notes');
 
   const sanitized = sanitizeTicketForClient({ ...ticketOrgA });
   assert(!('agentComments' in sanitized), 'agentComments stripped');
   assert(!('internalNotes' in sanitized), 'internalNotes stripped');
-  assert(!('aiSummary' in sanitized), 'aiSummary stripped');
-  assert(!('aiInsights' in sanitized), 'aiInsights stripped');
+  assert(!('aiSummary' in sanitized), 'aiSummary stripped from list sanitizer');
+  assert(!('aiInsights' in sanitized), 'aiInsights stripped from list sanitizer');
   assert(!('aiRootCause' in sanitized), 'aiRootCause stripped');
   assert(!('aiChecklist' in sanitized), 'aiChecklist stripped');
   assert(!('aiSentiment' in sanitized), 'aiSentiment stripped');
@@ -382,6 +389,28 @@ function testInternalNotesBlock(): void {
     visibilityInternal as any,
   ]);
   assert(filtered.length === 1 && filtered[0].id === 'm1', 'only public message remains');
+
+  assert(portalCanSeeInternalNotes('CLIENT_ADMIN') === true, 'CLIENT_ADMIN may see Interne Notiz');
+  assert(
+    portalCanSeeInternalNotes('CLIENT_SUPPORTER') === true,
+    'CLIENT_SUPPORTER may see Interne Notiz',
+  );
+  assert(portalCanSeeInternalNotes('CLIENT_USER') === false, 'CLIENT_USER never sees Interne Notiz');
+
+  const forUser = filterMessagesForPortalRole(
+    [publicMsg as any, internalMsg as any, visibilityInternal as any],
+    'CLIENT_USER',
+  );
+  assert(forUser.length === 1 && forUser[0].id === 'm1', 'CLIENT_USER detail drops internal notes');
+
+  const forAdmin = filterMessagesForPortalRole(
+    [publicMsg as any, internalMsg as any],
+    'CLIENT_ADMIN',
+  );
+  assert(
+    forAdmin.length === 2 && forAdmin.some((m) => m.is_internal === true),
+    'CLIENT_ADMIN detail keeps internal notes flagged',
+  );
 
   for (const role of ['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER']) {
     assert(isClientPortalRole(role), `${role} is a portal role`);
@@ -465,6 +494,165 @@ async function testPortalTicketDetailApiContract(): Promise<void> {
   );
 }
 
+async function testPortalTicketWorkspacePayload(): Promise<void> {
+  console.log('\n[2c] GET /api/portal/tickets/:id full workspace tabs (org-scoped)');
+
+  const richTicket = {
+    ...ticketOrgA,
+    id: ticketOrgA.id,
+    organizationId: ORG_A,
+    customerName: 'Alice',
+    customerEmail: 'alice@a.test',
+    assigneeId: orgAAdmin.id,
+    type: 'incident',
+    slaTier: 'gold',
+    accountHealth: 'good',
+    escalated: false,
+    aiSummary: 'Summary A',
+    aiInsights: ['insight-1'],
+    aiRootCause: 'misconfig',
+    aiChecklist: [{ id: 't1', task: 'Check VPN', completed: false, source: 'ai' }],
+    aiSentiment: 'Neutral',
+    aiSuggestedDraft: 'Please reboot.',
+    linkedTicketIds: [ticketOrgB.id],
+    agentComments: 'must-not-leak-on-list-sanitizer',
+    createdAt: '2026-01-01T09:00:00.000Z',
+  };
+
+  const workspaceTicket = sanitizeTicketForPortalWorkspace(richTicket as any);
+  assert(workspaceTicket.aiSummary === 'Summary A', 'workspace ticket exposes aiSummary');
+  assert(workspaceTicket.suggested_reply === 'Please reboot.', 'workspace ticket exposes suggested_reply');
+  assert(workspaceTicket.assignee_id === orgAAdmin.id, 'workspace ticket exposes assignee_id');
+  assert(workspaceTicket.ticket_type === 'incident', 'workspace ticket exposes ticket_type');
+  assert(workspaceTicket.sla_tier === 'gold', 'workspace ticket exposes sla_tier');
+  assert(workspaceTicket.account_health === 'good', 'workspace ticket exposes account_health');
+  assert(!('agentComments' in workspaceTicket), 'workspace ticket still strips agentComments');
+
+  const msgs = [
+    {
+      id: 'm-pub',
+      content: 'hello',
+      createdAt: '2026-01-01T10:00:00.000Z',
+      is_internal: false,
+      senderName: 'Alice',
+    },
+    {
+      id: 'm-int',
+      content: 'secret note',
+      createdAt: '2026-01-01T11:00:00.000Z',
+      is_internal: true,
+      senderName: 'Admin',
+    },
+  ];
+
+  const adminMessages = filterMessagesForPortalRole(msgs as any, 'CLIENT_ADMIN');
+  const userMessages = filterMessagesForPortalRole(msgs as any, 'CLIENT_USER');
+  assert(adminMessages.length === 2, 'admin workspace messages include Interne Notiz');
+  assert(userMessages.length === 1, 'CLIENT_USER never receives is_internal=true notes');
+  assert(
+    userMessages.every((m) => m.is_internal !== true && m.isInternal !== true),
+    'CLIENT_USER payload has no internal flags',
+  );
+
+  const customer = buildPortalCustomerSummary({
+    ticket: richTicket as any,
+    organization: {
+      id: ORG_A,
+      name: 'Org A',
+      slug: 'org-a',
+      domain: 'a.test',
+      tier: 'gold',
+      sla: '4h',
+      industry: 'IT',
+      website: null,
+    } as any,
+  });
+  assert(customer.email === 'alice@a.test', 'customer summary email');
+  assert(customer.organization?.id === ORG_A, 'customer summary org scoped');
+
+  const verlauf = buildPortalVerlauf({
+    ticket: richTicket as any,
+    messages: adminMessages,
+    includeInternalNotes: true,
+  });
+  assert(
+    verlauf.some((e) => e.kind === 'ticket_created') &&
+      verlauf.some((e) => e.kind === 'internal_note'),
+    'verlauf includes create + internal note',
+  );
+
+  const aiInsights = {
+    summary: workspaceTicket.aiSummary,
+    insights: workspaceTicket.aiInsights,
+    rootCause: workspaceTicket.aiRootCause,
+    sentiment: workspaceTicket.aiSentiment,
+    suggestedReply: workspaceTicket.suggested_reply,
+    accountHealth: workspaceTicket.accountHealth,
+  };
+  const tasks = workspaceTicket.aiChecklist;
+  const metaShape = {
+    agents: [{ id: orgAAdmin.id, role: 'CLIENT_ADMIN' }],
+    statuses: [{ key: 'open' }],
+    priorities: [{ key: 'high' }],
+    categories: [{ name: 'Network' }],
+    ticket_types: [{ key: 'incident' }],
+  };
+  const workspacePayload = {
+    customer,
+    verlauf,
+    aiInsights,
+    assets: [],
+    neuralLinks: [],
+    tasks,
+    timeEntries: [],
+    meta: metaShape,
+  };
+  assert(Boolean(workspacePayload.customer && workspacePayload.verlauf.length), 'customer + verlauf present');
+  assert(Array.isArray(workspacePayload.aiInsights.insights), 'aiInsights present');
+  assert(Array.isArray(workspacePayload.assets), 'assets present');
+  assert(Array.isArray(workspacePayload.neuralLinks), 'neuralLinks present');
+  assert(Array.isArray(workspacePayload.tasks) && workspacePayload.tasks.length === 1, 'tasks present');
+  assert(Array.isArray(workspacePayload.timeEntries), 'timeEntries present');
+  assert(
+    Boolean(
+      workspacePayload.meta.agents.length &&
+        workspacePayload.meta.statuses.length &&
+        workspacePayload.meta.priorities.length &&
+        workspacePayload.meta.categories.length &&
+        workspacePayload.meta.ticket_types.length,
+    ),
+    'meta dropdowns present',
+  );
+
+  // Cross-tenant: Org B ticket must 404 for Org A session.
+  const deny = await assertPortalTicketAccess(orgAAdmin as any, ticketOrgB as any, ticketOrgB.id);
+  assert(deny.ok === false, 'cross-tenant ticket workspace access denied');
+
+  const routesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalTicketRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    routesSrc.includes("'/tickets/meta'") &&
+      routesSrc.includes("'/tickets/:id/ai-sync'") &&
+      routesSrc.includes("'/tickets/:id/tasks'") &&
+      routesSrc.includes("'/tickets/:id/time-entries'") &&
+      routesSrc.includes('buildPortalTicketWorkspaceDetail') &&
+      routesSrc.includes('is_internal') &&
+      !routesSrc.includes("'/api/db") &&
+      !routesSrc.includes('getDocsDirect(\'/\')'),
+    'portal ticket workspace routes wired without /api/db calls',
+  );
+  assert(
+    isPortalTicketFrontendApiAllowed('/api/portal/tickets/x/ai-sync') === true,
+    'ai-sync path allowed for portal frontend',
+  );
+  assert(
+    isPortalTicketFrontendApiAllowed('/api/portal/tickets/meta') === true,
+    'tickets/meta path allowed',
+  );
+}
+
 async function testClientUserScoping(): Promise<void> {
   console.log('\n[3] CLIENT_USER scoping (requester ∪ participants)');
 
@@ -518,7 +706,10 @@ async function testPrivilegeEscalation(): Promise<void> {
   assert(spoof.organization_id === undefined, 'organization_id stripped');
   assert(spoof.role === undefined, 'role stripped');
   assert(spoof.is_admin === undefined, 'is_admin stripped');
-  assert(spoof.is_internal === undefined, 'is_internal stripped');
+  assert(
+    spoof.is_internal === true,
+    'is_internal preserved for Interne Notiz (route enforces CLIENT_ADMIN/SUPPORTER)',
+  );
   assert(spoof.agentComments === undefined, 'agentComments stripped from spoof');
   assert(spoof.status === 'closed', 'legitimate status preserved');
 
@@ -5896,6 +6087,7 @@ async function main(): Promise<void> {
   testCrossTenantBlock();
   testInternalNotesBlock();
   await testPortalTicketDetailApiContract();
+  await testPortalTicketWorkspacePayload();
   await testClientUserScoping();
   await testPrivilegeEscalation();
   testSecretProtection();

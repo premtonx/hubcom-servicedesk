@@ -66,6 +66,11 @@ export function isInternalMessage(msg: Record<string, unknown> | null | undefine
   return false;
 }
 
+/** CLIENT_ADMIN / CLIENT_SUPPORTER may read/write Interne Notizen in the portal workspace. */
+export function portalRoleCanAccessInternalNotes(role: string | null | undefined): boolean {
+  return isClientOrgWideTicketRole(role);
+}
+
 /** Hubcom-only fields that must never appear in client portal ticket payloads. */
 export const CLIENT_HIDDEN_TICKET_FIELDS = [
   'internalNotes',
@@ -174,7 +179,12 @@ export async function filterTicketsForClient(
     .map((t) => sanitizeTicketForClient(t));
 }
 
-/** Fields client roles must never set from the request body (anti-spoof). */
+/**
+ * Fields client roles must never set from the request body (anti-spoof).
+ * Note: `is_internal` / `isInternal` are intentionally allowed so
+ * CLIENT_ADMIN / CLIENT_SUPPORTER can post Interne Notizen — the route
+ * still rejects CLIENT_USER when those flags are true.
+ */
 export const CLIENT_SPOOF_FIELDS = [
   'organizationId',
   'organization_id',
@@ -184,8 +194,6 @@ export const CLIENT_SPOOF_FIELDS = [
   'roleId',
   'is_admin',
   'isAdmin',
-  'is_internal',
-  'isInternal',
   'agentComments',
   'agent_comments',
   'internalNotes',
