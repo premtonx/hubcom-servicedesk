@@ -72,6 +72,12 @@ import {
   reminderStageLabel,
   type ConfiguredReminderStage,
 } from '../../lib/client-portal/hardware-returns-stages';
+import {
+  parseReturnKpiFilterParam,
+  ReturnKpiStrip,
+  type ReturnKpiFilterId,
+} from './ReturnKpiStrip';
+import { emptyHardwareReturnsKpis } from '../../lib/client-portal/hardware-returns-kpis';
 
 type WorkbenchMode = 'portal' | 'staff';
 
@@ -333,7 +339,13 @@ export function ReturnsWorkbench({
   const orgQ = mode === 'staff' ? `organizationId=${encodeURIComponent(organizationId)}` : '';
   const [searchParams] = useSearchParams();
 
+  const initialKpiFilter = parseReturnKpiFilterParam(searchParams.get('filter'));
   const initialView = ((): (typeof VIEWS)[number]['id'] => {
+    if (initialKpiFilter === 'open' || initialKpiFilter === 'overdue') {
+      return initialKpiFilter;
+    }
+    if (initialKpiFilter === 'escalated') return 'open';
+    if (initialKpiFilter === 'returned') return 'done';
     const v = String(searchParams.get('view') || '').trim();
     if (v === 'open' || v === 'overdue' || v === 'done' || v === 'all') {
       return v;
@@ -341,6 +353,7 @@ export function ReturnsWorkbench({
     return 'open';
   })();
   const initialMailStatus = ((): string => {
+    if (initialKpiFilter === 'escalated') return 'mail4plus';
     const m = String(searchParams.get('mailStatus') || '').trim();
     if (
       m === 'none' ||
@@ -376,11 +389,8 @@ export function ReturnsWorkbench({
   const [total, setTotal] = useState(0);
   const [items, setItems] = useState<ListItem[]>([]);
   const [kpis, setKpis] = useState({
-    open: 0,
-    overdue: 0,
+    ...emptyHardwareReturnsKpis(),
     nextMailDue: 0,
-    stage3: 0,
-    returnedLast30: 0,
   });
   const [autoSendEnabled, setAutoSendEnabled] = useState(false);
   const [settings, setSettings] = useState<Record<string, any> | null>(null);
@@ -848,53 +858,28 @@ export function ReturnsWorkbench({
 
   const applyEscalatedFilter = useCallback(() => {
     setView('open');
-    setMailStatus((prev) => (prev === 'mail4plus' ? 'all' : 'mail4plus'));
+    setMailStatus('mail4plus');
     setOverdueBucket('all');
     setPage(1);
   }, []);
 
-  const kpiCards = useMemo(
-    () => [
-      {
-        key: 'open',
-        label: 'Offene Rücklieferungen',
-        value: kpis.open,
-        accent: 'border-t-sky-500',
-        Icon: PackageOpen,
-        iconWrap: 'bg-sky-50 text-sky-700 border-sky-100',
-        onClick: () => applyViewFilter('open'),
-      },
-      {
-        key: 'overdue',
-        label: 'Überfällig',
-        value: kpis.overdue,
-        accent: 'border-t-rose-500',
-        Icon: AlertTriangle,
-        iconWrap: 'bg-rose-50 text-rose-700 border-rose-100',
-        onClick: () => applyViewFilter('overdue'),
-      },
-      {
-        key: 's3',
-        label: 'Letzte Stufe / Eskaliert (4.+ Erinnerung)',
-        // Same shared classifier as GET /api/portal/dashboard (stage ≥ 4).
-        value: kpis.stage3,
-        accent: 'border-t-violet-500',
-        Icon: ShieldAlert,
-        iconWrap: 'bg-violet-50 text-violet-700 border-violet-100',
-        onClick: () => applyEscalatedFilter(),
-      },
-      {
-        key: 'done',
-        label: 'Zurückgeliefert (30 Tage)',
-        value: kpis.returnedLast30,
-        accent: 'border-t-emerald-500',
-        Icon: CheckCircle2,
-        iconWrap: 'bg-emerald-50 text-emerald-700 border-emerald-100',
-        onClick: () => applyViewFilter('done'),
-      },
-    ],
-    [kpis, applyViewFilter, applyEscalatedFilter],
+  const applyKpiFilter = useCallback(
+    (filter: ReturnKpiFilterId) => {
+      if (filter === 'open') applyViewFilter('open');
+      else if (filter === 'overdue') applyViewFilter('overdue');
+      else if (filter === 'returned') applyViewFilter('done');
+      else applyEscalatedFilter();
+    },
+    [applyViewFilter, applyEscalatedFilter],
   );
+
+  const activeKpiFilter: ReturnKpiFilterId | null = useMemo(() => {
+    if (mailStatus === 'mail4plus' && view === 'open') return 'escalated';
+    if (view === 'open') return 'open';
+    if (view === 'overdue') return 'overdue';
+    if (view === 'done') return 'returned';
+    return null;
+  }, [view, mailStatus]);
 
   const pageCount =
     pageSize === 'all' ? 1 : Math.max(1, Math.ceil(total / (pageSize as number)));
@@ -1016,37 +1001,12 @@ export function ReturnsWorkbench({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {kpiCards.map((c) => {
-          const Icon = c.Icon;
-          return (
-            <button
-              key={c.key}
-              type="button"
-              onClick={c.onClick}
-              className={cn(
-                'rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:shadow border-t-2',
-                c.accent,
-              )}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 leading-snug">
-                  {c.label}
-                </p>
-                <span
-                  className={cn(
-                    'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border',
-                    c.iconWrap,
-                  )}
-                >
-                  <Icon className="w-4 h-4" />
-                </span>
-              </div>
-              <p className="text-2xl font-black mt-2 tabular-nums text-slate-900">{c.value}</p>
-            </button>
-          );
-        })}
-      </div>
+      <ReturnKpiStrip
+        kpis={kpis}
+        activeFilter={activeKpiFilter}
+        onSelect={applyKpiFilter}
+        loading={loading}
+      />
 
       <div className="flex flex-wrap items-center gap-2 justify-between">
         <div className="flex flex-wrap gap-2">

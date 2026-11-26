@@ -60,8 +60,43 @@ const SQL_OVERDUE = `(
   OR ${SQL_STAGE1_SENT}
 )`;
 
+/** Overdue start day (Berlin): day after due, or mail1/stage-1 sent day. */
+const SQL_OVERDUE_START_D = `COALESCE(
+  (
+    SELECT MIN(d) FROM (VALUES
+      (
+        CASE
+          WHEN return_due_date IS NOT NULL THEN (return_due_date + 1)
+          ELSE NULL
+        END
+      ),
+      (
+        CASE
+          WHEN mail1_sent_at IS NOT NULL
+            THEN (mail1_sent_at AT TIME ZONE 'Europe/Berlin')::date
+          ELSE (
+            SELECT MIN((NULLIF(TRIM(elem->>'sentAt'), '')::timestamptz AT TIME ZONE 'Europe/Berlin')::date)
+            FROM jsonb_array_elements(COALESCE(reminder_stages, '[]'::jsonb)) AS elem
+            WHERE COALESCE((elem->>'stage')::int, 0) = 1
+              AND NULLIF(TRIM(elem->>'sentAt'), '') IS NOT NULL
+          )
+        END
+      )
+    ) AS v(d)
+    WHERE d IS NOT NULL
+  ),
+  NULL
+)`;
+
+const SQL_STAGE4_REACHED_AT = `(
+  SELECT MIN(NULLIF(TRIM(elem->>'sentAt'), '')::timestamptz)
+  FROM jsonb_array_elements(COALESCE(reminder_stages, '[]'::jsonb)) AS elem
+  WHERE COALESCE((elem->>'stage')::int, 0) >= 4
+    AND NULLIF(TRIM(elem->>'sentAt'), '') IS NOT NULL
+)`;
+
 /**
- * Single indexed SQL — 4 KPI counts, no row transfer to Node.
+ * Single indexed SQL — KPI counts + dynamic 7d/today deltas, no row transfer.
  */
 export async function fetchPortalReturnsKpisSql(
   organizationId: string,
@@ -79,7 +114,35 @@ export async function fetchPortalReturnsKpisSql(
          WHERE returned = TRUE
            AND returned_at IS NOT NULL
            AND returned_at >= NOW() - INTERVAL '30 days'
-       )::int AS returned_30d_count
+       )::int AS returned_30d_count,
+       COUNT(*) FILTER (
+         WHERE returned = FALSE
+           AND created_at IS NOT NULL
+           AND created_at >= NOW() - INTERVAL '7 days'
+       )::int AS open_added_7d,
+       COUNT(*) FILTER (
+         WHERE returned = FALSE
+           AND (${SQL_OVERDUE})
+           AND (${SQL_OVERDUE_START_D}) = ${BERLIN_TODAY}
+       )::int AS overdue_added_today,
+       COUNT(*) FILTER (
+         WHERE returned = FALSE
+           AND (${SQL_OVERDUE})
+           AND (${SQL_OVERDUE_START_D}) IS NOT NULL
+           AND (${SQL_OVERDUE_START_D}) >= (${BERLIN_TODAY} - 6)
+           AND (${SQL_OVERDUE_START_D}) <= ${BERLIN_TODAY}
+       )::int AS overdue_added_7d,
+       COUNT(*) FILTER (
+         WHERE returned = FALSE
+           AND (${SQL_ESCALATED})
+           AND ${SQL_STAGE4_REACHED_AT} IS NOT NULL
+           AND ${SQL_STAGE4_REACHED_AT} >= NOW() - INTERVAL '7 days'
+       )::int AS escalated_7d,
+       COUNT(*) FILTER (
+         WHERE returned = TRUE
+           AND returned_at IS NOT NULL
+           AND returned_at >= NOW() - INTERVAL '7 days'
+       )::int AS returned_7d_count
      FROM ticket_hardware_returns
      WHERE organization_id = $1::uuid
        AND return_required = TRUE`,
@@ -91,6 +154,11 @@ export async function fetchPortalReturnsKpisSql(
     overdue: Number(row.overdue_count) || 0,
     stage3: Number(row.escalated_count) || 0,
     returnedLast30: Number(row.returned_30d_count) || 0,
+    openAddedLast7d: Number(row.open_added_7d) || 0,
+    overdueAddedToday: Number(row.overdue_added_today) || 0,
+    overdueAddedLast7d: Number(row.overdue_added_7d) || 0,
+    escalatedLast7d: Number(row.escalated_7d) || 0,
+    returnedLast7d: Number(row.returned_7d_count) || 0,
   };
 }
 

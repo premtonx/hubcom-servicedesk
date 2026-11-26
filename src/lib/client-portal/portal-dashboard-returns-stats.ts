@@ -84,6 +84,7 @@ export type PortalReturnsLeanRow = PortalReturnsTrendSourceRow & {
   mail1SentAt?: string | null;
   reminderStages?: ReminderStageSentLike[];
   reminderCount?: number;
+  createdAt?: string | null;
 };
 
 export { toBerlinDayMs } from './hardware-returns-kpis.js';

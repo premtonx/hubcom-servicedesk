@@ -1215,7 +1215,7 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
     workbenchSrc.includes('PAGE_SIZE_OPTIONS') &&
       workbenchSrc.includes('Erinnerungsverlauf') &&
       !workbenchSrc.includes('Nächste Mail fällig') &&
-      workbenchSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)'),
+      workbenchSrc.includes('ReturnKpiStrip'),
     'workbench pagination + Erinnerung KPI strip',
   );
   assert(
@@ -1224,12 +1224,16 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
       escalationSrc.includes('kpiRowFromHardwareRecord'),
     'returns list KPIs use shared classifier; Alle limit ≤2000',
   );
+  const kpiStripSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnKpiStrip.tsx'),
+    'utf8',
+  );
   assert(
     dashboardPageSrc.includes('returnsKpis') &&
       dashboardPageSrc.includes('hardwareReturnsEnabled') &&
       dashboardPageSrc.includes('Rücklieferungen-Trends') &&
       dashboardPageSrc.includes("useState<PortalReturnsTrendRange>('7d')") &&
-      dashboardPageSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
+      kpiStripSrc.includes('Letzte Stufe / Eskaliert (4.+ Erinnerung)') &&
       dashboardPageSrc.includes('getReturnsTrends') &&
       dashboardPageSrc.includes('AbortController') &&
       dashboardPageSrc.includes('ZERO_RETURNS_KPIS') &&
@@ -1242,6 +1246,8 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
       dashboardPageSrc.includes('HardwareReturnsExecutiveBody') &&
       dashboardPageSrc.includes('Aktuelle Aktivitäten') &&
       dashboardPageSrc.includes('WeeklyPerformanceCard') &&
+      dashboardPageSrc.includes('ReturnKpiStrip') &&
+      dashboardPageSrc.includes('returnKpiFilterHref') &&
       !dashboardPageSrc.includes('returnsActivityByRange[') &&
       dashboardRouteSrc.includes('loadPortalDashboardReturnsStats') &&
       !dashboardRouteSrc.includes('listHardwareReturnsWorkbench') &&
@@ -1252,7 +1258,15 @@ function testReturnsPaginationErinnerungDashboardLifecycle(): void {
       dashboardRouteSrc.includes('mergePortalRecentActivities') &&
       !dashboardPageSrc.includes('/api/db') &&
       !dashboardRouteSrc.includes("'/api/db"),
-    'portal Übersicht executive FE + 4-series trends + overview aggregates',
+    'portal Übersicht executive FE + shared ReturnKpiStrip + overview aggregates',
+  );
+  assert(
+    kpiStripSrc.includes('formatReturnKpiDelta') &&
+      kpiStripSrc.includes('w-12 h-12 rounded-2xl') &&
+      workbenchSrc.includes('ReturnKpiStrip') &&
+      workbenchSrc.includes('parseReturnKpiFilterParam') &&
+      !kpiStripSrc.includes('/api/db'),
+    'ReturnKpiStrip shared on dashboard + returns workbench',
   );
   assert(
     /function HardwareReturnsExecutiveBody[\s\S]*?Mitarbeiter & Rollen/.test(
