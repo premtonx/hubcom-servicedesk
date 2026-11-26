@@ -42,7 +42,10 @@ export async function cosineSearchRagChunks(params: {
   const queryText = stripHtmlToPlainText(params.query).slice(0, 4000);
   if (!queryText.trim()) return [];
 
-  const [vec] = await embedTexts([queryText], { workspaceId: tenantId });
+  const [vec] = await embedTexts([queryText], {
+    workspaceId: tenantId,
+    organizationId: params.organizationId,
+  });
   if (!vec) return [];
   const literal = vectorToSqlLiteral(vec);
 

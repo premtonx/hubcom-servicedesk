@@ -536,7 +536,31 @@ export async function runAiRequestLifecycle(
       policiesChecked.push('persona_skill_file');
     }
 
-    const executor = options.executor ?? createProductionModelExecutor(workspaceId);
+    const organizationIdFromCtx = (() => {
+      const fromMeta =
+        ctx.metadata && typeof ctx.metadata === 'object'
+          ? String(
+              (ctx.metadata as any).organizationId ??
+                (ctx.metadata as any).organization_id ??
+                '',
+            ).trim()
+          : '';
+      if (fromMeta) return fromMeta;
+      const customerId = String(ctx.customerId || '').trim();
+      if (
+        customerId &&
+        customerId.length >= 8 &&
+        !['standard', 'vip', 'enterprise'].includes(customerId)
+      ) {
+        return customerId;
+      }
+      return null;
+    })();
+    const executor =
+      options.executor ??
+      createProductionModelExecutor(workspaceId, {
+        organizationId: organizationIdFromCtx,
+      });
     let output: string;
     let confidence: number;
     let costUsd = 0;

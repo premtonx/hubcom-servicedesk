@@ -220,7 +220,14 @@ TICKET DESCRIPTION: ${context.description}
 THREAD HISTORY: ${context.threadHistory?.join("\n") || "No history."}`;
 
     try {
-      const { output } = await this.runLifecycleFeature('kb_generation', prompt);
+      const organizationId =
+        typeof context.customerMetadata?.organizationId === 'string'
+          ? context.customerMetadata.organizationId
+          : undefined;
+      const { output } = await this.runLifecycleFeature('kb_generation', prompt, {
+        customerId: organizationId,
+        metadata: organizationId ? { organizationId } : undefined,
+      });
       const body = JSON.parse(output);
       return {
         title: body.title || defaultResponse.title,
@@ -271,7 +278,7 @@ ${plain.slice(0, 14000)}`;
   async answerKnowledgeQuery(
     query: string,
     ragSnippets: { sourceTitle: string; source: string; text: string }[],
-    options?: { forceRefresh?: boolean; entityId?: string },
+    options?: { forceRefresh?: boolean; entityId?: string; organizationId?: string },
   ): Promise<string> {
     const contextBlock =
       ragSnippets.length > 0
@@ -296,8 +303,14 @@ Provide a concise, helpful answer in 2-4 short paragraphs or bullet points.`;
       `kb-search-${query.trim().toLowerCase().replace(/\s+/g, '-').slice(0, 96)}`;
 
     try {
+      const organizationId = String(options?.organizationId || '').trim() || undefined;
       const { output } = await this.runLifecycleFeature("ticket_summarization", prompt, {
-        metadata: { entityId: cacheEntityId, kbArticleId: cacheEntityId },
+        customerId: organizationId,
+        metadata: {
+          entityId: cacheEntityId,
+          kbArticleId: cacheEntityId,
+          ...(organizationId ? { organizationId } : {}),
+        },
         forceRefresh: options?.forceRefresh,
       });
       return output;

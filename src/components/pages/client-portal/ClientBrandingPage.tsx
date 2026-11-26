@@ -4,6 +4,7 @@ import { Loader2, Palette } from 'lucide-react';
 import { toast } from 'sonner';
 import { OrgPortalBrandingCard } from '../../client-portal/OrgPortalBrandingCard';
 import { PortalModulesCard } from '../../client-portal/PortalModulesCard';
+import { MandantenKiRagCard } from '../../client-portal/MandantenKiRagCard';
 import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
 
 type OrgBranding = {
@@ -110,6 +111,8 @@ export default function ClientBrandingPage() {
             );
           }}
         />
+
+        <MandantenKiRagCard mode="portal" organizationName={org.name} />
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
           <OrgPortalBrandingCard

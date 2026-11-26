@@ -21,6 +21,7 @@ import {
   type PortalEmailOrgSettings,
 } from '../../../services/clientPortalApi';
 import { OrgPortalBrandingCard } from '../../client-portal/OrgPortalBrandingCard';
+import { MandantenKiRagCard } from '../../client-portal/MandantenKiRagCard';
 import { EmailSignatureEditor } from '../../email/EmailSignatureEditor';
 import { DEFAULT_HUBCOM_SIGNATURE_HTML } from '../../../lib/email-signature';
 import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
@@ -584,6 +585,8 @@ export default function ClientEmailIntegrationPage() {
           </Button>
         </div>
       </div>
+
+      <MandantenKiRagCard mode="portal" organizationName="Mandant" />
 
       {/* Optional SSO */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">

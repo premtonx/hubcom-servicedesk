@@ -104,6 +104,16 @@ import {
   resolveIncludeSharedKbInRag,
 } from '../src/lib/ai/rag-org-scope.js';
 import {
+  applyOrgAiSettingsUpdate,
+  defaultOrgAiSettings,
+  embeddingRowsOwnedByOrg,
+  filterKbArticlesForOrgReindex,
+  LOCAL_AI_UNREACHABLE_ERROR,
+  normalizeOrgAiSettings,
+  resolveOrgAiRouting,
+  toPublicOrgAiSettings,
+} from '../src/lib/ai/org-ai-settings.js';
+import {
   evaluatePortalKbCategoryWriteAccess,
   portalCategoryId,
 } from '../src/lib/kb/kb-categories.js';
@@ -1647,6 +1657,7 @@ function testPortalKbIsolation(): void {
   testPortalKbSharePointCsvImport();
   testPortalKbWorkspaceApiIsolation();
   testPortalRagOrganizationIdIsolation();
+  testPortalOrgLocalAiSettingsIsolation();
 }
 
 /** Part 1 — portal KB workspace metrics, index_in_rag, ai-ask org tenant isolation. */
@@ -2126,6 +2137,152 @@ function testPortalRagOrganizationIdIsolation(): void {
       !kbRouteSrc.includes("'/api/db") &&
       !kbRouteSrc.includes('"/api/db'),
     'portal KB RAG never touches /api/db',
+  );
+}
+
+/** Part 2 — Mandanten local AI (Ollama) + org-only reindex isolation. */
+function testPortalOrgLocalAiSettingsIsolation(): void {
+  console.log('\n[12g] Mandanten-KI org_local_ai + strict_local_only + reindex isolation');
+
+  const DPG = 'org-dpg-ai-0001';
+  const OTHER = 'org-other-ai-0002';
+
+  const defaults = defaultOrgAiSettings();
+  assert(defaults.ai_mode === 'global_default', 'default ai_mode is global_default');
+  assert(defaults.include_shared_kb_in_rag === false, 'include_shared_kb_in_rag defaults false');
+
+  const dpgLocal = applyOrgAiSettingsUpdate(defaults, {
+    ai_mode: 'org_local_ai',
+    local_llm_endpoint: 'http://10.0.0.5:11434',
+    local_llm_model: 'llama3',
+    local_embedding_model: 'nomic-embed-text',
+    strict_local_only: true,
+    include_shared_kb_in_rag: false,
+    local_ai_api_key: 'dpg-secret-key',
+  });
+  assert(dpgLocal.ai_mode === 'org_local_ai', 'DPG set to org_local_ai');
+  assert(dpgLocal.strict_local_only === true, 'strict_local_only true for DPG');
+  assert(Boolean(dpgLocal.local_ai_api_key_enc), 'API key encrypted at rest');
+  assert(
+    !String(dpgLocal.local_ai_api_key_enc).includes('dpg-secret-key'),
+    'encrypted blob never contains plaintext key',
+  );
+
+  const publicDto = toPublicOrgAiSettings(dpgLocal);
+  assert(
+    publicDto.local_ai_api_key_set === true &&
+      !(publicDto as any).local_ai_api_key &&
+      !(publicDto as any).local_ai_api_key_enc,
+    'public DTO never exposes raw or encrypted secrets',
+  );
+
+  const routing = resolveOrgAiRouting(dpgLocal);
+  assert(
+    routing.mode === 'org_local_ai' &&
+      routing.endpoint === 'http://10.0.0.5:11434' &&
+      routing.strictLocalOnly === true &&
+      routing.allowCloudFallback === false,
+    'DPG routing is exclusive local — no cloud fallback',
+  );
+
+  // Simulate local failure decision: strict path must surface Mandanten error (never cloud).
+  assert(
+    LOCAL_AI_UNREACHABLE_ERROR === 'Lokale Mandanten-KI nicht erreichbar',
+    'strict failure message is Lokale Mandanten-KI nicht erreichbar',
+  );
+
+  const globalOrg = normalizeOrgAiSettings({ settings: { ai_mode: 'global_default' } });
+  assert(
+    resolveOrgAiRouting(globalOrg).mode === 'global_default',
+    'global_default orgs keep Hubcom AI routing',
+  );
+
+  // Reindex must only touch DPG articles / embedding rows.
+  const articles = [
+    { id: 'kb-dpg-1', organizationId: DPG, status: 'Published' },
+    { id: 'kb-dpg-2', organization_id: DPG, status: 'Published' },
+    { id: 'kb-other-1', organizationId: OTHER, status: 'Published' },
+    { id: 'kb-hubcom', organizationId: null, status: 'Published' },
+  ];
+  const dpgOnly = filterKbArticlesForOrgReindex(articles, DPG);
+  assert(
+    dpgOnly.length === 2 &&
+      dpgOnly.every((a) => (a.organizationId || a.organization_id) === DPG) &&
+      !dpgOnly.some((a) => a.id === 'kb-other-1'),
+    'reindex candidate filter keeps ONLY DPG articles (0 OtherOrg)',
+  );
+
+  const embeddings = [
+    { id: 'e1', organization_id: DPG, source_id: 'kb-dpg-1' },
+    { id: 'e2', organization_id: OTHER, source_id: 'kb-other-1' },
+    { id: 'e3', organization_id: null, source_id: 'kb-hubcom' },
+  ];
+  const purge = embeddingRowsOwnedByOrg(embeddings, DPG);
+  assert(
+    purge.length === 1 &&
+      purge[0].organization_id === DPG &&
+      !purge.some((e) => e.organization_id === OTHER),
+    'reindex purge set is ONLY DPG organization_id rows',
+  );
+
+  // Source contracts: portal + admin AI settings routes, executor + embeddings, UI card.
+  const portalRoutesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalRoutes.ts'),
+    'utf8',
+  );
+  const adminOrgSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/organizationAdminRoutes.ts'),
+    'utf8',
+  );
+  const executorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/ai-lifecycle-executor.ts'),
+    'utf8',
+  );
+  const embeddingsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/ai/embeddings.ts'),
+    'utf8',
+  );
+  const cardSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/MandantenKiRagCard.tsx'),
+    'utf8',
+  );
+  const portalApiSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/services/clientPortalApi.ts'),
+    'utf8',
+  );
+
+  assert(
+    portalRoutesSrc.includes("'/ai-settings'") &&
+      portalRoutesSrc.includes("'/ai-settings/test'") &&
+      portalRoutesSrc.includes("'/ai-settings/reindex'") &&
+      portalRoutesSrc.includes('CLIENT_ADMIN') &&
+      !portalRoutesSrc.includes("'/api/db") &&
+      !/ai-settings[\s\S]{0,800}'\/api\/db/.test(portalRoutesSrc),
+    'portal exposes GET/PUT/test/reindex ai-settings for CLIENT_ADMIN (no /api/db)',
+  );
+  assert(
+    adminOrgSrc.includes('ai-settings') &&
+      adminOrgSrc.includes('reindexOrganizationKbRag') &&
+      adminOrgSrc.includes('updateOrganizationAiSettings'),
+    'Admin-Hub org routes expose Mandanten-KI settings + reindex',
+  );
+  assert(
+    executorSrc.includes('org_local_ai') &&
+      executorSrc.includes('LOCAL_AI_UNREACHABLE_ERROR') &&
+      executorSrc.includes('organizationId') &&
+      embeddingsSrc.includes('organizationId') &&
+      embeddingsSrc.includes('LOCAL_AI_UNREACHABLE_ERROR'),
+    'lifecycle + embeddings route org_local_ai with strict no-cloud error',
+  );
+  assert(
+    (cardSrc.includes('Mandanten-KI & RAG') || cardSrc.includes('Mandanten-KI &amp; RAG')) &&
+      cardSrc.includes('Strict Local Only') &&
+      cardSrc.includes('Verbindung testen') &&
+      cardSrc.includes('neu indexieren') &&
+      portalApiSrc.includes('/api/portal/ai-settings') &&
+      portalApiSrc.includes('getAiSettings') &&
+      portalApiSrc.includes('reindexAiSettings'),
+    'UI card + portal API client wire Mandanten-KI',
   );
 }
 

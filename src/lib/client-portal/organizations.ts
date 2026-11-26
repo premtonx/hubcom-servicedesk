@@ -681,6 +681,47 @@ export async function updateOrganizationPortalModules(
   });
 }
 
+/** Persist Mandanten-KI & RAG local AI settings into organizations.settings. */
+export async function updateOrganizationAiSettings(
+  id: string,
+  input: import('../ai/org-ai-settings.js').OrgAiSettingsUpdateInput,
+): Promise<OrganizationRecord | null> {
+  const existing = await getOrganization(id);
+  if (!existing) return null;
+  const {
+    applyOrgAiSettingsUpdate,
+    normalizeOrgAiSettings,
+    orgAiSettingsToSettingsPatch,
+  } = await import('../ai/org-ai-settings.js');
+  const current = normalizeOrgAiSettings(existing);
+  const next = applyOrgAiSettingsUpdate(current, input);
+  const nextSettings: Record<string, unknown> = {
+    ...(existing.settings || {}),
+    ...orgAiSettingsToSettingsPatch(next),
+  };
+  return updateOrganization(id, { settings: nextSettings });
+}
+
+/** After a successful org RAG reindex, stamp last_embedding_model. */
+export async function stampOrganizationEmbeddingModel(
+  id: string,
+): Promise<OrganizationRecord | null> {
+  const existing = await getOrganization(id);
+  if (!existing) return null;
+  const {
+    markEmbeddingModelSaved,
+    normalizeOrgAiSettings,
+    orgAiSettingsToSettingsPatch,
+  } = await import('../ai/org-ai-settings.js');
+  const stamped = markEmbeddingModelSaved(normalizeOrgAiSettings(existing));
+  return updateOrganization(id, {
+    settings: {
+      ...(existing.settings || {}),
+      ...orgAiSettingsToSettingsPatch(stamped),
+    },
+  });
+}
+
 /** Public module flags exposed on /api/portal/me and /api/organizations/:id. */
 export function organizationEnabledModules(org: OrganizationRecord | null | undefined): {
   hardwareReturns: boolean;

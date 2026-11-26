@@ -127,9 +127,71 @@ async function callLocal(endpointUrl: string, apiKey: string | null, model: stri
   };
 }
 
-/** Production model executor — routes to live Google/OpenAI/Anthropic/local endpoints. */
-export function createProductionModelExecutor(workspaceId = 'default'): AiModelExecutor {
+export type ProductionExecutorOptions = {
+  /** When set, honor per-org Mandanten-KI settings (org_local_ai / disabled). */
+  organizationId?: string | null;
+};
+
+/**
+ * Production model executor — routes to live Google/OpenAI/Anthropic/local endpoints.
+ * When organizationId has ai_mode=org_local_ai, all calls go to that org's local LLM;
+ * strict_local_only never falls back to cloud providers.
+ */
+export function createProductionModelExecutor(
+  workspaceId = 'default',
+  opts?: ProductionExecutorOptions,
+): AiModelExecutor {
   return async ({ model, prompt, feature }) => {
+    const organizationId = String(opts?.organizationId || '').trim() || null;
+
+    if (organizationId) {
+      const { getOrganization } = await import('./client-portal/organizations.js');
+      const {
+        decryptOrgAiApiKey,
+        LOCAL_AI_UNREACHABLE_ERROR,
+        normalizeOrgAiSettings,
+        resolveOrgAiRouting,
+      } = await import('./ai/org-ai-settings.js');
+      const org = await getOrganization(organizationId);
+      const orgAi = normalizeOrgAiSettings(org);
+      const routing = resolveOrgAiRouting(orgAi);
+
+      if (routing.mode === 'disabled') {
+        throw new Error(routing.error);
+      }
+
+      if (routing.mode === 'org_local_ai') {
+        if (!routing.endpoint) {
+          throw new Error(LOCAL_AI_UNREACHABLE_ERROR);
+        }
+        try {
+          const apiKey = decryptOrgAiApiKey(orgAi);
+          const result = await callLocal(
+            routing.endpoint,
+            apiKey,
+            routing.model,
+            prompt,
+          );
+          return {
+            output: result.output,
+            confidence: estimateConfidence(result.output, feature),
+            costUsd: estimateCost(result.promptTokens, result.completionTokens, 'local-llama'),
+            promptTokens: result.promptTokens,
+            completionTokens: result.completionTokens,
+          };
+        } catch (err: unknown) {
+          if (routing.strictLocalOnly || !routing.allowCloudFallback) {
+            throw new Error(LOCAL_AI_UNREACHABLE_ERROR);
+          }
+          // Non-strict: fall through to global providers below.
+          console.warn(
+            '[ai-lifecycle] org local AI failed — cloud fallback allowed:',
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
+    }
+
     const config = await getOrchestratorConfig(workspaceId);
     const resolved = RUNTIME_MODELS[model] ?? (LOCAL_PROVIDER_IDS.has(model)
       ? { kind: 'local' as const, model: 'llama3' }

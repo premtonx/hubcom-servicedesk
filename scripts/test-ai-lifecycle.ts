@@ -150,6 +150,15 @@ import {
 } from '../src/lib/client-portal/portal-returns-cache.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  applyOrgAiSettingsUpdate,
+  defaultOrgAiSettings,
+  embeddingRowsOwnedByOrg,
+  filterKbArticlesForOrgReindex,
+  LOCAL_AI_UNREACHABLE_ERROR,
+  resolveOrgAiRouting,
+  toPublicOrgAiSettings,
+} from '../src/lib/ai/org-ai-settings.js';
 
 let passed = 0;
 let failed = 0;
@@ -2418,6 +2427,73 @@ function testPortalSsoAdminApprovalLifecycle(): void {
   );
 }
 
+function testOrgLocalAiStrictLifecycle(): void {
+  console.log('\n[Mandanten-KI] org_local_ai strict_local_only lifecycle');
+
+  const DPG = 'dpg-lifecycle-org';
+  const OTHER = 'other-lifecycle-org';
+  const configured = applyOrgAiSettingsUpdate(defaultOrgAiSettings(), {
+    ai_mode: 'org_local_ai',
+    local_llm_endpoint: 'http://127.0.0.1:9',
+    local_llm_model: 'llama3',
+    local_embedding_model: 'nomic-embed-text',
+    strict_local_only: true,
+  });
+  const routing = resolveOrgAiRouting(configured);
+  assert(
+    routing.mode === 'org_local_ai' &&
+      routing.strictLocalOnly === true &&
+      routing.allowCloudFallback === false,
+    'DPG org_local_ai never allows cloud fallback',
+  );
+  assert(
+    LOCAL_AI_UNREACHABLE_ERROR.includes('Mandanten-KI'),
+    'unreachable local AI uses Mandanten error (not cloud provider names)',
+  );
+  const pub = toPublicOrgAiSettings(configured);
+  assert(
+    !(pub as any).local_ai_api_key_enc && pub.ai_mode === 'org_local_ai',
+    'public settings hide secrets',
+  );
+
+  const reindexArticles = filterKbArticlesForOrgReindex(
+    [
+      { id: 'a', organizationId: DPG },
+      { id: 'b', organizationId: OTHER },
+    ],
+    DPG,
+  );
+  assert(
+    reindexArticles.length === 1 && reindexArticles[0].id === 'a',
+    'reindex enqueues ONLY DPG KB articles',
+  );
+  const rows = embeddingRowsOwnedByOrg(
+    [
+      { organization_id: DPG },
+      { organization_id: OTHER },
+    ],
+    DPG,
+  );
+  assert(rows.length === 1, 'reindex deletes ONLY DPG embedding rows');
+
+  const executorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/ai-lifecycle-executor.ts'),
+    'utf8',
+  );
+  const embeddingsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/ai/embeddings.ts'),
+    'utf8',
+  );
+  assert(
+    executorSrc.includes('createProductionModelExecutor') &&
+      executorSrc.includes('organizationId') &&
+      executorSrc.includes('strictLocalOnly') &&
+      embeddingsSrc.includes('strictOrgLocal') &&
+      embeddingsSrc.includes('LOCAL_AI_UNREACHABLE_ERROR'),
+    'executor + embeddings enforce strict org-local path',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('AI Request Lifecycle — dry-run test suite');
   console.log('='.repeat(50));
@@ -2458,6 +2534,7 @@ async function main(): Promise<void> {
   testReturnsDetailOverviewLifecycle();
   testSecondLevelSupportNotifyLifecycle();
   testPortalSsoAdminApprovalLifecycle();
+  testOrgLocalAiStrictLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);

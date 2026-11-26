@@ -16,6 +16,7 @@ import {
 import { OrgPortalBrandingCard } from '../../client-portal/OrgPortalBrandingCard';
 import { HardwareReturnsModuleCard } from '../../client-portal/HardwareReturnsModuleCard';
 import { PortalModulesCard } from '../../client-portal/PortalModulesCard';
+import { MandantenKiRagCard } from '../../client-portal/MandantenKiRagCard';
 import { DeletePortalUserDialog } from '../../ui/DeletePortalUserDialog';
 import { useTranslation } from '../../../lib/context/I18nContext';
 
@@ -389,6 +390,14 @@ export default function CompanyPortalTab({
           setVaultEnabled(next.vault_enabled);
         }}
       />
+
+      {organizationId ? (
+        <MandantenKiRagCard
+          mode="admin"
+          organizationId={organizationId}
+          organizationName={companyName}
+        />
+      ) : null}
 
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">

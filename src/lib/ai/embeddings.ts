@@ -333,7 +333,80 @@ function mapChatModelToEmbeddingKind(modelId: string): EmbeddingProviderKind | '
   return 'skip';
 }
 
-async function buildCandidates(workspaceId: string): Promise<ProviderCandidate[]> {
+async function buildOrgLocalCandidates(
+  organizationId: string,
+): Promise<{ candidates: ProviderCandidate[]; strictLocalOnly: boolean; disabled: boolean } | null> {
+  try {
+    const { getOrganization } = await import('../client-portal/organizations.js');
+    const {
+      decryptOrgAiApiKey,
+      normalizeOrgAiSettings,
+      resolveOrgAiRouting,
+    } = await import('./org-ai-settings.js');
+    const org = await getOrganization(organizationId);
+    if (!org) return null;
+    const orgAi = normalizeOrgAiSettings(org);
+    const routing = resolveOrgAiRouting(orgAi);
+    if (routing.mode === 'disabled') {
+      return { candidates: [], strictLocalOnly: true, disabled: true };
+    }
+    if (routing.mode !== 'org_local_ai') return null;
+    if (!routing.embeddingEndpoint) {
+      return {
+        candidates: [],
+        strictLocalOnly: routing.strictLocalOnly,
+        disabled: false,
+      };
+    }
+    const apiKey = decryptOrgAiApiKey(orgAi);
+    const model = routing.embeddingModel;
+    const endpoint = routing.embeddingEndpoint;
+    const candidates: ProviderCandidate[] = [
+      {
+        kind: 'openai_compat',
+        model,
+        label: `Mandanten-KI embeddings (${organizationId.slice(0, 8)})`,
+        available: async () => true,
+        embed: async (texts) =>
+          embedWithOpenAICompat(texts, model, endpoint, apiKey || undefined),
+      },
+      {
+        kind: 'ollama',
+        model,
+        label: `Mandanten-Ollama (${organizationId.slice(0, 8)})`,
+        available: async () => true,
+        embed: async (texts) => embedWithOllama(texts, model, endpoint),
+      },
+    ];
+    return {
+      candidates,
+      strictLocalOnly: routing.strictLocalOnly,
+      disabled: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function buildCandidates(
+  workspaceId: string,
+  opts?: { organizationId?: string | null },
+): Promise<ProviderCandidate[]> {
+  const organizationId = String(opts?.organizationId || '').trim() || null;
+  if (organizationId) {
+    const orgLocal = await buildOrgLocalCandidates(organizationId);
+    if (orgLocal) {
+      if (orgLocal.disabled) return [];
+      if (orgLocal.strictLocalOnly || orgLocal.candidates.length > 0) {
+        // Strict: only org local. Non-strict with endpoint: prefer org, then global.
+        if (orgLocal.strictLocalOnly) return orgLocal.candidates;
+        // Fall through after prepending org candidates.
+        const global = await buildCandidates(workspaceId);
+        return [...orgLocal.candidates, ...global];
+      }
+    }
+  }
+
   const force = (process.env.EMBEDDING_PROVIDER || '').trim().toLowerCase();
   const explicitModel = (process.env.EMBEDDING_MODEL || '').trim();
 
@@ -442,8 +515,9 @@ async function buildCandidates(workspaceId: string): Promise<ProviderCandidate[]
 /** Resolve which embedding backend will be used (first available in priority order). */
 export async function resolveEmbeddingProvider(
   workspaceId = 'default',
+  opts?: { organizationId?: string | null },
 ): Promise<ResolvedEmbeddingProvider> {
-  const candidates = await buildCandidates(workspaceId);
+  const candidates = await buildCandidates(workspaceId, opts);
   for (const candidate of candidates) {
     if (await candidate.available()) {
       return { kind: candidate.kind, model: candidate.model, label: candidate.label };
@@ -453,10 +527,13 @@ export async function resolveEmbeddingProvider(
 }
 
 /** List embedding backends and whether credentials/endpoints are present. */
-export async function listEmbeddingProviderStatus(workspaceId = 'default'): Promise<
+export async function listEmbeddingProviderStatus(
+  workspaceId = 'default',
+  opts?: { organizationId?: string | null },
+): Promise<
   Array<{ kind: EmbeddingProviderKind; label: string; model: string; available: boolean }>
 > {
-  const candidates = await buildCandidates(workspaceId);
+  const candidates = await buildCandidates(workspaceId, opts);
   const seen = new Set<string>();
   const out: Array<{ kind: EmbeddingProviderKind; label: string; model: string; available: boolean }> =
     [];
@@ -482,16 +559,50 @@ export async function listEmbeddingProviderStatus(workspaceId = 'default'): Prom
  */
 export async function embedTexts(
   texts: string[],
-  opts?: { workspaceId?: string; allowMockFallback?: boolean },
+  opts?: {
+    workspaceId?: string;
+    organizationId?: string | null;
+    allowMockFallback?: boolean;
+  },
 ): Promise<number[][]> {
   const filtered = texts.map((t) => t.trim()).filter(Boolean);
   if (filtered.length === 0) return [];
 
   const workspaceId = opts?.workspaceId || 'default';
+  const organizationId = String(opts?.organizationId || '').trim() || null;
+
+  let strictOrgLocal = false;
+  if (organizationId) {
+    try {
+      const { getOrganization } = await import('../client-portal/organizations.js');
+      const {
+        LOCAL_AI_UNREACHABLE_ERROR,
+        ORG_AI_DISABLED_ERROR,
+        isOrgStrictLocalAi,
+        normalizeOrgAiSettings,
+      } = await import('./org-ai-settings.js');
+      const org = await getOrganization(organizationId);
+      const orgAi = normalizeOrgAiSettings(org);
+      if (orgAi.ai_mode === 'disabled') {
+        lastEmbeddingFailure = ORG_AI_DISABLED_ERROR;
+        throw new Error(ORG_AI_DISABLED_ERROR);
+      }
+      strictOrgLocal = isOrgStrictLocalAi(orgAi);
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        (err.message.includes('deaktiviert') || err.message.includes('nicht erreichbar'))
+      ) {
+        throw err;
+      }
+    }
+  }
+
   const allowMock =
+    !strictOrgLocal &&
     opts?.allowMockFallback !== false &&
     String(process.env.EMBEDDING_DISABLE_MOCK_FALLBACK || '').toLowerCase() !== 'true';
-  const candidates = await buildCandidates(workspaceId);
+  const candidates = await buildCandidates(workspaceId, { organizationId });
   const errors: string[] = [];
 
   for (const candidate of candidates) {
@@ -506,6 +617,12 @@ export async function embedTexts(
       lastEmbeddingFailure = message;
       console.warn(`[embeddings] ${candidate.label} failed — trying next provider:`, message);
     }
+  }
+
+  if (strictOrgLocal) {
+    const { LOCAL_AI_UNREACHABLE_ERROR } = await import('./org-ai-settings.js');
+    lastEmbeddingFailure = LOCAL_AI_UNREACHABLE_ERROR;
+    throw new Error(LOCAL_AI_UNREACHABLE_ERROR);
   }
 
   const force = (process.env.EMBEDDING_PROVIDER || '').trim().toLowerCase();
@@ -525,7 +642,7 @@ export async function embedTexts(
 
   lastEmbeddingFailure = errors.join(' | ') || 'no credentials found';
   throw new Error(
-    `No embedding provider succeeded. Configure one of: OpenAI, Azure OpenAI, Gemini (GEMINI_API_KEY), or local Ollama/OpenAI-compat endpoint. Details: ${lastEmbeddingFailure}`,
+    `No embedding provider succeeded. Configure one of: OpenAI, Azure OpenAI, Gemini (GEMINI_API_KEY), or local Ollama/OpenAI-compatible endpoint. Details: ${lastEmbeddingFailure}`,
   );
 }
 
