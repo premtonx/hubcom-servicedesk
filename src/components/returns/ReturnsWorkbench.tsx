@@ -332,7 +332,7 @@ function renderDeviceColumn(hw: Record<string, any>) {
 }
 
 const DEFAULT_CATALOG_LISTS = {
-  statuses: ['Neu', 'Warten auf Third Level', 'In Bearbeitung', 'Geschlossen'],
+  statuses: ['Neu', 'Warten auf Third Level', 'Abgeschlossen'],
   device_types: [
     'VL2E Adapter',
     'Secutest Pro',
@@ -459,8 +459,11 @@ export function ReturnsWorkbench({
     setLoading(true);
     try {
       const apiMailStatus = mailStatus === 'mail4plus' ? 'all' : mailStatus;
+      // Kanban needs all 4 lifecycle buckets (incl. returned) — never hide
+      // Zurückgeliefert behind the Offene-Rücklieferungen list tab.
+      const apiView = layoutMode === 'kanban' ? 'all' : view;
       const params = new URLSearchParams({
-        view,
+        view: apiView,
         q,
         mailStatus: apiMailStatus,
         overdueBucket,
@@ -502,6 +505,7 @@ export function ReturnsWorkbench({
   }, [
     organizationId,
     view,
+    layoutMode,
     q,
     mailStatus,
     overdueBucket,
@@ -710,16 +714,20 @@ export function ReturnsWorkbench({
   const markReturnedItem = async (it: ListItem) => {
     const id = returnRowId(it);
     if (!id) return;
+    const nowIso = new Date().toISOString();
     try {
-      await axios.post(
-        `${base}/${encodeURIComponent(id)}/mark-returned`,
-        mode === 'staff' ? { organizationId } : {},
-        { withCredentials: true },
+      // Same PATCH path as Kanban DnD into Zurückgeliefert / Eingegangen.
+      await patchReturnFields(
+        it,
+        { returned: true, returned_at: nowIso },
+        {
+          successToast: 'Eingang bestätigt',
+          mergeLocal: { returned: true, returned_at: nowIso },
+        },
       );
-      toast.success('Eingang bestätigt');
       void load();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Fehler');
+    } catch {
+      /* rolled back in patchReturnFields */
     }
   };
 
@@ -1075,12 +1083,11 @@ export function ReturnsWorkbench({
         ) : layoutMode === 'kanban' ? (
           <ReturnsKanbanBoard
             items={items}
-            catalogStatuses={catalogStatuses}
+            includeAllReturned={view === 'done' || view === 'all'}
             configuredStages={configuredStages}
             onOpenDetails={openEdit}
             onMarkReturned={(it) => void markReturnedItem(it)}
             onUnreturn={(it) => void unreturnItem(it)}
-            onStatusChange={(it, status) => void patchReturnStatus(it, status)}
             onOpenSend={(it, stage) => void openSend(returnRowId(it), stage)}
           />
         ) : layoutMode === 'cards' ? (

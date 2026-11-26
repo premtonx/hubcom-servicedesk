@@ -49,7 +49,8 @@ export interface HardwareReturnsCatalogs {
 }
 
 export const DEFAULT_HARDWARE_RETURNS_CATALOGS: HardwareReturnsCatalogs = {
-  statuses: ['Neu', 'Warten auf Third Level', 'In Bearbeitung', 'Geschlossen'],
+  // New orgs only — existing org catalogs in DB are preserved as-is.
+  statuses: ['Neu', 'Warten auf Third Level', 'Abgeschlossen'],
   device_types: [
     'VL2E Adapter',
     'Secutest Pro',

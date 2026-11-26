@@ -59,8 +59,12 @@ import {
   toIsoDateOnly,
 } from '../src/lib/client-portal/hardware-returns-dates.js';
 import {
+  buildReturnsLifecycleBuckets,
   buildReturnsStatusColumns,
+  DEFAULT_RETURN_STATUSES,
+  resolveReturnsLifecycleColumn,
   resolveReturnsStatusColumn,
+  RETURNS_LIFECYCLE_COLUMNS,
 } from '../src/lib/client-portal/hardware-returns-layout.js';
 import {
   defaultConfiguredReminderStages,
@@ -1519,30 +1523,112 @@ function testReturnsListeKanbanKartenLifecycle(): void {
     workbenchSrc.includes('ReturnsViewModeSelector') &&
       workbenchSrc.includes('ReturnsKanbanBoard') &&
       workbenchSrc.includes('ReturnsCardGrid') &&
-      workbenchSrc.includes('patchReturnStatus'),
-    'workbench wires Liste|Kanban|Karten + status PATCH',
+      workbenchSrc.includes("layoutMode === 'kanban' ? 'all'") &&
+      workbenchSrc.includes('includeAllReturned'),
+    'workbench wires Liste|Kanban|Karten; Kanban loads view=all for 4 buckets',
   );
 
+  assert(
+    RETURNS_LIFECYCLE_COLUMNS.length === 4 &&
+      RETURNS_LIFECYCLE_COLUMNS.map((c) => c.id).join('|') ===
+        'open|overdue|escalated|returned',
+    'Kanban has 4 lifecycle columns matching KPI bars',
+  );
+  assert(
+    DEFAULT_RETURN_STATUSES.join('|') === 'Neu|Warten auf Third Level|Abgeschlossen' &&
+      !([...DEFAULT_RETURN_STATUSES] as string[]).includes('In Bearbeitung'),
+    'default status catalog drops In Bearbeitung for new orgs',
+  );
+
+  const now = new Date('2026-11-25T12:00:00.000Z');
+  const sample = [
+    {
+      hardwareReturn: {
+        return_required: true,
+        returned: false,
+        return_due_date: '2026-12-10',
+        mail1_sent_at: null,
+        reminder_stages: [],
+        reminder_count: 0,
+        status: 'Neu',
+      },
+    },
+    {
+      hardwareReturn: {
+        return_required: true,
+        returned: false,
+        return_due_date: '2026-11-01',
+        mail1_sent_at: null,
+        reminder_stages: [],
+        reminder_count: 0,
+        status: 'Neu',
+      },
+    },
+    {
+      hardwareReturn: {
+        return_required: true,
+        returned: false,
+        return_due_date: '2026-10-01',
+        mail1_sent_at: '2026-10-15T10:00:00.000Z',
+        reminder_stages: [{ stage: 4, sentAt: '2026-11-01T10:00:00.000Z' }],
+        reminder_count: 4,
+        status: 'Neu',
+      },
+    },
+    {
+      hardwareReturn: {
+        return_required: true,
+        returned: true,
+        returned_at: '2026-11-20T10:00:00.000Z',
+        return_due_date: '2026-11-01',
+        mail1_sent_at: null,
+        reminder_stages: [],
+        reminder_count: 0,
+        status: 'Abgeschlossen',
+      },
+    },
+  ];
+  assert(resolveReturnsLifecycleColumn(sample[0]!, now) === 'open', 'lifecycle → Offen');
+  assert(resolveReturnsLifecycleColumn(sample[1]!, now) === 'overdue', 'lifecycle → Überfällig');
+  assert(resolveReturnsLifecycleColumn(sample[2]!, now) === 'escalated', 'lifecycle → Eskaliert');
+  assert(resolveReturnsLifecycleColumn(sample[3]!, now) === 'returned', 'lifecycle → Zurückgeliefert');
+
+  const buckets = buildReturnsLifecycleBuckets(sample, { now, includeAllReturned: false });
+  assert(
+    buckets.open.length === 1 &&
+      buckets.overdue.length === 1 &&
+      buckets.escalated.length === 1 &&
+      buckets.returned.length === 1,
+    'lifecycle buckets have accurate counts (1 each)',
+  );
+
+  // Liste still uses catalog status columns (Kanban does not).
   const cols = buildReturnsStatusColumns(
-    ['Neu', 'In Bearbeitung', 'Geschlossen', 'Warten auf Logistik'],
+    ['Neu', 'Abgeschlossen', 'Warten auf Logistik'],
     [
       { hardwareReturn: { status: 'Neu' } },
       { hardwareReturn: { status: 'Warten auf Logistik' } },
       { hardwareReturn: { status: 'Sonderstatus DPG' } },
     ],
   );
-  assert(cols.includes('Warten auf Logistik'), 'admin-added status becomes Kanban column');
-  assert(cols.includes('Sonderstatus DPG'), 'orphan status gets its own column');
+  assert(cols.includes('Warten auf Logistik'), 'Liste catalog keeps admin-added statuses');
+  assert(cols.includes('Sonderstatus DPG'), 'Liste orphan status gets its own column');
   assert(
-    resolveReturnsStatusColumn('In Bearbeitung', cols) === 'In Bearbeitung',
-    'card move resolves target status column',
+    resolveReturnsStatusColumn('Abgeschlossen', cols) === 'Abgeschlossen',
+    'Liste status column resolves case-insensitively',
   );
+
   assert(
     kanbanSrc.includes('draggable') &&
       kanbanSrc.includes('onDrop') &&
+      kanbanSrc.includes('buildReturnsLifecycleBuckets') &&
+      kanbanSrc.includes('RETURNS_LIFECYCLE_COLUMNS') &&
+      kanbanSrc.includes("target === 'returned'") &&
+      workbenchSrc.includes('returned: true') &&
+      workbenchSrc.includes('returned_at: nowIso') &&
       !kanbanSrc.includes("'/api/db") &&
       !workbenchSrc.includes("'/api/db"),
-    'Kanban DnD + portal-safe (no /api/db)',
+    'Kanban DnD into Zurückgeliefert PATCHes returned=true (no /api/db)',
   );
 }
 

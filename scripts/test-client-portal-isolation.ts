@@ -139,9 +139,12 @@ import {
   toIsoDateOnly,
 } from '../src/lib/client-portal/hardware-returns-dates.js';
 import {
+  buildReturnsLifecycleBuckets,
   buildReturnsStatusColumns,
   DEFAULT_RETURN_STATUSES,
+  resolveReturnsLifecycleColumn,
   resolveReturnsStatusColumn,
+  RETURNS_LIFECYCLE_COLUMNS,
 } from '../src/lib/client-portal/hardware-returns-layout.js';
 import {
   evaluatePortalReturnsPageAccess,
@@ -4608,12 +4611,13 @@ function testHardwareReturnsListeKanbanKarten(): void {
   assert(
     workbenchSrc.includes('ReturnsKanbanBoard') &&
       workbenchSrc.includes('ReturnsCardGrid') &&
-      workbenchSrc.includes('patchReturnStatus') &&
       workbenchSrc.includes('axios.patch') &&
+      workbenchSrc.includes("layoutMode === 'kanban' ? 'all'") &&
       kanbanSrc.includes('draggable') &&
       kanbanSrc.includes('onDrop') &&
-      kanbanSrc.includes('buildReturnsStatusColumns'),
-    'Kanban uses catalog columns + drag-and-drop status PATCH',
+      kanbanSrc.includes('buildReturnsLifecycleBuckets') &&
+      kanbanSrc.includes('RETURNS_LIFECYCLE_COLUMNS'),
+    'Kanban uses 4 lifecycle columns + DnD (loads view=all)',
   );
   assert(
     cardsSrc.includes('grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3') &&
@@ -4624,8 +4628,78 @@ function testHardwareReturnsListeKanbanKarten(): void {
     'Karten grid renders device/reminder cards with Details/Eingang bestätigen',
   );
 
-  // Custom admin status becomes its own Kanban column; move resolves target.
-  const catalog = ['Neu', 'In Bearbeitung', 'Geschlossen', 'Warten auf Logistik'];
+  assert(
+    RETURNS_LIFECYCLE_COLUMNS.length === 4 &&
+      RETURNS_LIFECYCLE_COLUMNS.some((c) => c.id === 'open') &&
+      RETURNS_LIFECYCLE_COLUMNS.some((c) => c.id === 'overdue') &&
+      RETURNS_LIFECYCLE_COLUMNS.some((c) => c.id === 'escalated') &&
+      RETURNS_LIFECYCLE_COLUMNS.some((c) => c.id === 'returned'),
+    'Kanban lifecycle columns: Offen / Überfällig / Eskaliert / Zurückgeliefert',
+  );
+
+  const now = new Date('2026-11-25T12:00:00.000Z');
+  const lifeItems = [
+    {
+      hardwareReturn: {
+        return_required: true,
+        returned: false,
+        return_due_date: '2026-12-01',
+        mail1_sent_at: null,
+        reminder_count: 0,
+        reminder_stages: [],
+      },
+    },
+    {
+      hardwareReturn: {
+        return_required: true,
+        returned: false,
+        return_due_date: '2026-11-01',
+        mail1_sent_at: null,
+        reminder_count: 0,
+        reminder_stages: [],
+      },
+    },
+    {
+      hardwareReturn: {
+        return_required: true,
+        returned: false,
+        return_due_date: '2026-10-01',
+        mail1_sent_at: '2026-10-10T00:00:00.000Z',
+        reminder_count: 4,
+        reminder_stages: [{ stage: 4, sentAt: '2026-11-01T00:00:00.000Z' }],
+      },
+    },
+    {
+      hardwareReturn: {
+        return_required: true,
+        returned: true,
+        returned_at: '2026-11-20T00:00:00.000Z',
+        return_due_date: '2026-11-01',
+        mail1_sent_at: null,
+        reminder_count: 0,
+        reminder_stages: [],
+      },
+    },
+  ];
+  const buckets = buildReturnsLifecycleBuckets(lifeItems, { now });
+  assert(
+    buckets.open.length === 1 &&
+      buckets.overdue.length === 1 &&
+      buckets.escalated.length === 1 &&
+      buckets.returned.length === 1 &&
+      resolveReturnsLifecycleColumn(lifeItems[0]!, now) === 'open',
+    'lifecycle buckets accurate counts for all 4 columns',
+  );
+  assert(
+    kanbanSrc.includes("target === 'returned'") &&
+      workbenchSrc.includes('returned: true') &&
+      workbenchSrc.includes('returned_at: nowIso') &&
+      workbenchSrc.includes('Eingang bestätigt'),
+    'dragging into Zurückgeliefert PATCHes returned=true + returned_at',
+  );
+
+  // Liste/Karten still use catalog status columns.
+  const catalog = ['Neu', 'Abgeschlossen', 'Warten auf Logistik'];
   const items = [
     { hardwareReturn: { status: 'Neu' } },
     { hardwareReturn: { status: 'Warten auf Logistik' } },
@@ -4634,15 +4708,16 @@ function testHardwareReturnsListeKanbanKarten(): void {
   const columns = buildReturnsStatusColumns(catalog, items);
   assert(
     columns.includes('Warten auf Logistik') && columns.includes('Custom Escalation'),
-    'Kanban columns include admin-added + orphan custom statuses',
+    'Liste catalog columns include admin-added + orphan custom statuses',
   );
   assert(
     resolveReturnsStatusColumn('warten auf logistik', columns) === 'Warten auf Logistik',
-    'moving card matches status column case-insensitively',
+    'Liste status column matches case-insensitively',
   );
   assert(
-    buildReturnsStatusColumns([], []).join('|') === DEFAULT_RETURN_STATUSES.join('|'),
-    'empty catalog falls back to default statuses',
+    buildReturnsStatusColumns([], []).join('|') === DEFAULT_RETURN_STATUSES.join('|') &&
+      !([...DEFAULT_RETURN_STATUSES] as string[]).includes('In Bearbeitung'),
+    'empty catalog falls back to default statuses without In Bearbeitung',
   );
 
   // Portal mode: zero /api/db across layout surfaces.

@@ -184,7 +184,7 @@ export function mapParsedRowToHardwareInput(
     employee_phone: row.phoneOffice,
     employee_mobile: row.phoneMobile,
     assignee_name: row.assigneeName,
-    status: row.status || (row.returned ? 'Geschlossen' : 'Neu'),
+    status: row.status || (row.returned ? 'Abgeschlossen' : 'Neu'),
     sla: row.sla || 'Normal',
     service_level: row.serviceLevel,
     shipping_method: row.shippingMethod,

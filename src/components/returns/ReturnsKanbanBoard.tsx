@@ -1,99 +1,109 @@
 import { useMemo, useState } from 'react';
 import { cn } from '../../lib/utils';
 import {
-  buildReturnsStatusColumns,
-  resolveReturnsStatusColumn,
+  buildReturnsLifecycleBuckets,
+  RETURNS_LIFECYCLE_COLUMNS,
+  resolveReturnsLifecycleColumn,
+  type ReturnsLifecycleColumnId,
 } from '../../lib/client-portal/hardware-returns-layout';
 import type { ConfiguredReminderStage } from '../../lib/client-portal/hardware-returns-stages';
 import {
   returnRowId,
   ReturnsItemCardBody,
-  statusDotClass,
   type ReturnsListItem,
 } from './returns-layout-shared';
 
 interface ReturnsKanbanBoardProps {
   items: ReturnsListItem[];
-  catalogStatuses: string[];
+  /** When true, returned column shows all returned rows (Erledigt/Alle). Else last 30 days. */
+  includeAllReturned?: boolean;
   configuredStages?: ConfiguredReminderStage[] | null;
   onOpenDetails: (item: ReturnsListItem) => void;
   onMarkReturned: (item: ReturnsListItem) => void;
   onUnreturn?: (item: ReturnsListItem) => void;
-  onStatusChange: (item: ReturnsListItem, status: string) => void;
   onOpenSend?: (item: ReturnsListItem, stage: number) => void;
 }
 
 export function ReturnsKanbanBoard({
   items,
-  catalogStatuses,
+  includeAllReturned = false,
   configuredStages,
   onOpenDetails,
   onMarkReturned,
   onUnreturn,
-  onStatusChange,
   onOpenSend,
 }: ReturnsKanbanBoardProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<ReturnsLifecycleColumnId | null>(null);
 
-  const columns = useMemo(
-    () => buildReturnsStatusColumns(catalogStatuses, items),
-    [catalogStatuses, items],
+  const buckets = useMemo(
+    () =>
+      buildReturnsLifecycleBuckets(items, {
+        includeAllReturned,
+      }),
+    [items, includeAllReturned],
   );
 
-  const itemsByStatus = useMemo(() => {
-    const buckets: Record<string, ReturnsListItem[]> = {};
-    for (const col of columns) buckets[col] = [];
-    for (const it of items) {
-      const match = resolveReturnsStatusColumn(it.hardwareReturn.status, columns);
-      if (!buckets[match]) buckets[match] = [];
-      buckets[match].push(it);
-    }
-    return buckets;
-  }, [columns, items]);
-
-  const handleDropOnColumn = (status: string) => {
+  const handleDropOnColumn = (target: ReturnsLifecycleColumnId) => {
     if (!draggingId) return;
     const item = items.find((it) => returnRowId(it) === draggingId);
-    const current = String(item?.hardwareReturn.status || 'Neu').trim() || 'Neu';
-    if (!item || current.toLowerCase() === status.toLowerCase()) {
-      setDraggingId(null);
-      setDropTarget(null);
-      return;
-    }
-    onStatusChange(item, status);
     setDraggingId(null);
     setDropTarget(null);
+    if (!item) return;
+
+    const from = resolveReturnsLifecycleColumn(item);
+    if (!from || from === target) return;
+
+    // Open → Zurückgeliefert: mark returned (PATCH returned=true).
+    if (target === 'returned' && from !== 'returned') {
+      onMarkReturned(item);
+      return;
+    }
+    // Zurückgeliefert → Offen / Überfällig / Eskaliert: undo receipt.
+    if (from === 'returned' && target !== 'returned') {
+      onUnreturn?.(item);
+      return;
+    }
+    // Moves among open/overdue/escalated are classifier-derived (due/reminders) — no-op.
   };
 
   return (
     <div className="flex gap-3 p-4 min-h-[400px] overflow-x-auto">
-      {columns.map((col) => {
-        const colItems = itemsByStatus[col] || [];
-        const isDropActive = dropTarget === col;
+      {RETURNS_LIFECYCLE_COLUMNS.map((col) => {
+        const colItems = buckets[col.id] || [];
+        const isDropActive = dropTarget === col.id;
         return (
           <div
-            key={col}
+            key={col.id}
+            data-lifecycle-column={col.id}
             className={cn(
-              'flex-1 min-w-[240px] max-w-[320px] flex flex-col rounded-xl bg-slate-50/80 border border-slate-200/80 transition-colors',
-              isDropActive && 'border-blue-400 bg-blue-50/40 ring-2 ring-blue-200/60',
+              'flex-1 min-w-[240px] max-w-[320px] flex flex-col rounded-xl bg-slate-50/80 border border-slate-200/80 border-t-4 transition-colors',
+              col.accentBorder,
+              isDropActive && 'bg-white ring-2 ring-blue-200/60',
             )}
             onDragOver={(e) => {
               e.preventDefault();
-              setDropTarget(col);
+              setDropTarget(col.id);
             }}
             onDragLeave={() => {
-              if (dropTarget === col) setDropTarget(null);
+              if (dropTarget === col.id) setDropTarget(null);
             }}
             onDrop={(e) => {
               e.preventDefault();
-              handleDropOnColumn(col);
+              handleDropOnColumn(col.id);
             }}
           >
             <div className="px-3 py-2 border-b border-slate-200/80 flex items-center gap-2">
-              <span className={cn('h-2 w-2 rounded-full shrink-0', statusDotClass(col))} />
-              <span className="text-xs font-semibold text-slate-700 truncate">{col}</span>
-              <span className="ml-auto inline-flex items-center rounded-full bg-white border border-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-500 tabular-nums">
+              <span className={cn('h-2 w-2 rounded-full shrink-0', col.accentDot)} />
+              <span className="text-xs font-semibold text-slate-700 truncate" title={col.label}>
+                {col.label}
+              </span>
+              <span
+                className={cn(
+                  'ml-auto inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
+                  col.accentBadge,
+                )}
+              >
                 {colItems.length}
               </span>
             </div>
@@ -109,6 +119,7 @@ export function ReturnsKanbanBoard({
                   <div
                     key={id}
                     draggable
+                    data-return-id={id}
                     onDragStart={(e) => {
                       e.dataTransfer.setData('text/plain', id);
                       e.dataTransfer.effectAllowed = 'move';
@@ -126,14 +137,13 @@ export function ReturnsKanbanBoard({
                   >
                     <ReturnsItemCardBody
                       item={item}
-                      statuses={columns}
+                      statuses={[]}
                       configuredStages={configuredStages}
                       compact
-                      showStatusSelect
+                      showStatusSelect={false}
                       onOpenDetails={() => onOpenDetails(item)}
                       onMarkReturned={() => onMarkReturned(item)}
                       onUnreturn={onUnreturn ? () => onUnreturn(item) : undefined}
-                      onStatusChange={(status) => onStatusChange(item, status)}
                       onOpenSend={
                         onOpenSend ? (stage) => onOpenSend(item, stage) : undefined
                       }

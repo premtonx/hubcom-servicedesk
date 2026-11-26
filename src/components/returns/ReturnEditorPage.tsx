@@ -99,7 +99,7 @@ type DirectoryHit = {
 type Assignee = { id: string; name: string; email: string; role: string };
 
 const DEFAULT_CATALOGS: Catalogs = {
-  statuses: ['Neu', 'Warten auf Third Level', 'In Bearbeitung', 'Geschlossen'],
+  statuses: ['Neu', 'Warten auf Third Level', 'Abgeschlossen'],
   device_types: [
     'VL2E Adapter',
     'Secutest Pro',
