@@ -315,7 +315,7 @@ export function KnowledgeBaseArticlePage({
 
   const handleToggleIndexInRag = useCallback(
     async (checked: boolean) => {
-      if (isPortal || !capabilities.ragIndexToggle) return;
+      if (!capabilities.ragIndexToggle) return;
       if (isSeedArticle(liveArticle.id)) {
         setLiveArticle((prev) => ({ ...prev, index_in_rag: checked }));
         onArticleUpdated(liveArticle.id, { index_in_rag: checked });
@@ -340,7 +340,7 @@ export function KnowledgeBaseArticlePage({
         toast.error(message);
       }
     },
-    [adapter, capabilities.ragIndexToggle, isPortal, liveArticle.id, onArticleUpdated],
+    [adapter, capabilities.ragIndexToggle, liveArticle.id, onArticleUpdated],
   );
 
   const handleAiExplain = useCallback(async () => {
@@ -461,9 +461,15 @@ export function KnowledgeBaseArticlePage({
       onCreateCategory={onCreateCategory}
       onHelpful={handleHelpful}
       onUnhelpful={handleUnhelpful}
-      indexInRag={isPortal || !capabilities.ragIndexToggle ? undefined : liveArticle.index_in_rag !== false}
+      indexInRag={
+        !capabilities.ragIndexToggle
+          ? undefined
+          : isPortal
+            ? liveArticle.index_in_rag === true
+            : liveArticle.index_in_rag !== false
+      }
       onToggleIndexInRag={
-        isPortal || !capabilities.ragIndexToggle
+        !capabilities.ragIndexToggle
           ? undefined
           : (checked) => void handleToggleIndexInRag(checked)
       }

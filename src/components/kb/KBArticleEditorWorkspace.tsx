@@ -380,7 +380,7 @@ export function KBArticleEditorWorkspace({
           </div>
         </div>
 
-        {showRagToggle && !isPortal ? (
+        {showRagToggle ? (
           <div className="space-y-2">
             <Label className="text-[9.5px] uppercase font-black text-slate-400 tracking-wider">
               {t('kb.editor.ragAccess', 'KI-Wissensspeicher (RAG)')}
@@ -398,7 +398,7 @@ export function KBArticleEditorWorkspace({
                 </span>
               </div>
               <Switch
-                checked={newArticle.index_in_rag !== false}
+                checked={newArticle.index_in_rag === true || (!isPortal && newArticle.index_in_rag !== false)}
                 onCheckedChange={(checked) => {
                   const value = Boolean(checked);
                   patchArticle({ index_in_rag: value });

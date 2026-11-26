@@ -135,6 +135,7 @@ import {
 import { KBCategoryDeleteModal, type CategoryDeleteStrategy } from './KBCategoryDeleteModal';
 import { useWorkspace } from '../../lib/context/WorkspaceContext';
 import { KBAutopilotDashboard } from '../KBAutopilotDashboard';
+import { PortalKbAiAssistantPanel } from './PortalKbAiAssistantPanel';
 import { KBSharePointCsvImportModal } from './KBSharePointCsvImportModal';
 import { KBArticle } from '../../types';
 import { KnowledgeBaseArticlePage } from '../pages/KnowledgeBaseArticlePage';
@@ -654,13 +655,26 @@ export function KnowledgeBaseWorkbench({
       owner: mode === 'portal' ? '' : meName,
       reviewer: '',
       lastEditor: user?.email || meName || '',
-      status: mode === 'portal' ? 'Published' : 'Draft',
+      status: capabilities.draftsNav ? 'Draft' : 'Published',
       avgReadTime: '',
-      index_in_rag: mode !== 'portal',
+      index_in_rag: capabilities.ragIndexToggle ? false : mode !== 'portal',
     });
     setTagInput('');
     setEditingArticleId(null);
     setIsAddingArticle(true);
+  };
+
+  const openCreateArticleFromAi = (draft: { title: string; content: string }) => {
+    openCreateArticle();
+    // After create-draft defaults land, overlay the AI-generated title/body.
+    queueMicrotask(() => {
+      setNewArticle((prev) => ({
+        ...prev,
+        title: draft.title,
+        content: draft.content,
+        status: capabilities.draftsNav ? 'Draft' : 'Published',
+      }));
+    });
   };
 
   const handleSaveArticle = async (saveMode: KBArticleSaveMode = 'draft') => {
@@ -733,7 +747,11 @@ export function KnowledgeBaseWorkbench({
         status,
         avgReadTime: newArticle.avgReadTime || '4m 00s',
         language: 'de',
-        index_in_rag: mode === 'portal' ? false : newArticle.index_in_rag !== false,
+        index_in_rag: capabilities.ragIndexToggle
+          ? newArticle.index_in_rag === true
+          : mode === 'portal'
+            ? false
+            : newArticle.index_in_rag !== false,
       };
 
       if (editingArticleId) {
@@ -897,7 +915,7 @@ export function KnowledgeBaseWorkbench({
   };
 
   const handleCopyArticleLink = (articleId: string) => {
-    const url = buildKbArticleDeepLink(articleId);
+    const url = buildKbArticleDeepLink(articleId, mode);
     void navigator.clipboard.writeText(url).then(() => {
       toast.success('Link kopiert!');
     }).catch(() => {
@@ -1198,6 +1216,26 @@ export function KnowledgeBaseWorkbench({
       }
       setAiSearchError(null);
       setIsAiSearchLoading(true);
+
+      // Portal: org-scoped portal KB ai-ask (never staff vectors or DB routes).
+      if (adapter.askPortalAi) {
+        try {
+          const result = await adapter.askPortalAi(query, options);
+          const snippets = (result.snippets || []).map((hit) => ({
+            ...hit,
+            text: truncateRagSnippet(String(hit.text || '')),
+          })) as RAGResult[];
+          setAiSearchSources(snippets);
+          setAiSearchSummary(result.answer);
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : t('kb.aiAnswerFailed', 'Could not generate an AI answer.');
+          setAiSearchError(message);
+        } finally {
+          setIsAiSearchLoading(false);
+        }
+        return;
+      }
 
       const scopedArticles = filterArticlesByWorkspace(articles, workspace);
       const ragHits = adapter.findRelevantContext?.(query, scopedArticles) ?? [];
@@ -1761,9 +1799,7 @@ export function KnowledgeBaseWorkbench({
               active={kbNav}
               onNavigate={handleKbNavigate}
               onOpenSettings={
-                capabilities.categoryAdmin && mode === 'staff'
-                  ? () => setIsCategoryAdminOpen(true)
-                  : undefined
+                capabilities.categoryAdmin ? () => setIsCategoryAdminOpen(true) : undefined
               }
               categories={categories}
               counts={sidebarCounts}
@@ -1941,11 +1977,24 @@ export function KnowledgeBaseWorkbench({
                   ) : kbSection === 'sources' && capabilities.externalSourcesTab ? (
                     <KBExternalSourcesTab />
                   ) : isAiAssistantMode ? (
-                    <KBAutopilotDashboard
-                      embedded
-                      onBackToKB={() => handleKbNavigate({ type: 'workspace', id: 'overview' })}
-                      onArticlePublished={() => handleKbNavigate({ type: 'workspace', id: 'overview' })}
-                    />
+                    mode === 'portal' ? (
+                      <PortalKbAiAssistantPanel
+                        adapter={adapter}
+                        canGenerate={capabilities.aiGenerate}
+                        onApplyGenerated={
+                          capabilities.canCreateArticles ? openCreateArticleFromAi : undefined
+                        }
+                        onBackToKb={() => handleKbNavigate({ type: 'workspace', id: 'overview' })}
+                      />
+                    ) : (
+                      <KBAutopilotDashboard
+                        embedded
+                        onBackToKB={() => handleKbNavigate({ type: 'workspace', id: 'overview' })}
+                        onArticlePublished={() =>
+                          handleKbNavigate({ type: 'workspace', id: 'overview' })
+                        }
+                      />
+                    )
                   ) : isKbEmpty && isOverviewMode ? (
                     <KBEmptyWorkspace
                       onCreateArticle={() => openCreateArticle()}
@@ -1961,14 +2010,22 @@ export function KnowledgeBaseWorkbench({
                     <>
                   {isOverviewMode ? (
                     <KBKpiCards
-                      variant={mode === 'portal' ? 'portal' : 'staff'}
+                      variant={
+                        mode === 'portal' && !capabilities.kbHealthTelemetry ? 'portal' : 'staff'
+                      }
                       publishedCount={
-                        mode === 'portal' ? portalPublishedCount : publishedCount
+                        mode === 'portal' && !capabilities.kbHealthTelemetry
+                          ? portalPublishedCount
+                          : publishedCount
                       }
                       draftCount={draftCount}
                       healthScore={capabilities.kbHealthTelemetry ? healthScore : 0}
                       monthlyViews={monthlyViews}
-                      trends={mode === 'portal' ? undefined : dashboardMetrics.trends}
+                      trends={
+                        mode === 'portal' && !capabilities.kbHealthTelemetry
+                          ? undefined
+                          : dashboardMetrics.trends
+                      }
                       portalOrgCount={portalOrgCount}
                       portalSharedCount={portalSharedCount}
                       portalRecentlyUpdatedCount={portalRecentlyUpdatedCount}
@@ -2168,7 +2225,8 @@ export function KnowledgeBaseWorkbench({
                   )}
                 </main>
 
-                {!isAiAssistantMode && mode === 'staff' ? (
+                {!isAiAssistantMode &&
+                (capabilities.aiInsights || capabilities.kbHealthTelemetry) ? (
                 <aside className="xl:w-[280px] shrink-0 border-t xl:border-t-0 xl:border-l border-slate-200/80 bg-white px-4 py-6 xl:sticky xl:top-0 xl:self-start">
                   <KBActivitySidebar
                     recentActivity={recentActivity}
@@ -2176,7 +2234,12 @@ export function KnowledgeBaseWorkbench({
                     reviewCount={needsReviewCount}
                     missingTagsCount={missingTagsCount}
                     outdatedCount={outdatedCount}
-                    aiRecommendations={workspaceArticles.length === 0 ? 0 : (coverageData?.aiSuggestions?.length ?? 0)}
+                    aiRecommendations={
+                      workspaceArticles.length === 0
+                        ? 0
+                        : (coverageData?.aiSuggestions?.length ??
+                          missingTagsCount + outdatedCount + needsReviewCount)
+                    }
                     contributors={topContributors}
                   />
                 </aside>

@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState, type ReactNode } from 'react';
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { Toaster } from './components/ui/sonner';
 import { TooltipProvider } from './components/ui/tooltip';
 import MainLayout from './components/layout/MainLayout';
@@ -205,6 +205,14 @@ function ClientAwareHomeRedirect() {
     );
   }
   return <Navigate to={isClient ? '/portal/dashboard' : '/dashboard'} replace />;
+}
+
+/** Deep-link alias: /kb/:id and /portal/kb/:id → shared workbench ?article= query. */
+function KbArticlePathRedirect({ basePath }: { basePath: '/kb' | '/portal/kb' }) {
+  const { id } = useParams<{ id: string }>();
+  const articleId = String(id || '').trim();
+  if (!articleId) return <Navigate to={basePath} replace />;
+  return <Navigate to={`${basePath}?article=${encodeURIComponent(articleId)}`} replace />;
 }
 
 function OnboardingGate({ children }: { children: ReactNode }) {
@@ -476,6 +484,14 @@ function AppRoutes() {
                         }
                       />
                       <Route
+                        path="kb/:id"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Wissensdatenbank" />}>
+                            <KbArticlePathRedirect basePath="/portal/kb" />
+                          </ErrorBoundary>
+                        }
+                      />
+                      <Route
                         path="exchange"
                         element={
                           <ErrorBoundary fallback={<ModuleCrashFallback module="Portal Sicherer Austausch" />}>
@@ -615,6 +631,16 @@ function AppRoutes() {
                     <Route path="returns" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Rücklieferungen" />}><LazyPage><StaffReturnsPage /></LazyPage></ErrorBoundary>} />
                     <Route path="customers" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Customers" />}><LazyPage><CustomersPage /></LazyPage></ErrorBoundary>} />
                     <Route path="kb" element={<ModuleRoute module="geistKB"><ErrorBoundary fallback={<ModuleCrashFallback module="GeistKB" />}><LazyPage><KBPage /></LazyPage></ErrorBoundary></ModuleRoute>} />
+                    <Route
+                      path="kb/:id"
+                      element={
+                        <ModuleRoute module="geistKB">
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="GeistKB" />}>
+                            <KbArticlePathRedirect basePath="/kb" />
+                          </ErrorBoundary>
+                        </ModuleRoute>
+                      }
+                    />
                     <Route path="migrator" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Migrator" />}><LazyPage><GeistDeskMigratorPage /></LazyPage></ErrorBoundary>} />
                     <Route path="vault" element={<ModuleRoute module="geistExchange"><ErrorBoundary fallback={<ModuleCrashFallback module="Geist Exchange" />}><LazyPage><VaultPage /></LazyPage></ErrorBoundary></ModuleRoute>} />
                     <Route path="credentials" element={<ModuleRoute module="geistVault"><ErrorBoundary fallback={<ModuleCrashFallback module="GeistVault" />}><LazyPage><CredentialVaultPage /></LazyPage></ErrorBoundary></ModuleRoute>} />

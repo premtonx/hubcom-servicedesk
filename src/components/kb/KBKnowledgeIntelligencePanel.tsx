@@ -235,8 +235,8 @@ export function KBKnowledgeIntelligencePanel({
         )}
       </PanelCard>
 
-      {/* Staff-only panels — never shown in Kunden-Portal */}
-      {!isPortal && typeof indexInRag === 'boolean' && onToggleIndexInRag ? (
+      {/* RAG toggle — staff always; portal when capabilities.ragIndexToggle wires handlers */}
+      {typeof indexInRag === 'boolean' && onToggleIndexInRag ? (
         <PanelCard title={t('kb.editor.ragAccess', 'KI-Wissensspeicher (RAG)')} icon={Database}>
           <div className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50">
             <div className="flex flex-col">

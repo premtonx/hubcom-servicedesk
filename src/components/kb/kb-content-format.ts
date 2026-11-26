@@ -160,7 +160,11 @@ export function toEditableHtml(content: string): string {
   return toRenderableHtml(content);
 }
 
-export function buildKbArticleDeepLink(articleId: string): string {
-  if (typeof window === 'undefined') return `/kb?article=${articleId}`;
-  return `${window.location.origin}/kb?article=${encodeURIComponent(articleId)}`;
+export function buildKbArticleDeepLink(
+  articleId: string,
+  mode: 'staff' | 'portal' = 'staff',
+): string {
+  const path = mode === 'portal' ? '/portal/kb' : '/kb';
+  if (typeof window === 'undefined') return `${path}?article=${articleId}`;
+  return `${window.location.origin}${path}?article=${encodeURIComponent(articleId)}`;
 }
