@@ -390,11 +390,16 @@ router.put(
 
 const orgAiSettingsSchema = z.object({
   ai_mode: z.enum(['global_default', 'org_local_ai', 'disabled']).optional(),
+  local_server_type: z.enum(['ollama', 'openai_compatible']).optional().nullable(),
   local_llm_endpoint: z.string().max(500).optional().nullable(),
   local_llm_model: z.string().max(120).optional().nullable(),
   local_embedding_endpoint: z.string().max(500).optional().nullable(),
   local_embedding_model: z.string().max(120).optional().nullable(),
   local_ai_api_key: z.string().max(2000).optional().nullable(),
+  model_ticket_summary: z.string().max(120).optional().nullable(),
+  model_ticket_reply: z.string().max(120).optional().nullable(),
+  model_kb_assistant: z.string().max(120).optional().nullable(),
+  model_rag_embedding: z.string().max(120).optional().nullable(),
   strict_local_only: z.boolean().optional().nullable(),
   include_shared_kb_in_rag: z.boolean().optional().nullable(),
 });
@@ -414,8 +419,16 @@ router.get(
         normalizeOrgAiSettings,
         toPublicOrgAiSettings,
       } = await import('../lib/ai/org-ai-settings.js');
+      const { getOrganizationRagStatus } = await import('../lib/ai/org-rag-reindex.js');
+      let ragStatus = { indexedCount: 0, totalCount: 0, organizationId: id };
+      try {
+        ragStatus = await getOrganizationRagStatus(id);
+      } catch {
+        /* optional */
+      }
       return res.json({
         settings: toPublicOrgAiSettings(normalizeOrgAiSettings(org)),
+        ragStatus,
         organization: { id: org.id, name: org.name },
       });
     } catch (err: any) {
@@ -473,21 +486,66 @@ router.post(
       if (!org) return res.status(404).json({ error: 'Organization not found.' });
       const {
         decryptOrgAiApiKey,
+        isLocalServerType,
         normalizeOrgAiSettings,
         resolveOrgLlmEndpoint,
       } = await import('../lib/ai/org-ai-settings.js');
       const { testOrgLocalAiConnection } = await import('../lib/ai/org-rag-reindex.js');
       const settings = normalizeOrgAiSettings(org);
       const endpointOverride = String((req.body as any)?.endpoint || '').trim();
+      const serverTypeRaw = (req.body as any)?.serverType ?? (req.body as any)?.local_server_type;
       const result = await testOrgLocalAiConnection({
         endpoint: endpointOverride || resolveOrgLlmEndpoint(settings),
         apiKey: decryptOrgAiApiKey(settings),
         model: settings.local_llm_model,
+        serverType: isLocalServerType(serverTypeRaw)
+          ? serverTypeRaw
+          : settings.local_server_type,
       });
       return res.json({ ...result, success: result.ok, organizationId: id });
     } catch (err: any) {
       return res.status(500).json({
         error: safeErrorMessage(err, 'Verbindungstest fehlgeschlagen'),
+      });
+    }
+  },
+);
+
+/**
+ * POST /api/admin/organizations/:id/ai-settings/models
+ */
+router.post(
+  '/:id/ai-settings/models',
+  requireRole(['SYSTEM_ADMIN']),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const id = routeParam(req.params.id);
+      const org = await getOrganization(id);
+      if (!org) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+      const {
+        decryptOrgAiApiKey,
+        isLocalServerType,
+        normalizeOrgAiSettings,
+        resolveOrgLlmEndpoint,
+      } = await import('../lib/ai/org-ai-settings.js');
+      const { discoverOrgLocalModels } = await import('../lib/ai/org-rag-reindex.js');
+      const settings = normalizeOrgAiSettings(org);
+      const endpointOverride = String((req.body as any)?.endpoint || '').trim();
+      const serverTypeRaw = (req.body as any)?.serverType ?? (req.body as any)?.local_server_type;
+      const result = await discoverOrgLocalModels({
+        endpoint: endpointOverride || resolveOrgLlmEndpoint(settings),
+        apiKey: decryptOrgAiApiKey(settings),
+        serverType: isLocalServerType(serverTypeRaw)
+          ? serverTypeRaw
+          : settings.local_server_type,
+      });
+      return res.json({ ...result, success: result.ok, organizationId: id });
+    } catch (err: any) {
+      return res.status(500).json({
+        error: safeErrorMessage(
+          err,
+          'Lokaler KI-Server ist unter dieser Adresse nicht erreichbar.',
+        ),
       });
     }
   },
@@ -513,7 +571,7 @@ router.post(
       });
     } catch (err: any) {
       return res.status(500).json({
-        error: safeErrorMessage(err, 'Reindex fehlgeschlagen'),
+        error: safeErrorMessage(err, 'Neuindexierung fehlgeschlagen'),
       });
     }
   },

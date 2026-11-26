@@ -87,12 +87,12 @@ export function PortalKbAiAssistantPanel({
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-          Hubcom KI fragen
+          KI fragen
         </h3>
         <Textarea
           value={askQuery}
           onChange={(e) => setAskQuery(e.target.value)}
-          placeholder="Hubcom KI fragen oder Dokumentation durchsuchen…"
+          placeholder="KI fragen oder Dokumentation durchsuchen…"
           rows={3}
         />
         <Button type="button" onClick={() => void handleAsk()} disabled={askLoading || !askQuery.trim()}>

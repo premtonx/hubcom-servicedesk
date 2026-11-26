@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BrainCircuit, Loader2, RefreshCw, Wifi } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
@@ -16,14 +16,20 @@ import {
 import { cn } from '../../lib/utils';
 
 export type OrgAiMode = 'global_default' | 'org_local_ai' | 'disabled';
+export type LocalServerType = 'ollama' | 'openai_compatible';
 
 export interface MandantenKiSettings {
   ai_mode: OrgAiMode;
+  local_server_type: LocalServerType;
   local_llm_endpoint: string;
   local_llm_model: string;
   local_embedding_endpoint: string;
   local_embedding_model: string;
   local_ai_api_key_set: boolean;
+  model_ticket_summary: string;
+  model_ticket_reply: string;
+  model_kb_assistant: string;
+  model_rag_embedding: string;
   strict_local_only: boolean;
   include_shared_kb_in_rag: boolean;
   last_embedding_model: string | null;
@@ -31,29 +37,128 @@ export interface MandantenKiSettings {
 }
 
 interface MandantenKiRagCardProps {
-  /** Staff Admin-Hub: organization id. Portal CLIENT_ADMIN: omit (session org). */
   organizationId?: string | null;
   mode: 'admin' | 'portal';
   className?: string;
-  /** Optional org display name for reindex button label. */
   organizationName?: string | null;
 }
 
 const emptySettings = (): MandantenKiSettings => ({
   ai_mode: 'global_default',
+  local_server_type: 'ollama',
   local_llm_endpoint: '',
   local_llm_model: 'llama3',
   local_embedding_endpoint: '',
   local_embedding_model: 'nomic-embed-text',
   local_ai_api_key_set: false,
+  model_ticket_summary: '',
+  model_ticket_reply: '',
+  model_kb_assistant: '',
+  model_rag_embedding: '',
   strict_local_only: true,
   include_shared_kb_in_rag: false,
   last_embedding_model: null,
   needs_reindex: false,
 });
 
+type FeatureKey =
+  | 'model_ticket_summary'
+  | 'model_ticket_reply'
+  | 'model_kb_assistant'
+  | 'model_rag_embedding';
+
+const FEATURE_FIELDS: Array<{
+  key: FeatureKey;
+  label: string;
+  hint: string;
+}> = [
+  {
+    key: 'model_ticket_summary',
+    label: 'Ticket-Zusammenfassung & Analyse',
+    hint: 'KI-Sync, Detailanalyse, Triage',
+  },
+  {
+    key: 'model_ticket_reply',
+    label: 'Antwortvorschläge & KI-Copilot',
+    hint: 'KI-vorgeschlagene Strategie, Entwürfe',
+  },
+  {
+    key: 'model_kb_assistant',
+    label: 'Wissensdatenbank-Assistent',
+    hint: 'KI fragen, KI generieren',
+  },
+  {
+    key: 'model_rag_embedding',
+    label: 'RAG-Modell (Text-Vektoren / Suche)',
+    hint: 'Indexierung & semantische Suche',
+  },
+];
+
+function ModelField({
+  label,
+  hint,
+  value,
+  fallback,
+  models,
+  onChange,
+  allowCustom,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  fallback: string;
+  models: string[];
+  onChange: (v: string) => void;
+  allowCustom: boolean;
+}) {
+  const effective = value || fallback || '';
+  const options = useMemo(() => {
+    const set = new Set(models);
+    if (effective) set.add(effective);
+    if (fallback) set.add(fallback);
+    return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  }, [models, effective, fallback]);
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-sm font-bold text-slate-900">{label}</Label>
+      <p className="text-[11px] text-slate-500 -mt-0.5">{hint}</p>
+      {options.length > 0 && !allowCustom ? (
+        <Select value={effective || undefined} onValueChange={onChange}>
+          <SelectTrigger className="text-sm">
+            <SelectValue placeholder="Modell wählen" />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((m) => (
+              <SelectItem key={m} value={m}>
+                {m}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <Input
+          list={`models-${label}`}
+          className="text-sm font-mono"
+          value={value}
+          placeholder={fallback || 'Modellname'}
+          onChange={(e) => onChange(e.target.value)}
+          autoComplete="off"
+        />
+      )}
+      {options.length > 0 && allowCustom ? (
+        <datalist id={`models-${label}`}>
+          {options.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+      ) : null}
+    </div>
+  );
+}
+
 /**
- * Mandanten-KI & RAG (Lokal) — configure org-dedicated Ollama / OpenAI-compat AI.
+ * KI & Lokaler Server — Mandanten-KI Einstellungen (100 % deutsche UI).
  */
 export function MandantenKiRagCard({
   organizationId,
@@ -67,6 +172,10 @@ export function MandantenKiRagCard({
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [reindexing, setReindexing] = useState(false);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [connectionHint, setConnectionHint] = useState<string | null>(null);
+  const [ragStatus, setRagStatus] = useState({ indexedCount: 0, totalCount: 0 });
+  const [embeddingChanged, setEmbeddingChanged] = useState(false);
 
   const basePath =
     mode === 'admin'
@@ -83,9 +192,18 @@ export function MandantenKiRagCard({
       const res = await axios.get(basePath, { withCredentials: true });
       const next = res.data?.settings as MandantenKiSettings | undefined;
       if (next) setSettings({ ...emptySettings(), ...next });
+      if (res.data?.ragStatus) {
+        setRagStatus({
+          indexedCount: Number(res.data.ragStatus.indexedCount || 0),
+          totalCount: Number(res.data.ragStatus.totalCount || 0),
+        });
+      }
       setApiKeyDraft('');
+      setEmbeddingChanged(false);
     } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'KI-Einstellungen konnten nicht geladen werden');
+      toast.error(
+        err?.response?.data?.error || 'KI-Einstellungen konnten nicht geladen werden.',
+      );
     } finally {
       setLoading(false);
     }
@@ -104,10 +222,16 @@ export function MandantenKiRagCard({
     try {
       const payload: Record<string, unknown> = {
         ai_mode: settings.ai_mode,
+        local_server_type: settings.local_server_type,
         local_llm_endpoint: settings.local_llm_endpoint,
         local_llm_model: settings.local_llm_model,
         local_embedding_endpoint: settings.local_embedding_endpoint,
-        local_embedding_model: settings.local_embedding_model,
+        local_embedding_model:
+          settings.model_rag_embedding || settings.local_embedding_model,
+        model_ticket_summary: settings.model_ticket_summary,
+        model_ticket_reply: settings.model_ticket_reply,
+        model_kb_assistant: settings.model_kb_assistant,
+        model_rag_embedding: settings.model_rag_embedding,
         strict_local_only: settings.strict_local_only,
         include_shared_kb_in_rag: settings.include_shared_kb_in_rag,
       };
@@ -118,29 +242,52 @@ export function MandantenKiRagCard({
       const next = res.data?.settings as MandantenKiSettings | undefined;
       if (next) setSettings({ ...emptySettings(), ...next });
       setApiKeyDraft('');
-      toast.success('Mandanten-KI Einstellungen gespeichert');
+      toast.success('Einstellungen gespeichert.');
+      if (embeddingChanged) {
+        toast.message(
+          'RAG-Modell geändert — bitte Wissensdatenbank neu indexieren.',
+        );
+      }
     } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Speichern fehlgeschlagen');
+      toast.error(err?.response?.data?.error || 'Speichern fehlgeschlagen.');
     } finally {
       setSaving(false);
     }
   };
 
-  const testConnection = async () => {
+  const testAndLoadModels = async () => {
     setTesting(true);
+    setConnectionHint(null);
     try {
       const res = await axios.post(
-        `${basePath}/test`,
-        { endpoint: settings.local_llm_endpoint },
+        `${basePath}/models`,
+        {
+          endpoint: settings.local_llm_endpoint,
+          serverType: settings.local_server_type,
+        },
         { withCredentials: true },
       );
+      const models: string[] = Array.isArray(res.data?.models) ? res.data.models : [];
+      setDiscoveredModels(models);
       if (res.data?.ok || res.data?.success) {
-        toast.success(res.data?.message || 'Verbindung OK');
+        if (res.data?.serverType === 'ollama' || res.data?.serverType === 'openai_compatible') {
+          setSettings((s) => ({ ...s, local_server_type: res.data.serverType }));
+        }
+        setConnectionHint(res.data?.message || 'Verbindung erfolgreich.');
+        toast.success(res.data?.message || 'Verbindung erfolgreich.');
       } else {
-        toast.error(res.data?.message || 'Lokale Mandanten-KI nicht erreichbar');
+        const msg =
+          res.data?.message ||
+          'Lokaler KI-Server ist unter dieser Adresse nicht erreichbar.';
+        setConnectionHint(msg);
+        toast.error(msg);
       }
     } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Verbindungstest fehlgeschlagen');
+      const msg =
+        err?.response?.data?.error ||
+        'Lokaler KI-Server ist unter dieser Adresse nicht erreichbar.';
+      setConnectionHint(msg);
+      toast.error(msg);
     } finally {
       setTesting(false);
     }
@@ -152,11 +299,14 @@ export function MandantenKiRagCard({
       const res = await axios.post(`${basePath}/reindex`, {}, { withCredentials: true });
       toast.success(
         res.data?.message ||
-          `${organizationName || 'Mandant'} Wissensdatenbank wird neu indexiert (${res.data?.enqueued ?? 0} Artikel)`,
+          'Wissensdatenbank wird neu indexiert.',
       );
+      setEmbeddingChanged(false);
       await load();
     } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Reindex fehlgeschlagen');
+      toast.error(
+        err?.response?.data?.error || 'Neuindexierung fehlgeschlagen.',
+      );
     } finally {
       setReindexing(false);
     }
@@ -164,6 +314,10 @@ export function MandantenKiRagCard({
 
   const localMode = settings.ai_mode === 'org_local_ai';
   const orgLabel = organizationName?.trim() || 'Mandant';
+  const chatFallback = settings.local_llm_model || 'llama3';
+  const embFallback =
+    settings.model_rag_embedding || settings.local_embedding_model || 'nomic-embed-text';
+  const modelsOffline = discoveredModels.length === 0;
 
   if (loading) {
     return (
@@ -175,7 +329,7 @@ export function MandantenKiRagCard({
       >
         <div className="flex items-center gap-2 text-sm text-slate-500">
           <Loader2 className="w-4 h-4 animate-spin" />
-          Mandanten-KI wird geladen…
+          KI-Einstellungen werden geladen…
         </div>
       </section>
     );
@@ -193,10 +347,10 @@ export function MandantenKiRagCard({
           <BrainCircuit className="w-4.5 h-4.5" />
         </div>
         <div className="min-w-0">
-          <h3 className="text-sm font-black text-slate-900">Mandanten-KI &amp; RAG (Lokal)</h3>
+          <h3 className="text-sm font-black text-slate-900">KI &amp; Lokaler Server</h3>
           <p className="text-xs text-slate-500 font-medium mt-0.5 leading-relaxed">
-            Dedizierte lokale KI (Ollama / OpenAI-kompatibel) nur für Tickets und Wissensdatenbank
-            dieses Mandanten — getrennt von Hubcom Global-KI.
+            Eigenen lokalen KI-Server (Ollama oder OpenAI-kompatibel) nur für Tickets und
+            Wissensdatenbank dieses Mandanten nutzen — getrennt von Hubcom.
           </p>
         </div>
       </div>
@@ -209,8 +363,7 @@ export function MandantenKiRagCard({
             setSettings((s) => ({
               ...s,
               ai_mode: v as OrgAiMode,
-              strict_local_only:
-                v === 'org_local_ai' ? true : s.strict_local_only,
+              strict_local_only: v === 'org_local_ai' ? true : s.strict_local_only,
             }))
           }
         >
@@ -218,8 +371,8 @@ export function MandantenKiRagCard({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="global_default">Hubcom Global-KI (Standard)</SelectItem>
-            <SelectItem value="org_local_ai">Eigene lokale Mandanten-KI</SelectItem>
+            <SelectItem value="global_default">Standard (Hubcom)</SelectItem>
+            <SelectItem value="org_local_ai">Eigener lokaler KI-Server</SelectItem>
             <SelectItem value="disabled">KI deaktiviert</SelectItem>
           </SelectContent>
         </Select>
@@ -227,54 +380,49 @@ export function MandantenKiRagCard({
 
       {localMode && (
         <>
-          <div className="space-y-1.5">
-            <Label htmlFor="mandanten-llm-endpoint">Local LLM Endpoint</Label>
-            <Input
-              id="mandanten-llm-endpoint"
-              placeholder="http://10.x.x.x:11434"
-              value={settings.local_llm_endpoint}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, local_llm_endpoint: e.target.value }))
-              }
-              className="text-sm font-mono"
-              autoComplete="off"
-            />
-          </div>
-
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="mandanten-llm-model">LLM-Modell</Label>
-              <Input
-                id="mandanten-llm-model"
-                placeholder="llama3"
-                value={settings.local_llm_model}
-                onChange={(e) =>
-                  setSettings((s) => ({ ...s, local_llm_model: e.target.value }))
+              <Label htmlFor="mandanten-server-type">Server-Typ</Label>
+              <Select
+                value={settings.local_server_type}
+                onValueChange={(v) =>
+                  setSettings((s) => ({
+                    ...s,
+                    local_server_type: v as LocalServerType,
+                  }))
                 }
-                className="text-sm"
-              />
+              >
+                <SelectTrigger id="mandanten-server-type" className="text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ollama">Ollama</SelectItem>
+                  <SelectItem value="openai_compatible">OpenAI-kompatibel</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="mandanten-emb-model">Embedding-Modell</Label>
+            <div className="space-y-1.5 sm:col-span-1">
+              <Label htmlFor="mandanten-llm-endpoint">Server-Adresse (URL)</Label>
               <Input
-                id="mandanten-emb-model"
-                placeholder="nomic-embed-text"
-                value={settings.local_embedding_model}
+                id="mandanten-llm-endpoint"
+                placeholder="http://10.x.x.x:11434"
+                value={settings.local_llm_endpoint}
                 onChange={(e) =>
-                  setSettings((s) => ({ ...s, local_embedding_model: e.target.value }))
+                  setSettings((s) => ({ ...s, local_llm_endpoint: e.target.value }))
                 }
-                className="text-sm"
+                className="text-sm font-mono"
+                autoComplete="off"
               />
             </div>
           </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="mandanten-emb-endpoint">
-              Embedding-Endpoint (optional, sonst LLM-Endpoint)
+              Separater Embedding-Server (optional)
             </Label>
             <Input
               id="mandanten-emb-endpoint"
-              placeholder="http://10.x.x.x:11434"
+              placeholder="Leer = gleiche Server-Adresse"
               value={settings.local_embedding_endpoint}
               onChange={(e) =>
                 setSettings((s) => ({ ...s, local_embedding_endpoint: e.target.value }))
@@ -286,8 +434,8 @@ export function MandantenKiRagCard({
 
           <div className="space-y-1.5">
             <Label htmlFor="mandanten-api-key">
-              API-Key / Bearer (optional)
-              {settings.local_ai_api_key_set ? ' — hinterlegt' : ''}
+              Zugangsschlüssel / Bearer{settings.local_ai_api_key_set ? ' — hinterlegt' : ''}{' '}
+              (optional)
             </Label>
             <Input
               id="mandanten-api-key"
@@ -298,19 +446,57 @@ export function MandantenKiRagCard({
               className="text-sm"
               autoComplete="new-password"
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="mandanten-fallback-model">Standard-Chatmodell (Fallback)</Label>
+            <Input
+              id="mandanten-fallback-model"
+              placeholder="llama3"
+              value={settings.local_llm_model}
+              onChange={(e) =>
+                setSettings((s) => ({ ...s, local_llm_model: e.target.value }))
+              }
+              className="text-sm"
+            />
             <p className="text-[11px] text-slate-400">
-              Wird AES-256-GCM verschlüsselt gespeichert und nie im Klartext zurückgegeben.
+              Wird verwendet, wenn für eine Funktion kein eigenes Modell gewählt ist.
             </p>
+          </div>
+
+          <div className="rounded-xl border border-slate-100 bg-slate-50/80 px-4 py-3 space-y-3">
+            <p className="text-xs font-black text-slate-800 uppercase tracking-wide">
+              Modelle je KI-Bereich
+            </p>
+            <div className="grid gap-4">
+              {FEATURE_FIELDS.map((f) => (
+                <ModelField
+                  key={f.key}
+                  label={f.label}
+                  hint={f.hint}
+                  value={settings[f.key]}
+                  fallback={
+                    f.key === 'model_rag_embedding' ? embFallback : chatFallback
+                  }
+                  models={discoveredModels}
+                  allowCustom={modelsOffline}
+                  onChange={(v) => {
+                    setSettings((s) => ({ ...s, [f.key]: v }));
+                    if (f.key === 'model_rag_embedding') setEmbeddingChanged(true);
+                  }}
+                />
+              ))}
+            </div>
           </div>
 
           <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50/80 px-4 py-3">
             <div className="min-w-0">
               <p className="text-sm font-bold text-slate-900">
-                Strict Local Only (kein Cloud-Fallback)
+                Kein Cloud-Fallback (100 % lokal)
               </p>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Bei unerreichbarer lokaler KI: Fehler „Lokale Mandanten-KI nicht erreichbar“ —
-                niemals Gemini / OpenAI / Anthropic.
+                Bei unerreichbarem Server erscheint: „Lokaler KI-Server ist unter dieser Adresse
+                nicht erreichbar.“ — kein externes Cloud-Modell.
               </p>
             </div>
             <Switch
@@ -318,16 +504,18 @@ export function MandantenKiRagCard({
               onCheckedChange={(v) =>
                 setSettings((s) => ({ ...s, strict_local_only: Boolean(v) }))
               }
-              aria-label="Strict Local Only"
+              aria-label="Kein Cloud-Fallback"
             />
           </div>
 
           <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50/80 px-4 py-3">
             <div className="min-w-0">
-              <p className="text-sm font-bold text-slate-900">Shared Hubcom-KB in RAG</p>
+              <p className="text-sm font-bold text-slate-900">
+                Hubcom-Wissensartikel in der Suche
+              </p>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Standard aus — nur eigene Artikel. Aktivieren, um zusätzlich Hubcom-Global-Artikel
-                einzubeziehen.
+                Standard aus — nur eigene Artikel. Aktivieren, um zusätzlich freigegebene
+                Hubcom-Artikel einzubeziehen.
               </p>
             </div>
             <Switch
@@ -335,15 +523,36 @@ export function MandantenKiRagCard({
               onCheckedChange={(v) =>
                 setSettings((s) => ({ ...s, include_shared_kb_in_rag: Boolean(v) }))
               }
-              aria-label="include_shared_kb_in_rag"
+              aria-label="Hubcom-Wissensartikel in der Suche"
             />
           </div>
 
-          {settings.needs_reindex && (
-            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              Embedding-Modell geändert — bitte RAG-Index für diesen Mandanten neu aufbauen.
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 space-y-2">
+            <p className="text-sm font-bold text-slate-900">RAG-Status</p>
+            <p className="text-xs text-slate-600">
+              {ragStatus.indexedCount} von {ragStatus.totalCount} Wissensartikeln im
+              KI-Wissensspeicher
             </p>
-          )}
+            {(settings.needs_reindex || embeddingChanged) && (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                RAG-Modell geändert — bestehende Vektoren bitte mit „Wissensdatenbank neu
+                indexieren“ neu aufbauen.
+              </p>
+            )}
+          </div>
+
+          {connectionHint ? (
+            <p
+              className={cn(
+                'text-xs rounded-lg px-3 py-2 border',
+                connectionHint.includes('erfolgreich') || connectionHint.includes('OK')
+                  ? 'text-emerald-800 bg-emerald-50 border-emerald-200'
+                  : 'text-rose-800 bg-rose-50 border-rose-200',
+              )}
+            >
+              {connectionHint}
+            </p>
+          ) : null}
         </>
       )}
 
@@ -357,7 +566,7 @@ export function MandantenKiRagCard({
             <Button
               type="button"
               variant="outline"
-              onClick={() => void testConnection()}
+              onClick={() => void testAndLoadModels()}
               disabled={saving || testing || reindexing}
             >
               {testing ? (
@@ -365,7 +574,7 @@ export function MandantenKiRagCard({
               ) : (
                 <Wifi className="w-4 h-4 mr-2" />
               )}
-              Verbindung testen
+              Verbindung testen &amp; Modelle laden
             </Button>
             <Button
               type="button"
@@ -378,11 +587,14 @@ export function MandantenKiRagCard({
               ) : (
                 <RefreshCw className="w-4 h-4 mr-2" />
               )}
-              {orgLabel} Wissensdatenbank neu indexieren
+              Wissensdatenbank neu indexieren
             </Button>
           </>
         )}
       </div>
+      {localMode && orgLabel !== 'Mandant' ? (
+        <p className="text-[11px] text-slate-400">Indexierung gilt nur für {orgLabel}.</p>
+      ) : null}
     </section>
   );
 }

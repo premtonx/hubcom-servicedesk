@@ -156,7 +156,11 @@ import {
   embeddingRowsOwnedByOrg,
   filterKbArticlesForOrgReindex,
   LOCAL_AI_UNREACHABLE_ERROR,
+  mapAiFeatureToOrgModelKind,
+  parseOllamaTagsResponse,
+  parseOpenAiModelsResponse,
   resolveOrgAiRouting,
+  resolveOrgFeatureModel,
   toPublicOrgAiSettings,
 } from '../src/lib/ai/org-ai-settings.js';
 
@@ -2428,32 +2432,67 @@ function testPortalSsoAdminApprovalLifecycle(): void {
 }
 
 function testOrgLocalAiStrictLifecycle(): void {
-  console.log('\n[Mandanten-KI] org_local_ai strict_local_only lifecycle');
+  console.log('\n[Mandanten-KI] org_local_ai strict_local_only + per-feature models lifecycle');
 
   const DPG = 'dpg-lifecycle-org';
   const OTHER = 'other-lifecycle-org';
   const configured = applyOrgAiSettingsUpdate(defaultOrgAiSettings(), {
     ai_mode: 'org_local_ai',
+    local_server_type: 'ollama',
     local_llm_endpoint: 'http://127.0.0.1:9',
     local_llm_model: 'llama3',
     local_embedding_model: 'nomic-embed-text',
+    model_ticket_summary: 'sum-model',
+    model_ticket_reply: 'reply-model',
+    model_kb_assistant: 'kb-model',
+    model_rag_embedding: 'emb-model',
     strict_local_only: true,
   });
-  const routing = resolveOrgAiRouting(configured);
+  const routing = resolveOrgAiRouting(configured, 'ticket_summarization');
   assert(
     routing.mode === 'org_local_ai' &&
       routing.strictLocalOnly === true &&
-      routing.allowCloudFallback === false,
-    'DPG org_local_ai never allows cloud fallback',
+      routing.allowCloudFallback === false &&
+      routing.model === 'sum-model',
+    'DPG org_local_ai never allows cloud fallback; ticket_summary uses per-feature model',
   );
   assert(
-    LOCAL_AI_UNREACHABLE_ERROR.includes('Mandanten-KI'),
-    'unreachable local AI uses Mandanten error (not cloud provider names)',
+    resolveOrgAiRouting(configured, 'smart_reply').mode === 'org_local_ai' &&
+      (resolveOrgAiRouting(configured, 'smart_reply') as any).model === 'reply-model' &&
+      (resolveOrgAiRouting(configured, 'kb_assistant') as any).model === 'kb-model' &&
+      (resolveOrgAiRouting(configured, 'rag_embedding') as any).embeddingModel ===
+        'emb-model',
+    'each portal AI feature routes to its configured local model',
+  );
+  assert(
+    mapAiFeatureToOrgModelKind('ticket_summarization') === 'ticket_summary' &&
+      mapAiFeatureToOrgModelKind('smart_reply') === 'ticket_reply' &&
+      mapAiFeatureToOrgModelKind('kb_assistant') === 'kb_assistant' &&
+      mapAiFeatureToOrgModelKind('rag_embedding') === 'rag_embedding',
+    'feature → model kind mapping covers portal entry points',
+  );
+  assert(
+    resolveOrgFeatureModel(configured, 'ticket_summary') === 'sum-model',
+    'resolveOrgFeatureModel returns configured override',
+  );
+  assert(
+    parseOllamaTagsResponse({ models: [{ name: 'a' }, { name: 'b' }] }).join(',') ===
+      'a,b' &&
+      parseOpenAiModelsResponse({ data: [{ id: 'x' }] })[0] === 'x',
+    'Ollama /api/tags and OpenAI /v1/models parsers work without secrets',
+  );
+  assert(
+    LOCAL_AI_UNREACHABLE_ERROR.includes('Lokaler KI-Server') &&
+      !LOCAL_AI_UNREACHABLE_ERROR.toLowerCase().includes('openai') &&
+      !LOCAL_AI_UNREACHABLE_ERROR.toLowerCase().includes('gemini'),
+    'unreachable local AI uses German local-server error (not cloud provider names)',
   );
   const pub = toPublicOrgAiSettings(configured);
   assert(
-    !(pub as any).local_ai_api_key_enc && pub.ai_mode === 'org_local_ai',
-    'public settings hide secrets',
+    !(pub as any).local_ai_api_key_enc &&
+      pub.ai_mode === 'org_local_ai' &&
+      pub.model_ticket_summary === 'sum-model',
+    'public settings hide secrets and expose per-feature models',
   );
 
   const reindexArticles = filterKbArticlesForOrgReindex(
@@ -2487,10 +2526,12 @@ function testOrgLocalAiStrictLifecycle(): void {
   assert(
     executorSrc.includes('createProductionModelExecutor') &&
       executorSrc.includes('organizationId') &&
+      executorSrc.includes('resolveOrgAiRouting') &&
       executorSrc.includes('strictLocalOnly') &&
       embeddingsSrc.includes('strictOrgLocal') &&
+      embeddingsSrc.includes('rag_embedding') &&
       embeddingsSrc.includes('LOCAL_AI_UNREACHABLE_ERROR'),
-    'executor + embeddings enforce strict org-local path',
+    'executor + embeddings enforce strict org-local per-feature path',
   );
 }
 

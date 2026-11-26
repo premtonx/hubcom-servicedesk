@@ -245,6 +245,23 @@ export const clientPortalApi = {
     };
   },
 
+  async getMe(): Promise<{
+    aiEnabled: boolean;
+    aiMode: string;
+    enabledModules?: Record<string, unknown>;
+    user?: Record<string, unknown>;
+  }> {
+    const path = '/api/portal/me';
+    assertNeverDb(path);
+    const res = await axios.get(path, { withCredentials: true });
+    return {
+      aiEnabled: res.data?.aiEnabled !== false,
+      aiMode: String(res.data?.aiMode || 'global_default'),
+      enabledModules: res.data?.enabledModules,
+      user: res.data?.user,
+    };
+  },
+
   async listMembers(): Promise<PortalMember[]> {
     const res = await axios.get('/api/portal/members', { withCredentials: true });
     return res.data?.members || [];
@@ -800,10 +817,14 @@ export const clientPortalApi = {
     return (res.data?.settings || {}) as Record<string, unknown>;
   },
 
-  async testAiSettings(payload?: { endpoint?: string }): Promise<{
+  async testAiSettings(payload?: {
+    endpoint?: string;
+    serverType?: string;
+  }): Promise<{
     ok: boolean;
     message: string;
     latencyMs?: number;
+    models?: string[];
   }> {
     const path = '/api/portal/ai-settings/test';
     assertNeverDb(path);
@@ -812,6 +833,30 @@ export const clientPortalApi = {
       ok: Boolean(res.data?.ok ?? res.data?.success),
       message: res.data?.message || res.data?.error || '',
       latencyMs: typeof res.data?.latencyMs === 'number' ? res.data.latencyMs : undefined,
+      models: Array.isArray(res.data?.models) ? res.data.models : undefined,
+    };
+  },
+
+  async discoverAiModels(payload?: {
+    endpoint?: string;
+    serverType?: string;
+  }): Promise<{
+    ok: boolean;
+    message: string;
+    latencyMs?: number;
+    models: string[];
+    serverType?: string;
+  }> {
+    const path = '/api/portal/ai-settings/models';
+    assertNeverDb(path);
+    const res = await axios.post(path, payload || {}, { withCredentials: true });
+    return {
+      ok: Boolean(res.data?.ok ?? res.data?.success),
+      message: res.data?.message || res.data?.error || '',
+      latencyMs: typeof res.data?.latencyMs === 'number' ? res.data.latencyMs : undefined,
+      models: Array.isArray(res.data?.models) ? res.data.models : [],
+      serverType:
+        typeof res.data?.serverType === 'string' ? res.data.serverType : undefined,
     };
   },
 
