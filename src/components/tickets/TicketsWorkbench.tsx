@@ -1,17 +1,15 @@
 /**
  * Shared Tickets workbench — Liste | Kanban | Karten.
  * Presentational shell only: all I/O via TicketsWorkbenchAdapter.
- * Staff keeps TicketsLeftSidebar + detail/returns outside; portal owns PortalTicketsSidebar here.
+ * Portal mounts the exact staff TicketsLeftSidebar (KUNDEN tree omitted) + TicketListView.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { TicketListView, type TicketListViewProps } from './TicketListView';
-import {
-  PortalTicketsSidebar,
-  type PortalQueueViewId,
-} from '../pages/client-portal/PortalTicketsSidebar';
+import { TicketsLeftSidebar } from './TicketsLeftSidebar';
+import type { PortalQueueViewId } from '../pages/client-portal/PortalTicketsSidebar';
 import {
   PORTAL_TICKETS_CAPABILITIES,
   STAFF_TICKETS_CAPABILITIES,
@@ -28,6 +26,8 @@ import {
   toPortalStatusGroup,
 } from '../../lib/portal/status';
 import { useClientPortalSession } from '../../hooks/useClientPortalSession';
+import { useTicketsSidebarPreferences } from '../../lib/ticketsSidebarPreferences';
+import { COMPACT_SIDEBAR_SECTION } from './ticketsSidebarConfig';
 
 const PRIORITY_RANK: Record<string, number> = {
   urgent: 0,
@@ -128,12 +128,16 @@ function PortalTicketsWorkbench({
 }) {
   const { session, isOrgWide, loading: sessionLoading } = useClientPortalSession();
   const [searchParams, setSearchParams] = useSearchParams();
+  const {
+    prefs: sidebarPrefs,
+    toggleFavorite,
+    reorderFavorites,
+    toggleGroupCollapsed,
+  } = useTicketsSidebarPreferences(session?.id);
 
   const [tickets, setTickets] = useState<TicketType[]>([]);
   const [serverCounts, setServerCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [statusQueuesOpen, setStatusQueuesOpen] = useState(true);
   const [layoutMode, setLayoutMode] = useState<TicketsLayoutMode>('list');
   const [listSort, setListSort] = useState<'newest' | 'oldest' | 'priority'>('newest');
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
@@ -146,6 +150,26 @@ function PortalTicketsWorkbench({
   const [drawerTicketId, setDrawerTicketId] = useState<string | null>(null);
   const mousePosRef = useRef({ x: 0, y: 0 });
 
+  const staffViewFromPortal = (v: PortalQueueViewId): string => {
+    if (v === 'mine') return 'assigned_me';
+    if (v === 'company_all') return 'team_all_open';
+    if (v === 'open') return 'status_open';
+    if (v === 'in_progress') return 'status_pending';
+    if (v === 'waiting') return 'status_waiting_customer';
+    if (v === 'resolved') return 'status_resolved';
+    return 'team_all_open';
+  };
+
+  const portalViewFromStaff = (view: string): PortalQueueViewId => {
+    if (view === 'assigned_me') return 'mine';
+    if (view === 'team_all_open' || view === 'unassigned') return isOrgWide ? 'company_all' : 'mine';
+    if (view === 'status_open') return 'open';
+    if (view === 'status_pending') return 'in_progress';
+    if (view.startsWith('status_waiting') || view === 'waiting_customer') return 'waiting';
+    if (view === 'status_resolved' || view === 'status_closed') return 'resolved';
+    return isOrgWide ? 'company_all' : 'mine';
+  };
+
   const initialView = ((): PortalQueueViewId => {
     const status = searchParams.get('status');
     if (status === 'open') return 'open';
@@ -156,9 +180,13 @@ function PortalTicketsWorkbench({
     return isOrgWide ? 'company_all' : 'mine';
   })();
   const [activeView, setActiveView] = useState<PortalQueueViewId>(initialView);
+  const [staffActiveView, setStaffActiveView] = useState(() => staffViewFromPortal(initialView));
 
   useEffect(() => {
-    if (!isOrgWide && activeView === 'company_all') setActiveView('mine');
+    if (!isOrgWide && activeView === 'company_all') {
+      setActiveView('mine');
+      setStaffActiveView('assigned_me');
+    }
   }, [isOrgWide, activeView]);
 
   useEffect(() => {
@@ -273,6 +301,7 @@ function PortalTicketsWorkbench({
 
   const handleViewChange = (view: PortalQueueViewId) => {
     setActiveView(view);
+    setStaffActiveView(staffViewFromPortal(view));
     setTopStatusFilter('all');
     const next = new URLSearchParams(searchParams);
     if (view === 'mine') next.set('scope', 'mine');
@@ -286,6 +315,27 @@ function PortalTicketsWorkbench({
     }
     setSearchParams(next, { replace: true });
   };
+
+  const handleStaffSidebarViewChange = (view: string) => {
+    const portalView = portalViewFromStaff(view);
+    setStaffActiveView(view);
+    handleViewChange(portalView);
+  };
+
+  const getViewCount = useCallback(
+    (viewId: string) => {
+      if (viewId === 'assigned_me') return sidebarCounts.mine;
+      if (viewId === 'team_all_open' || viewId === 'unassigned') return sidebarCounts.companyAll;
+      if (viewId === 'status_open') return sidebarCounts.open;
+      if (viewId === 'status_pending') return sidebarCounts.in_progress;
+      if (viewId.startsWith('status_waiting') || viewId === 'waiting_customer') {
+        return sidebarCounts.waiting;
+      }
+      if (viewId === 'status_resolved' || viewId === 'status_closed') return sidebarCounts.resolved;
+      return 0;
+    },
+    [sidebarCounts],
+  );
 
   const handleInlineUpdate = useCallback(
     async (id: string, data: Partial<TicketType>) => {
@@ -323,15 +373,24 @@ function PortalTicketsWorkbench({
 
   return (
     <div className="flex flex-1 min-h-0 min-w-0 w-full h-full overflow-hidden bg-slate-50">
-      <PortalTicketsSidebar
-        collapsed={sidebarCollapsed}
-        onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-        isOrgWide={isOrgWide}
-        activeView={activeView}
-        onViewChange={handleViewChange}
-        counts={sidebarCounts}
-        statusQueuesOpen={statusQueuesOpen}
-        onToggleStatusQueues={() => setStatusQueuesOpen((v) => !v)}
+      {/* Exact staff left sidebar — KUNDEN tree omitted (no kundenOrgs). */}
+      <TicketsLeftSidebar
+        effectiveCollapsed={false}
+        collapsedGroups={sidebarPrefs.collapsedGroups}
+        toggleGroup={toggleGroupCollapsed}
+        activeView={staffActiveView}
+        onViewChange={handleStaffSidebarViewChange}
+        getViewCount={getViewCount}
+        favoriteViewIds={sidebarPrefs.favoriteViewIds}
+        onToggleFavorite={toggleFavorite}
+        onReorderFavorites={reorderFavorites}
+        groupOrder={sidebarPrefs.groupOrder}
+        hiddenGroupIds={[
+          ...sidebarPrefs.hiddenGroupIds,
+          COMPACT_SIDEBAR_SECTION.kunden,
+        ]}
+        customViews={sidebarPrefs.customViews}
+        onOpenManageViews={() => undefined}
       />
 
       <div className="flex-1 min-w-0 min-h-0 h-full flex flex-col overflow-hidden bg-white">

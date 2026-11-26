@@ -1,12 +1,12 @@
 /**
  * Shared ticket detail workbench — Shared UI, Separate APIs.
  * Staff: presentational pass-through of TicketDetailView + context pane.
- * Portal: full workspace tabs + Eigenschaften via PortalTicketDetailWorkspace
+ * Portal: mounts the exact same staff shells via PortalTicketStaffDetailHost
  * (adapter → /api/portal/tickets* only, zero /api/db).
  */
 
 import type { ReactNode } from 'react';
-import { PortalTicketDetailWorkspace } from './PortalTicketDetailWorkspace';
+import { PortalTicketStaffDetailHost } from './PortalTicketStaffDetailHost';
 import {
   PORTAL_TICKET_DETAIL_CAPABILITIES,
   STAFF_TICKET_DETAIL_CAPABILITIES,
@@ -25,13 +25,22 @@ export type TicketDetailWorkbenchProps = {
   ticketId?: string;
 };
 
-/** @deprecated Use PortalTicketDetailWorkspace — kept for isolation-test string match. */
+/**
+ * @deprecated Lookalike workspace retired — portal mounts TicketDetailView via
+ * PortalTicketStaffDetailHost. Kept as alias for isolation-test string match.
+ */
 export function PortalTicketDetailBody(props: {
   ticketId: string;
   adapter: TicketDetailWorkbenchAdapter;
   capabilities: TicketDetailWorkbenchCapabilities;
 }) {
-  return <PortalTicketDetailWorkspace {...props} />;
+  void props.adapter;
+  return (
+    <PortalTicketStaffDetailHost
+      ticketId={props.ticketId}
+      capabilities={props.capabilities}
+    />
+  );
 }
 
 export function TicketDetailWorkbench({
@@ -46,6 +55,7 @@ export function TicketDetailWorkbench({
     (mode === 'staff' ? STAFF_TICKET_DETAIL_CAPABILITIES : PORTAL_TICKET_DETAIL_CAPABILITIES);
 
   if (mode === 'staff') {
+    void adapter;
     return <>{staffDetailSlot}</>;
   }
 

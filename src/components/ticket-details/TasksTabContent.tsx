@@ -17,9 +17,22 @@ import {
 interface TasksTabContentProps {
   ticket: TicketType;
   onChecklistUpdated?: (checklist: TicketChecklistItem[]) => void;
+  portalMode?: boolean;
+  taskApi?: {
+    toggle: (ticketId: string, taskId: string) => Promise<TicketChecklistItem[]>;
+    add: (ticketId: string, text: string) => Promise<TicketChecklistItem[]>;
+    update: (ticketId: string, taskId: string, text: string) => Promise<TicketChecklistItem[]>;
+    remove: (ticketId: string, taskId: string) => Promise<TicketChecklistItem[]>;
+  };
 }
 
-export function TasksTabContent({ ticket, onChecklistUpdated }: TasksTabContentProps) {
+export function TasksTabContent({
+  ticket,
+  onChecklistUpdated,
+  portalMode = false,
+  taskApi,
+}: TasksTabContentProps) {
+  void portalMode;
   const { t } = useTranslation();
   const [tasks, setTasks] = useState<TicketChecklistItem[]>(() => normalizeChecklistItems(ticket.aiChecklist));
   const [newTaskText, setNewTaskText] = useState('');
@@ -55,7 +68,9 @@ export function TasksTabContent({ ticket, onChecklistUpdated }: TasksTabContentP
     setBusyTaskId(taskId);
 
     try {
-      const next = await ticketService.toggleTaskCompletion(ticket.id, taskId);
+      const next = taskApi
+        ? await taskApi.toggle(ticket.id, taskId)
+        : await ticketService.toggleTaskCompletion(ticket.id, taskId);
       applyChecklist(next);
     } catch (error) {
       console.error('[TasksTabContent] toggle failed:', error);
@@ -77,7 +92,9 @@ export function TasksTabContent({ ticket, onChecklistUpdated }: TasksTabContentP
     setIsAdding(true);
 
     try {
-      const next = await ticketService.addChecklistTask(ticket.id, trimmed);
+      const next = taskApi
+        ? await taskApi.add(ticket.id, trimmed)
+        : await ticketService.addChecklistTask(ticket.id, trimmed);
       applyChecklist(next);
       toast.success(t('tickets.tasksTab.taskAdded', 'Task added to action plan.'));
     } catch (error) {
@@ -100,7 +117,9 @@ export function TasksTabContent({ ticket, onChecklistUpdated }: TasksTabContentP
     setBusyTaskId(taskId);
 
     try {
-      const next = await ticketService.updateChecklistTask(ticket.id, taskId, trimmed);
+      const next = taskApi
+        ? await taskApi.update(ticket.id, taskId, trimmed)
+        : await ticketService.updateChecklistTask(ticket.id, taskId, trimmed);
       applyChecklist(next);
       setEditingTaskId(null);
       setEditingText('');
@@ -124,7 +143,9 @@ export function TasksTabContent({ ticket, onChecklistUpdated }: TasksTabContentP
     setBusyTaskId(taskId);
 
     try {
-      const next = await ticketService.deleteChecklistTask(ticket.id, taskId);
+      const next = taskApi
+        ? await taskApi.remove(ticket.id, taskId)
+        : await ticketService.deleteChecklistTask(ticket.id, taskId);
       applyChecklist(next);
     } catch (error) {
       console.error('[TasksTabContent] delete failed:', error);

@@ -15,6 +15,15 @@ import { cn } from '../../lib/utils';
 
 interface TimeTrackingTabContentProps {
   ticket: TicketType;
+  portalMode?: boolean;
+  portalTimeEntries?: Array<Record<string, unknown>>;
+  onAddPortalTimeEntry?: (payload: {
+    hours: number;
+    description?: string;
+    date?: string;
+    kuerzel?: string;
+    sonderzahlung?: boolean;
+  }) => Promise<unknown>;
 }
 
 function formatEur(value: number): string {
@@ -29,7 +38,12 @@ function hoursFromParts(h: number, m: number): number {
   return Math.round((h + m / 60) * 4) / 4;
 }
 
-export function TimeTrackingTabContent({ ticket }: TimeTrackingTabContentProps) {
+export function TimeTrackingTabContent({
+  ticket,
+  portalMode = false,
+  portalTimeEntries,
+  onAddPortalTimeEntry,
+}: TimeTrackingTabContentProps) {
   const { t } = useTranslation();
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [summary, setSummary] = useState({ totalHours: 0, totalAmount: 0, count: 0 });
@@ -53,6 +67,30 @@ export function TimeTrackingTabContent({ ticket }: TimeTrackingTabContentProps) 
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      if (portalMode) {
+        const mapped = (portalTimeEntries || []).map((e, i) => ({
+          id: String((e as any).id || `te-${i}`),
+          ticketId: ticket.id,
+          ticketNumber: String(ticket.customId || ticket.id),
+          ticketSubject: String(ticket.subject || ''),
+          customerCompany: String(ticket.company || ''),
+          userId: String((e as any).userId || ''),
+          hours: Number((e as any).hours || 0),
+          description: String((e as any).description || ''),
+          date: String((e as any).date || ''),
+          kuerzel: String((e as any).kuerzel || ''),
+          amount: Number((e as any).amount || 0),
+          sonderzahlung: Boolean((e as any).sonderzahlung),
+          hourlyRate: Number((e as any).hourlyRate || 0),
+          createdAt: String((e as any).createdAt || ''),
+          updatedAt: String((e as any).updatedAt || ''),
+        })) as unknown as TimeEntry[];
+        setEntries(mapped);
+        const totalHours = mapped.reduce((s, e) => s + Number(e.hours || 0), 0);
+        const totalAmount = mapped.reduce((s, e) => s + Number((e as any).amount || 0), 0);
+        setSummary({ totalHours, totalAmount, count: mapped.length });
+        return;
+      }
       const [list, defaults] = await Promise.all([
         timeEntryService.list({ ticketId: ticket.id }),
         timeEntryService.getDefaults(),
@@ -69,7 +107,7 @@ export function TimeTrackingTabContent({ ticket }: TimeTrackingTabContentProps) 
     } finally {
       setLoading(false);
     }
-  }, [ticket.id, editingId, t]);
+  }, [ticket.id, editingId, t, portalMode, portalTimeEntries]);
 
   useEffect(() => {
     void load();
@@ -112,7 +150,24 @@ export function TimeTrackingTabContent({ ticket }: TimeTrackingTabContentProps) 
     }
     setSaving(true);
     try {
-      if (editingId) {
+      if (portalMode) {
+        if (editingId) {
+          toast.error(t('timeTracking.portalEditDenied', 'Bearbeiten ist im Portal nicht verfügbar.'));
+          return;
+        }
+        if (!onAddPortalTimeEntry) {
+          toast.error(t('timeTracking.saveFailed', 'Speichern fehlgeschlagen.'));
+          return;
+        }
+        await onAddPortalTimeEntry({
+          hours: previewHours,
+          description: description.trim(),
+          date,
+          kuerzel: kuerzel.trim().toUpperCase(),
+          sonderzahlung,
+        });
+        toast.success(t('timeTracking.created', 'Zeit erfasst.'));
+      } else if (editingId) {
         await timeEntryService.update(editingId, {
           kuerzel: kuerzel.trim().toUpperCase(),
           hours: previewHours,
@@ -145,6 +200,10 @@ export function TimeTrackingTabContent({ ticket }: TimeTrackingTabContentProps) 
   };
 
   const handleDelete = async (id: string) => {
+    if (portalMode) {
+      toast.error(t('timeTracking.portalDeleteDenied', 'Löschen ist im Portal nicht verfügbar.'));
+      return;
+    }
     if (!window.confirm(t('timeTracking.confirmDelete', 'Diesen Zeiteintrag wirklich löschen?'))) return;
     try {
       await timeEntryService.remove(id);
@@ -157,6 +216,7 @@ export function TimeTrackingTabContent({ ticket }: TimeTrackingTabContentProps) 
   };
 
   const handleExport = () => {
+    if (portalMode) return;
     window.open(timeEntryService.downloadExportUrl({ ticketId: ticket.id }), '_blank');
   };
 

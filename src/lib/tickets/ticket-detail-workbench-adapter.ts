@@ -99,7 +99,7 @@ export const PORTAL_TICKET_DETAIL_CAPABILITIES: TicketDetailWorkbenchCapabilitie
   internalNotes: true,
   merge: false,
   spam: false,
-  sentimentGlyph: false,
+  sentimentGlyph: true,
   swarmBanner: false,
   tabCustomer: true,
   tabTimeline: true,
@@ -109,12 +109,14 @@ export const PORTAL_TICKET_DETAIL_CAPABILITIES: TicketDetailWorkbenchCapabilitie
   tabTasks: true,
   tabTime: true,
   aiSummaryCard: true,
-  emailComposer: false,
-  portalPublicReply: true,
+  /** Exact staff EmailComposer (Von/An/CC/Betreff) with portalMode gates. */
+  emailComposer: true,
+  portalPublicReply: false,
   ticketKindFields: true,
   smartContextMobile: false,
-  staffContextPane: false,
-  portalPropertiesPane: true,
+  /** Exact staff TicketDetailContextPane / RedesignedSidebar. */
+  staffContextPane: true,
+  portalPropertiesPane: false,
   participantsPanel: true,
   canManageParticipants: false,
   statusActions: true,
@@ -137,6 +139,7 @@ export const PORTAL_TICKET_DETAIL_CAPABILITIES_CLIENT_USER: TicketDetailWorkbenc
   canEditProperties: false,
   canManageParticipants: false,
   canMarkClosed: false,
+  canUpdateStatus: true,
 };
 
 export type PortalTicketWorkspaceMeta = {

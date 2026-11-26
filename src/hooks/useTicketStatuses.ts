@@ -3,11 +3,17 @@ import type { TicketStatusConfig } from '../lib/ticket-config/types';
 import { ticketConfigService } from '../services/ticketConfigService';
 
 /** Loads admin-configured ticket statuses (includes inactive for display of legacy ticket values). */
-export function useTicketStatuses() {
+export function useTicketStatuses(options?: { enabled?: boolean }) {
+  const enabled = options?.enabled !== false;
   const [statuses, setStatuses] = useState<TicketStatusConfig[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
 
   const reload = useCallback(async () => {
+    if (!enabled) {
+      setStatuses([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const list = await ticketConfigService.listStatuses(false);
@@ -17,7 +23,7 @@ export function useTicketStatuses() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
     void reload();

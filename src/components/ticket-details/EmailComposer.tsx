@@ -86,6 +86,8 @@ interface EmailComposerProps {
   aiDraftMeta?: AiComposerMeta | null;
   autoDispatchThreshold?: number;
   isAutoDispatched?: boolean;
+  /** Skip staff email-channel / signature / composer-address fetches. */
+  portalMode?: boolean;
 }
 
 export function EmailComposer({
@@ -108,6 +110,7 @@ export function EmailComposer({
   aiDraftMeta = null,
   autoDispatchThreshold = 95,
   isAutoDispatched = false,
+  portalMode = false,
 }: EmailComposerProps) {
   const { t } = useTranslation();
   const [suggestionApplied, setSuggestionApplied] = useState(false);
@@ -143,6 +146,17 @@ export function EmailComposer({
         moduleSupportEmail: getModuleConfig().email?.supportEmail,
       });
 
+    if (portalMode) {
+      setFromOptions([]);
+      setFromChannelId('');
+      setFromAddress(
+        String(ticket.mailbox || ticket.customerEmail || fallbackFrom() || ''),
+      );
+      return () => {
+        alive = false;
+      };
+    }
+
     Promise.all([
       emailChannelApi.listFromOptions().catch(() => [] as EmailFromOption[]),
       ticketService.getComposerAddresses(ticket.id).catch(() => ({ from: '', to: '' })),
@@ -165,10 +179,10 @@ export function EmailComposer({
     return () => {
       alive = false;
     };
-  }, [ticket.id, ticket.mailbox]);
+  }, [ticket.id, ticket.mailbox, ticket.customerEmail, portalMode]);
 
   useEffect(() => {
-    if (!signaturePreviewOpen) return;
+    if (portalMode || !signaturePreviewOpen) return;
     let alive = true;
     const qs = fromChannelId
       ? `?channelId=${encodeURIComponent(fromChannelId)}`
@@ -187,7 +201,7 @@ export function EmailComposer({
     return () => {
       alive = false;
     };
-  }, [signaturePreviewOpen, ticket.id, fromChannelId]);
+  }, [signaturePreviewOpen, ticket.id, fromChannelId, portalMode]);
 
   const emitSend = () => {
     const opt = fromOptions.find((o) => o.id === fromChannelId);

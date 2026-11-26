@@ -22,6 +22,8 @@ import { useTranslation } from '../../lib/context/I18nContext';
 
 interface AssetsTabContentProps {
   ticket: TicketType;
+  portalMode?: boolean;
+  portalAssets?: Array<Record<string, unknown>>;
 }
 
 const SECRET_TYPE_KEYS = ['password', 'api_key', 'ssh_key', 'vpn', 'note'] as const;
@@ -38,7 +40,11 @@ function fmt(template: string, vars: Record<string, string>) {
   );
 }
 
-export function AssetsTabContent({ ticket }: AssetsTabContentProps) {
+export function AssetsTabContent({
+  ticket,
+  portalMode = false,
+  portalAssets,
+}: AssetsTabContentProps) {
   const { t } = useTranslation();
 
   const secretTypeLabel = useCallback(
@@ -63,14 +69,34 @@ export function AssetsTabContent({ ticket }: AssetsTabContentProps) {
   const [copying, setCopying] = useState(false);
 
   useEffect(() => {
+    if (portalMode) {
+      setCurrentTicketItems(
+        (portalAssets || []).map((a, i) => ({
+          id: String((a as any).id || `asset-${i}`),
+          name: String((a as any).name || (a as any).title || 'Asset'),
+          type: String((a as any).type || 'note'),
+          metadata: { relatedTicketId: ticket.id },
+          expiresAt: null,
+          expirationType: 'never',
+          isBurned: false,
+          createdBy: '',
+          createdAt: '',
+        })) as unknown as VaultItem[],
+      );
+      return;
+    }
     const unsub = vaultService.subscribeToHistory((items) => {
       const filtered = items.filter(item => item.metadata?.relatedTicketId === ticket.id);
       setCurrentTicketItems(filtered);
     });
     return () => unsub();
-  }, [ticket.id]);
+  }, [ticket.id, portalMode, portalAssets]);
 
   const handleDirectSendSecret = async () => {
+    if (portalMode) {
+      toast.error(t('tickets.assetsTab.portalReadOnly', 'Assets sind im Portal schreibgeschützt.'));
+      return;
+    }
     if (!secretContent.trim()) {
       toast.error(t('tickets.assetsTab.enterSecret', 'Please enter a secret to secure.'));
       return;

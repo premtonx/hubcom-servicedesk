@@ -4354,8 +4354,9 @@ function testTicketsWorkbenchSharedUiIsolation(): void {
   assert(
     workbenchSrc.includes('TicketListView') &&
       workbenchSrc.includes("mode === 'portal'") &&
-      workbenchSrc.includes('PortalTicketsSidebar'),
-    'portal mode mounts PortalTicketsSidebar + TicketListView',
+      workbenchSrc.includes('TicketsLeftSidebar') &&
+      !workbenchSrc.includes('<PortalTicketsSidebar'),
+    'portal mode mounts exact TicketsLeftSidebar + TicketListView (no KUNDEN lookalike)',
   );
   assert(
     pageSrc.includes('useStaffTicketsAdapter') && pageSrc.includes('mode="staff"'),
@@ -4414,8 +4415,20 @@ function testTicketDetailWorkbenchSharedUiIsolation(): void {
     path.join(process.cwd(), 'src/components/tickets/TicketDetailWorkbench.tsx'),
     'utf8',
   );
+  const portalHostSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/PortalTicketStaffDetailHost.tsx'),
+    'utf8',
+  );
   const portalWorkspaceSrc = fs.readFileSync(
     path.join(process.cwd(), 'src/components/tickets/PortalTicketDetailWorkspace.tsx'),
+    'utf8',
+  );
+  const detailViewSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/TicketDetailView.tsx'),
+    'utf8',
+  );
+  const contextPaneSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/TicketDetailContextPane.tsx'),
     'utf8',
   );
   const adapterSrc = fs.readFileSync(
@@ -4442,7 +4455,8 @@ function testTicketDetailWorkbenchSharedUiIsolation(): void {
   assert(
     workbenchSrc.includes('TicketDetailWorkbenchAdapter') &&
       workbenchSrc.includes("mode === 'staff'") &&
-      workbenchSrc.includes('PortalTicketDetailBody'),
+      workbenchSrc.includes('PortalTicketDetailBody') &&
+      workbenchSrc.includes('PortalTicketStaffDetailHost'),
     'TicketDetailWorkbench accepts mode + adapter with staff/portal branches',
   );
   assert(
@@ -4456,17 +4470,16 @@ function testTicketDetailWorkbenchSharedUiIsolation(): void {
     'TicketDetailWorkbench has zero /api/db, ticketService import, or axios calls',
   );
   assert(
-    !portalWorkspaceSrc.includes("'/api/db") &&
-      !portalWorkspaceSrc.includes('"/api/db') &&
-      !portalWorkspaceSrc.includes('ticketService') &&
-      !portalWorkspaceSrc.includes("from 'axios'") &&
-      !portalWorkspaceSrc.includes('/api/admin/'),
-    'PortalTicketDetailWorkspace has zero /api/db, ticketService, axios, or /api/admin',
+    portalWorkspaceSrc.includes('PortalTicketStaffDetailHost') &&
+      portalWorkspaceSrc.includes('deprecated') &&
+      !portalWorkspaceSrc.includes("'/api/db") &&
+      !portalWorkspaceSrc.includes('from \'axios\''),
+    'PortalTicketDetailWorkspace retired to re-export staff host (no /api/db)',
   );
   assert(
     !workbenchSrc.includes('HardwareReturn') &&
       !workbenchSrc.includes('hardwareReturn') &&
-      !portalWorkspaceSrc.includes('HardwareReturn'),
+      !portalHostSrc.includes('HardwareReturn'),
     'detail workbench has zero Hardware & Service-Level / RMA fields',
   );
   assert(
@@ -4477,34 +4490,24 @@ function testTicketDetailWorkbenchSharedUiIsolation(): void {
       adapterSrc.includes('tabRelatedTickets: true') &&
       adapterSrc.includes('tabTasks: true') &&
       adapterSrc.includes('tabTime: true') &&
-      adapterSrc.includes('portalPublicReply: true') &&
-      adapterSrc.includes('PORTAL_TICKET_DETAIL_CAPABILITIES_CLIENT_USER') &&
-      adapterSrc.includes('emailComposer: false') &&
-      adapterSrc.includes('staffContextPane: false'),
-    'portal capabilities enable all 8 workspace tabs; CLIENT_USER variant exists; no staff email/context pane',
+      adapterSrc.includes('emailComposer: true') &&
+      adapterSrc.includes('staffContextPane: true') &&
+      adapterSrc.includes('PORTAL_TICKET_DETAIL_CAPABILITIES_CLIENT_USER'),
+    'portal capabilities enable all workspace tabs + exact staff EmailComposer/context pane',
   );
   assert(
-    portalWorkspaceSrc.includes("'Übersicht'") &&
-      portalWorkspaceSrc.includes("'Kunde'") &&
-      portalWorkspaceSrc.includes("'Verlauf'") &&
-      portalWorkspaceSrc.includes("'KI-Erkenntnisse'") &&
-      portalWorkspaceSrc.includes("'Assets'") &&
-      portalWorkspaceSrc.includes("'Neuronale Verknüpfungen'") &&
-      portalWorkspaceSrc.includes("'Aufgaben'") &&
-      portalWorkspaceSrc.includes("'Zeiterfassung'") &&
-      portalWorkspaceSrc.includes('Eigenschaften') &&
-      portalWorkspaceSrc.includes('AGENTEN-ZUWEISUNG') &&
-      portalWorkspaceSrc.includes('PRIORITÄT') &&
-      portalWorkspaceSrc.includes('FALLSTATUS') &&
-      portalWorkspaceSrc.includes('KATEGORIE') &&
-      portalWorkspaceSrc.includes('TICKETTYP') &&
-      portalWorkspaceSrc.includes('SLA-STUFE') &&
-      portalWorkspaceSrc.includes('KONTOGESUNDHEIT') &&
-      portalWorkspaceSrc.includes('KI-Copilot') &&
-      portalWorkspaceSrc.includes('KI-Sync') &&
-      portalWorkspaceSrc.includes('Öffentliche Antwort') &&
-      portalWorkspaceSrc.includes('Interne Notiz'),
-    '/portal/tickets/:id renders all 8 tabs + full Eigenschaften sidebar + composer modes',
+    portalHostSrc.includes('TicketDetailView') &&
+      portalHostSrc.includes('TicketDetailContextPane') &&
+      portalHostSrc.includes('portalMode') &&
+      portalHostSrc.includes('clientPortalApi') === false &&
+      portalHostSrc.includes('usePortalTicketDetailAdapter') &&
+      !portalHostSrc.includes("'/api/db") &&
+      !portalHostSrc.includes('"/api/db') &&
+      detailViewSrc.includes('portalMode') &&
+      contextPaneSrc.includes('portalMode') &&
+      detailViewSrc.includes('KI-Sync') &&
+      detailViewSrc.includes('EmailComposer'),
+    '/portal/tickets/:id mounts exact TicketDetailView + TicketDetailContextPane (portalMode)',
   );
   assert(
     portalAdapterSrc.includes('clientPortalApi') &&
@@ -4535,20 +4538,16 @@ function testTicketDetailWorkbenchSharedUiIsolation(): void {
     '/tickets mounts TicketDetailWorkbench staff mode with TicketDetailView slot',
   );
   assert(
-    portalDetailSrc.includes('TicketDetailWorkbench') &&
-      portalDetailSrc.includes('mode="portal"') &&
-      portalDetailSrc.includes('usePortalTicketDetailAdapter') &&
-      portalDetailSrc.includes('PORTAL_TICKET_DETAIL_CAPABILITIES_CLIENT_USER') &&
+    portalDetailSrc.includes('PortalTicketStaffDetailHost') &&
       !portalDetailSrc.includes('/api/db') &&
-      !portalDetailSrc.includes('ticketService') &&
       !portalDetailSrc.includes('HardwareReturn') &&
       !portalDetailSrc.includes('hardwareReturn'),
-    'ClientTicketDetailPage is thin portal shell with CLIENT_USER capability gate (no /api/db, no RMA)',
+    'ClientTicketDetailPage mounts PortalTicketStaffDetailHost (no /api/db, no RMA)',
   );
   assert(
-    portalWorkspaceSrc.includes('ConversationTimeline') &&
-      portalWorkspaceSrc.includes('Beteiligte'),
-    'portal branch reuses staff conversation timeline + participants rail',
+    portalHostSrc.includes('TicketDetailView') &&
+      portalHostSrc.includes('TicketDetailContextPane'),
+    'portal branch mounts exact staff TicketDetailView + TicketDetailContextPane',
   );
 }
 

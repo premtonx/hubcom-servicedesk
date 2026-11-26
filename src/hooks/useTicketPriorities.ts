@@ -3,11 +3,17 @@ import type { TicketPriorityConfig } from '../lib/ticket-config/types';
 import { ticketConfigService } from '../services/ticketConfigService';
 
 /** Loads admin-configured priorities ordered lowest → highest. */
-export function useTicketPriorities() {
+export function useTicketPriorities(options?: { enabled?: boolean }) {
+  const enabled = options?.enabled !== false;
   const [priorities, setPriorities] = useState<TicketPriorityConfig[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
 
   const reload = useCallback(async () => {
+    if (!enabled) {
+      setPriorities([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const list = await ticketConfigService.listPriorities(false);
@@ -17,7 +23,7 @@ export function useTicketPriorities() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
     void reload();

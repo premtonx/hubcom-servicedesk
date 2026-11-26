@@ -46,8 +46,33 @@ import {
   resolveStatusConfig,
   softTintStyles,
 } from '../../lib/ticket-config/display';
+import type { TicketStatusConfig, TicketPriorityConfig } from '../../lib/ticket-config/types';
+import type { TicketDetailWorkbenchCapabilities } from '../../lib/tickets/ticket-detail-workbench-adapter';
+
+export type PortalTicketTaskApi = {
+  toggle: (ticketId: string, taskId: string) => Promise<TicketChecklistItem[]>;
+  add: (ticketId: string, text: string) => Promise<TicketChecklistItem[]>;
+  update: (ticketId: string, taskId: string, text: string) => Promise<TicketChecklistItem[]>;
+  remove: (ticketId: string, taskId: string) => Promise<TicketChecklistItem[]>;
+};
 
 export interface TicketDetailViewProps {
+  /** When true, skip staff-only chrome and use portal-safe child APIs. */
+  portalMode?: boolean;
+  portalCapabilities?: TicketDetailWorkbenchCapabilities;
+  /** Injected taxonomy (portal meta) — skips staff /api/ticket-config hooks. */
+  statusConfigs?: TicketStatusConfig[];
+  priorityConfigs?: TicketPriorityConfig[];
+  taskApi?: PortalTicketTaskApi;
+  portalTimeEntries?: Array<Record<string, unknown>>;
+  portalAssets?: Array<Record<string, unknown>>;
+  onAddPortalTimeEntry?: (payload: {
+    hours: number;
+    description?: string;
+    date?: string;
+    kuerzel?: string;
+    sonderzahlung?: boolean;
+  }) => Promise<unknown>;
   selectedTicket: TicketType;
   ticketContact: Contact | null;
   ticketCompany: Company | null;
@@ -113,9 +138,15 @@ export interface TicketDetailViewProps {
 
 export function TicketDetailView(props: TicketDetailViewProps) {
   const { t } = useTranslation();
-  const { statuses: ticketStatuses } = useTicketStatuses();
-  const { priorities: ticketPriorities } = useTicketPriorities();
   const {
+    portalMode = false,
+    portalCapabilities,
+    statusConfigs: statusConfigsProp,
+    priorityConfigs: priorityConfigsProp,
+    taskApi,
+    portalTimeEntries,
+    portalAssets,
+    onAddPortalTimeEntry,
     selectedTicket,
     ticketContact,
     ticketCompany,
@@ -171,7 +202,19 @@ export function TicketDetailView(props: TicketDetailViewProps) {
     onOpenMerge,
   } = props;
 
+  const useInjectedTaxonomy = Boolean(statusConfigsProp && priorityConfigsProp) || portalMode;
+  const hookedStatuses = useTicketStatuses({ enabled: !useInjectedTaxonomy });
+  const hookedPriorities = useTicketPriorities({ enabled: !useInjectedTaxonomy });
+  const ticketStatuses = statusConfigsProp ?? hookedStatuses.statuses;
+  const ticketPriorities = priorityConfigsProp ?? hookedPriorities.priorities;
+
   const [composerTab, setComposerTab] = useState<'reply' | 'note'>('reply');
+  const allowInternalNotes = portalMode
+    ? portalCapabilities?.internalNotes !== false
+    : true;
+  const allowAiSync = portalMode ? portalCapabilities?.aiSync !== false : true;
+  const allowSpam = portalMode ? false : true;
+  const allowSwarm = portalMode ? false : true;
 
   // Defensive guard: never crash the ticket workspace when the selected
   // ticket is temporarily unavailable (e.g. removed from the master list
@@ -243,7 +286,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                     <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-slate-50">
                       {/* 1. Compact header: title + actions; badges live in the subtitle row */}
                     <div className="flex flex-col gap-1.5 w-full min-w-0 px-4 md:px-6 pt-3 md:pt-4 pb-3 border-b border-slate-100 dark:border-slate-850 bg-white dark:bg-slate-900 shrink-0">
-                      <SwarmOutageBanner ticketId={selectedTicket.id} />
+                      {allowSwarm ? <SwarmOutageBanner ticketId={selectedTicket.id} /> : null}
 
                       <div className="flex w-full min-w-0 items-start justify-between gap-3">
                         <div className="flex items-start gap-2 min-w-0 flex-1">
@@ -315,11 +358,14 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                                 &bull;{' '}
                                 <span className="font-mono tabular-nums text-slate-600 font-semibold">{ticketRef}</span>
                               </span>
-                              <DynamicSentimentGlyph sentiment={selectedTicket.sentiment} />
+                              {!portalMode || portalCapabilities?.sentimentGlyph !== false ? (
+                                <DynamicSentimentGlyph sentiment={selectedTicket.sentiment} />
+                              ) : null}
                             </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0 h-8">
+                          {allowAiSync ? (
                           <button
                             type="button"
                             onClick={runAiSync}
@@ -333,6 +379,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                             )}
                             <span>{t('tickets.detail.aiSync', 'KI-Sync')}</span>
                           </button>
+                          ) : null}
                           {onConvertToKB && (
                             <button
                               type="button"
@@ -348,6 +395,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                                 : t('tickets.detail.convertToKbShort', 'In KB')}</span>
                             </button>
                           )}
+                          {allowInternalNotes ? (
                           <button
                             type="button"
                             onClick={openInternalNoteComposer}
@@ -356,6 +404,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                             <StickyNote className="w-3.5 h-3.5 shrink-0" />
                             <span>{t('tickets.noteBtnShort', 'Notiz')}</span>
                           </button>
+                          ) : null}
                           <DropdownMenu>
                             <DropdownMenuTrigger
                               render={
@@ -378,7 +427,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                                   {t('tickets.merge.button', 'Zusammenführen')}
                                 </DropdownMenuItem>
                               )}
-                              {selectedTicket.status !== 'spam' && (
+                              {allowSpam && selectedTicket.status !== 'spam' && (
                                 <DropdownMenuItem
                                   className="rounded-lg text-xs font-semibold py-2 cursor-pointer text-rose-700"
                                   onClick={() => document.getElementById('ticket-header-spam-trigger')?.click()}
@@ -398,6 +447,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
+                          {allowSpam ? (
                           <TicketDetailsSpamAction
                             hideTrigger
                             ticket={selectedTicket}
@@ -413,6 +463,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                               setSelectedTicketId(null);
                             }}
                           />
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -464,6 +515,8 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                               isAiDrafting={isAiDrafting}
                               onChecklistUpdated={handleChecklistUpdated}
                               onAdoptProposedSolution={(text) => setReplyText(text)}
+                              portalMode={portalMode}
+                              taskApi={taskApi}
                             />
     
                             {/* 2. Foldable/Collapsible Agent Notes Section */}
@@ -750,6 +803,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                                   aiDraftMeta={aiDraftMeta}
                                   autoDispatchThreshold={95}
                                   isAutoDispatched={selectedTicket?.aiAutoDispatched === true}
+                                  portalMode={portalMode}
                                 />
                                 )}
                               </div>
@@ -779,6 +833,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                             onUpdateTicket={(data) =>
                               handleInlineUpdate(selectedTicket.id, data)
                             }
+                            portalMode={portalMode}
                           />
                         )}
     
@@ -800,7 +855,11 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                         )}
     
                         {activeDetailTab === 'assets' && (
-                          <AssetsTabContent ticket={selectedTicket} />
+                          <AssetsTabContent
+                            ticket={selectedTicket}
+                            portalMode={portalMode}
+                            portalAssets={portalAssets}
+                          />
                         )}
     
                         {activeDetailTab === 'related_tickets' && (
@@ -820,11 +879,18 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                           <TasksTabContent
                             ticket={selectedTicket}
                             onChecklistUpdated={handleChecklistUpdated}
+                            portalMode={portalMode}
+                            taskApi={taskApi}
                           />
                         )}
 
                         {activeDetailTab === 'time' && (
-                          <TimeTrackingTabContent ticket={selectedTicket} />
+                          <TimeTrackingTabContent
+                            ticket={selectedTicket}
+                            portalMode={portalMode}
+                            portalTimeEntries={portalTimeEntries}
+                            onAddPortalTimeEntry={onAddPortalTimeEntry}
+                          />
                         )}
     
                       </div>

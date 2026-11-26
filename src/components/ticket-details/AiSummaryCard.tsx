@@ -46,6 +46,10 @@ interface AiSummaryCardProps {
   isAiDrafting: boolean;
   onChecklistUpdated?: (checklist: TicketChecklistItem[]) => void;
   onAdoptProposedSolution?: (text: string) => void;
+  portalMode?: boolean;
+  taskApi?: {
+    toggle: (ticketId: string, taskId: string) => Promise<TicketChecklistItem[]>;
+  };
 }
 
 export function AiSummaryCard({
@@ -56,6 +60,8 @@ export function AiSummaryCard({
   isAiDrafting,
   onChecklistUpdated,
   onAdoptProposedSolution,
+  portalMode = false,
+  taskApi,
 }: AiSummaryCardProps) {
   const { t } = useTranslation();
   
@@ -76,6 +82,10 @@ export function AiSummaryCard({
 
   // Fetch top-3 RAG references (resolved tickets + KB articles) for this ticket.
   useEffect(() => {
+    if (portalMode) {
+      setRagReferences([]);
+      return;
+    }
     let alive = true;
     const query = [ticket.subject, ticket.description]
       .filter(Boolean)
@@ -117,7 +127,7 @@ export function AiSummaryCard({
     return () => {
       alive = false;
     };
-  }, [ticket.id, ticket.subject, ticket.description]);
+  }, [ticket.id, ticket.subject, ticket.description, portalMode]);
 
   const adoptProposedSolution = () => {
     if (!proposedSolution) return;
@@ -180,7 +190,9 @@ export function AiSummaryCard({
     onChecklistUpdated?.(optimistic);
 
     try {
-      const next = await ticketService.toggleTaskCompletion(ticket.id, taskId);
+      const next = taskApi
+        ? await taskApi.toggle(ticket.id, taskId)
+        : await ticketService.toggleTaskCompletion(ticket.id, taskId);
       onChecklistUpdated?.(next);
     } catch (e) {
       console.error('Failed to commit interactive checklist state to database:', e);

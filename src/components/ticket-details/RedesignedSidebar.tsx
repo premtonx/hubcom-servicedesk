@@ -61,6 +61,12 @@ import {
   TicketPriorityChip,
   TicketCategoryChip,
 } from '../tickets/TicketTableCells';
+import type {
+  PortalTicketWorkspaceMeta,
+  TicketDetailWorkbenchCapabilities,
+} from '../../lib/tickets/ticket-detail-workbench-adapter';
+import type { TicketStatusConfig, TicketPriorityConfig } from '../../lib/ticket-config/types';
+import type { TicketCategory } from '../../lib/ticket-categories/types';
 
 function matchDispatchAgentId(
   assignee: { id: string; name: string } | null,
@@ -98,6 +104,9 @@ interface RedesignedSidebarProps {
   suggestedTags: string[];
   onInitiateHandoff?: (data: { agentName: string; agentId?: string }) => void;
   onCloseMobile?: () => void;
+  portalMode?: boolean;
+  portalMeta?: PortalTicketWorkspaceMeta | null;
+  portalCapabilities?: TicketDetailWorkbenchCapabilities;
 }
 
 export function RedesignedSidebar({
@@ -118,17 +127,63 @@ export function RedesignedSidebar({
   onAddTag,
   suggestedTags,
   onInitiateHandoff,
-  onCloseMobile
+  onCloseMobile,
+  portalMode = false,
+  portalMeta = null,
+  portalCapabilities,
 }: RedesignedSidebarProps) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const { categories: allTicketCategories } = useTicketCategories(false);
-  const { statuses: ticketStatuses } = useTicketStatuses();
-  const { priorities: ticketPriorities } = useTicketPriorities();
+  const usePortalMeta = portalMode && portalMeta != null;
+  const { categories: hookedCategories } = useTicketCategories(false, {
+    enabled: !usePortalMeta,
+  });
+  const { statuses: hookedStatuses } = useTicketStatuses({ enabled: !usePortalMeta });
+  const { priorities: hookedPriorities } = useTicketPriorities({ enabled: !usePortalMeta });
+
+  const allTicketCategories: TicketCategory[] = usePortalMeta
+    ? (portalMeta!.categories || []).map((c, i) => ({
+        id: c.id,
+        name: c.name,
+        slug: c.slug || c.name,
+        color: c.color || null,
+        sortOrder: i,
+        isActive: true,
+      })) as TicketCategory[]
+    : hookedCategories;
+  const ticketStatuses: TicketStatusConfig[] = usePortalMeta
+    ? (portalMeta!.statuses || []).map((s, i) => ({
+        id: s.id || s.key,
+        key: s.key,
+        name: s.name,
+        description: '',
+        color: s.color || '#64748b',
+        sortOrder: s.sortOrder ?? i,
+        isActive: true,
+        workflowKind: (s.workflowKind as TicketStatusConfig['workflowKind']) || 'open',
+        createdAt: '',
+        updatedAt: '',
+      }))
+    : hookedStatuses;
+  const ticketPriorities: TicketPriorityConfig[] = usePortalMeta
+    ? (portalMeta!.priorities || []).map((p, i) => ({
+        id: p.id || p.key,
+        key: p.key,
+        name: p.name,
+        description: '',
+        color: p.color || '#64748b',
+        sortOrder: p.sortOrder ?? i,
+        isActive: true,
+        createdAt: '',
+        updatedAt: '',
+      }))
+    : hookedPriorities;
   // Pass full config list into chips; selectableCategoriesForValue keeps inactive current values.
   const ticketKind = getTicketKind(ticket);
   const [slaTierDraft, setSlaTierDraft] = useState(ticket.slaTier ?? '');
   const syncedHealthTicketId = useRef<string | null>(null);
+  const canEditAssignee = portalMode ? portalCapabilities?.canEditAssignee !== false : true;
+  const canEditProperties = portalMode ? portalCapabilities?.canEditProperties !== false : true;
 
   const ticketAssignee = useMemo(
     () => resolveTicketAssignee(ticket),
@@ -136,32 +191,33 @@ export function RedesignedSidebar({
   );
 
   const dispatchAgents = useMemo(() => {
-    const agents = TICKET_DISPATCH_AGENTS.map((a) => ({ ...a })).filter(
-      (a) => Boolean(scalarAssigneeId(a.id)),
-    );
+    const agents = usePortalMeta
+      ? (portalMeta!.agents || []).map((a) => ({ id: a.id, name: a.name || a.email }))
+      : TICKET_DISPATCH_AGENTS.map((a) => ({ ...a }));
+    const filtered = agents.filter((a) => Boolean(scalarAssigneeId(a.id)));
     const currentId = scalarAssigneeId(user?.uid || '');
     const currentName = user?.displayName || user?.email || '';
-    if (currentId && !agents.some((a) => a.id === currentId)) {
-      agents.unshift({
+    if (currentId && !filtered.some((a) => a.id === currentId)) {
+      filtered.unshift({
         id: currentId,
         name: currentName || t('tickets.assigneeYourself', 'Yourself'),
       });
     }
     // Inject the current real assignee if missing from the catalog — never
     // inject sentinel / "Nicht zugewiesen" pseudo-users (empty option covers that).
-    if (!ticketAssignee) return agents;
-    const knownById = Boolean(ticketAssignee.id && agents.some((a) => a.id === ticketAssignee.id));
+    if (!ticketAssignee) return filtered;
+    const knownById = Boolean(ticketAssignee.id && filtered.some((a) => a.id === ticketAssignee.id));
     const knownByName = Boolean(
-      ticketAssignee.name && agents.some((a) => a.name.toLowerCase() === ticketAssignee.name.toLowerCase()),
+      ticketAssignee.name && filtered.some((a) => a.name.toLowerCase() === ticketAssignee.name.toLowerCase()),
     );
     if (!knownById && !knownByName && ticketAssignee.id) {
-      agents.unshift({
+      filtered.unshift({
         id: ticketAssignee.id,
         name: ticketAssignee.name || ticketAssignee.id,
       });
     }
-    return agents;
-  }, [ticketAssignee, user?.uid, user?.displayName, user?.email, t]);
+    return filtered;
+  }, [ticketAssignee, user?.uid, user?.displayName, user?.email, t, usePortalMeta, portalMeta]);
 
   const syncedDispatchAgentId = useMemo(
     () => matchDispatchAgentId(ticketAssignee, dispatchAgents),

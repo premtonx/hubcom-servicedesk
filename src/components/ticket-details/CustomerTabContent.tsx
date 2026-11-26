@@ -26,6 +26,8 @@ interface CustomerTabContentProps {
   contactSchema: CustomField[];
   allTickets: TicketType[];
   onUpdateTicket?: (data: Partial<TicketType>) => void;
+  /** Skip /api/admin and customerService staff fetches. */
+  portalMode?: boolean;
 }
 
 type OrgContract = {
@@ -62,6 +64,7 @@ export function CustomerTabContent({
   contactSchema,
   allTickets,
   onUpdateTicket,
+  portalMode = false,
 }: CustomerTabContentProps) {
   const { t } = useTranslation();
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -89,8 +92,12 @@ export function CustomerTabContent({
   }, [allTickets, ticket]);
 
   useEffect(() => {
+    if (portalMode) {
+      setCompanies(company ? [company] : []);
+      return;
+    }
     return customerService.subscribeToCompanies(setCompanies);
-  }, []);
+  }, [portalMode, company]);
 
   const orgId = String(
     ticket.organizationId ||
@@ -101,6 +108,22 @@ export function CustomerTabContent({
   ).trim();
 
   useEffect(() => {
+    if (portalMode) {
+      setOrgContract(
+        company
+          ? {
+              name: company.name,
+              tier: null,
+              sla: null,
+              contract_renewal: null,
+              monthly_rate: null,
+              website: null,
+              domain: null,
+            }
+          : null,
+      );
+      return;
+    }
     if (!orgId) {
       setOrgContract(null);
       return;
@@ -131,9 +154,23 @@ export function CustomerTabContent({
     return () => {
       cancelled = true;
     };
-  }, [orgId]);
+  }, [orgId, portalMode, company]);
 
   useEffect(() => {
+    if (portalMode) {
+      if (contact?.email) {
+        setPeople([
+          {
+            id: String(contact.id || contact.email),
+            name: contact.name || contact.email,
+            email: contact.email,
+          },
+        ]);
+      } else {
+        setPeople([]);
+      }
+      return;
+    }
     const companyId = ticket.companyId;
     if (!companyId) {
       setPeople([]);
@@ -182,7 +219,7 @@ export function CustomerTabContent({
       cancelled = true;
       unsub();
     };
-  }, [ticket.companyId, orgId]);
+  }, [ticket.companyId, orgId, portalMode, contact]);
 
   const orgDisplayName =
     orgContract?.name || company?.name || ticket.company || null;
@@ -197,7 +234,7 @@ export function CustomerTabContent({
   );
 
   const assignCompany = async (companyId: string) => {
-    if (!onUpdateTicket) return;
+    if (!onUpdateTicket || portalMode) return;
     setSaving(true);
     try {
       const nextCompany = companies.find((c) => c.id === companyId) || null;

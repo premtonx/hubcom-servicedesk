@@ -4,6 +4,10 @@ import { Building2, Globe, Mail, PlusCircle, Sparkles, Tag, XCircle } from 'luci
 import { RedesignedSidebar } from '../ticket-details/RedesignedSidebar';
 import type { Ticket as TicketType, Contact, Company } from '../../types';
 import type { SuggestedLink } from '../../services/neuralLinkService';
+import type {
+  PortalTicketWorkspaceMeta,
+  TicketDetailWorkbenchCapabilities,
+} from '../../lib/tickets/ticket-detail-workbench-adapter';
 
 export interface TicketDetailContextPaneProps {
   selectedTicket: TicketType;
@@ -24,6 +28,9 @@ export interface TicketDetailContextPaneProps {
   suggestedTags: string[];
   allTickets: TicketType[];
   handleInlineUpdate: (ticketId: string, data: Partial<TicketType>) => Promise<void> | void;
+  portalMode?: boolean;
+  portalMeta?: PortalTicketWorkspaceMeta | null;
+  portalCapabilities?: TicketDetailWorkbenchCapabilities;
 }
 
 export function TicketDetailContextPane(props: TicketDetailContextPaneProps) {
@@ -46,6 +53,9 @@ export function TicketDetailContextPane(props: TicketDetailContextPaneProps) {
     suggestedTags,
     allTickets,
     handleInlineUpdate,
+    portalMode = false,
+    portalMeta = null,
+    portalCapabilities,
   } = props;
 
   // Defensive: if the selected ticket disappears from the master list (e.g.
@@ -88,9 +98,14 @@ export function TicketDetailContextPane(props: TicketDetailContextPaneProps) {
                       onUnlinkTicket={unlinkTicket}
                       tagsInput={newTagInput}
                       onChangeTagsInput={setNewTagInput}
-                      onInitiateHandoff={(data) => initiateHandoff(selectedTicket.id, data)}
+                      onInitiateHandoff={
+                        portalMode
+                          ? undefined
+                          : (data) => initiateHandoff(selectedTicket.id, data)
+                      }
                       onCloseMobile={() => setIsMobilePropertiesOpen(false)}
                       onAddTag={() => {
+                        if (portalMode && portalCapabilities?.canEditTags === false) return;
                         if (newTagInput.trim() && selectedTicket) {
                           handleInlineUpdate(selectedTicket.id, { tags: [...tags, newTagInput.trim()] });
                           setNewTagInput('');
@@ -99,7 +114,9 @@ export function TicketDetailContextPane(props: TicketDetailContextPaneProps) {
                       
                        suggestedTags={suggestedTags}
                       allTickets={allTickets}
-                      
+                      portalMode={portalMode}
+                      portalMeta={portalMeta}
+                      portalCapabilities={portalCapabilities}
                     />
            </aside>
   );
