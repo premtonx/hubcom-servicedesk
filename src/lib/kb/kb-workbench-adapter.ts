@@ -81,19 +81,24 @@ export const STAFF_KB_CAPABILITIES: KbWorkbenchCapabilities = {
   canBulkDelete: true,
 };
 
-/** Base portal chrome — staff-only features off. Write flags set per role. */
+/**
+ * Portal chrome mirrors the staff Wissensdatenbank workspace (Entwürfe, Prüfungen,
+ * KI-Assistent, Analytik, KB-Gesundheit, AI insights, import, RAG). Staff-only
+ * document/source tabs and cross-tenant visibility admin stay off.
+ * Write flags are set per role below.
+ */
 export const PORTAL_KB_CAPABILITIES: KbWorkbenchCapabilities = {
   importDocs: false,
   importCsv: false,
   aiGenerate: false,
   documentsTab: false,
   externalSourcesTab: false,
-  draftsNav: false,
-  reviewsNav: false,
-  aiAssistantNav: false,
-  analyticsNav: false,
-  aiInsights: false,
-  kbHealthTelemetry: false,
+  draftsNav: true,
+  reviewsNav: true,
+  aiAssistantNav: true,
+  analyticsNav: true,
+  aiInsights: true,
+  kbHealthTelemetry: true,
   crossTenantVisibilityFilters: false,
   categoryAdmin: false,
   ragIndexToggle: false,
@@ -102,20 +107,23 @@ export const PORTAL_KB_CAPABILITIES: KbWorkbenchCapabilities = {
   canDeleteArticles: false,
   canDuplicateArticles: false,
   canBulkDelete: false,
-  smartItemIds: ['popular', 'recent'],
+  smartItemIds: ['popular', 'recent', 'mostViewed', 'missing', 'outdated'],
 };
 
-/** CLIENT_ADMIN | CLIENT_SUPPORTER — write own-org articles + categories. */
+/** CLIENT_ADMIN | CLIENT_SUPPORTER — write own-org articles + categories + RAG/import/AI. */
 export const PORTAL_KB_WRITER_CAPABILITIES: KbWorkbenchCapabilities = {
   ...PORTAL_KB_CAPABILITIES,
   categoryAdmin: true,
+  importDocs: true,
   importCsv: true,
+  aiGenerate: true,
+  ragIndexToggle: true,
   canCreateArticles: true,
   canEditArticles: true,
   canDeleteArticles: true,
 };
 
-/** CLIENT_USER — read-only. */
+/** CLIENT_USER — read/search/AI-ask; no edit/create/import/RAG toggle. */
 export const PORTAL_KB_READER_CAPABILITIES: KbWorkbenchCapabilities = {
   ...PORTAL_KB_CAPABILITIES,
 };
@@ -232,4 +240,22 @@ export interface KbWorkbenchAdapter {
    * Portal adapters omit this.
    */
   getAiAdapter?(): unknown;
+
+  /**
+   * Portal: POST /api/portal/kb/ai-ask (org-scoped RAG).
+   * When set, workbench prefers this over findRelevantContext + answerKnowledgeQuery.
+   */
+  askPortalAi?(
+    query: string,
+    options?: { forceRefresh?: boolean },
+  ): Promise<{ answer: string; snippets: KbRagSnippet[] }>;
+
+  /**
+   * Portal: POST /api/portal/kb/ai-generate (writers).
+   * Returns draft title/content for the create editor.
+   */
+  generatePortalArticle?(payload: {
+    subject: string;
+    description?: string;
+  }): Promise<{ title: string; content: string }>;
 }

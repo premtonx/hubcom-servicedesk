@@ -93,7 +93,10 @@ export function KBArticleDetailView({
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const scrollAreaRootRef = useRef<HTMLDivElement>(null);
 
-  const articleUrl = useMemo(() => buildKbArticleDeepLink(article.id), [article.id]);
+  const articleUrl = useMemo(
+    () => buildKbArticleDeepLink(article.id, mode),
+    [article.id, mode],
+  );
   const viewSourceContent = article.content ?? htmlContent;
 
   const renderedHtml = useMemo(() => {

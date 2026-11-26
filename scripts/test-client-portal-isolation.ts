@@ -1937,14 +1937,24 @@ function testPortalKbArticleEditAndPortalChrome(): void {
   );
   assert(
     panelSrc.includes('Artikel-Metadaten') &&
-      panelSrc.includes('!isPortal') &&
       panelSrc.includes('KI-Wissensspeicher (RAG)') &&
+      panelSrc.includes('onToggleIndexInRag') &&
       headerSrc.includes('Zurück zur Wissensdatenbank') &&
       toolbarSrc.includes('Bearbeiten') &&
       toolbarSrc.includes('Link kopieren') &&
       toolbarSrc.includes('Als PDF exportieren') &&
       toolbarSrc.includes('isPortal'),
-    'portal chrome uses German labels; staff RAG panels gated by !isPortal',
+    'portal chrome uses German labels; RAG toggle wired via capabilities (not hard-gated off)',
+  );
+  const articlePageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/KnowledgeBaseArticlePage.tsx'),
+    'utf8',
+  );
+  assert(
+    articlePageSrc.includes('capabilities.ragIndexToggle') &&
+      !articlePageSrc.includes('if (isPortal || !capabilities.ragIndexToggle) return') &&
+      articlePageSrc.includes('adapter.setIndexInRag'),
+    'article detail RAG toggle works in portal when ragIndexToggle capability is on',
   );
   assert(
     detailViewSrc.includes("mode === 'portal'") &&
@@ -2127,10 +2137,11 @@ function testPortalKbSharePointCsvImport(): void {
     'utf8',
   );
   assert(
-    portalAdapterSrc.includes('/import-csv') &&
+    portalAdapterSrc.includes('/import') &&
       portalAdapterSrc.includes('importCsvArticles') &&
-      !portalAdapterSrc.includes('/api/kb/import-csv'),
-    'portal adapter posts only /api/portal/kb/import-csv',
+      !portalAdapterSrc.includes('/api/kb/import-csv') &&
+      !portalAdapterSrc.includes('/api/kb/import'),
+    'portal adapter posts only /api/portal/kb/import (docs/CSV)',
   );
 
   const adapterCapsSrc = fs.readFileSync(
@@ -4879,10 +4890,54 @@ function testKbWorkbenchSharedUiIsolation(): void {
   );
   assert(
     adapterSrc.includes('canCreateArticles') &&
-      adapterSrc.includes('importDocs: false') &&
-      adapterSrc.includes('aiInsights: false') &&
-      adapterSrc.includes('reviewsNav: false'),
-    'portal capabilities hide staff-only chrome',
+      adapterSrc.includes('draftsNav: true') &&
+      adapterSrc.includes('reviewsNav: true') &&
+      adapterSrc.includes('aiAssistantNav: true') &&
+      adapterSrc.includes('analyticsNav: true') &&
+      adapterSrc.includes('aiInsights: true') &&
+      adapterSrc.includes('kbHealthTelemetry: true') &&
+      adapterSrc.includes('documentsTab: false') &&
+      adapterSrc.includes('externalSourcesTab: false') &&
+      adapterSrc.includes('crossTenantVisibilityFilters: false'),
+    'portal capabilities mirror staff workspace chrome; keep docs/sources/cross-tenant off',
+  );
+  assert(
+    /PORTAL_KB_WRITER_CAPABILITIES[\s\S]*importDocs:\s*true/.test(adapterSrc) &&
+      /PORTAL_KB_WRITER_CAPABILITIES[\s\S]*aiGenerate:\s*true/.test(adapterSrc) &&
+      /PORTAL_KB_WRITER_CAPABILITIES[\s\S]*ragIndexToggle:\s*true/.test(adapterSrc) &&
+      /PORTAL_KB_READER_CAPABILITIES[\s\S]*ragIndexToggle:\s*false|PORTAL_KB_CAPABILITIES[\s\S]*ragIndexToggle:\s*false/.test(
+        adapterSrc,
+      ),
+    'writers get import/AI-generate/RAG; readers do not toggle RAG',
+  );
+  assert(
+    portalAdapterSrc.includes('/ai-ask') &&
+      portalAdapterSrc.includes('/ai-generate') &&
+      portalAdapterSrc.includes('/import') &&
+      portalAdapterSrc.includes('askPortalAi') &&
+      portalAdapterSrc.includes('setIndexInRag') &&
+      portalAdapterSrc.includes('index_in_rag') &&
+      !portalAdapterSrc.includes('Portal never toggles RAG'),
+    'portal adapter wires ai-ask/generate/import + index_in_rag (no /api/db)',
+  );
+  assert(
+    workbenchSrc.includes('PortalKbAiAssistantPanel') &&
+      workbenchSrc.includes('askPortalAi') &&
+      workbenchSrc.includes('capabilities.aiInsights || capabilities.kbHealthTelemetry') &&
+      workbenchSrc.includes('KBActivitySidebar'),
+    'portal mounts shared workbench AI panel + right activity sidebar (not staff-only gate)',
+  );
+  assert(
+    fs
+      .readFileSync(path.join(process.cwd(), 'src/components/kb/kb-content-format.ts'), 'utf8')
+      .includes("/portal/kb") &&
+      fs
+        .readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8')
+        .includes('KbArticlePathRedirect') &&
+      fs
+        .readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8')
+        .includes('path="kb/:id"'),
+    '/portal/kb/:id deep-links into shared workbench via ?article=',
   );
 }
 
