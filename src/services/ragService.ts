@@ -105,15 +105,24 @@ export const ragService = {
     query: string,
     kbArticles: KBArticle[] = [],
     resolvedTickets: Ticket[] = [],
-    opts?: { tenantId?: string; limit?: number },
+    opts?: {
+      tenantId?: string;
+      limit?: number;
+      /** Ticket / portal org — server filters KnowledgeEmbedding.organization_id. */
+      organizationId?: string | null;
+      includeSharedKb?: boolean;
+    },
   ): Promise<GroundedRagClientResult> => {
     try {
+      const organizationId = String(opts?.organizationId || '').trim() || undefined;
       const res = await axios.post(
         '/api/vectors/search',
         {
           query,
           // tenantId is derived from the authenticated session on the server
           limit: opts?.limit ?? 5,
+          ...(organizationId ? { organizationId } : {}),
+          ...(opts?.includeSharedKb === true ? { includeSharedKb: true } : {}),
         },
         { withCredentials: true },
       );

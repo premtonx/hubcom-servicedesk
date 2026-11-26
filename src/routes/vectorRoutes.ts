@@ -24,6 +24,14 @@ const enqueueSchema = z.object({
 const searchSchema = z.object({
   query: z.string().min(1).max(8000),
   limit: z.number().int().min(1).max(20).optional(),
+  /**
+   * When set (ticket belonging to an MSP client org), strictly filter
+   * KnowledgeEmbedding.organization_id. Omit for Hubcom staff/global search
+   * (which excludes all org-private vectors).
+   */
+  organizationId: z.string().min(1).max(255).optional().nullable(),
+  /** Org flag include_shared_kb_in_rag — default false = exclusive org RAG. */
+  includeSharedKb: z.boolean().optional(),
   // tenantId from body is ignored — session tenant is authoritative
 });
 
@@ -57,14 +65,22 @@ router.post('/search', authenticate, async (req: Request, res: Response) => {
   }
   try {
     const tenantId = resolveTenantFromRequest(req);
+    const organizationId = parsed.data.organizationId
+      ? String(parsed.data.organizationId).trim() || null
+      : null;
+    const includeSharedKb = parsed.data.includeSharedKb === true;
     const grounded = await buildGroundedRagContext({
       query: parsed.data.query,
       tenantId,
+      organizationId,
+      includeSharedKb,
       limit: parsed.data.limit ?? 5,
     });
     return res.json({
       success: true,
       tenantId,
+      organizationId,
+      includeSharedKb,
       ...grounded,
       hits: grounded.snippets,
     });
@@ -105,12 +121,24 @@ router.post('/hybrid', authenticate, async (req: Request, res: Response) => {
   }
   try {
     const tenantId = resolveTenantFromRequest(req);
+    const organizationId = parsed.data.organizationId
+      ? String(parsed.data.organizationId).trim() || null
+      : null;
+    const includeSharedKb = parsed.data.includeSharedKb === true;
     const hits = await hybridSearchKnowledge({
       query: parsed.data.query,
       tenantId,
+      organizationId,
+      includeSharedKb,
       limit: parsed.data.limit ?? 5,
     });
-    return res.json({ success: true, tenantId, hits });
+    return res.json({
+      success: true,
+      tenantId,
+      organizationId,
+      includeSharedKb,
+      hits,
+    });
   } catch (err: unknown) {
     return res.status(500).json({ error: safeErrorMessage(err, 'Hybrid search failed') });
   }

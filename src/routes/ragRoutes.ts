@@ -26,6 +26,8 @@ const searchSchema = z.object({
   query: z.string().min(1).max(8000),
   limit: z.number().int().min(1).max(20).optional(),
   minSimilarity: z.number().min(0).max(1).optional(),
+  organizationId: z.string().min(1).max(255).optional().nullable(),
+  includeSharedKb: z.boolean().optional(),
 });
 
 const indexPendingSchema = z.object({
@@ -72,15 +74,23 @@ router.post(
         return res.status(400).json({ error: 'Invalid search payload', details: parsed.error.flatten() });
       }
       const tenantId = resolveTenantFromRequest(req);
+      const organizationId = parsed.data.organizationId
+        ? String(parsed.data.organizationId).trim() || null
+        : null;
+      const includeSharedKb = parsed.data.includeSharedKb === true;
       const hits = await cosineSearchRagChunks({
         query: parsed.data.query,
         tenantId,
+        organizationId,
+        includeSharedKb,
         limit: parsed.data.limit,
         minSimilarity: parsed.data.minSimilarity,
       });
       return res.json({
         success: true,
         tenantId,
+        organizationId,
+        includeSharedKb,
         query: parsed.data.query,
         minSimilarity: parsed.data.minSimilarity ?? 0.65,
         hitCount: hits.length,

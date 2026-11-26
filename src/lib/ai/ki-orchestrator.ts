@@ -9,6 +9,7 @@ import { stripHtmlToPlainText } from './text-chunker.js';
 export interface HybridSearchHit {
   id: string;
   tenantId: string;
+  organizationId: string | null;
   sourceType: 'KB_ARTICLE' | 'RESOLVED_TICKET' | 'KB_DOCUMENT';
   sourceId: string;
   chunkIndex: number;
@@ -52,6 +53,13 @@ export async function hybridSearchKnowledge(params: {
   query: string;
   /** Required for isolation — callers must pass session-derived tenantId. */
   tenantId: string;
+  /**
+   * When set (portal / org-scoped ticket), strictly filter KnowledgeEmbedding.organization_id.
+   * Omit / null for Hubcom staff default-tenant search (excludes org-private rows).
+   */
+  organizationId?: string | null;
+  /** Default false — exclusive org RAG. When true, also include organization_id IS NULL. */
+  includeSharedKb?: boolean;
   limit?: number;
   sourceTypes?: RagSearchSourceType[];
 }): Promise<HybridSearchHit[]> {
@@ -59,6 +67,12 @@ export async function hybridSearchKnowledge(params: {
   const limit = Math.min(Math.max(params.limit ?? 5, 1), 20);
   const queryText = stripHtmlToPlainText(params.query).slice(0, 4000);
   if (!queryText.trim()) return [];
+
+  const { buildRagOrganizationSqlFilter } = await import('./rag-org-scope.js');
+  const orgScope = {
+    organizationId: params.organizationId,
+    includeSharedKb: params.includeSharedKb === true,
+  };
 
   let queryVector: number[] | null = null;
   try {
@@ -72,12 +86,14 @@ export async function hybridSearchKnowledge(params: {
 
   if (queryVector) {
     const literal = vectorToSqlLiteral(queryVector);
-    // Parameterized IN-list via ANY($n::text[]) — no string interpolation of enums.
+    // $1 vector, $2 query, $3 tenant, $4 source types, $5 limit, $6+ org
+    const org = buildRagOrganizationSqlFilter(orgScope, 6);
     const sql = `
       WITH candidates AS (
         SELECT
           id::text AS id,
           tenant_id,
+          organization_id,
           source_type::text AS source_type,
           source_id,
           chunk_index,
@@ -89,6 +105,7 @@ export async function hybridSearchKnowledge(params: {
         WHERE tenant_id = $3
           AND source_type::text = ANY($4::text[])
           AND embedding IS NOT NULL
+          ${org.clause}
         ORDER BY embedding <=> $1::vector
         LIMIT 40
       )
@@ -99,15 +116,25 @@ export async function hybridSearchKnowledge(params: {
           + COALESCE(fts_rank, 0) * 0.3) DESC
       LIMIT $5
     `;
-    const res = await queryDb(sql, [literal, queryText, tenantId, sourceFilter, limit]);
+    const res = await queryDb(sql, [
+      literal,
+      queryText,
+      tenantId,
+      sourceFilter,
+      limit,
+      ...org.values,
+    ]);
     return res.rows.map(mapRow);
   }
 
   // FTS-only fallback when embeddings are not configured
+  // $1 query, $2 tenant, $3 source types, $4 limit, $5+ org
+  const orgFts = buildRagOrganizationSqlFilter(orgScope, 5);
   const sql = `
     SELECT
       id::text AS id,
       tenant_id,
+      organization_id,
       source_type::text AS source_type,
       source_id,
       chunk_index,
@@ -119,10 +146,11 @@ export async function hybridSearchKnowledge(params: {
     WHERE tenant_id = $2
       AND source_type::text = ANY($3::text[])
       AND search_tsv @@ plainto_tsquery('english', $1)
+      ${orgFts.clause}
     ORDER BY fts_rank DESC NULLS LAST
     LIMIT $4
   `;
-  const res = await queryDb(sql, [queryText, tenantId, sourceFilter, limit]);
+  const res = await queryDb(sql, [queryText, tenantId, sourceFilter, limit, ...orgFts.values]);
   return res.rows.map(mapRow);
 }
 
@@ -137,10 +165,15 @@ function mapRow(row: any): HybridSearchHit {
   const hybridScore =
     (vectorDistance == null ? 0 : 1 - Math.min(vectorDistance, 1)) * 0.7 +
     (ftsRank || 0) * 0.3;
+  const organizationId =
+    row.organization_id == null || String(row.organization_id).trim() === ''
+      ? null
+      : String(row.organization_id).trim();
 
   return {
     id: String(row.id),
     tenantId: String(row.tenant_id),
+    organizationId,
     sourceType: row.source_type as HybridSearchHit['sourceType'],
     sourceId: String(row.source_id),
     chunkIndex: Number(row.chunk_index) || 0,
@@ -157,11 +190,15 @@ function mapRow(row: any): HybridSearchHit {
 export async function buildGroundedRagContext(params: {
   query: string;
   tenantId: string;
+  organizationId?: string | null;
+  includeSharedKb?: boolean;
   limit?: number;
 }): Promise<GroundedRagContext> {
   const snippets = await hybridSearchKnowledge({
     query: params.query,
     tenantId: params.tenantId || DEFAULT_TENANT,
+    organizationId: params.organizationId,
+    includeSharedKb: params.includeSharedKb === true,
     limit: params.limit ?? 5,
   });
 
@@ -197,11 +234,16 @@ export async function groundInboundTicketForTriage(params: {
   subject: string;
   body: string;
   tenantId: string;
+  /** When the ticket belongs to an MSP client org, filter RAG to that org only. */
+  organizationId?: string | null;
+  includeSharedKb?: boolean;
 }): Promise<GroundedRagContext> {
   const query = `${params.subject}\n${params.body}`.slice(0, 6000);
   return buildGroundedRagContext({
     query,
     tenantId: params.tenantId || DEFAULT_TENANT,
+    organizationId: params.organizationId,
+    includeSharedKb: params.includeSharedKb === true,
     limit: 5,
   });
 }

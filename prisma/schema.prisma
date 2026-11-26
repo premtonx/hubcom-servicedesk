@@ -16,21 +16,25 @@ datasource db {
 
 /// RAG chunk store — KB articles + resolved tickets for hybrid search.
 model KnowledgeEmbedding {
-  id           String                       @id @default(uuid()) @db.Uuid
-  tenantId     String                       @default("default") @map("tenant_id") @db.VarChar(255)
-  sourceType   KnowledgeSourceType          @map("source_type")
-  sourceId     String                       @map("source_id") @db.VarChar(255)
-  chunkIndex   Int                          @default(0) @map("chunk_index")
-  chunkContent String                       @map("chunk_content") @db.Text
-  metadata     Json                         @default("{}")
+  id             String                       @id @default(uuid()) @db.Uuid
+  tenantId       String                       @default("default") @map("tenant_id") @db.VarChar(255)
+  /// MSP client organization — NULL for Hubcom-global / shared articles.
+  organizationId String?                      @map("organization_id") @db.VarChar(255)
+  sourceType     KnowledgeSourceType          @map("source_type")
+  sourceId       String                       @map("source_id") @db.VarChar(255)
+  chunkIndex     Int                          @default(0) @map("chunk_index")
+  chunkContent   String                       @map("chunk_content") @db.Text
+  metadata       Json                         @default("{}")
   /// OpenAI text-embedding-3-small (1536 dims) or compatible provider.
-  embedding    Unsupported("vector(1536)")?
-  searchTsv    Unsupported("tsvector")?     @map("search_tsv")
-  createdAt    DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  embedding      Unsupported("vector(1536)")?
+  searchTsv      Unsupported("tsvector")?     @map("search_tsv")
+  createdAt      DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([tenantId, sourceType, sourceId, chunkIndex], map: "knowledge_embedding_source_chunk_uq")
   @@index([tenantId, sourceType, sourceId], map: "idx_knowledge_embedding_source")
+  @@index([tenantId, organizationId], map: "idx_knowledge_embedding_tenant_org")
+  @@index([sourceId], map: "idx_knowledge_embedding_article")
   @@map("KnowledgeEmbedding")
 }
 

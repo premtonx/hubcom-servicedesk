@@ -139,6 +139,8 @@ export async function deleteEmbeddingsForSource(
 
 async function upsertChunks(params: {
   tenantId: string;
+  /** MSP client organization — null for Hubcom-global / shared articles. */
+  organizationId?: string | null;
   sourceType: KnowledgeSourceType;
   sourceId: string;
   title: string;
@@ -162,6 +164,11 @@ async function upsertChunks(params: {
   const vectors = await embedTexts(stamped, { workspaceId: params.tenantId });
   await deleteEmbeddingsForSource(params.tenantId, params.sourceType, params.sourceId);
 
+  const organizationId =
+    params.organizationId == null || String(params.organizationId).trim() === ''
+      ? null
+      : String(params.organizationId).trim();
+
   for (let i = 0; i < chunks.length; i += 1) {
     const content = stamped[i];
     const embedding = vectors[i];
@@ -172,29 +179,43 @@ async function upsertChunks(params: {
       title: params.title,
       chunkIndex: i,
       chunkCount: chunks.length,
+      organization_id: organizationId,
+      organizationId,
+      article_id: params.sourceId,
     };
     await queryDb(
       `INSERT INTO "KnowledgeEmbedding"
-        (tenant_id, source_type, source_id, chunk_index, chunk_content, metadata, embedding, search_tsv, updated_at)
+        (tenant_id, organization_id, source_type, source_id, chunk_index, chunk_content, metadata, embedding, search_tsv, updated_at)
        VALUES (
          $1,
-         $2::"KnowledgeSourceType",
-         $3,
+         $2,
+         $3::"KnowledgeSourceType",
          $4,
          $5,
-         $6::jsonb,
-         $7::vector,
-         to_tsvector('english', $5),
+         $6,
+         $7::jsonb,
+         $8::vector,
+         to_tsvector('english', $6),
          CURRENT_TIMESTAMP
        )
        ON CONFLICT (tenant_id, source_type, source_id, chunk_index)
        DO UPDATE SET
+         organization_id = EXCLUDED.organization_id,
          chunk_content = EXCLUDED.chunk_content,
          metadata = EXCLUDED.metadata,
          embedding = EXCLUDED.embedding,
          search_tsv = EXCLUDED.search_tsv,
          updated_at = CURRENT_TIMESTAMP`,
-      [params.tenantId, params.sourceType, params.sourceId, i, content, JSON.stringify(meta), literal],
+      [
+        params.tenantId,
+        organizationId,
+        params.sourceType,
+        params.sourceId,
+        i,
+        content,
+        JSON.stringify(meta),
+        literal,
+      ],
     );
   }
   return chunks.length;
@@ -241,8 +262,15 @@ async function indexKbArticle(tenantId: string, sourceId: string): Promise<void>
     tenantId,
   );
   const ragConfig = await getRagPipelineConfig(tenantId);
+  const { resolveArticleOrganizationId, organizationIdFromRagTenant } = await import(
+    './rag-org-scope.js'
+  );
+  const organizationId =
+    resolveArticleOrganizationId(doc as Record<string, unknown>) ||
+    organizationIdFromRagTenant(tenantId);
   await upsertChunks({
     tenantId,
+    organizationId,
     sourceType: 'KB_ARTICLE',
     sourceId,
     title,
@@ -251,6 +279,8 @@ async function indexKbArticle(tenantId: string, sourceId: string): Promise<void>
     metadata: {
       workspace_id: tenantId,
       article_id: sourceId,
+      organization_id: organizationId,
+      organizationId,
       title: doc.title,
       locale: doc.language || 'en',
       updated_at: doc.updatedAt || doc.createdAt || null,
@@ -335,8 +365,15 @@ async function indexKbDocument(tenantId: string, sourceId: string): Promise<void
   const ragConfig = await getRagPipelineConfig(tenantId);
   const body = await redactForRag(text, tenantId);
   const header = buildChunkHeader(filename, sourceId);
+  const { resolveArticleOrganizationId, organizationIdFromRagTenant } = await import(
+    './rag-org-scope.js'
+  );
+  const organizationId =
+    resolveArticleOrganizationId(doc as Record<string, unknown>) ||
+    organizationIdFromRagTenant(tenantId);
   const chunkCount = await upsertChunks({
     tenantId,
+    organizationId,
     sourceType: 'KB_DOCUMENT',
     sourceId,
     title: String(doc.title || filename),
@@ -347,6 +384,8 @@ async function indexKbDocument(tenantId: string, sourceId: string): Promise<void
       workspace_id: tenantId,
       source: 'kb_doc',
       document_id: sourceId,
+      organization_id: organizationId,
+      organizationId,
       filename,
       index_in_rag: true,
       pages,
@@ -467,8 +506,15 @@ async function indexResolvedTicket(tenantId: string, sourceId: string): Promise<
     );
   }
 
+  const { resolveArticleOrganizationId, organizationIdFromRagTenant } = await import(
+    './rag-org-scope.js'
+  );
+  const organizationId =
+    resolveArticleOrganizationId(doc as Record<string, unknown>) ||
+    organizationIdFromRagTenant(tenantId);
   await upsertChunks({
     tenantId,
+    organizationId,
     sourceType: 'RESOLVED_TICKET',
     sourceId,
     title,
@@ -478,6 +524,8 @@ async function indexResolvedTicket(tenantId: string, sourceId: string): Promise<
       workspace_id: tenantId,
       source: 'ticket',
       ticket_id: sourceId,
+      organization_id: organizationId,
+      organizationId,
       status: doc.status,
       customId: doc.customId,
       priority: doc.priority,

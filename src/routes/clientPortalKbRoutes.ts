@@ -57,6 +57,7 @@ import {
   deleteEmbeddingsForSource,
   enqueueKbArticleIndex,
 } from '../lib/ai/vector-queue.js';
+import { getOrganization } from '../lib/client-portal/organizations.js';
 
 const KB_COLLECTION = 'kb_articles';
 const router = Router();
@@ -280,19 +281,25 @@ router.post(
       }
       const ragTenantId = resolveTenantIdForOrganization(organizationId);
       const limit = parsed.data.limit ?? 5;
+      const org = await getOrganization(organizationId);
+      const { resolveIncludeSharedKbInRag } = await import('../lib/ai/rag-org-scope.js');
+      const includeSharedKb = resolveIncludeSharedKbInRag(org);
 
-      // Vector hits — exclusively this org's tenant (never default Hubcom pool).
+      // Vector hits — exclusively this org's tenant + organization_id (never other orgs).
       let vectorHits: Array<{
         sourceId: string;
         sourceTitle: string;
         text: string;
         score?: number;
+        organizationId?: string | null;
       }> = [];
       try {
         const { hybridSearchKnowledge } = await import('../lib/ai/ki-orchestrator.js');
         const hits = await hybridSearchKnowledge({
           query: parsed.data.query,
           tenantId: ragTenantId,
+          organizationId,
+          includeSharedKb,
           limit,
           sourceTypes: ['KB_ARTICLE'],
         });
@@ -303,6 +310,7 @@ router.post(
           ),
           text: String(h.chunkContent || '').slice(0, 1200),
           score: h.hybridScore,
+          organizationId: h.organizationId ?? null,
         }));
       } catch (err: any) {
         safeLog('warn', '[portal/kb] ai-ask vector search unavailable', err?.message || err);
@@ -313,9 +321,17 @@ router.post(
       const visible = filterPortalVisibleArticles(rows, organizationId, 'all');
       const keywordHits = portalKbKeywordSearch(parsed.data.query, visible, limit);
 
-      // Drop any vector hit whose source article is not portal-visible (defense in depth).
+      // Drop any vector hit whose source article is not portal-visible, or whose
+      // organization_id does not match this org (defense in depth — never leak OtherOrg).
       const visibleIds = new Set(visible.map((a) => String(a.id)));
-      const safeVectorHits = vectorHits.filter((h) => visibleIds.has(h.sourceId));
+      const safeVectorHits = vectorHits.filter((h) => {
+        if (!visibleIds.has(h.sourceId)) return false;
+        if (!includeSharedKb) {
+          const hitOrg = String(h.organizationId || '').trim();
+          if (hitOrg && hitOrg !== organizationId) return false;
+        }
+        return true;
+      });
 
       const snippets =
         safeVectorHits.length > 0
