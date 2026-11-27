@@ -21,7 +21,32 @@ export type EmbeddingOrgRow = {
   source_id?: string | null;
   sourceId?: string | null;
   metadata?: Record<string, unknown> | null;
+  visibility?: string | null;
 };
+
+function embeddingVisibility(row: EmbeddingOrgRow): string {
+  const raw =
+    row.visibility ??
+    (row.metadata && typeof row.metadata === 'object'
+      ? (row.metadata as any).visibility
+      : null);
+  const value = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_');
+  if (
+    value === 'shared_portal' ||
+    value === 'shared' ||
+    value === 'public' ||
+    value === 'global'
+  ) {
+    return 'shared_portal';
+  }
+  if (value === 'organization' || value === 'org' || value === 'company' || value === 'tenant') {
+    return 'organization';
+  }
+  return 'internal';
+}
 
 /** Resolve organization id stamped on a KB article document. */
 export function resolveArticleOrganizationId(
@@ -94,7 +119,10 @@ export function embeddingMatchesOrgScope(
   }
 
   if (rowOrg === orgId) return true;
-  if (scope.includeSharedKb === true && !rowOrg) return true;
+  // Shared Hubcom guides only — never internal staff docs with NULL organization_id.
+  if (scope.includeSharedKb === true && !rowOrg && embeddingVisibility(row) === 'shared_portal') {
+    return true;
+  }
   return false;
 }
 
@@ -125,8 +153,16 @@ export function buildRagOrganizationSqlFilter(
     };
   }
   if (scope.includeSharedKb === true) {
+    // Own-org chunks OR shared_portal/global (NULL org + visibility) — never internal Hubcom.
     return {
-      clause: ` AND (organization_id = $${nextParamIndex} OR organization_id IS NULL OR TRIM(COALESCE(organization_id, '')) = '')`,
+      clause: ` AND (
+        organization_id = $${nextParamIndex}
+        OR (
+          (organization_id IS NULL OR TRIM(COALESCE(organization_id, '')) = '')
+          AND lower(replace(trim(COALESCE(metadata->>'visibility', '')), '-', '_'))
+            IN ('shared_portal', 'shared', 'public', 'global')
+        )
+      )`,
       values: [orgId],
       nextIndex: nextParamIndex + 1,
     };

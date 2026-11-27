@@ -215,6 +215,8 @@ import {
 import {
   assertSetLocalDoesNotBleed,
   ensureTenantRlsPolicies,
+  evaluateRlsEmbeddingAllowed,
+  evaluateRlsKbArticleAllowed,
   evaluateRlsOrgAllowed,
   resolveTenantContextFromUser,
   withSystemTenantContext,
@@ -2057,6 +2059,18 @@ function testPortalRagOrganizationIdIsolation(): void {
       source_id: 'kb-hubcom-guide',
       source_type: 'KB_ARTICLE',
       chunk_content: 'Hubcom global shared guide',
+      metadata: { visibility: 'shared_portal' },
+      visibility: 'shared_portal',
+    },
+    {
+      id: 'emb-hubcom-internal',
+      tenant_id: sharedTenant,
+      organization_id: null,
+      source_id: 'kb-hubcom-runbook',
+      source_type: 'KB_ARTICLE',
+      chunk_content: 'Hubcom internal runbook',
+      metadata: { visibility: 'internal' },
+      visibility: 'internal',
     },
   ];
 
@@ -2089,7 +2103,7 @@ function testPortalRagOrganizationIdIsolation(): void {
     'OtherOrg exclusive RAG returns ONLY OtherOrg (0 DPG)',
   );
 
-  // Optional shared flag — DPG + NULL hubcom, still 0 OtherOrg
+  // Optional shared flag — DPG + shared_portal NULL hubcom, still 0 OtherOrg / 0 internal
   const dpgWithShared = filterEmbeddingsByOrganization(seededChunks, {
     organizationId: DPG,
     includeSharedKb: true,
@@ -2097,10 +2111,11 @@ function testPortalRagOrganizationIdIsolation(): void {
   assert(
     dpgWithShared.length === 3 &&
       dpgWithShared.every(
-        (c) => c.organization_id === DPG || c.organization_id == null,
+        (c) => c.organization_id === DPG || c.id === 'emb-hubcom-global',
       ) &&
-      !dpgWithShared.some((c) => c.organization_id === OTHER),
-    'include_shared_kb_in_rag=true adds Hubcom-global NULL rows only — never OtherOrg',
+      !dpgWithShared.some((c) => c.organization_id === OTHER) &&
+      !dpgWithShared.some((c) => c.id === 'emb-hubcom-internal'),
+    'include_shared_kb_in_rag=true adds shared_portal NULL rows only — never OtherOrg/internal',
   );
 
   // Staff / no org — only NULL organization_id (never customer private)
@@ -2109,8 +2124,8 @@ function testPortalRagOrganizationIdIsolation(): void {
     includeSharedKb: false,
   });
   assert(
-    staffHits.length === 1 &&
-      staffHits[0].organization_id == null &&
+    staffHits.length === 2 &&
+      staffHits.every((c) => c.organization_id == null) &&
       !staffHits.some((c) => c.organization_id === DPG || c.organization_id === OTHER),
     'Hubcom staff RAG excludes all customer org vectors',
   );
@@ -5693,8 +5708,23 @@ function testKbWorkbenchSharedUiIsolation(): void {
   );
   assert(
     portalPageSrc.includes('PORTAL_KB_WRITER_CAPABILITIES') &&
-      portalPageSrc.includes('PORTAL_KB_READER_CAPABILITIES'),
-    'portal RBAC capabilities split writer vs reader',
+      portalPageSrc.includes('PORTAL_KB_READER_CAPABILITIES') &&
+      portalPageSrc.includes('isClientAdmin'),
+    'portal RBAC capabilities split writer vs reader (CLIENT_ADMIN write)',
+  );
+  assert(
+    adapterSrc.includes('analyticsNav: false') &&
+      adapterSrc.includes('draftsNav: false') &&
+      adapterSrc.includes('externalSourcesTab: false'),
+    'portal caps hide Analytik / Entwürfe / Datenquellen',
+  );
+  assert(
+    workbenchSrc.includes("id: 'all'") &&
+      workbenchSrc.includes('filterTenantOrg') &&
+      workbenchSrc.includes('KBKpiCards') &&
+      workbenchSrc.includes("categories.length > 0") &&
+      !workbenchSrc.includes('<KBActivitySidebar'),
+    'article-first workbench: Alle Artikel landing, staff tenant filter, KPIs in Analytik, no activity sidebar',
   );
   const portalApiPaths = collectApiPathLiteralsFromSource(portalAdapterSrc);
   assert(
@@ -5712,16 +5742,16 @@ function testKbWorkbenchSharedUiIsolation(): void {
   );
   assert(
     adapterSrc.includes('canCreateArticles') &&
-      adapterSrc.includes('draftsNav: true') &&
-      adapterSrc.includes('reviewsNav: true') &&
+      adapterSrc.includes('draftsNav: false') &&
+      adapterSrc.includes('reviewsNav: false') &&
       adapterSrc.includes('aiAssistantNav: true') &&
-      adapterSrc.includes('analyticsNav: true') &&
+      adapterSrc.includes('analyticsNav: false') &&
       adapterSrc.includes('aiInsights: true') &&
-      adapterSrc.includes('kbHealthTelemetry: true') &&
+      adapterSrc.includes('kbHealthTelemetry: false') &&
       adapterSrc.includes('documentsTab: false') &&
       adapterSrc.includes('externalSourcesTab: false') &&
       adapterSrc.includes('crossTenantVisibilityFilters: false'),
-    'portal capabilities mirror staff workspace chrome; keep docs/sources/cross-tenant off',
+    'portal capabilities hide staff Analytik/Entwürfe/Datenquellen; keep AI search',
   );
   assert(
     /PORTAL_KB_WRITER_CAPABILITIES[\s\S]*importDocs:\s*true/.test(adapterSrc) &&
@@ -5745,9 +5775,8 @@ function testKbWorkbenchSharedUiIsolation(): void {
   assert(
     workbenchSrc.includes('PortalKbAiAssistantPanel') &&
       workbenchSrc.includes('askPortalAi') &&
-      workbenchSrc.includes('capabilities.aiInsights || capabilities.kbHealthTelemetry') &&
-      workbenchSrc.includes('KBActivitySidebar'),
-    'portal mounts shared workbench AI panel + right activity sidebar (not staff-only gate)',
+      !workbenchSrc.includes('<KBActivitySidebar'),
+    'portal mounts shared workbench AI panel; activity sidebar removed for full-width articles',
   );
   assert(
     fs
@@ -8462,6 +8491,7 @@ async function main(): Promise<void> {
   testPayloadSanitizeUploadGuardIsolation();
   testTenantRlsSourceContracts();
   await testTenantRlsLiveSqlIsolation();
+  await testKbTenantRlsPortalIsolation();
   await testTenantRlsSystemBootUnderForceRls();
   await testTenantRlsStaffApiDbUnderForceRls();
   await testTenantRlsVaultExchangeDashboardUnderForceRls();
@@ -9511,6 +9541,82 @@ function testTenantRlsSourceContracts(): void {
     'staff_scoped denies unassigned OtherOrg',
   );
   assert(
+    evaluateRlsKbArticleAllowed({
+      mode: 'portal',
+      orgId: 'org-citadelle',
+      visibility: 'organization',
+      currentOrgId: 'org-citadelle',
+    }) === true &&
+      evaluateRlsKbArticleAllowed({
+        mode: 'portal',
+        orgId: null,
+        visibility: 'shared_portal',
+        currentOrgId: 'org-citadelle',
+      }) === true &&
+      evaluateRlsKbArticleAllowed({
+        mode: 'portal',
+        orgId: 'org-dpg',
+        visibility: 'organization',
+        currentOrgId: 'org-citadelle',
+      }) === false &&
+      evaluateRlsKbArticleAllowed({
+        mode: 'portal',
+        orgId: null,
+        visibility: 'internal',
+        currentOrgId: 'org-citadelle',
+      }) === false,
+    'portal KB SELECT: own-org + global, 0 DPG, 0 internal',
+  );
+  assert(
+    evaluateRlsKbArticleAllowed({
+      mode: 'portal',
+      orgId: 'org-dpg',
+      visibility: 'organization',
+      currentOrgId: 'org-citadelle',
+      forWrite: true,
+    }) === false &&
+      evaluateRlsKbArticleAllowed({
+        mode: 'portal',
+        orgId: 'org-citadelle',
+        visibility: 'organization',
+        currentOrgId: 'org-citadelle',
+        forWrite: true,
+      }) === true &&
+      evaluateRlsKbArticleAllowed({
+        mode: 'portal',
+        orgId: null,
+        visibility: 'shared_portal',
+        currentOrgId: 'org-citadelle',
+        forWrite: true,
+      }) === false,
+    'portal KB WRITE: only own-org tenant visibility',
+  );
+  assert(
+    evaluateRlsEmbeddingAllowed({
+      mode: 'portal',
+      orgId: 'org-citadelle',
+      currentOrgId: 'org-citadelle',
+    }) === true &&
+      evaluateRlsEmbeddingAllowed({
+        mode: 'portal',
+        orgId: null,
+        visibility: 'shared_portal',
+        currentOrgId: 'org-citadelle',
+      }) === true &&
+      evaluateRlsEmbeddingAllowed({
+        mode: 'portal',
+        orgId: null,
+        visibility: 'internal',
+        currentOrgId: 'org-citadelle',
+      }) === false &&
+      evaluateRlsEmbeddingAllowed({
+        mode: 'portal',
+        orgId: 'org-dpg',
+        currentOrgId: 'org-citadelle',
+      }) === false,
+    'portal embeddings: own-org + shared_portal, 0 DPG, 0 internal',
+  );
+  assert(
     assertSetLocalDoesNotBleed({
       firstOrg: 'dpg',
       secondOrg: 'other',
@@ -9544,8 +9650,12 @@ function testTenantRlsSourceContracts(): void {
       ddl.includes('NOBYPASSRLS') &&
       ddl.includes('app.current_org_id') &&
       ddl.includes('CREATE OR REPLACE VIEW tickets') &&
-      ddl.includes('KnowledgeEmbedding'),
-    'RLS DDL covers tickets view, embeddings, hubcom_app',
+      ddl.includes('KnowledgeEmbedding') &&
+      ddl.includes('app_document_kb_visibility') &&
+      ddl.includes('app_rls_document_write_allowed') &&
+      ddl.includes('app_rls_embedding_allowed') &&
+      ddl.includes("collection = 'kb_articles'"),
+    'RLS DDL covers tickets view, embeddings, hubcom_app, KB visibility predicates',
   );
   assert(
     rls.includes('withTenantContext') &&
@@ -9741,6 +9851,214 @@ async function testTenantRlsLiveSqlIsolation(): Promise<void> {
   await queryDb(`DELETE FROM geistdesk_documents WHERE id = ANY($1::text[])`, [
     [ticketDpg, ticketOther],
   ]);
+  if (embeddingsOk) {
+    await queryDb(`DELETE FROM "KnowledgeEmbedding" WHERE chunk_content = $1`, [marker]).catch(
+      () => undefined,
+    );
+  }
+}
+
+/**
+ * FORCE RLS: Citadelle portal sees own tenant + global KB/RAG, 0 DPG, 0 internal;
+ * cannot mutate DPG articles.
+ */
+async function testKbTenantRlsPortalIsolation(): Promise<void> {
+  console.log('\n[KB RLS] Citadelle portal vs DPG — articles + embeddings under FORCE RLS');
+
+  if (!process.env.DATABASE_URL && !process.env.PG_DATABASE_URL) {
+    console.log('  (skip) DATABASE_URL not set');
+    return;
+  }
+
+  const { initDb, queryDb, getOwnerPgPool } = await import('../src/lib/postgres-backend.js');
+  await initDb();
+  await ensureTenantRlsPolicies((sql) => queryDb(sql));
+
+  const citadelle: string = '33333333-3333-4333-8333-333333333303';
+  const dpg: string = '11111111-1111-4111-8111-111111111101';
+  const marker = `kb-rls-${Date.now()}`;
+
+  const owner = getOwnerPgPool();
+  await owner.query(`ALTER TABLE geistdesk_documents FORCE ROW LEVEL SECURITY`).catch(() => undefined);
+  await owner
+    .query(`ALTER TABLE "KnowledgeEmbedding" FORCE ROW LEVEL SECURITY`)
+    .catch(() => undefined);
+
+  for (const [id, name, slug] of [
+    [citadelle, 'Citadelle AG', `citadelle-${marker}`],
+    [dpg, 'DPG', `dpg-kb-${marker}`],
+  ] as const) {
+    await queryDb(
+      `INSERT INTO organizations (id, name, slug, settings)
+       VALUES ($1::uuid, $2, $3, '{}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, name, slug],
+    ).catch(async () => {
+      await queryDb(
+        `INSERT INTO organizations (id, name, settings)
+         VALUES ($1::uuid, $2, '{}'::jsonb)
+         ON CONFLICT (id) DO NOTHING`,
+        [id, name],
+      ).catch(() => undefined);
+    });
+  }
+
+  const artCitadelle = `kb-cit-${marker}`;
+  const artDpg = `kb-dpg-${marker}`;
+  const artGlobal = `kb-global-${marker}`;
+  const artInternal = `kb-int-${marker}`;
+
+  await queryDb(
+    `INSERT INTO geistdesk_documents (collection, id, data)
+     VALUES
+       ('kb_articles', $1::text, jsonb_build_object(
+         'title', 'Citadelle Guide', 'status', 'Published',
+         'visibility', 'organization', 'organizationId', $2::text, 'marker', $5::text
+       )),
+       ('kb_articles', $3::text, jsonb_build_object(
+         'title', 'DPG Guide', 'status', 'Published',
+         'visibility', 'organization', 'organizationId', $4::text, 'marker', $5::text
+       )),
+       ('kb_articles', $6::text, jsonb_build_object(
+         'title', 'Global Guide', 'status', 'Published',
+         'visibility', 'shared_portal', 'marker', $5::text
+       )),
+       ('kb_articles', $7::text, jsonb_build_object(
+         'title', 'Internal Runbook', 'status', 'Published',
+         'visibility', 'internal', 'marker', $5::text
+       ))
+     ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data`,
+    [artCitadelle, citadelle, artDpg, dpg, marker, artGlobal, artInternal],
+  );
+
+  let embeddingsOk = true;
+  try {
+    await queryDb(
+      `INSERT INTO "KnowledgeEmbedding"
+         (id, tenant_id, organization_id, source_type, source_id, chunk_index, chunk_content, metadata, embedding)
+       VALUES
+         (gen_random_uuid(), 'default', $1, 'KB_ARTICLE', $2, 0, $5, jsonb_build_object('visibility','organization'), NULL),
+         (gen_random_uuid(), 'default', $3, 'KB_ARTICLE', $4, 0, $5, jsonb_build_object('visibility','organization'), NULL),
+         (gen_random_uuid(), 'default', NULL, 'KB_ARTICLE', $6, 0, $5, jsonb_build_object('visibility','shared_portal'), NULL),
+         (gen_random_uuid(), 'default', NULL, 'KB_ARTICLE', $7, 0, $5, jsonb_build_object('visibility','internal'), NULL)`,
+      [citadelle, artCitadelle, dpg, artDpg, marker, artGlobal, artInternal],
+    );
+  } catch (err: any) {
+    embeddingsOk = false;
+    console.log('  (note) KnowledgeEmbedding seed skipped:', err?.message || err);
+  }
+
+  const listed = await withTenantContext(
+    { mode: 'portal', orgId: citadelle },
+    async (client) => {
+      const res = await client.query(
+        `SELECT id, organization_id, data->>'visibility' AS visibility, data->>'title' AS title
+         FROM kb_articles
+         WHERE data->>'marker' = $1`,
+        [marker],
+      );
+      return res.rows || [];
+    },
+  );
+
+  const ids = listed.map((r: any) => String(r.id));
+  assert(
+    ids.includes(artCitadelle) &&
+      ids.includes(artGlobal) &&
+      !ids.includes(artDpg) &&
+      !ids.includes(artInternal),
+    'Citadelle portal KB list: own + global, 0 DPG, 0 internal',
+  );
+
+  // Mutation of DPG article must fail under portal(Citadelle)
+  let dpgUpdateBlocked = false;
+  try {
+    await withTenantContext({ mode: 'portal', orgId: citadelle }, async (client) => {
+      const res = await client.query(
+        `UPDATE geistdesk_documents
+         SET data = data || jsonb_build_object('title', 'HACKED')
+         WHERE collection = 'kb_articles' AND id = $1
+         RETURNING id`,
+        [artDpg],
+      );
+      if ((res.rowCount || 0) === 0) dpgUpdateBlocked = true;
+    });
+  } catch {
+    dpgUpdateBlocked = true;
+  }
+  assert(dpgUpdateBlocked, 'Citadelle portal cannot UPDATE DPG KB article');
+
+  let dpgInsertBlocked = false;
+  try {
+    await withTenantContext({ mode: 'portal', orgId: citadelle }, async (client) => {
+      await client.query(
+        `INSERT INTO geistdesk_documents (collection, id, data)
+         VALUES (
+           'kb_articles',
+           $1::text,
+           jsonb_build_object(
+             'title', 'Spoof DPG',
+             'status', 'Published',
+             'visibility', 'organization',
+             'organizationId', $2::text,
+             'marker', $3::text
+           )
+         )`,
+        [`kb-spoof-${marker}`, dpg, marker],
+      );
+    });
+  } catch {
+    dpgInsertBlocked = true;
+  }
+  assert(dpgInsertBlocked, 'Citadelle portal cannot INSERT DPG-scoped KB article');
+
+  let dpgDeleteBlocked = false;
+  try {
+    await withTenantContext({ mode: 'portal', orgId: citadelle }, async (client) => {
+      const res = await client.query(
+        `DELETE FROM geistdesk_documents
+         WHERE collection = 'kb_articles' AND id = $1
+         RETURNING id`,
+        [artDpg],
+      );
+      if ((res.rowCount || 0) === 0) dpgDeleteBlocked = true;
+    });
+  } catch {
+    dpgDeleteBlocked = true;
+  }
+  assert(dpgDeleteBlocked, 'Citadelle portal cannot DELETE DPG KB article');
+
+  if (embeddingsOk) {
+    const emb = await withTenantContext(
+      { mode: 'portal', orgId: citadelle },
+      async (client) => {
+        const res = await client.query(
+          `SELECT organization_id, metadata->>'visibility' AS visibility, source_id
+           FROM "KnowledgeEmbedding"
+           WHERE chunk_content = $1`,
+          [marker],
+        );
+        return res.rows || [];
+      },
+    );
+    assert(
+      emb.some((r: any) => String(r.organization_id) === citadelle) &&
+        emb.some(
+          (r: any) =>
+            (r.organization_id == null || String(r.organization_id).trim() === '') &&
+            String(r.visibility) === 'shared_portal',
+        ) &&
+        !emb.some((r: any) => String(r.organization_id) === dpg) &&
+        !emb.some((r: any) => String(r.visibility) === 'internal'),
+      'Citadelle portal RAG: own + shared_portal, 0 DPG, 0 internal embeddings',
+    );
+  }
+
+  await queryDb(
+    `DELETE FROM geistdesk_documents
+     WHERE collection = 'kb_articles' AND data->>'marker' = $1`,
+    [marker],
+  ).catch(() => undefined);
   if (embeddingsOk) {
     await queryDb(`DELETE FROM "KnowledgeEmbedding" WHERE chunk_content = $1`, [marker]).catch(
       () => undefined,

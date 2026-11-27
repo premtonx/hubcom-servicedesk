@@ -20,6 +20,25 @@ AS $$
   )), '');
 $$;
 
+-- Normalize KB visibility (mirrors kb-visibility.ts).
+CREATE OR REPLACE FUNCTION app_document_kb_visibility(data jsonb)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT CASE lower(replace(trim(COALESCE(data->>'visibility', '')), '-', '_'))
+    WHEN 'shared_portal' THEN 'shared_portal'
+    WHEN 'shared' THEN 'shared_portal'
+    WHEN 'public' THEN 'shared_portal'
+    WHEN 'global' THEN 'shared_portal'
+    WHEN 'organization' THEN 'organization'
+    WHEN 'org' THEN 'organization'
+    WHEN 'company' THEN 'organization'
+    WHEN 'tenant' THEN 'organization'
+    ELSE 'internal'
+  END;
+$$;
+
 -- Helper: is this a tenant-scoped document collection?
 CREATE OR REPLACE FUNCTION app_is_tenant_document_collection(collection text)
 RETURNS boolean
@@ -38,10 +57,10 @@ AS $$
     OR collection ~ '^tickets/[^/]+/messages$'
 $$;
 
--- Core RLS predicate for document org matching.
--- Policies use this for both USING (SELECT/UPDATE/DELETE) and WITH CHECK (INSERT/UPDATE).
+-- Core RLS predicate for document READ (USING).
 -- system / super_admin: full access for boot, workers, pre-auth endpoints.
--- portal: organization_id must equal app.current_org_id.
+-- portal kb_articles: shared_portal (global) OR own-org organization (tenant) rows.
+-- portal other tenant collections: organization_id must equal app.current_org_id.
 -- staff_scoped: organization_id IS NULL (internal) OR in app.allowed_org_ids.
 -- unset: fail closed (FALSE) — never leak all tenants.
 CREATE OR REPLACE FUNCTION app_rls_document_allowed(collection text, data jsonb)
@@ -55,6 +74,17 @@ AS $$
     WHEN 'portal' THEN
       CASE
         WHEN NOT app_is_tenant_document_collection(collection) THEN TRUE
+        WHEN collection = 'kb_articles' THEN
+          (
+            app_document_kb_visibility(data) = 'shared_portal'
+            OR (
+              app_document_kb_visibility(data) = 'organization'
+              AND app_document_org_id(data) = NULLIF(current_setting('app.current_org_id', true), '')
+            )
+          )
+        WHEN collection IN ('kb_categories', 'kb_documents') THEN
+          app_document_org_id(data) IS NULL
+          OR app_document_org_id(data) = NULLIF(current_setting('app.current_org_id', true), '')
         ELSE app_document_org_id(data) = NULLIF(current_setting('app.current_org_id', true), '')
       END
     WHEN 'staff_scoped' THEN
@@ -69,6 +99,32 @@ AS $$
   END;
 $$;
 
+-- Document WRITE (WITH CHECK). Portal may only mutate own-org tenant KB rows
+-- (visibility=organization); never create/update shared_portal or internal spoof.
+CREATE OR REPLACE FUNCTION app_rls_document_write_allowed(collection text, data jsonb)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT CASE COALESCE(current_setting('app.rls_mode', true), '')
+    WHEN 'super_admin' THEN TRUE
+    WHEN 'system' THEN TRUE
+    WHEN 'portal' THEN
+      CASE
+        WHEN NOT app_is_tenant_document_collection(collection) THEN TRUE
+        WHEN collection = 'kb_articles' THEN
+          app_document_kb_visibility(data) = 'organization'
+          AND app_document_org_id(data) = NULLIF(current_setting('app.current_org_id', true), '')
+        WHEN collection IN ('kb_categories', 'kb_documents') THEN
+          app_document_org_id(data) = NULLIF(current_setting('app.current_org_id', true), '')
+        ELSE app_document_org_id(data) = NULLIF(current_setting('app.current_org_id', true), '')
+      END
+    WHEN 'staff_scoped' THEN
+      app_rls_document_allowed(collection, data)
+    ELSE FALSE
+  END;
+$$;
+
 CREATE OR REPLACE FUNCTION app_rls_org_column_allowed(org_id text)
 RETURNS boolean
 LANGUAGE sql
@@ -79,6 +135,37 @@ AS $$
     WHEN 'system' THEN TRUE
     WHEN 'portal' THEN
       org_id IS NOT NULL AND org_id = NULLIF(current_setting('app.current_org_id', true), '')
+    WHEN 'staff_scoped' THEN
+      org_id IS NULL
+      OR org_id = ANY (
+        string_to_array(NULLIF(current_setting('app.allowed_org_ids', true), ''), ',')
+      )
+    ELSE FALSE
+  END;
+$$;
+
+-- KnowledgeEmbedding READ: portal sees own-org chunks OR shared_portal (NULL org + visibility).
+-- Internal Hubcom chunks (NULL org without shared visibility) stay hidden from portal.
+CREATE OR REPLACE FUNCTION app_rls_embedding_allowed(org_id text, metadata jsonb)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT CASE COALESCE(current_setting('app.rls_mode', true), '')
+    WHEN 'super_admin' THEN TRUE
+    WHEN 'system' THEN TRUE
+    WHEN 'portal' THEN
+      (
+        org_id IS NOT NULL
+        AND org_id = NULLIF(current_setting('app.current_org_id', true), '')
+      )
+      OR (
+        (org_id IS NULL OR TRIM(org_id) = '')
+        AND lower(replace(trim(COALESCE(
+          metadata->>'visibility',
+          ''
+        )), '-', '_')) IN ('shared_portal', 'shared', 'public', 'global')
+      )
     WHEN 'staff_scoped' THEN
       org_id IS NULL
       OR org_id = ANY (
@@ -170,7 +257,7 @@ BEGIN
       CREATE POLICY geistdesk_documents_tenant_isolation ON geistdesk_documents
         FOR ALL
         USING (app_rls_document_allowed(collection, data))
-        WITH CHECK (app_rls_document_allowed(collection, data))
+        WITH CHECK (app_rls_document_write_allowed(collection, data))
     $p$;
   END IF;
 
@@ -260,8 +347,17 @@ BEGIN
     EXECUTE $p$
       CREATE POLICY knowledge_embedding_tenant_isolation ON "KnowledgeEmbedding"
         FOR ALL
-        USING (app_rls_org_column_allowed(organization_id))
-        WITH CHECK (app_rls_org_column_allowed(organization_id))
+        USING (app_rls_embedding_allowed(organization_id, metadata))
+        WITH CHECK (
+          CASE COALESCE(current_setting('app.rls_mode', true), '')
+            WHEN 'super_admin' THEN TRUE
+            WHEN 'system' THEN TRUE
+            WHEN 'portal' THEN
+              organization_id IS NOT NULL
+              AND organization_id = NULLIF(current_setting('app.current_org_id', true), '')
+            ELSE app_rls_embedding_allowed(organization_id, metadata)
+          END
+        )
     $p$;
   END IF;
 END $$;

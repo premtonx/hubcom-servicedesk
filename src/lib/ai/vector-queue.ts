@@ -271,9 +271,11 @@ async function indexKbArticle(tenantId: string, sourceId: string): Promise<void>
   const organizationId =
     resolveArticleOrganizationId(doc as Record<string, unknown>) ||
     organizationIdFromRagTenant(tenantId);
+  const { normalizeKbVisibility } = await import('../client-portal/kb-visibility.js');
+  const visibility = normalizeKbVisibility(doc.visibility);
   await upsertChunks({
     tenantId,
-    organizationId,
+    organizationId: visibility === 'organization' ? organizationId : null,
     sourceType: 'KB_ARTICLE',
     sourceId,
     title,
@@ -282,13 +284,13 @@ async function indexKbArticle(tenantId: string, sourceId: string): Promise<void>
     metadata: {
       workspace_id: tenantId,
       article_id: sourceId,
-      organization_id: organizationId,
-      organizationId,
+      organization_id: visibility === 'organization' ? organizationId : null,
+      organizationId: visibility === 'organization' ? organizationId : null,
       title: doc.title,
       locale: doc.language || 'en',
       updated_at: doc.updatedAt || doc.createdAt || null,
       status: doc.status,
-      visibility: doc.visibility,
+      visibility,
       category: doc.category,
       tags: doc.tags || [],
     },

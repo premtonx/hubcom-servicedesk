@@ -93,12 +93,14 @@ export const PORTAL_KB_CAPABILITIES: KbWorkbenchCapabilities = {
   aiGenerate: false,
   documentsTab: false,
   externalSourcesTab: false,
-  draftsNav: true,
-  reviewsNav: true,
+  /** Staff-only: portal hides internal drafts chrome. */
+  draftsNav: false,
+  reviewsNav: false,
   aiAssistantNav: true,
-  analyticsNav: true,
+  /** Staff-only Analytik (KPI + coverage). */
+  analyticsNav: false,
   aiInsights: true,
-  kbHealthTelemetry: true,
+  kbHealthTelemetry: false,
   crossTenantVisibilityFilters: false,
   categoryAdmin: false,
   ragIndexToggle: false,
@@ -107,7 +109,7 @@ export const PORTAL_KB_CAPABILITIES: KbWorkbenchCapabilities = {
   canDeleteArticles: false,
   canDuplicateArticles: false,
   canBulkDelete: false,
-  smartItemIds: ['popular', 'recent', 'mostViewed', 'missing', 'outdated'],
+  smartItemIds: ['popular', 'recent', 'mostViewed'],
 };
 
 /** CLIENT_ADMIN | CLIENT_SUPPORTER — write own-org articles + categories + RAG/import/AI. */

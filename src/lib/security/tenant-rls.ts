@@ -320,6 +320,82 @@ export function evaluateRlsOrgAllowed(params: {
   return false;
 }
 
+function normalizeRlsKbVisibility(raw: unknown): 'internal' | 'shared_portal' | 'organization' {
+  const value = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_');
+  if (
+    value === 'shared_portal' ||
+    value === 'shared' ||
+    value === 'public' ||
+    value === 'global'
+  ) {
+    return 'shared_portal';
+  }
+  if (value === 'organization' || value === 'org' || value === 'company' || value === 'tenant') {
+    return 'organization';
+  }
+  return 'internal';
+}
+
+/** Mirrors app_rls_document_allowed for kb_articles portal SELECT. */
+export function evaluateRlsKbArticleAllowed(params: {
+  mode: TenantRlsMode | '' | null;
+  orgId: string | null | undefined;
+  visibility: unknown;
+  currentOrgId?: string | null;
+  allowedOrgIds?: string[];
+  forWrite?: boolean;
+}): boolean {
+  const mode = params.mode || '';
+  const orgId = params.orgId == null || params.orgId === '' ? null : String(params.orgId);
+  const visibility = normalizeRlsKbVisibility(params.visibility);
+  if (mode === 'super_admin' || mode === 'system') return true;
+  if (mode === 'portal') {
+    if (params.forWrite) {
+      return (
+        visibility === 'organization' && orgId != null && orgId === String(params.currentOrgId || '')
+      );
+    }
+    if (visibility === 'shared_portal') return true;
+    if (visibility === 'organization') {
+      return orgId != null && orgId === String(params.currentOrgId || '');
+    }
+    return false;
+  }
+  if (mode === 'staff_scoped') {
+    if (orgId == null) return true;
+    return (params.allowedOrgIds || []).includes(orgId);
+  }
+  return false;
+}
+
+/** Mirrors app_rls_embedding_allowed for portal/staff KnowledgeEmbedding SELECT. */
+export function evaluateRlsEmbeddingAllowed(params: {
+  mode: TenantRlsMode | '' | null;
+  orgId: string | null | undefined;
+  visibility?: unknown;
+  currentOrgId?: string | null;
+  allowedOrgIds?: string[];
+}): boolean {
+  const mode = params.mode || '';
+  const orgId = params.orgId == null || params.orgId === '' ? null : String(params.orgId);
+  if (mode === 'super_admin' || mode === 'system') return true;
+  if (mode === 'portal') {
+    if (orgId != null && orgId === String(params.currentOrgId || '')) return true;
+    if (orgId == null && normalizeRlsKbVisibility(params.visibility) === 'shared_portal') {
+      return true;
+    }
+    return false;
+  }
+  if (mode === 'staff_scoped') {
+    if (orgId == null) return true;
+    return (params.allowedOrgIds || []).includes(orgId);
+  }
+  return false;
+}
+
 export function assertSetLocalDoesNotBleed(params: {
   firstOrg: string;
   secondOrg: string;

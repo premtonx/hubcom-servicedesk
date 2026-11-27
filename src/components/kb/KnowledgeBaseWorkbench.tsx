@@ -110,7 +110,6 @@ import { KBBulkActionBar } from './KBBulkActionBar';
 import { truncateRagSnippet } from './kbSearchUtils';
 import type { RAGResult } from '../../services/ragService';
 import { KBEmptyWorkspace } from './KBEmptyWorkspace';
-import { KBActivitySidebar, buildRecentActivity, buildTopContributors } from './KBActivitySidebar';
 import { KBViewModeSelector, type KBArticleViewMode } from './KBViewModeSelector';
 import { KBArticleViews } from './KBArticleViews';
 import { KBLeftSidebar, type KBNavFilter } from './KBLeftSidebar';
@@ -267,7 +266,8 @@ export function KnowledgeBaseWorkbench({
     }
   }, [searchParams, setSearchParams, selectedCategory, capabilities.canCreateArticles, mode, user?.email]);
   const [activeSubTab, setActiveSubTab] = useState<string>('All');
-  const [kbNav, setKbNav] = useState<KBNavFilter>({ type: 'workspace', id: 'overview' });
+  /** Article-first landing: Alle Artikel (not KPI overview). */
+  const [kbNav, setKbNav] = useState<KBNavFilter>({ type: 'workspace', id: 'all' });
   const [viewLayout, setViewLayout] = useState<KBArticleViewMode>('grid');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortBy, setSortBy] = useState<'date' | 'views' | 'confidence' | 'popular'>('popular');
@@ -277,6 +277,8 @@ export function KnowledgeBaseWorkbench({
   // Custom interactive layout filters
   const [filterOwner, setFilterOwner] = useState<string>('All');
   const [filterVisibility, setFilterVisibility] = useState<string>('All');
+  /** Staff tenant filter: Alle | Intern | specific organization_id */
+  const [filterTenantOrg, setFilterTenantOrg] = useState<string>('All');
   const [filterLanguage, setFilterLanguage] = useState<string>('All');
   const [filterTag, setFilterTag] = useState<string>('All');
   /** Portal scope tabs: Alle / Firmen-Anleitungen / Hubcom Guides */
@@ -393,7 +395,7 @@ export function KnowledgeBaseWorkbench({
     closeArticleDraft();
     setSelectedCategory('All');
     setActiveSubTab('All');
-    setKbNav({ type: 'workspace', id: 'overview' });
+    setKbNav({ type: 'workspace', id: 'all' });
   }, [workspace, closeArticleDraft]);
 
   const [categories, setCategories] = useState<KBCategoryRecord[]>([]);
@@ -570,7 +572,7 @@ export function KnowledgeBaseWorkbench({
       setCategories((prev) => prev.filter((c) => c.id !== catId));
       if (selectedCategory === catId || (kbNav.type === 'category' && kbNav.id === catId)) {
         setSelectedCategory('All');
-        setKbNav({ type: 'workspace', id: 'overview' });
+        setKbNav({ type: 'workspace', id: 'all' });
       }
       setDeleteCategoryTarget(null);
     } catch (error) {
@@ -1004,6 +1006,21 @@ export function KnowledgeBaseWorkbench({
     ) {
       return false;
     }
+    if (mode === 'staff' && filterTenantOrg !== 'All') {
+      if (filterTenantOrg === 'internal') {
+        if (normalizeKbVisibility(art.visibility) !== 'internal') return false;
+      } else {
+        const artOrg = String(
+          (art as any).organizationId || (art as any).organization_id || '',
+        ).trim();
+        if (
+          normalizeKbVisibility(art.visibility) !== 'organization' ||
+          artOrg !== filterTenantOrg
+        ) {
+          return false;
+        }
+      }
+    }
     if (mode === 'portal' && portalScope !== 'all') {
       if (normalizeKbVisibility(art.visibility) !== portalScope) return false;
     }
@@ -1102,24 +1119,6 @@ export function KnowledgeBaseWorkbench({
   const healthScore = dashboardMetrics.healthScore;
   const monthlyViews = dashboardMetrics.monthlyViews;
   const missingTagsCount = dashboardMetrics.missingTagsCount;
-  const recentActivity = buildRecentActivity(workspaceArticles, t);
-  const topContributors = buildTopContributors(workspaceArticles);
-
-  const portalOrgCount = workspaceArticles.filter(
-    (a) => normalizeKbVisibility(a.visibility) === 'organization',
-  ).length;
-  const portalSharedCount = workspaceArticles.filter(
-    (a) => normalizeKbVisibility(a.visibility) === 'shared_portal',
-  ).length;
-  const portalRecentlyUpdatedCount = workspaceArticles.filter((a) => {
-    const raw = a.updatedAt?.toDate?.() ?? a.updatedAt ?? a.createdAt?.toDate?.() ?? a.createdAt;
-    const d = raw instanceof Date ? raw : raw ? new Date(raw as string) : null;
-    if (!d || Number.isNaN(d.getTime())) return false;
-    return Date.now() - d.getTime() < 30 * 24 * 60 * 60 * 1000;
-  }).length;
-  const portalPublishedCount = workspaceArticles.filter((a) =>
-    isPublishedStatus(a.status) || !a.status,
-  ).length;
 
   const isOrgWritableArticle = (art: { visibility?: string }) =>
     normalizeKbVisibility(art.visibility) === 'organization';
@@ -1129,10 +1128,8 @@ export function KnowledgeBaseWorkbench({
   const isKbEmpty = workspaceArticles.length === 0 && categories.length === 0;
 
   const workspaceNavIds = useMemo(() => {
-    const ids: Array<'overview' | 'all' | 'drafts' | 'reviews' | 'ai' | 'analytics'> = [
-      'overview',
-      'all',
-    ];
+    // Article-first: Alle Artikel is the primary landing — no separate Overview KPI page.
+    const ids: Array<'overview' | 'all' | 'drafts' | 'reviews' | 'ai' | 'analytics'> = ['all'];
     if (capabilities.draftsNav) ids.push('drafts');
     if (capabilities.reviewsNav) ids.push('reviews');
     if (capabilities.aiAssistantNav) ids.push('ai');
@@ -1196,17 +1193,23 @@ export function KnowledgeBaseWorkbench({
     if (filter.type === 'category') {
       setSelectedCategory(filter.id);
       setActiveSubTab('All');
+      setViewMode('standard');
     } else {
       setSelectedCategory('All');
       if (filter.type === 'workspace') {
         if (filter.id === 'drafts') setActiveSubTab('Drafts');
         else if (filter.id === 'reviews') setActiveSubTab('All');
         else setActiveSubTab('All');
+        // Analytik → coverage dashboard (+ KPI cards); everything else stays article list.
+        setViewMode(filter.id === 'analytics' ? 'coverage' : 'standard');
+      } else {
+        setViewMode('standard');
       }
     }
     if (filter.type === 'smart') {
       if (filter.id === 'recent') setSortBy('date');
       if (filter.id === 'popular' || filter.id === 'mostViewed') setSortBy('views');
+      setViewMode('standard');
     }
   };
 
@@ -1215,12 +1218,14 @@ export function KnowledgeBaseWorkbench({
     dismissArticleDetail();
     setFilterOwner('All');
     setFilterVisibility('All');
+    setFilterTenantOrg('All');
     setFilterTag('All');
     setFilterLanguage('All');
     setSearchQuery('');
     setActiveSubTab('All');
     setSelectedCategory('All');
-    setKbNav({ type: 'workspace', id: 'overview' });
+    setKbNav({ type: 'workspace', id: 'all' });
+    setViewMode('standard');
     setAiSearchQuery(null);
     setAiSearchSummary(null);
     setAiSearchSources([]);
@@ -1336,9 +1341,21 @@ export function KnowledgeBaseWorkbench({
   const renderCoverageDashboard = () => {
     if (!coverageData) {
       return (
-        <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white space-y-4">
+        <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+          <div className="px-4 sm:px-6 pt-6 space-y-6">
+            <KBKpiCards
+              variant="staff"
+              publishedCount={publishedCount}
+              draftCount={draftCount}
+              healthScore={capabilities.kbHealthTelemetry ? healthScore : 0}
+              monthlyViews={monthlyViews}
+              trends={dashboardMetrics.trends}
+            />
+          </div>
+          <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white space-y-4">
           <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
           <p className="font-bold text-slate-700">Loading AI Knowledge Coverage Map...</p>
+        </div>
         </div>
       );
     }
@@ -1372,8 +1389,17 @@ export function KnowledgeBaseWorkbench({
       : coverageData.categories?.[0];
 
     return (
-      <div className="flex-1 bg-slate-50/50 p-8 space-y-8 animate-in fade-in duration-200">
-        
+      <div className="flex-1 bg-slate-50/50 p-8 space-y-8 animate-in fade-in duration-200 overflow-y-auto">
+        {/* Staff Analytik: KPI cards live here (not on the article list). */}
+        <KBKpiCards
+          variant="staff"
+          publishedCount={publishedCount}
+          draftCount={draftCount}
+          healthScore={capabilities.kbHealthTelemetry ? healthScore : 0}
+          monthlyViews={monthlyViews}
+          trends={dashboardMetrics.trends}
+        />
+
         {/* Dashboard Top Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-[1.5rem] border border-slate-200/80 shadow-xs">
           <div>
@@ -1900,8 +1926,8 @@ export function KnowledgeBaseWorkbench({
               renderArticleDetailView()
             ) : (
             <ScrollArea className="flex-1 min-w-0">
-              <div className="flex flex-col xl:flex-row gap-0 min-h-full">
-                <main className="flex-1 min-w-0 px-4 sm:px-6 py-6 space-y-6 pb-10">
+              <div className="flex flex-col gap-0 min-h-full">
+                <main className="flex-1 min-w-0 px-4 sm:px-6 py-6 space-y-6 pb-10 max-w-full">
                   <KBPageHeader
                     onImportDocs={() => setIsCsvImportOpen(true)}
                     onImportCsv={() => setIsCsvImportOpen(true)}
@@ -2016,18 +2042,18 @@ export function KnowledgeBaseWorkbench({
                         onApplyGenerated={
                           capabilities.canCreateArticles ? openCreateArticleFromAi : undefined
                         }
-                        onBackToKb={() => handleKbNavigate({ type: 'workspace', id: 'overview' })}
+                        onBackToKb={() => handleKbNavigate({ type: 'workspace', id: 'all' })}
                       />
                     ) : (
                       <KBAutopilotDashboard
                         embedded
-                        onBackToKB={() => handleKbNavigate({ type: 'workspace', id: 'overview' })}
+                        onBackToKB={() => handleKbNavigate({ type: 'workspace', id: 'all' })}
                         onArticlePublished={() =>
-                          handleKbNavigate({ type: 'workspace', id: 'overview' })
+                          handleKbNavigate({ type: 'workspace', id: 'all' })
                         }
                       />
                     )
-                  ) : isKbEmpty && isOverviewMode ? (
+                  ) : isKbEmpty ? (
                     <KBEmptyWorkspace
                       onCreateArticle={() => openCreateArticle()}
                       onImportDocs={
@@ -2040,30 +2066,7 @@ export function KnowledgeBaseWorkbench({
                     />
                   ) : (
                     <>
-                  {isOverviewMode ? (
-                    <KBKpiCards
-                      variant={
-                        mode === 'portal' && !capabilities.kbHealthTelemetry ? 'portal' : 'staff'
-                      }
-                      publishedCount={
-                        mode === 'portal' && !capabilities.kbHealthTelemetry
-                          ? portalPublishedCount
-                          : publishedCount
-                      }
-                      draftCount={draftCount}
-                      healthScore={capabilities.kbHealthTelemetry ? healthScore : 0}
-                      monthlyViews={monthlyViews}
-                      trends={
-                        mode === 'portal' && !capabilities.kbHealthTelemetry
-                          ? undefined
-                          : dashboardMetrics.trends
-                      }
-                      portalOrgCount={portalOrgCount}
-                      portalSharedCount={portalSharedCount}
-                      portalRecentlyUpdatedCount={portalRecentlyUpdatedCount}
-                    />
-                  ) : null}
-
+                  {/* Unified search & filter toolbar above articles */}
                   <KBSearchSection
                     searchQuery={searchQuery}
                     onSearchChange={(value) => {
@@ -2102,23 +2105,27 @@ export function KnowledgeBaseWorkbench({
                       ))}
                     </ModuleToolbarSelect>
                     {capabilities.crossTenantVisibilityFilters ? (
+                    <>
                     <ModuleToolbarSelect value={filterVisibility} onChange={setFilterVisibility} aria-label={t('kb.allAccess', 'Access')}>
                       <option value="All">{t('kb.allAccess', 'Alle Sichtbarkeiten')}</option>
-                      <option value="internal">{t('kb.visibilityInternal', 'Nur intern (Hubcom)')}</option>
-                      <option value="shared_portal">{t('kb.visibilityShared', 'Für alle Kunden-Portale')}</option>
-                      <option value="organization">{t('kb.visibilityOrg', 'Nur für bestimmtes Unternehmen')}</option>
+                      <option value="internal">{t('kb.visibilityInternal', 'Intern (nur Hubcom)')}</option>
+                      <option value="organization">{t('kb.visibilityOrg', 'Kundenspezifisch (Mandant)')}</option>
+                      <option value="shared_portal">{t('kb.visibilityShared', 'Global (alle Kunden-Portale)')}</option>
                     </ModuleToolbarSelect>
-                    ) : null}
-                    {mode === 'staff' ? (
-                      isDeveloperWorkspace ? (
-                      <span className="text-[11px] text-violet-600 font-medium px-2 py-1 rounded-lg bg-violet-50 border border-violet-100">
-                        {t('kb.workspaceDeveloperHint', 'Developer workspace — internal docs & runbooks')}
-                      </span>
-                    ) : (
-                      <span className="text-[11px] text-blue-600 font-medium px-2 py-1 rounded-lg bg-blue-50 border border-blue-100">
-                        {t('kb.workspaceSupportHint', 'Support workspace — public customer FAQs')}
-                      </span>
-                    )
+                    <ModuleToolbarSelect
+                      value={filterTenantOrg}
+                      onChange={setFilterTenantOrg}
+                      aria-label={t('kb.tenantFilter', 'Mandant')}
+                    >
+                      <option value="All">{t('kb.tenantFilterAll', 'Alle')}</option>
+                      <option value="internal">{t('kb.tenantFilterInternal', 'Intern')}</option>
+                      {portalOrganizations.map((org) => (
+                        <option key={org.id} value={org.id}>
+                          {org.name}
+                        </option>
+                      ))}
+                    </ModuleToolbarSelect>
+                    </>
                     ) : null}
                   </div>
 
@@ -2139,60 +2146,60 @@ export function KnowledgeBaseWorkbench({
                     </div>
                   ) : null}
 
-                  {!isOverviewMode ? (
-                    <section>
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-                        <div className="min-w-0">
-                          <h2 className="text-sm font-semibold text-slate-900">{articlesSectionTitle}</h2>
-                          <p className="text-[11px] text-slate-400 mt-0.5">
-                            {t('kb.resultsCount', '{{count}} results').replace('{{count}}', String(processedArticles.length))}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 sm:justify-end shrink-0">
-                          <KBViewModeSelector value={viewLayout} onChange={setViewLayout} />
-                          <div className="flex items-center gap-1">
-                            <span className="text-[11px] font-medium text-slate-500">{t('modulePage.sort', 'Sort')}:</span>
-                            <ModuleToolbarSelect
-                              value={sortBy}
-                              onChange={(v) => setSortBy(v as typeof sortBy)}
-                              aria-label={t('actions.sort', 'Sort')}
-                            >
-                              <option value="date">{t('kb.sortLatest', 'Latest updated')}</option>
-                              <option value="popular">{t('kb.sortPopularity', 'Popularity')}</option>
-                              <option value="views">{t('kb.sortViews', 'Most views')}</option>
-                              <option value="confidence">{t('kb.sortConfidence', 'Trust score')}</option>
-                            </ModuleToolbarSelect>
-                          </div>
+                  {/* Article list first — full width (no activity sidebar). */}
+                  <section>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-semibold text-slate-900">{articlesSectionTitle}</h2>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          {t('kb.resultsCount', '{{count}} results').replace('{{count}}', String(processedArticles.length))}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end shrink-0">
+                        <KBViewModeSelector value={viewLayout} onChange={setViewLayout} />
+                        <div className="flex items-center gap-1">
+                          <span className="text-[11px] font-medium text-slate-500">{t('modulePage.sort', 'Sort')}:</span>
+                          <ModuleToolbarSelect
+                            value={sortBy}
+                            onChange={(v) => setSortBy(v as typeof sortBy)}
+                            aria-label={t('actions.sort', 'Sort')}
+                          >
+                            <option value="date">{t('kb.sortLatest', 'Latest updated')}</option>
+                            <option value="popular">{t('kb.sortPopularity', 'Popularity')}</option>
+                            <option value="views">{t('kb.sortViews', 'Most views')}</option>
+                            <option value="confidence">{t('kb.sortConfidence', 'Trust score')}</option>
+                          </ModuleToolbarSelect>
                         </div>
                       </div>
-                      {capabilities.canBulkDelete ? (
-                      <KBBulkActionBar
-                        selectedCount={selectedArticleIds.size}
-                        onClear={() => setSelectedArticleIds(new Set())}
-                        onBulkDelete={() => setBulkDeleteOpen(true)}
-                        className="mb-3"
-                      />
-                      ) : null}
-                      <KBArticleViews
-                        articles={processedArticles}
-                        categories={categories}
-                        selectedIds={selectedArticleIds}
-                        onToggleSelect={toggleArticleSelection}
-                        onToggleSelectAll={toggleSelectAllArticles}
-                        viewMode={viewLayout}
-                        onSelect={(art) => openArticleView(art)}
-                        onEdit={capabilities.canEditArticles ? handleEditArticle : undefined}
-                        onDuplicate={
-                          capabilities.canDuplicateArticles ? handleDuplicateArticle : undefined
-                        }
-                        onDelete={capabilities.canDeleteArticles ? handleDeleteArticle : undefined}
-                        onResetFilters={resetFilters}
-                        showSelection={capabilities.canBulkDelete}
-                      />
-                    </section>
-                  ) : null}
+                    </div>
+                    {capabilities.canBulkDelete ? (
+                    <KBBulkActionBar
+                      selectedCount={selectedArticleIds.size}
+                      onClear={() => setSelectedArticleIds(new Set())}
+                      onBulkDelete={() => setBulkDeleteOpen(true)}
+                      className="mb-3"
+                    />
+                    ) : null}
+                    <KBArticleViews
+                      articles={processedArticles}
+                      categories={categories}
+                      selectedIds={selectedArticleIds}
+                      onToggleSelect={toggleArticleSelection}
+                      onToggleSelectAll={toggleSelectAllArticles}
+                      viewMode={viewLayout}
+                      onSelect={(art) => openArticleView(art)}
+                      onEdit={capabilities.canEditArticles ? handleEditArticle : undefined}
+                      onDuplicate={
+                        capabilities.canDuplicateArticles ? handleDuplicateArticle : undefined
+                      }
+                      onDelete={capabilities.canDeleteArticles ? handleDeleteArticle : undefined}
+                      onResetFilters={resetFilters}
+                      showSelection={capabilities.canBulkDelete}
+                    />
+                  </section>
 
-                  {isOverviewMode ? (
+                  {/* Kategorie-Explorer only when categories exist */}
+                  {categories.length > 0 ? (
                     <KBCategoryGrid
                       categories={categories}
                       categoryRecords={categories}
@@ -2203,79 +2210,9 @@ export function KnowledgeBaseWorkbench({
                       onDelete={capabilities.categoryAdmin ? openDeleteCategory : undefined}
                     />
                   ) : null}
-
-                  {isOverviewMode ? (
-                    <section>
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-                        <h2 className="text-sm font-semibold text-slate-900">
-                          {t('kb.allArticlesSection', 'All Articles')}
-                        </h2>
-                        <div className="flex flex-wrap items-center gap-2 sm:justify-end shrink-0">
-                          <KBViewModeSelector value={viewLayout} onChange={setViewLayout} />
-                          <div className="flex items-center gap-1">
-                            <span className="text-[11px] font-medium text-slate-500">{t('modulePage.sort', 'Sort')}:</span>
-                            <ModuleToolbarSelect
-                              value={sortBy}
-                              onChange={(v) => setSortBy(v as typeof sortBy)}
-                              aria-label={t('actions.sort', 'Sort')}
-                            >
-                              <option value="date">{t('kb.sortLatest', 'Latest updated')}</option>
-                              <option value="popular">{t('kb.sortPopularity', 'Popularity')}</option>
-                              <option value="views">{t('kb.sortViews', 'Most views')}</option>
-                              <option value="confidence">{t('kb.sortConfidence', 'Trust score')}</option>
-                            </ModuleToolbarSelect>
-                          </div>
-                        </div>
-                      </div>
-                      {capabilities.canBulkDelete ? (
-                      <KBBulkActionBar
-                        selectedCount={selectedArticleIds.size}
-                        onClear={() => setSelectedArticleIds(new Set())}
-                        onBulkDelete={() => setBulkDeleteOpen(true)}
-                        className="mb-3"
-                      />
-                      ) : null}
-                      <KBArticleViews
-                        articles={processedArticles}
-                        categories={categories}
-                        selectedIds={selectedArticleIds}
-                        onToggleSelect={toggleArticleSelection}
-                        onToggleSelectAll={toggleSelectAllArticles}
-                        viewMode={viewLayout}
-                        onSelect={(art) => openArticleView(art)}
-                        onEdit={capabilities.canEditArticles ? handleEditArticle : undefined}
-                        onDuplicate={
-                          capabilities.canDuplicateArticles ? handleDuplicateArticle : undefined
-                        }
-                        onDelete={capabilities.canDeleteArticles ? handleDeleteArticle : undefined}
-                        onResetFilters={resetFilters}
-                        showSelection={capabilities.canBulkDelete}
-                      />
-                    </section>
-                  ) : null}
                     </>
                   )}
                 </main>
-
-                {!isAiAssistantMode &&
-                (capabilities.aiInsights || capabilities.kbHealthTelemetry) ? (
-                <aside className="xl:w-[280px] shrink-0 border-t xl:border-t-0 xl:border-l border-slate-200/80 bg-white px-4 py-6 xl:sticky xl:top-0 xl:self-start">
-                  <KBActivitySidebar
-                    recentActivity={recentActivity}
-                    healthScore={healthScore}
-                    reviewCount={needsReviewCount}
-                    missingTagsCount={missingTagsCount}
-                    outdatedCount={outdatedCount}
-                    aiRecommendations={
-                      workspaceArticles.length === 0
-                        ? 0
-                        : (coverageData?.aiSuggestions?.length ??
-                          missingTagsCount + outdatedCount + needsReviewCount)
-                    }
-                    contributors={topContributors}
-                  />
-                </aside>
-                ) : null}
               </div>
             </ScrollArea>
             )}

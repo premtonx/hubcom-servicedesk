@@ -15,7 +15,7 @@ import { clientPortalApi } from '../../../services/clientPortalApi';
 
 export default function ClientKbPage() {
   const portalAdapter = usePortalKbAdapter();
-  const { isOrgWide, loading } = useClientPortalSession();
+  const { isClientAdmin, loading } = useClientPortalSession();
   const [aiEnabled, setAiEnabled] = useState(true);
 
   useEffect(() => {
@@ -35,7 +35,8 @@ export default function ClientKbPage() {
   }, []);
 
   const capabilities = useMemo((): KbWorkbenchCapabilities => {
-    const base = isOrgWide
+    // Tenant-scoped article create/edit: CLIENT_ADMIN only (PORTAL_USER read-only).
+    const base = isClientAdmin
       ? PORTAL_KB_WRITER_CAPABILITIES
       : PORTAL_KB_READER_CAPABILITIES;
     if (aiEnabled) return base;
@@ -45,7 +46,7 @@ export default function ClientKbPage() {
       aiAssistantNav: false,
       aiInsights: false,
     };
-  }, [aiEnabled, isOrgWide]);
+  }, [aiEnabled, isClientAdmin]);
 
   if (loading) {
     return (

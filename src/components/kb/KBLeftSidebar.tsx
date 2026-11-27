@@ -62,12 +62,12 @@ interface KBLeftSidebarProps {
 }
 
 const WORKSPACE_ITEMS = [
-  { id: 'overview', icon: LayoutDashboard, labelKey: 'kb.sidebar.overview', defaultLabel: 'Overview' },
-  { id: 'all', icon: FileText, labelKey: 'kb.sidebar.allArticles', defaultLabel: 'All Articles' },
-  { id: 'drafts', icon: FilePen, labelKey: 'kb.sidebar.drafts', defaultLabel: 'Drafts' },
-  { id: 'reviews', icon: ClipboardCheck, labelKey: 'kb.sidebar.reviews', defaultLabel: 'Reviews' },
-  { id: 'ai', icon: Sparkles, labelKey: 'kb.sidebar.aiAssistant', defaultLabel: 'AI Assistant' },
-  { id: 'analytics', icon: BarChart3, labelKey: 'kb.sidebar.analytics', defaultLabel: 'Analytics' },
+  { id: 'overview', icon: LayoutDashboard, labelKey: 'kb.sidebar.overview', defaultLabel: 'Übersicht' },
+  { id: 'all', icon: FileText, labelKey: 'kb.sidebar.allArticles', defaultLabel: 'Alle Artikel' },
+  { id: 'drafts', icon: FilePen, labelKey: 'kb.sidebar.drafts', defaultLabel: 'Entwürfe' },
+  { id: 'reviews', icon: ClipboardCheck, labelKey: 'kb.sidebar.reviews', defaultLabel: 'Prüfungen' },
+  { id: 'ai', icon: Sparkles, labelKey: 'kb.sidebar.aiAssistant', defaultLabel: 'KI-Assistent' },
+  { id: 'analytics', icon: BarChart3, labelKey: 'kb.sidebar.analytics', defaultLabel: 'Analytik' },
 ] as const;
 
 const SMART_ITEMS = [

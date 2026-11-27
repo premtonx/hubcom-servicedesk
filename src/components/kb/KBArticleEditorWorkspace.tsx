@@ -337,13 +337,13 @@ export function KBArticleEditorWorkspace({
                   aria-label={t('kb.editor.visibilitySelect', 'Sichtbarkeit')}
                 >
                   <option value="internal">
-                    {t('kb.editor.visibilityInternal', 'Nur intern (Hubcom)')}
-                  </option>
-                  <option value="shared_portal">
-                    {t('kb.editor.visibilityShared', 'Für alle Kunden-Portale')}
+                    {t('kb.editor.visibilityInternal', 'Intern (nur Hubcom)')}
                   </option>
                   <option value="organization">
-                    {t('kb.editor.visibilityOrg', 'Nur für bestimmtes Unternehmen')}
+                    {t('kb.editor.visibilityOrg', 'Kundenspezifisch (Mandant)')}
+                  </option>
+                  <option value="shared_portal">
+                    {t('kb.editor.visibilityShared', 'Global (alle Kunden-Portale)')}
                   </option>
                 </select>
                 {draftVisibility(newArticle.visibility) === 'organization' ? (
