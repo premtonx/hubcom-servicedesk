@@ -85,6 +85,7 @@ import { useStaffTicketsAdapter } from '../../hooks/useStaffTicketsAdapter';
 import { TicketDetailContextPane } from '../tickets/TicketDetailContextPane';
 import { TicketDetailView } from '../tickets/TicketDetailView';
 import { TicketDetailWorkbench } from '../tickets/TicketDetailWorkbench';
+import { TicketsDetailRail } from '../tickets/TicketsDetailRail';
 import { useStaffTicketDetailAdapter } from '../../hooks/useStaffTicketDetailAdapter';
 import { STAFF_TICKET_DETAIL_CAPABILITIES } from '../../lib/tickets/ticket-detail-workbench-adapter';
 import { TicketDialogs } from '../tickets/TicketDialogs';
@@ -200,12 +201,16 @@ export default function TicketsPage() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  const effectiveCollapsed = isPipelineCollapsed && !isMobile;
   const [newAgentComment, setNewAgentComment] = useState("");
   const [allTickets, setAllTickets] = useState<TicketType[]>([]);
   const [kbArticles, setKbArticles] = useState<KBArticle[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(ticketId || null);
+  /** Auto-collapse KI-SUPPORT-OPERATIONEN into icon rail when a ticket detail is open. */
+  const [detailQueueExpanded, setDetailQueueExpanded] = useState(false);
+  const effectiveCollapsed =
+    (isPipelineCollapsed && !isMobile) ||
+    (Boolean(selectedTicketId) && !detailQueueExpanded && !isMobile);
   const [replyText, setReplyText] = useState('');
   const [isMobilePropertiesOpen, setIsMobilePropertiesOpen] = useState(false);
   const [activeView, setActiveView] = useState<string>(() => {
@@ -1064,6 +1069,18 @@ export default function TicketsPage() {
     }
     return map;
   }, [kundenOrgs]);
+
+  const organizationLogoById = useMemo(() => {
+    const map: Record<string, string | null> = {};
+    for (const org of kundenOrgs) {
+      if (org.id) map[org.id] = org.logo_url || null;
+    }
+    return map;
+  }, [kundenOrgs]);
+
+  useEffect(() => {
+    if (!selectedTicketId) setDetailQueueExpanded(false);
+  }, [selectedTicketId]);
 
   const getFilteredTickets = () => {
     return layoutMode === 'kanban' ? kanbanBoardTickets : finalRenderedTickets;
@@ -2130,10 +2147,40 @@ export default function TicketsPage() {
               capabilities={STAFF_TICKET_DETAIL_CAPABILITIES}
               staffDetailSlot={
                 <div className="flex-1 min-w-0 min-h-0 h-full flex flex-row overflow-hidden">
+                  <TicketsDetailRail
+                    tickets={tickets}
+                    selectedTicketId={selectedTicket.id}
+                    onSelectTicket={(id) => {
+                      setSelectedTicketId(id);
+                      navigate(`/tickets/${id}`);
+                    }}
+                    onRefresh={() => {
+                      void ticketService
+                        .getTicket(selectedTicket.id)
+                        .then((fresh) => {
+                          if (fresh) {
+                            setAllTickets((prev) =>
+                              prev.map((row) => (row.id === fresh.id ? fresh : row)),
+                            );
+                          }
+                        })
+                        .catch(() => {});
+                    }}
+                    onToggleQueueMenu={() => setDetailQueueExpanded((v) => !v)}
+                    ticketQueueStats={ticketQueueStats}
+                    activeViewLabel={
+                      activeView === 'all'
+                        ? t('tickets.allTickets', 'Alle Tickets')
+                        : String(activeView)
+                    }
+                    organizationNameById={organizationNameById}
+                    organizationLogoById={organizationLogoById}
+                  />
                   <TicketDetailView
                     selectedTicket={selectedTicket}
                     ticketContact={ticketContact}
                     ticketCompany={ticketCompany}
+                    onQuickResolve={() => setPendingResolveStatus('resolved')}
                     contactSchema={contactSchema}
                     messages={messages}
                     allTickets={allTickets}
@@ -2184,6 +2231,8 @@ export default function TicketsPage() {
                     onConvertToKB={handleConvertToKB}
                     isKbDrafting={isKbDrafting}
                     onOpenMerge={openDetailMergeDialog}
+                    organizationNameById={organizationNameById}
+                    organizationLogoById={organizationLogoById}
                   />
                   <TicketDetailContextPane
                     selectedTicket={selectedTicket}
@@ -2204,6 +2253,8 @@ export default function TicketsPage() {
                     suggestedTags={suggestedTags}
                     allTickets={allTickets}
                     handleInlineUpdate={handleInlineUpdate}
+                    organizationNameById={organizationNameById}
+                    organizationLogoById={organizationLogoById}
                   />
                 </div>
               }
@@ -2270,6 +2321,7 @@ export default function TicketsPage() {
           ticketService,
           teamCategoryLabels,
           organizationNameById,
+          organizationLogoById,
         }}
       />
         )}

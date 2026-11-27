@@ -5,7 +5,6 @@ import {
   ChevronDown, 
   ChevronUp, 
   Settings2, 
-  User, 
   Building2, 
   Tag, 
   Link2, 
@@ -16,6 +15,7 @@ import {
   X,
   Clock3,
   Search,
+  ListTodo,
 } from 'lucide-react';
 import { Ticket as TicketType, Company, Contact } from '../../types';
 import { Button } from '../ui/button';
@@ -41,6 +41,7 @@ import {
   TicketPriorityChip,
   TicketCategoryChip,
 } from '../tickets/TicketTableCells';
+import { CustomerOrgAvatar, resolveTicketOrgLogo } from '../tickets/CustomerOrgAvatar';
 import { customerService } from '../../services/customerService';
 import { userService } from '../../services/userService';
 import type {
@@ -107,6 +108,8 @@ interface RedesignedSidebarProps {
   portalMode?: boolean;
   portalMeta?: PortalTicketWorkspaceMeta | null;
   portalCapabilities?: TicketDetailWorkbenchCapabilities;
+  organizationNameById?: Record<string, string>;
+  organizationLogoById?: Record<string, string | null>;
 }
 
 export function RedesignedSidebar({
@@ -131,6 +134,8 @@ export function RedesignedSidebar({
   portalMode = false,
   portalMeta = null,
   portalCapabilities,
+  organizationNameById = {},
+  organizationLogoById = {},
 }: RedesignedSidebarProps) {
   const { t } = useTranslation();
   const { user } = useAuth();
@@ -191,6 +196,7 @@ export function RedesignedSidebar({
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companyQuery, setCompanyQuery] = useState('');
+  const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [escalationOrg, setEscalationOrg] = useState<{
     name?: string;
     slug?: string;
@@ -321,6 +327,13 @@ export function RedesignedSidebar({
     setDispatchAgentId(syncedDispatchAgentId);
   }, [ticket.id, syncedDispatchAgentId]);
 
+  useEffect(() => {
+    setCompanyMenuOpen(false);
+    setCompanyQuery('');
+    setAgentMenuOpen(false);
+    setAgentQuery('');
+  }, [ticket.id]);
+
   const filteredAgents = useMemo(() => {
     const q = agentQuery.trim().toLowerCase();
     if (!q) return dispatchAgents;
@@ -399,6 +412,28 @@ export function RedesignedSidebar({
     } as any);
   };
 
+  const orgId = String(ticket.organizationId || (ticket as any).organization_id || '').trim();
+  const companyLabel =
+    (orgId && organizationNameById[orgId]) ||
+    safeString(ticket.company) ||
+    t('tickets.detail.noCompany', 'Kein Unternehmen');
+  const logoUrl = resolveTicketOrgLogo(ticket, organizationLogoById);
+  const contactLabel = safeString(
+    contact?.name || ticket.customerName,
+    t('tickets.customerTab.noContactAssigned', 'Keine Kontaktperson zugewiesen'),
+  );
+  const contactEmail = safeString(contact?.email || (ticket as any).customerEmail || '');
+  const channelLabel = (() => {
+    const ch = String(ticket.channel || 'email').toLowerCase();
+    if (ch === 'chat') return t('tickets.channel.chat', 'Chat');
+    if (ch === 'phone') return t('tickets.channel.phone', 'Telefon');
+    if (ch === 'whatsapp') return t('tickets.channel.whatsapp', 'WhatsApp');
+    return t('tickets.channel.email', 'E-Mail');
+  })();
+
+  const fieldRowClass = 'flex items-start justify-between gap-3 py-2.5';
+  const fieldLabelClass = 'text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0 pt-1 w-[6.5rem]';
+
   return (
     <aside className="relative isolate w-full min-w-0 bg-white flex flex-col shrink-0 h-full min-h-0 overflow-hidden select-none">
       <div className="relative z-20 shrink-0 px-4 py-3 border-b border-slate-200 flex items-center justify-between bg-white">
@@ -418,176 +453,89 @@ export function RedesignedSidebar({
         ) : null}
       </div>
 
-      <div className="relative z-0 flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pt-3 px-3.5 pb-4 space-y-3">
-        {/* Zuständiger — searchable */}
-        <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <UserCheck className="w-3.5 h-3.5 text-primary" />
-              {t('tickets.sidebar.assignee', 'Zuständiger')}
-            </label>
-            {canEditAssignee ? (
-              <button
-                type="button"
-                className="text-[10px] font-bold text-indigo-700 hover:underline"
-                onClick={assignToMe}
-              >
-                {t('tickets.sidebar.assignToMe', 'Mir zuweisen')}
-              </button>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            disabled={!canEditAssignee}
-            onClick={() => setAgentMenuOpen((o) => !o)}
-            className={cn(
-              'w-full flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50/80 px-2.5 py-2 text-left hover:bg-slate-50 transition-colors',
-              !canEditAssignee && 'opacity-70 cursor-default',
-            )}
-          >
-            <div
+      <div className="relative z-0 flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 pb-4">
+        {/* Kunde / Unternehmen — click to assign */}
+        {!portalMode ? (
+          <div className="pt-3 pb-3 border-b border-slate-100 relative">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+              <Building2 className="w-3.5 h-3.5" />
+              {t('tickets.sidebar.customerCompany', 'Kunde / Unternehmen')}
+            </p>
+            <button
+              type="button"
+              disabled={!canEditProperties}
+              onClick={() => setCompanyMenuOpen((o) => !o)}
               className={cn(
-                'w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 border',
-                ticketAssignee
-                  ? 'bg-slate-100 text-slate-700 border-slate-200'
-                  : 'bg-white text-slate-400 border-dashed border-slate-300',
+                'w-full flex items-center gap-2.5 rounded-lg px-1 py-1 text-left hover:bg-slate-50 transition-colors',
+                !canEditProperties && 'opacity-70 cursor-default',
               )}
             >
-              {ticketAssignee ? getInitials(ticketAssignee.name || ticketAssignee.id) : '—'}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p
-                className={cn(
-                  'text-xs truncate',
-                  ticketAssignee ? 'font-semibold text-slate-900' : 'italic text-slate-400',
-                )}
-              >
-                {safeString(
-                  ticketAssignee?.name || ticketAssignee?.id,
-                  t('tickets.unassigned', 'Nicht zugewiesen'),
-                )}
-              </p>
-              <p className="text-[10px] text-slate-400">
-                {t('tickets.sidebar.searchAgents', 'Suchen & zuweisen')}
-              </p>
-            </div>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-          </button>
-          {agentMenuOpen && canEditAssignee ? (
-            <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-2 space-y-2">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <Input
-                  value={agentQuery}
-                  onChange={(e) => setAgentQuery(e.target.value)}
-                  placeholder={t('tickets.sidebar.agentSearchPlaceholder', 'Agent suchen…')}
-                  className="h-8 pl-8 text-xs"
-                  autoFocus
-                />
-              </div>
-              <button
-                type="button"
-                className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50"
-                onClick={() => {
-                  setDispatchAgentId('');
-                  onUpdateTicketField(clearAssigneePayload());
-                  setAgentMenuOpen(false);
-                  setAgentQuery('');
-                }}
-              >
-                {t('tickets.unassigned', 'Nicht zugewiesen')}
-              </button>
-              <div className="max-h-40 overflow-y-auto space-y-0.5">
-                {filteredAgents.map((a) => (
-                  <button
-                    key={a.id}
-                    type="button"
-                    className={cn(
-                      'w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium hover:bg-slate-50',
-                      dispatchAgentId === a.id && 'bg-slate-900 text-white hover:bg-slate-800',
-                    )}
-                    onClick={() => {
-                      setDispatchAgentId(a.id);
-                      onUpdateTicketField(
-                        buildAssigneePayload(a.id, a.name) as Partial<TicketType>,
-                      );
-                      setAgentMenuOpen(false);
-                      setAgentQuery('');
-                    }}
-                  >
-                    {a.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {ticketAssignee && onInitiateHandoff ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="w-full text-xs font-semibold py-2 rounded-xl flex items-center justify-center gap-1.5 border-amber-200 text-amber-700 hover:bg-amber-50"
-              onClick={() => {
-                const selected = dispatchAgents.find((a) => a.id === dispatchAgentId);
-                onInitiateHandoff({
-                  agentName: selected?.name || safeString(ticket.agentName, 'Agent'),
-                  agentId: dispatchAgentId || ticketAssignee?.id || ticket.agentId || undefined,
-                });
-              }}
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              {t('tickets.sidebar.transferTicket', 'Ticket übergeben')}
-            </Button>
-          ) : null}
-        </div>
-
-        {/* Status + Priorität */}
-        <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
-          <div className="grid grid-cols-2 gap-2.5">
-            <div className="space-y-1 min-w-0">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                {t('tickets.sidebar.dispatchCaseStatus', 'Status')}
-              </label>
-              <div className="min-h-[2rem] flex items-center gap-1.5">
-                <TicketStatusChip
-                  status={ticket.status ?? 'open'}
-                  statuses={ticketStatuses}
-                  onChange={(status) =>
-                    canEditProperties
-                      ? onUpdateTicketField({ status: status as any })
-                      : undefined
-                  }
-                />
-                {isReadonlyTerminalStatus(ticket.status) ? (
-                  <span className="text-[8px] font-black uppercase tracking-widest text-muted-foreground shrink-0">
-                    {t('tickets.merge.readonlyMerged', 'Nur lesbar')}
-                  </span>
+              <CustomerOrgAvatar
+                logoUrl={logoUrl}
+                companyName={companyLabel}
+                contactName={contactLabel}
+                size="md"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-900 truncate">{companyLabel}</p>
+                <p className="text-[11px] text-slate-600 truncate">{contactLabel}</p>
+                {contactEmail ? (
+                  <p className="text-[10px] text-slate-400 truncate">{contactEmail}</p>
                 ) : null}
               </div>
-            </div>
-            <div className="space-y-1 min-w-0">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                {t('tickets.sidebar.priority', 'Priorität')}
-              </label>
-              <div className="min-h-[2rem] flex items-center">
-                <TicketPriorityChip
-                  priority={ticket.priority ?? 'medium'}
-                  priorities={ticketPriorities}
-                  onChange={(priority) =>
-                    canEditProperties
-                      ? onUpdateTicketField({ priority: priority as any })
-                      : undefined
-                  }
-                />
+              <ChevronDown className={cn('w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform', companyMenuOpen && 'rotate-180')} />
+            </button>
+            {companyMenuOpen && canEditProperties ? (
+              <div className="absolute left-0 right-0 top-full z-40 mt-1 rounded-xl border border-slate-200 bg-white shadow-lg p-2 space-y-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    value={companyQuery}
+                    onChange={(e) => setCompanyQuery(e.target.value)}
+                    placeholder={t('tickets.sidebar.companySearchPlaceholder', 'Unternehmen suchen…')}
+                    className="h-8 pl-8 text-xs"
+                    autoFocus
+                  />
+                </div>
+                <div className="max-h-44 overflow-y-auto space-y-0.5">
+                  {filteredCompanies.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className={cn(
+                        'w-full text-left px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-50',
+                        ticket.companyId === c.id && 'bg-slate-100 font-semibold',
+                      )}
+                      onClick={() => {
+                        void assignCompany(c.id);
+                        setCompanyQuery('');
+                        setCompanyMenuOpen(false);
+                      }}
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+                  {filteredCompanies.length === 0 ? (
+                    <p className="px-2.5 py-2 text-[11px] text-slate-400 italic">
+                      {t('tickets.sidebar.noCompanies', 'Keine Unternehmen gefunden.')}
+                    </p>
+                  ) : null}
+                </div>
               </div>
-            </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Flat property rows */}
+        <div className="divide-y divide-slate-100">
+          <div className={fieldRowClass}>
+            <span className={fieldLabelClass}>{t('tickets.sidebar.channel', 'Kanal')}</span>
+            <span className="text-xs font-semibold text-slate-800 pt-0.5">{channelLabel}</span>
           </div>
 
-          <div className="grid grid-cols-2 gap-2.5">
-            <div className="space-y-1 min-w-0">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                {t('tickets.sidebar.category', 'Kategorie')}
-              </label>
+          <div className={fieldRowClass}>
+            <span className={fieldLabelClass}>{t('tickets.sidebar.category', 'Kategorie')}</span>
+            <div className="min-w-0 flex-1 flex justify-end">
               <TicketCategoryChip
                 categoryId={ticket.categoryId}
                 categoryName={ticket.categoryName}
@@ -597,108 +545,287 @@ export function RedesignedSidebar({
                 }
               />
             </div>
-            <div className="space-y-1 min-w-0">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                {t('tickets.sidebar.ticketType', 'Typ')}
-              </label>
-              <select
-                className="w-full bg-card border border-border rounded-lg px-2 py-1.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary"
-                value={ticket.type || 'incident'}
-                disabled={!canEditProperties}
-                onChange={(e) => onUpdateTicketField({ type: e.target.value as any })}
-              >
-                <option value="incident">{t('tickets.typeLabels.incident', 'Vorfall')}</option>
-                <option value="question">{t('tickets.typeLabels.question', 'Frage')}</option>
-                <option value="problem">{t('tickets.typeLabels.problem', 'Problem')}</option>
-                <option value="feature_request">
-                  {t('tickets.typeLabels.feature_request', 'Feature-Anfrage')}
-                </option>
-              </select>
-            </div>
           </div>
-        </div>
 
-        {/* Unternehmen & Kontakt */}
-        {!portalMode ? (
-          <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <Building2 className="w-3.5 h-3.5" />
-              {t('tickets.sidebar.companyContact', 'Unternehmen & Kontakt')}
-            </label>
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <Input
-                value={companyQuery}
-                onChange={(e) => setCompanyQuery(e.target.value)}
-                placeholder={
-                  ticket.company ||
-                  t('tickets.detail.noCompany', 'Kein Unternehmen')
+          <div className={fieldRowClass}>
+            <span className={fieldLabelClass}>{t('tickets.sidebar.priority', 'Priorität')}</span>
+            <div className="min-w-0 flex-1 flex justify-end">
+              <TicketPriorityChip
+                priority={ticket.priority ?? 'medium'}
+                priorities={ticketPriorities}
+                onChange={(priority) =>
+                  canEditProperties
+                    ? onUpdateTicketField({ priority: priority as any })
+                    : undefined
                 }
-                className="h-8 pl-8 text-xs"
-                disabled={!canEditProperties}
               />
             </div>
-            {(companyQuery || !ticket.companyId) && canEditProperties ? (
-              <div className="max-h-36 overflow-y-auto rounded-lg border border-slate-100 divide-y divide-slate-50">
-                {filteredCompanies.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className={cn(
-                      'w-full text-left px-2.5 py-1.5 text-xs hover:bg-slate-50',
-                      ticket.companyId === c.id && 'bg-slate-100 font-semibold',
-                    )}
-                    onClick={() => {
-                      void assignCompany(c.id);
-                      setCompanyQuery('');
-                    }}
-                  >
-                    {c.name}
-                  </button>
-                ))}
-                {filteredCompanies.length === 0 ? (
-                  <p className="px-2.5 py-2 text-[11px] text-slate-400 italic">
-                    {t('tickets.sidebar.noCompanies', 'Keine Unternehmen gefunden.')}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-            <div className="flex items-center gap-2 text-xs text-slate-600">
-              <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              <span className="truncate">
-                {safeString(
-                  contact?.name || ticket.customerName,
-                  t('tickets.customerTab.noContactAssigned', 'Keine Kontaktperson zugewiesen'),
-                )}
-              </span>
+          </div>
+
+          <div className={fieldRowClass}>
+            <span className={fieldLabelClass}>{t('tickets.sidebar.dispatchCaseStatus', 'Status')}</span>
+            <div className="min-w-0 flex-1 flex items-center justify-end gap-1.5">
+              <TicketStatusChip
+                status={ticket.status ?? 'open'}
+                statuses={ticketStatuses}
+                onChange={(status) =>
+                  canEditProperties
+                    ? onUpdateTicketField({ status: status as any })
+                    : undefined
+                }
+              />
+              {isReadonlyTerminalStatus(ticket.status) ? (
+                <span className="text-[8px] font-black uppercase tracking-widest text-muted-foreground shrink-0">
+                  {t('tickets.merge.readonlyMerged', 'Nur lesbar')}
+                </span>
+              ) : null}
             </div>
           </div>
-        ) : null}
 
-        {/* Zeiterfassung summary */}
-        {!portalMode ? (
-          <button
-            type="button"
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors text-left"
-            onClick={() => {
-              window.dispatchEvent(
-                new CustomEvent('hubcom-ticket-open-view', { detail: { tab: 'time' } }),
-              );
-            }}
-          >
-            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
-              <Clock3 className="w-3.5 h-3.5 text-slate-400" />
-              {hoursLabel}
+          <div className="py-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className={fieldLabelClass + ' pt-0'}>
+                <span className="inline-flex items-center gap-1">
+                  <UserCheck className="w-3.5 h-3.5" />
+                  {t('tickets.sidebar.assignee', 'Zuständiger')}
+                </span>
+              </span>
+              {canEditAssignee ? (
+                <button
+                  type="button"
+                  className="text-[10px] font-bold text-indigo-700 hover:underline"
+                  onClick={assignToMe}
+                >
+                  {t('tickets.sidebar.assignToMe', 'Mir zuweisen')}
+                </button>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              disabled={!canEditAssignee}
+              onClick={() => setAgentMenuOpen((o) => !o)}
+              className={cn(
+                'w-full flex items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-2 text-left hover:bg-slate-50 transition-colors',
+                !canEditAssignee && 'opacity-70 cursor-default',
+              )}
+            >
+              <div
+                className={cn(
+                  'w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 border',
+                  ticketAssignee
+                    ? 'bg-slate-100 text-slate-700 border-slate-200'
+                    : 'bg-white text-slate-400 border-dashed border-slate-300',
+                )}
+              >
+                {ticketAssignee ? getInitials(ticketAssignee.name || ticketAssignee.id) : '—'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p
+                  className={cn(
+                    'text-xs truncate',
+                    ticketAssignee ? 'font-semibold text-slate-900' : 'italic text-slate-400',
+                  )}
+                >
+                  {safeString(
+                    ticketAssignee?.name || ticketAssignee?.id,
+                    t('tickets.unassigned', 'Nicht zugewiesen'),
+                  )}
+                </p>
+              </div>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            </button>
+            {agentMenuOpen && canEditAssignee ? (
+              <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-2 space-y-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    value={agentQuery}
+                    onChange={(e) => setAgentQuery(e.target.value)}
+                    placeholder={t('tickets.sidebar.agentSearchPlaceholder', 'Agent suchen…')}
+                    className="h-8 pl-8 text-xs"
+                    autoFocus
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50"
+                  onClick={() => {
+                    setDispatchAgentId('');
+                    onUpdateTicketField(clearAssigneePayload());
+                    setAgentMenuOpen(false);
+                    setAgentQuery('');
+                  }}
+                >
+                  {t('tickets.unassigned', 'Nicht zugewiesen')}
+                </button>
+                <div className="max-h-40 overflow-y-auto space-y-0.5">
+                  {filteredAgents.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      className={cn(
+                        'w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium hover:bg-slate-50',
+                        dispatchAgentId === a.id && 'bg-slate-900 text-white hover:bg-slate-800',
+                      )}
+                      onClick={() => {
+                        setDispatchAgentId(a.id);
+                        onUpdateTicketField(
+                          buildAssigneePayload(a.id, a.name) as Partial<TicketType>,
+                        );
+                        setAgentMenuOpen(false);
+                        setAgentQuery('');
+                      }}
+                    >
+                      {a.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {ticketAssignee && onInitiateHandoff ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full text-xs font-semibold py-2 rounded-lg flex items-center justify-center gap-1.5 border-amber-200 text-amber-700 hover:bg-amber-50"
+                onClick={() => {
+                  const selected = dispatchAgents.find((a) => a.id === dispatchAgentId);
+                  onInitiateHandoff({
+                    agentName: selected?.name || safeString(ticket.agentName, 'Agent'),
+                    agentId: dispatchAgentId || ticketAssignee?.id || ticket.agentId || undefined,
+                  });
+                }}
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                {t('tickets.sidebar.transferTicket', 'Ticket übergeben')}
+              </Button>
+            ) : null}
+          </div>
+
+          <div className={fieldRowClass}>
+            <span className={fieldLabelClass}>{t('tickets.sidebar.ticketType', 'Typ')}</span>
+            <select
+              className="bg-transparent border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary max-w-[12rem]"
+              value={ticket.type || 'incident'}
+              disabled={!canEditProperties}
+              onChange={(e) => onUpdateTicketField({ type: e.target.value as any })}
+            >
+              <option value="incident">{t('tickets.typeLabels.incident', 'Vorfall')}</option>
+              <option value="question">{t('tickets.typeLabels.question', 'Frage')}</option>
+              <option value="problem">{t('tickets.typeLabels.problem', 'Problem')}</option>
+              <option value="feature_request">
+                {t('tickets.typeLabels.feature_request', 'Feature-Anfrage')}
+              </option>
+            </select>
+          </div>
+
+          {!portalMode ? (
+            <div className={fieldRowClass}>
+              <span className={fieldLabelClass + ' flex items-center gap-1'}>
+                <Clock3 className="w-3.5 h-3.5" />
+                {t('tickets.sidebar.timeTracking', 'Zeiterfassung')}
+              </span>
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 hover:text-indigo-700"
+                onClick={() => {
+                  window.dispatchEvent(
+                    new CustomEvent('hubcom-ticket-open-view', { detail: { tab: 'time' } }),
+                  );
+                }}
+              >
+                <span>{hoursLabel === '—' ? t('tickets.sidebar.noTimeLogged', '0,00 Std. erfasst') : hoursLabel}</span>
+                <span className="text-[10px] font-bold text-indigo-700">
+                  {t('tickets.sidebar.addTime', '+ Zeit')}
+                </span>
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Tags — always visible compact */}
+        <div className="py-3 border-t border-slate-100 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <Tag className="w-3.5 h-3.5" />
+              {t('tickets.sidebar.metadataTags', 'Tags')}
             </span>
-            <span className="text-[10px] font-bold text-indigo-700">
-              {t('tickets.sidebar.addTime', '+ Zeit')}
-            </span>
-          </button>
-        ) : null}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {ticket.tags && ticket.tags.length > 0 ? (
+              ticket.tags.map((tag) => {
+                const tagText =
+                  typeof tag === 'string'
+                    ? tag
+                    : tag && typeof tag === 'object'
+                      ? safeString((tag as Record<string, unknown>).name) ||
+                        safeString((tag as Record<string, unknown>).label) ||
+                        String(tag)
+                      : String(tag ?? '');
+                if (!tagText) return null;
+                return (
+                  <Badge
+                    key={String(tagText)}
+                    className="bg-slate-100 text-slate-700 hover:bg-slate-100 hover:text-red-500 border-none text-[9px] font-bold px-2 py-0.5 gap-1 shrink-0 cursor-pointer"
+                    onClick={() =>
+                      onUpdateTicketField({
+                        tags: ticket.tags.filter((row) => row !== tag),
+                      })
+                    }
+                  >
+                    <span>#{String(tagText)}</span>
+                    <span className="font-bold text-[8px] opacity-70">x</span>
+                  </Badge>
+                );
+              })
+            ) : (
+              <span className="text-[10px] text-muted-foreground italic">
+                {t('tickets.sidebar.noTagsDefined', 'No manual tags defined.')}
+              </span>
+            )}
+          </div>
+          <div className="relative">
+            <Input
+              placeholder={t('tickets.sidebar.addTagPlaceholder', '+ Tag')}
+              className="h-8 text-xs rounded-lg pr-8"
+              value={tagsInput}
+              onChange={(e) => onChangeTagsInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && tagsInput.trim()) onAddTag();
+              }}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute right-1 top-1 h-6 w-6 rounded-md text-slate-600 hover:bg-slate-50"
+              onClick={onAddTag}
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+          {suggestedTags && suggestedTags.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {suggestedTags
+                .filter((st) => !(ticket.tags ?? []).includes(st))
+                .map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    className="text-[9px] font-bold bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full"
+                    onClick={() =>
+                      onUpdateTicketField({ tags: [...(ticket.tags ?? []), st] })
+                    }
+                  >
+                    +#{st}
+                  </button>
+                ))}
+            </div>
+          ) : null}
+        </div>
 
         {/* DPG-only Support-Level / Eskalation */}
         {showEscalation ? (
-          <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-3 space-y-2">
+          <div className="py-3 border-t border-slate-100 space-y-2">
             <label
               htmlFor="dispatch-support-level-select"
               className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block"
@@ -707,7 +834,7 @@ export function RedesignedSidebar({
             </label>
             <select
               id="dispatch-support-level-select"
-              className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+              className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
               value={String(
                 ticket.support_level ||
                   ticket.supportLevel ||
@@ -738,7 +865,7 @@ export function RedesignedSidebar({
               type="button"
               variant="outline"
               size="sm"
-              className="w-full text-xs font-semibold py-2 rounded-xl border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+              className="w-full text-xs font-semibold py-2 rounded-lg border-indigo-200 text-indigo-700 hover:bg-indigo-50"
               onClick={() =>
                 onUpdateTicketField({
                   supportLevel: 'second_level',
@@ -758,143 +885,15 @@ export function RedesignedSidebar({
           </div>
         ) : null}
 
-        {/* Tags */}
-        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        {/* Verbundene Tickets — collapsed */}
+        <div className="border-t border-slate-100">
           <button
             type="button"
-            className="w-full flex items-center justify-between text-[10.5px] font-black uppercase tracking-widest text-[#5F6368] hover:text-foreground transition-colors px-3.5 py-2.5 focus:outline-none"
-            onClick={() => toggleSection('tags')}
-          >
-            <span className="flex items-center gap-1.5">
-              <Tag className="w-4 h-4 text-purple-500" />
-              <span>{t('tickets.sidebar.metadataTags', 'Tags')}</span>
-            </span>
-            {collapsed.tags ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-          </button>
-          {!collapsed.tags ? (
-            <div className="space-y-3 px-3.5 pb-3.5 overflow-hidden">
-              <div className="flex flex-wrap gap-1">
-                {ticket.tags && ticket.tags.length > 0 ? (
-                  ticket.tags.map((tag) => {
-                    const tagText =
-                      typeof tag === 'string'
-                        ? tag
-                        : tag && typeof tag === 'object'
-                          ? safeString((tag as Record<string, unknown>).name) ||
-                            safeString((tag as Record<string, unknown>).label) ||
-                            String(tag)
-                          : String(tag ?? '');
-                    if (!tagText) return null;
-                    return (
-                      <Badge
-                        key={String(tagText)}
-                        className="bg-purple-100 text-purple-800 hover:bg-purple-100/90 hover:text-red-500 border-none text-[9px] font-bold px-2 py-0.5 gap-1 shrink-0 cursor-pointer"
-                        onClick={() =>
-                          onUpdateTicketField({
-                            tags: ticket.tags.filter((row) => row !== tag),
-                          })
-                        }
-                      >
-                        <span>#{String(tagText)}</span>
-                        <span className="font-bold text-[8px] opacity-70">x</span>
-                      </Badge>
-                    );
-                  })
-                ) : (
-                  <span className="text-[10px] text-muted-foreground italic">
-                    {t('tickets.sidebar.noTagsDefined', 'No manual tags defined.')}
-                  </span>
-                )}
-              </div>
-              <div className="relative">
-                <Input
-                  placeholder={t('tickets.sidebar.tagPlaceholder', 'Enter tag...')}
-                  className="h-8 text-xs rounded-xl focus:ring-purple-400 focus:border-purple-400 pr-8"
-                  value={tagsInput}
-                  onChange={(e) => onChangeTagsInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && tagsInput.trim()) onAddTag();
-                  }}
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-1 top-1 h-6 w-6 rounded-md text-purple-600 hover:bg-purple-50"
-                  onClick={onAddTag}
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-              {suggestedTags && suggestedTags.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {suggestedTags
-                    .filter((st) => !(ticket.tags ?? []).includes(st))
-                    .map((st) => (
-                      <button
-                        key={st}
-                        type="button"
-                        className="text-[9px] font-black bg-white hover:bg-purple-100 border border-purple-200 text-purple-700 px-2 py-0.5 rounded-full"
-                        onClick={() =>
-                          onUpdateTicketField({ tags: [...(ticket.tags ?? []), st] })
-                        }
-                      >
-                        +#{st}
-                      </button>
-                    ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-
-        {/* KI-Copilot — collapsed by default */}
-        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-          <button
-            type="button"
-            className="w-full flex items-center justify-between text-[10.5px] font-black uppercase tracking-widest text-[#5F6368] hover:text-foreground transition-colors px-3.5 py-2.5 focus:outline-none"
-            onClick={() => toggleSection('copilot')}
-          >
-            <span className="flex items-center gap-1.5 text-indigo-700">
-              <Sparkles className="w-4 h-4 text-indigo-500" />
-              <span>{t('tickets.sidebar.aiCopilotHub', 'KI-Copilot')}</span>
-            </span>
-            {collapsed.copilot ? (
-              <ChevronDown className="w-3.5 h-3.5" />
-            ) : (
-              <ChevronUp className="w-3.5 h-3.5" />
-            )}
-          </button>
-          {!collapsed.copilot ? (
-            <div className="space-y-2 border-t border-indigo-100 p-3.5">
-              <div className="grid grid-cols-2 gap-1.5">
-                <Button
-                  className="bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[10px] font-black h-8 rounded-lg"
-                  onClick={onDraftWithAI}
-                  disabled={isAiDrafting || !isAiReady}
-                >
-                  {t('tickets.sidebar.draftReply', 'Draft reply')}
-                </Button>
-                <Button
-                  className="bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[10px] font-black h-8 rounded-lg"
-                  onClick={onConvertToKB}
-                  disabled={!isAiReady}
-                >
-                  {t('tickets.sidebar.kbExtraction', 'KB extraction')}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-
-        {/* Verbundene Tickets — collapsed by default */}
-        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-          <button
-            type="button"
-            className="w-full flex items-center justify-between text-[10.5px] font-black uppercase tracking-widest text-[#5F6368] hover:text-foreground transition-colors px-3.5 py-2.5 focus:outline-none"
+            className="w-full flex items-center justify-between text-[10.5px] font-bold uppercase tracking-widest text-slate-500 hover:text-foreground transition-colors py-3 focus:outline-none"
             onClick={() => toggleSection('related')}
           >
             <span className="flex items-center gap-1.5">
-              <Link2 className="w-4 h-4 text-[#1A73E8]" />
+              <Link2 className="w-4 h-4 text-slate-400" />
               <span>
                 {t('tickets.sidebar.linkedTickets', 'Verbundene Tickets ({{count}})').replace(
                   '{{count}}',
@@ -909,12 +908,12 @@ export function RedesignedSidebar({
             )}
           </button>
           {!collapsed.related ? (
-            <div className="space-y-2 px-3.5 pb-3.5">
+            <div className="space-y-2 pb-3">
               {ticket.linkedTicketIds && ticket.linkedTicketIds.length > 0 ? (
                 ticket.linkedTicketIds.map((id) => (
                   <div
                     key={id}
-                    className="p-2 bg-card border border-border rounded-xl flex items-center justify-between text-[11px]"
+                    className="py-1.5 flex items-center justify-between text-[11px]"
                   >
                     <span className="truncate pr-1 text-foreground font-semibold">
                       #{id.slice(-5).toUpperCase()}
@@ -929,7 +928,7 @@ export function RedesignedSidebar({
                   </div>
                 ))
               ) : (
-                <span className="text-[10px] text-muted-foreground italic px-2 block">
+                <span className="text-[10px] text-muted-foreground italic block">
                   {t('tickets.sidebar.noActiveLinks', 'No active linkages.')}
                 </span>
               )}
@@ -950,7 +949,79 @@ export function RedesignedSidebar({
             </div>
           ) : null}
         </div>
+
+        {/* KI-Copilot — collapsed */}
+        <div className="border-t border-slate-100">
+          <button
+            type="button"
+            className="w-full flex items-center justify-between text-[10.5px] font-bold uppercase tracking-widest text-slate-500 hover:text-foreground transition-colors py-3 focus:outline-none"
+            onClick={() => toggleSection('copilot')}
+          >
+            <span className="flex items-center gap-1.5 text-indigo-700">
+              <Sparkles className="w-4 h-4 text-indigo-500" />
+              <span>{t('tickets.sidebar.aiCopilotHub', 'KI-Copilot')}</span>
+            </span>
+            {collapsed.copilot ? (
+              <ChevronDown className="w-3.5 h-3.5" />
+            ) : (
+              <ChevronUp className="w-3.5 h-3.5" />
+            )}
+          </button>
+          {!collapsed.copilot ? (
+            <div className="space-y-2 pb-3">
+              <div className="grid grid-cols-2 gap-1.5">
+                <Button
+                  className="bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold h-8 rounded-lg"
+                  onClick={onDraftWithAI}
+                  disabled={isAiDrafting || !isAiReady}
+                >
+                  {t('tickets.sidebar.draftReply', 'Draft reply')}
+                </Button>
+                <Button
+                  className="bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold h-8 rounded-lg"
+                  onClick={onConvertToKB}
+                  disabled={!isAiReady}
+                >
+                  {t('tickets.sidebar.kbExtraction', 'KB extraction')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
+
+      {/* Schnellaktionen footer */}
+      {!portalMode ? (
+        <div className="shrink-0 border-t border-slate-200 px-4 py-3 bg-slate-50/80 space-y-1.5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+            {t('tickets.sidebar.quickActions', 'Schnellaktionen')}
+          </p>
+          <button
+            type="button"
+            className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white transition-colors"
+            onClick={() => {
+              window.dispatchEvent(
+                new CustomEvent('hubcom-ticket-open-view', { detail: { tab: 'tasks' } }),
+              );
+            }}
+          >
+            <ListTodo className="w-3.5 h-3.5 text-slate-400" />
+            {t('tickets.sidebar.createTask', 'Aufgabe erstellen')}
+          </button>
+          <button
+            type="button"
+            className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white transition-colors"
+            onClick={() => {
+              window.dispatchEvent(
+                new CustomEvent('hubcom-ticket-open-view', { detail: { tab: 'time' } }),
+              );
+            }}
+          >
+            <Clock3 className="w-3.5 h-3.5 text-slate-400" />
+            {t('tickets.sidebar.logTime', 'Zeit erfassen')}
+          </button>
+        </div>
+      ) : null}
     </aside>
   );
 }
