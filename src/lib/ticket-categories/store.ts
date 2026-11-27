@@ -6,6 +6,7 @@ import {
   queryDb,
   setDocDirect,
 } from '../postgres-backend.js';
+import { withSystemTenantContext } from '../security/tenant-rls.js';
 import {
   countTicketsUsingValue,
   reassignTicketField,
@@ -192,25 +193,27 @@ export async function getTicketCategoryUsage(id: string): Promise<number> {
 /** Legt Standard-Kategorien an, falls die Collection leer ist. */
 export async function ensureDefaultTicketCategories(): Promise<number> {
   try {
-    const countRes = await queryDb(
-      `SELECT COUNT(*)::int AS c FROM geistdesk_documents WHERE collection = $1`,
-      [TICKET_CATEGORIES_COLLECTION],
-    );
-    const count = Number(countRes.rows[0]?.c || 0);
-    if (count > 0) return 0;
+    return await withSystemTenantContext(async () => {
+      const countRes = await queryDb(
+        `SELECT COUNT(*)::int AS c FROM geistdesk_documents WHERE collection = $1`,
+        [TICKET_CATEGORIES_COLLECTION],
+      );
+      const count = Number(countRes.rows[0]?.c || 0);
+      if (count > 0) return 0;
 
-    const now = new Date().toISOString();
-    let created = 0;
-    for (const def of DEFAULT_TICKET_CATEGORIES) {
-      await addDocDirect(TICKET_CATEGORIES_COLLECTION, {
-        ...def,
-        createdAt: now,
-        updatedAt: now,
-      });
-      created += 1;
-    }
-    console.info(`[ticket-categories] ${created} Standard-Kategorien angelegt.`);
-    return created;
+      const now = new Date().toISOString();
+      let created = 0;
+      for (const def of DEFAULT_TICKET_CATEGORIES) {
+        await addDocDirect(TICKET_CATEGORIES_COLLECTION, {
+          ...def,
+          createdAt: now,
+          updatedAt: now,
+        });
+        created += 1;
+      }
+      console.info(`[ticket-categories] ${created} Standard-Kategorien angelegt.`);
+      return created;
+    });
   } catch (err) {
     console.warn('[ticket-categories] Seed fehlgeschlagen:', err);
     return 0;

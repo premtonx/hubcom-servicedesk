@@ -38,7 +38,12 @@ AS $$
     OR collection ~ '^tickets/[^/]+/messages$'
 $$;
 
--- Core RLS predicate for document org matching
+-- Core RLS predicate for document org matching.
+-- Policies use this for both USING (SELECT/UPDATE/DELETE) and WITH CHECK (INSERT/UPDATE).
+-- system / super_admin: full access for boot, workers, pre-auth endpoints.
+-- portal: organization_id must equal app.current_org_id.
+-- staff_scoped: organization_id IS NULL (internal) OR in app.allowed_org_ids.
+-- unset: fail closed (FALSE) — never leak all tenants.
 CREATE OR REPLACE FUNCTION app_rls_document_allowed(collection text, data jsonb)
 RETURNS boolean
 LANGUAGE sql

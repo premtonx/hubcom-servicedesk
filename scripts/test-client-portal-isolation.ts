@@ -196,6 +196,7 @@ import {
   assertSetLocalDoesNotBleed,
   ensureTenantRlsPolicies,
   evaluateRlsOrgAllowed,
+  withSystemTenantContext,
   withTenantContext,
 } from '../src/lib/security/tenant-rls.js';
 import {
@@ -8415,6 +8416,7 @@ async function main(): Promise<void> {
   testPayloadSanitizeUploadGuardIsolation();
   testTenantRlsSourceContracts();
   await testTenantRlsLiveSqlIsolation();
+  await testTenantRlsSystemBootUnderForceRls();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
@@ -9130,15 +9132,26 @@ function testTenantRlsSourceContracts(): void {
   );
   assert(
     rls.includes('withTenantContext') &&
+      rls.includes('withSystemTenantContext') &&
+      rls.includes('systemRlsMiddleware') &&
       rls.includes('SET LOCAL ROLE hubcom_app') &&
       rls.includes('set_config') &&
       pg.includes('getTenantRlsClient') &&
       pg.includes('dbQuery') &&
       pg.includes('ensureTenantRlsPolicies') &&
+      pg.includes('ownerPgPool') &&
       serverSrc.includes('tenantRlsMiddleware') &&
+      serverSrc.includes('systemRlsMiddleware') &&
       docs.includes('DATABASE_APP_URL') &&
-      docs.includes('hubcom_app'),
-    'withTenantContext + portal middleware + docs wired',
+      docs.includes('hubcom_app') &&
+      docs.includes('42501'),
+    'withTenantContext + system boot/pre-auth + docs wired',
+  );
+  assert(
+    ddl.includes("WHEN 'system' THEN TRUE") &&
+      ddl.includes('WITH CHECK') &&
+      ddl.includes('USING'),
+    'geistdesk_documents RLS allows system/super_admin via USING + WITH CHECK',
   );
 }
 
@@ -9288,6 +9301,98 @@ async function testTenantRlsLiveSqlIsolation(): Promise<void> {
       () => undefined,
     );
   }
+}
+
+/**
+ * FORCE RLS + hubcom_app: boot/ensure + onboarding status must not 42501, and
+ * an initialized workspace must keep isInitialized=true. Portal mode still
+ * hides OtherOrg rows.
+ */
+async function testTenantRlsSystemBootUnderForceRls(): Promise<void> {
+  console.log('\n[Tenant RLS] FORCE RLS + system boot — no 42501 / false onboarding');
+
+  if (!process.env.DATABASE_URL && !process.env.PG_DATABASE_URL) {
+    console.log('  (skip) DATABASE_URL not set');
+    return;
+  }
+
+  const { initDb, queryDb, getOwnerPgPool } = await import('../src/lib/postgres-backend.js');
+  await initDb();
+  await ensureTenantRlsPolicies((sql) => queryDb(sql));
+
+  const owner = getOwnerPgPool();
+  await owner.query(`ALTER TABLE geistdesk_documents FORCE ROW LEVEL SECURITY`);
+  await owner.query(`
+    INSERT INTO geistdesk_documents (collection, id, data)
+    VALUES (
+      'module_config',
+      'global',
+      jsonb_build_object(
+        'is_initialized', true,
+        'initializedBy', 'rls-force-test',
+        'initializedAt', NOW()::text,
+        'platformModules', jsonb_build_object(
+          'tickets', true, 'geistKB', true, 'geistVault', true, 'geistExchange', true
+        )
+      )
+    )
+    ON CONFLICT (collection, id) DO UPDATE
+      SET data = geistdesk_documents.data
+          || jsonb_build_object(
+            'is_initialized', true,
+            'initializedBy', 'rls-force-test'
+          )
+  `);
+
+  const dpg = '11111111-1111-4111-8111-111111111101';
+  const other = '22222222-2222-4222-8222-222222222202';
+  const marker = `rls-force-${Date.now()}`;
+  const ticketOther = `tkt-force-other-${marker}`;
+  await owner.query(
+    `INSERT INTO geistdesk_documents (collection, id, data)
+     VALUES ('tickets', $1, jsonb_build_object('organizationId', $2::text, 'subject', $3::text))
+     ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data`,
+    [ticketOther, other, marker],
+  );
+
+  let bootError: string | null = null;
+  let statusInitialized: boolean | null = null;
+  try {
+    const { ensureDefaultTicketConfig } = await import('../src/lib/ticket-config/store.js');
+    const {
+      ensureInitializationFlag,
+      getOnboardingStatus,
+    } = await import('../src/lib/onboarding-service.js');
+
+    await withSystemTenantContext(async () => {
+      await ensureDefaultTicketConfig();
+      const boot = await ensureInitializationFlag();
+      assert(boot.isInitialized === true, 'ensureInitializationFlag keeps isInitialized=true');
+      const status = await getOnboardingStatus();
+      statusInitialized = Boolean(status.isInitialized);
+    });
+  } catch (err: any) {
+    bootError = String(err?.code || err?.message || err);
+  }
+
+  assert(
+    bootError == null,
+    `ensureDefaultTicketConfig + ensureInitializationFlag + onboarding status under hubcom_app/FORCE: zero 42501 (got ${bootError})`,
+  );
+  assert(statusInitialized === true, 'GET onboarding status reports isInitialized=true under FORCE RLS');
+
+  const otherVisible = await withTenantContext({ mode: 'portal', orgId: dpg }, async (client) => {
+    const res = await client.query(
+      `SELECT id FROM geistdesk_documents
+        WHERE collection = 'tickets' AND app_document_org_id(data) = $1`,
+      [other],
+    );
+    return (res.rows || []).length;
+  });
+  assert(otherVisible === 0, 'portal mode still returns 0 OtherOrg geistdesk_documents rows');
+
+  await owner.query(`DELETE FROM geistdesk_documents WHERE id = $1`, [ticketOther]).catch(() => undefined);
+  // Leave FORCE on — matches production DATABASE_APP_URL posture; owner bypasses for cleanup above.
 }
 
 main().catch((err) => {

@@ -73,6 +73,21 @@ export async function withTenantContext<T>(
   ctx: TenantContextInput,
   fn: (client: pg.PoolClient) => Promise<T>,
 ): Promise<T> {
+  const existing = getTenantRlsStore();
+  // Nesting: only reuse when the active context already matches the request.
+  // Never reuse system/super_admin for a portal/staff_scoped call (would bypass isolation).
+  if (existing) {
+    const sameMode = existing.mode === ctx.mode;
+    const samePortalOrg =
+      ctx.mode !== 'portal' || String(existing.orgId || '') === String(ctx.orgId || '');
+    const elevatingToSystem =
+      (ctx.mode === 'system' || ctx.mode === 'super_admin') &&
+      (existing.mode === 'system' || existing.mode === 'super_admin');
+    if ((sameMode && samePortalOrg) || elevatingToSystem) {
+      return fn(existing.client);
+    }
+  }
+
   const { getPgPool } = await import('../postgres-backend.js');
   const pool = getPgPool();
   const client = await pool.connect();
@@ -106,6 +121,53 @@ export async function withTenantContext<T>(
     }
     client.release();
   }
+}
+
+/**
+ * Boot / workers / pre-auth: full document access under FORCE RLS + hubcom_app.
+ * Reuses an existing system/super_admin ALS context when already active.
+ */
+export async function withSystemTenantContext<T>(fn: () => Promise<T>): Promise<T> {
+  return withTenantContext({ mode: 'system' }, async () => fn());
+}
+
+/**
+ * Express middleware: bind the request to system RLS mode (SET LOCAL) until
+ * the response finishes. Use for pre-auth paths that must read/write
+ * geistdesk_documents without a portal/staff org context.
+ */
+export function systemRlsMiddleware(
+  req: any,
+  res: Response,
+  next: NextFunction,
+): void {
+  let settled = false;
+  const finish = (err?: unknown) => {
+    if (settled) return;
+    settled = true;
+    if (err && !res.headersSent) {
+      next(err);
+    }
+  };
+
+  void withTenantContext({ mode: 'system' }, async () => {
+    await new Promise<void>((resolve, reject) => {
+      const done = () => {
+        res.removeListener('finish', done);
+        res.removeListener('close', done);
+        resolve();
+      };
+      res.on('finish', done);
+      res.on('close', done);
+      try {
+        next();
+      } catch (err) {
+        reject(err);
+      }
+    });
+  })
+    .then(() => finish())
+    .catch((err) => finish(err));
 }
 
 /** Resolve RLS context from an authenticated Express request. */
