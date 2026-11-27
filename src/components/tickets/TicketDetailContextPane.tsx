@@ -31,6 +31,8 @@ export interface TicketDetailContextPaneProps {
   portalMode?: boolean;
   portalMeta?: PortalTicketWorkspaceMeta | null;
   portalCapabilities?: TicketDetailWorkbenchCapabilities;
+  organizationNameById?: Record<string, string>;
+  organizationLogoById?: Record<string, string | null>;
 }
 
 export function TicketDetailContextPane(props: TicketDetailContextPaneProps) {
@@ -56,6 +58,8 @@ export function TicketDetailContextPane(props: TicketDetailContextPaneProps) {
     portalMode = false,
     portalMeta = null,
     portalCapabilities,
+    organizationNameById,
+    organizationLogoById,
   } = props;
 
   // Defensive: if the selected ticket disappears from the master list (e.g.
@@ -117,6 +121,8 @@ export function TicketDetailContextPane(props: TicketDetailContextPaneProps) {
                       portalMode={portalMode}
                       portalMeta={portalMeta}
                       portalCapabilities={portalCapabilities}
+                      organizationNameById={organizationNameById}
+                      organizationLogoById={organizationLogoById}
                     />
            </aside>
   );

@@ -44,6 +44,7 @@ import { getTicketTableGridClass, getTicketTableMinWidth, ticketTableRowClass } 
 import { TicketsViewModeSelector, type TicketsLayoutMode } from './TicketsViewModeSelector';
 import { TicketsKanbanBoard } from './TicketsKanbanBoard';
 import { TicketsCardGrid } from './TicketsCardGrid';
+import { CustomerOrgAvatar, resolveTicketOrgLogo } from './CustomerOrgAvatar';
 import { useTranslation } from '../../lib/context/I18nContext';
 import type { Ticket as TicketType, KBArticle, TicketStatus, TicketPriority } from '../../types';
 import type { TicketQueueStats, TopStatusFilterId } from '../../lib/ticketViewFilters';
@@ -115,6 +116,8 @@ export interface TicketListViewProps {
   teamCategoryLabels?: string[];
   /** Map of organizationId → display name for the Kunde column company line. */
   organizationNameById?: Record<string, string>;
+  /** Map of organizationId → logo URL for the Kunde column avatar. */
+  organizationLogoById?: Record<string, string | null>;
 }
 
 export function TicketListView(props: TicketListViewProps) {
@@ -178,6 +181,7 @@ export function TicketListView(props: TicketListViewProps) {
     ticketService,
   } = props;
   const organizationNameById = props.organizationNameById || {};
+  const organizationLogoById = props.organizationLogoById || {};
 
   const paginatedTickets = tickets.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const totalTicketsCount = tickets.length;
@@ -1263,21 +1267,19 @@ export function TicketListView(props: TicketListViewProps) {
 
                           {/* Customer Column */}
                           <div className="min-w-0 flex items-center gap-2 pr-1" onClick={(e) => e.stopPropagation()}>
-                             <Avatar className={cn(
-                               "border border-border shrink-0 shadow-sm",
-                               viewDensity === 'comfortable' ? "h-8 w-8" : "h-7 w-7"
-                             )}>
-                                <AvatarFallback className="bg-accent text-primary font-bold text-xs uppercase">
-                                   {getInitials(ticket.customerName) || 'U'}
-                                </AvatarFallback>
-                             </Avatar>
+                             <CustomerOrgAvatar
+                               logoUrl={resolveTicketOrgLogo(ticket, organizationLogoById)}
+                               companyName={resolveCompanyLabel(ticket)}
+                               contactName={ticket.customerName}
+                               size={viewDensity === 'comfortable' ? 'md' : 'sm'}
+                             />
                              <div className="flex flex-col min-w-0">
                                 <span className={cn(
                                   "font-semibold text-foreground truncate",
                                   viewDensity === 'comfortable' ? "text-xs" : "text-[11px]"
-                                )}>{safeString(ticket.customerName)}</span>
+                                )}>{resolveCompanyLabel(ticket)}</span>
                                 <div className="flex items-center gap-1 mt-0.5">
-                                  <span className="text-[10px] text-slate-500 truncate">{resolveCompanyLabel(ticket)}</span>
+                                  <span className="text-[10px] text-slate-500 truncate">{safeString(ticket.customerName)}</span>
                                 </div>
                              </div>
                           </div>
@@ -1404,15 +1406,16 @@ export function TicketListView(props: TicketListViewProps) {
                         {/* Row 1: Sentiment, Customer, Tier Badge */}
                         <div className="flex items-start justify-between">
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <Avatar className="h-8 w-8 border border-border shrink-0 shadow-xs">
-                              <AvatarFallback className="bg-accent text-primary font-bold text-xs uppercase">
-                                 {getInitials(ticket.customerName)}
-                              </AvatarFallback>
-                            </Avatar>
+                            <CustomerOrgAvatar
+                              logoUrl={resolveTicketOrgLogo(ticket, organizationLogoById)}
+                              companyName={resolveCompanyLabel(ticket)}
+                              contactName={ticket.customerName}
+                              size="md"
+                            />
                             <div className="flex flex-col min-w-0">
-                              <span className="font-extrabold text-xs text-foreground truncate">{safeString(ticket.customerName)}</span>
+                              <span className="font-extrabold text-xs text-foreground truncate">{resolveCompanyLabel(ticket)}</span>
                               <div className="flex items-center gap-1">
-                                <span className="text-[10px] text-muted-foreground truncate">{resolveCompanyLabel(ticket)}</span>
+                                <span className="text-[10px] text-muted-foreground truncate">{safeString(ticket.customerName)}</span>
                                 <Badge variant="outline" className={cn("text-[8px] h-3.5 px-1.5 pb-0 scale-90 select-none font-bold", tier.style)}>
                                   {tier.label}
                                 </Badge>

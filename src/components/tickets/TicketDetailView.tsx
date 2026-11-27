@@ -1,7 +1,7 @@
 import { useEffect, useState, type Dispatch, SetStateAction } from 'react';
 import { toast } from 'sonner';
 import {
-  BookOpen, ChevronDown, ChevronLeft, GitMerge, MessageSquare, Plus,
+  BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Forward, GitMerge, MessageSquare, Plus,
   MoreHorizontal, RefreshCw, Reply, SlidersHorizontal, Sparkles, StickyNote, Ticket, Ban, X,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -28,6 +28,7 @@ import { RelatedTicketsTabContent } from '../ticket-details/RelatedTicketsTabCon
 import { TasksTabContent } from '../ticket-details/TasksTabContent';
 import { TimeTrackingTabContent } from '../ticket-details/TimeTrackingTabContent';
 import { SwarmOutageBanner } from '../tickets/SwarmOutageBanner';
+import { CustomerOrgAvatar, resolveTicketOrgLogo } from '../tickets/CustomerOrgAvatar';
 import { TicketDetailsSpamAction } from '../pages/TicketDetailsPage';
 import { DynamicSentimentGlyph } from '../ticket-details/DynamicSentimentGlyph';
 import { useTranslation } from '../../lib/context/I18nContext';
@@ -134,6 +135,9 @@ export interface TicketDetailViewProps {
   onConvertToKB?: () => void;
   isKbDrafting?: boolean;
   onOpenMerge?: () => void;
+  onQuickResolve?: () => void;
+  organizationNameById?: Record<string, string>;
+  organizationLogoById?: Record<string, string | null>;
 }
 
 export function TicketDetailView(props: TicketDetailViewProps) {
@@ -200,6 +204,9 @@ export function TicketDetailView(props: TicketDetailViewProps) {
     onConvertToKB,
     isKbDrafting,
     onOpenMerge,
+    onQuickResolve,
+    organizationNameById = {},
+    organizationLogoById = {},
   } = props;
 
   const useInjectedTaxonomy = Boolean(statusConfigsProp && priorityConfigsProp) || portalMode;
@@ -291,6 +298,47 @@ export function TicketDetailView(props: TicketDetailViewProps) {
 
   const canMerge = Boolean(onOpenMerge) && selectedTicket.status !== 'merged';
   const ticketRef = formatTicketCode(selectedTicket);
+  const orgId = String(
+    selectedTicket.organizationId || (selectedTicket as any).organization_id || '',
+  ).trim();
+  const companyLabel =
+    (orgId && organizationNameById[orgId]) ||
+    safeString(selectedTicket.company) ||
+    t('tickets.detail.noCompany', 'Kein Unternehmen');
+  const logoUrl = resolveTicketOrgLogo(selectedTicket, organizationLogoById);
+  const channelLabel = (() => {
+    const ch = String(selectedTicket.channel || 'email').toLowerCase();
+    if (ch === 'chat') return t('tickets.channel.chat', 'Chat');
+    if (ch === 'phone') return t('tickets.channel.phone', 'Telefon');
+    if (ch === 'whatsapp') return t('tickets.channel.whatsapp', 'WhatsApp');
+    return t('tickets.channel.email', 'E-Mail');
+  })();
+  const createdLabel = (() => {
+    try {
+      const raw = selectedTicket.createdAt as any;
+      const date =
+        raw && typeof raw.toDate === 'function' ? raw.toDate() : raw ? new Date(raw) : null;
+      if (!date || Number.isNaN(date.getTime())) return '';
+      return date.toLocaleString('de-DE', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return '';
+    }
+  })();
+  const statusDisplay = resolveStatusConfig(selectedTicket.status, ticketStatuses);
+  const statusTint = softTintStyles(statusDisplay.color);
+  const priorityDisplay = resolvePriorityConfig(selectedTicket.priority, ticketPriorities);
+  const priorityTint = softTintStyles(priorityDisplay.color);
+  const canQuickResolve =
+    Boolean(onQuickResolve) &&
+    selectedTicket.status !== 'resolved' &&
+    selectedTicket.status !== 'closed' &&
+    selectedTicket.status !== 'merged';
 
   const openInternalNoteComposer = () => {
     setActiveDetailTab('conversation');
@@ -306,103 +354,32 @@ export function TicketDetailView(props: TicketDetailViewProps) {
 
   const actionBtnClass =
     'box-border inline-flex h-8 min-h-8 max-h-8 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium leading-none shrink-0 transition-colors';
-  const actionBtnPrimary = `${actionBtnClass} border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-70 shadow-none`;
+  const actionBtnPrimary = `${actionBtnClass} border-blue-600 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-70 shadow-none`;
   const actionBtnOutline = `${actionBtnClass} border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 shadow-none`;
   const actionBtnIcon = `${actionBtnOutline} w-8 px-0`;
 
   return (
     <>
                     <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-slate-50">
-                      {/* 1. Compact header: title + actions; badges live in the subtitle row */}
-                    <div className="flex flex-col gap-1.5 w-full min-w-0 px-4 md:px-6 pt-3 md:pt-4 pb-3 border-b border-slate-100 dark:border-slate-850 bg-white dark:bg-slate-900 shrink-0">
+                      {/* Top action bar + title block */}
+                    <div className="flex flex-col gap-2.5 w-full min-w-0 px-4 md:px-6 pt-3 md:pt-4 pb-3 border-b border-slate-100 dark:border-slate-850 bg-white dark:bg-slate-900 shrink-0">
                       {allowSwarm ? <SwarmOutageBanner ticketId={selectedTicket.id} /> : null}
 
-                      <div className="flex w-full min-w-0 items-start justify-between gap-3">
-                        <div className="flex items-start gap-2 min-w-0 flex-1">
+                      <div className="flex w-full min-w-0 items-center justify-between gap-3">
+                        <nav className="flex items-center gap-1 min-w-0 text-xs font-semibold text-slate-500">
                           <button
                             type="button"
                             onClick={closeFullTicketView}
-                            aria-label={t('tickets.detail.backToList', 'Back to tickets')}
-                            title={t('tickets.detail.backToList', 'Back to tickets')}
-                            className="flex items-center justify-center h-8 w-8 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800 cursor-pointer transition-colors select-none shrink-0 mt-0.5"
+                            className="inline-flex items-center gap-0.5 rounded-md px-1.5 py-1 hover:bg-slate-50 hover:text-slate-800 transition-colors"
                           >
-                            <ChevronLeft className="w-4 h-4" />
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                            <span>{t('tickets.detail.breadcrumbTickets', 'Tickets')}</span>
                           </button>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                              <span className="font-mono text-xs font-bold tabular-nums text-slate-700 bg-slate-100 border border-slate-200 rounded-md px-1.5 py-0.5 shrink-0">
-                                {ticketRef}
-                              </span>
-                              {(() => {
-                                const statusDisplay = resolveStatusConfig(
-                                  selectedTicket.status,
-                                  ticketStatuses,
-                                );
-                                const statusTint = softTintStyles(statusDisplay.color);
-                                return (
-                                  <span
-                                    className="inline-flex h-5 items-center gap-1.5 px-2 text-[11px] font-medium rounded-full border shrink-0"
-                                    style={statusTint}
-                                    title={statusDisplay.name}
-                                  >
-                                    <span
-                                      className="h-1.5 w-1.5 rounded-full shrink-0"
-                                      style={{ backgroundColor: statusDisplay.color }}
-                                      aria-hidden
-                                    />
-                                    {statusDisplay.name}
-                                  </span>
-                                );
-                              })()}
-                              {(() => {
-                                const priorityDisplay = resolvePriorityConfig(
-                                  selectedTicket.priority,
-                                  ticketPriorities,
-                                );
-                                const priorityTint = softTintStyles(priorityDisplay.color);
-                                return (
-                                  <span
-                                    className="inline-flex h-5 items-center gap-1.5 px-2 text-[11px] font-medium rounded-full border shrink-0"
-                                    style={priorityTint}
-                                    title={priorityDisplay.name}
-                                  >
-                                    <span
-                                      className="h-1.5 w-1.5 rounded-full shrink-0"
-                                      style={{ backgroundColor: priorityDisplay.color }}
-                                      aria-hidden
-                                    />
-                                    {priorityDisplay.name}
-                                  </span>
-                                );
-                              })()}
-                              {!portalMode || portalCapabilities?.sentimentGlyph !== false ? (
-                                <DynamicSentimentGlyph sentiment={selectedTicket.sentiment} />
-                              ) : null}
-                            </div>
-                            <h2 className="text-lg font-bold text-slate-900 tracking-tight leading-snug dark:text-slate-50 min-w-0 break-words mt-1">
-                              {safeString(selectedTicket.subject)}
-                            </h2>
-                            <div className="flex items-center gap-2 mt-1.5 min-w-0 flex-wrap">
-                              <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[12px] font-semibold text-slate-800">
-                                <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
-                                  {t('tickets.detail.companyLabel', 'Unternehmen')}
-                                </span>
-                                {safeString(selectedTicket.company) ||
-                                  t('tickets.detail.noCompany', 'Kein Unternehmen')}
-                              </span>
-                              <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[12px] font-medium text-slate-700">
-                                <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
-                                  {t('tickets.detail.contactLabel', 'Kontakt')}
-                                </span>
-                                {safeString(selectedTicket.customerName) ||
-                                  t(
-                                    'tickets.customerTab.noContactAssigned',
-                                    'Keine Kontaktperson zugewiesen',
-                                  )}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
+                          <ChevronRight className="w-3 h-3 text-slate-300 shrink-0" />
+                          <span className="font-mono text-[11px] font-bold tabular-nums text-slate-800 bg-slate-100 border border-slate-200 rounded-md px-1.5 py-0.5 truncate">
+                            {ticketRef}
+                          </span>
+                        </nav>
                         <div className="flex items-center gap-2 flex-shrink-0 h-8">
                           <div className="relative">
                             <button
@@ -480,6 +457,16 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                             <span>{t('tickets.noteBtnShort', 'Notiz')}</span>
                           </button>
                           ) : null}
+                          {canQuickResolve ? (
+                            <button
+                              type="button"
+                              onClick={onQuickResolve}
+                              className={actionBtnPrimary}
+                            >
+                              <Check className="w-3.5 h-3.5 shrink-0" />
+                              <span>{t('tickets.detail.quickResolve', 'Lösen')}</span>
+                            </button>
+                          ) : null}
                           <DropdownMenu>
                             <DropdownMenuTrigger
                               render={
@@ -539,6 +526,70 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                             }}
                           />
                           ) : null}
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3 min-w-0">
+                        <CustomerOrgAvatar
+                          logoUrl={logoUrl}
+                          companyName={companyLabel}
+                          contactName={selectedTicket.customerName}
+                          size="lg"
+                          className="w-10 h-10"
+                        />
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <h2 className="text-lg font-bold text-slate-900 tracking-tight leading-snug dark:text-slate-50 min-w-0 break-words">
+                            {safeString(selectedTicket.subject)}
+                          </h2>
+                          <div className="flex items-center gap-x-2 gap-y-1 min-w-0 flex-wrap text-[12px] text-slate-600">
+                            <span className="font-semibold text-slate-800 truncate">
+                              {companyLabel}
+                            </span>
+                            <span className="text-slate-300">·</span>
+                            <span className="truncate">
+                              {safeString(selectedTicket.customerName) ||
+                                t(
+                                  'tickets.customerTab.noContactAssigned',
+                                  'Keine Kontaktperson zugewiesen',
+                                )}
+                            </span>
+                            {createdLabel ? (
+                              <>
+                                <span className="text-slate-300">·</span>
+                                <span className="tabular-nums text-slate-500">{createdLabel}</span>
+                              </>
+                            ) : null}
+                            <span
+                              className="inline-flex h-5 items-center gap-1.5 px-2 text-[11px] font-medium rounded-full border shrink-0"
+                              style={statusTint}
+                              title={statusDisplay.name}
+                            >
+                              <span
+                                className="h-1.5 w-1.5 rounded-full shrink-0"
+                                style={{ backgroundColor: statusDisplay.color }}
+                                aria-hidden
+                              />
+                              {statusDisplay.name}
+                            </span>
+                            <span
+                              className="inline-flex h-5 items-center gap-1.5 px-2 text-[11px] font-medium rounded-full border shrink-0"
+                              style={priorityTint}
+                              title={priorityDisplay.name}
+                            >
+                              <span
+                                className="h-1.5 w-1.5 rounded-full shrink-0"
+                                style={{ backgroundColor: priorityDisplay.color }}
+                                aria-hidden
+                              />
+                              {priorityDisplay.name}
+                            </span>
+                            <span className="inline-flex h-5 items-center px-2 text-[11px] font-medium rounded-full border border-slate-200 bg-slate-50 text-slate-600 shrink-0">
+                              {t('tickets.detail.channelPrefix', 'Kanal')}: {channelLabel}
+                            </span>
+                            {!portalMode || portalCapabilities?.sentimentGlyph !== false ? (
+                              <DynamicSentimentGlyph sentiment={selectedTicket.sentiment} />
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -761,12 +812,34 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                                     <Reply className="w-3.5 h-3.5" />
                                     {t('tickets.composer.reply', 'Antworten')}
                                   </Button>
-                                  <span className="text-[11px] text-slate-500 font-medium">
-                                    {t(
-                                      'tickets.composer.replyHint',
-                                      'Öffentliche Antwort erst bei Bedarf öffnen — Thread bleibt kompakt.',
-                                    )}
-                                  </span>
+                                  {allowInternalNotes ? (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      className="h-9 gap-1.5 font-semibold"
+                                      onClick={openInternalNoteComposer}
+                                    >
+                                      <StickyNote className="w-3.5 h-3.5" />
+                                      {t('tickets.noteBtnShort', 'Notiz')}
+                                    </Button>
+                                  ) : null}
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="h-9 gap-1.5 font-semibold"
+                                    onClick={() => {
+                                      openReplyComposer();
+                                      toast.message(
+                                        t(
+                                          'tickets.composer.forwardHint',
+                                          'Weiterleiten: Empfänger in CC ergänzen und senden.',
+                                        ),
+                                      );
+                                    }}
+                                  >
+                                    <Forward className="w-3.5 h-3.5" />
+                                    {t('tickets.composer.forward', 'Weiterleiten')}
+                                  </Button>
                                 </div>
                               ) : (
                                 <div className="space-y-2">
