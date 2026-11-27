@@ -5893,7 +5893,7 @@ function testTicketDetailWorkbenchSharedUiIsolation(): void {
       !portalHostSrc.includes('"/api/db') &&
       detailViewSrc.includes('portalMode') &&
       contextPaneSrc.includes('portalMode') &&
-      detailViewSrc.includes('KI-Sync') &&
+      detailViewSrc.includes('KI-Zusammenfassung') &&
       detailViewSrc.includes('EmailComposer'),
     '/portal/tickets/:id mounts exact TicketDetailView + TicketDetailContextPane (portalMode)',
   );
@@ -8232,8 +8232,10 @@ function testSecondLevelSupportNotify(): void {
   assert(
     sidebar.includes('Support-Level / Eskalation') &&
       sidebar.includes('second_level') &&
-      sidebar.includes('An 2nd-Level-Support eskalieren'),
-    'ticket sidebar exposes 2nd-Level assignment target',
+      sidebar.includes('An 2nd-Level-Support eskalieren') &&
+      sidebar.includes('orgSupportsEscalation') &&
+      sidebar.includes('/dpg/i'),
+    'ticket sidebar exposes 2nd-Level assignment target (DPG / escalation-flag only)',
   );
 
   const apiClient = fs.readFileSync(

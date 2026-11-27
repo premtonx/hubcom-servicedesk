@@ -15,7 +15,7 @@ interface TicketsCardGridProps {
   onAssigneeChange: (id: string, agentId: string | null | undefined, agentName: string | null | undefined) => void;
   currentUserId?: string;
   currentUserLabel?: string;
-  formatTicketRef: (id: string) => string;
+  formatTicketRef: (id: string, customId?: string | null) => string;
   assigneeReadOnly?: boolean;
 }
 
@@ -65,7 +65,7 @@ export function TicketsCardGrid({
 
             <p className="text-sm font-bold text-slate-900 line-clamp-2 leading-snug">{safeString(ticket.subject)}</p>
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-              <span className="text-[10px] text-slate-400 font-medium font-mono">{formatTicketRef(ticket.id)}</span>
+              <span className="text-[10px] text-slate-400 font-medium font-mono">{formatTicketRef(ticket.id, ticket.customId)}</span>
               {ticket.slaDueAt || ticket.firstResponseDue ? (
                 <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border border-blue-100 bg-blue-50 text-blue-700">
                   SLA

@@ -31,6 +31,65 @@ interface ConversationTimelineProps {
 
 import { sanitizeTimelineHtml } from '../../lib/sanitize-html';
 
+const SIGNATURE_SPLIT_RE =
+  /(<div[^>]*class=["'][^"']*(?:gmail_signature|Signature|moz-signature)[^"']*["'][^>]*>[\s\S]*$)|(<br\s*\/?>\s*(?:--|—|&mdash;)\s*(?:<br\s*\/?>|$))/i;
+
+function splitMessageAndSignature(html: string): { body: string; signature: string | null } {
+  const raw = String(html || '');
+  if (!raw.trim()) return { body: raw, signature: null };
+  const match = SIGNATURE_SPLIT_RE.exec(raw);
+  if (!match || match.index == null || match.index < 40) {
+    return { body: raw, signature: null };
+  }
+  return {
+    body: raw.slice(0, match.index).trim(),
+    signature: raw.slice(match.index).trim(),
+  };
+}
+
+function MessageHtmlBody({
+  html,
+  translating,
+}: {
+  html: string;
+  translating?: boolean;
+}) {
+  const { t } = useTranslation();
+  const [showSig, setShowSig] = useState(false);
+  const { body, signature } = useMemo(() => splitMessageAndSignature(html), [html]);
+  if (translating) {
+    return (
+      <p className="italic text-muted-foreground animate-pulse">Translating message content...</p>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <div
+        className="select-text cursor-text max-w-none"
+        dangerouslySetInnerHTML={{ __html: sanitizeTimelineHtml(body) }}
+      />
+      {signature ? (
+        <div>
+          {!showSig ? (
+            <button
+              type="button"
+              className="text-[11px] font-semibold text-slate-400 hover:text-slate-600"
+              onClick={() => setShowSig(true)}
+            >
+              {t('tickets.conversation.showSignature', '… Signatur anzeigen')}
+            </button>
+          ) : (
+            <div
+              className="select-text cursor-text max-w-none text-muted-foreground border-t border-slate-100 pt-2"
+              dangerouslySetInnerHTML={{ __html: sanitizeTimelineHtml(signature) }}
+            />
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ConversationTimeline({
   ticket,
   messages,
@@ -233,20 +292,11 @@ export function ConversationTimeline({
                     </div>
                   ) : null}
 
-                  {/* Message body — prefer html_content, sanitize before dangerouslySetInnerHTML */}
-                  <div className="font-sans text-sm text-foreground/90 whitespace-pre-wrap leading-relaxed break-words [&_p]:mb-2.5 [&_p:last-child]:mb-0 [&_a]:underline [&_blockquote]:mt-3 [&_blockquote]:border-l-2 [&_blockquote]:border-slate-200 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [.gmail_signature]:mt-3 [.gmail_signature]:text-muted-foreground [&_.gmail_signature]:mt-3 [&_.gmail_signature]:text-muted-foreground [&_pre]:font-sans [&_pre]:text-sm [&_pre]:whitespace-pre-wrap [&_pre]:bg-transparent [&_pre]:p-0 [&_pre]:m-0">
-                    {isTranslating && item.id === 'opening-post' ? (
-                      <p className="italic text-muted-foreground animate-pulse">Translating message content...</p>
-                    ) : (
-                      <div
-                        className="select-text cursor-text max-w-none"
-                        dangerouslySetInnerHTML={{
-                          __html: sanitizeTimelineHtml(
-                            item.html_content || item.content || '',
-                          ),
-                        }}
-                      />
-                    )}
+                  <div className="font-sans text-sm text-foreground/90 whitespace-pre-wrap leading-relaxed break-words [&_p]:mb-2.5 [&_p:last-child]:mb-0 [&_a]:underline [&_blockquote]:mt-3 [&_blockquote]:border-l-2 [&_blockquote]:border-slate-200 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [&_pre]:font-sans [&_pre]:text-sm [&_pre]:whitespace-pre-wrap [&_pre]:bg-transparent [&_pre]:p-0 [&_pre]:m-0">
+                    <MessageHtmlBody
+                      html={item.html_content || item.content || ''}
+                      translating={isTranslating && item.id === 'opening-post'}
+                    />
                   </div>
 
                   {item.attachments && item.attachments.length > 0 ? (

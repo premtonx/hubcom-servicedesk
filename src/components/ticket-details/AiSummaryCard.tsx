@@ -240,7 +240,7 @@ export function AiSummaryCard({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-xs font-bold text-slate-900 tracking-tight dark:text-indigo-200 font-sans">
-                {t('tickets.aiSummaryCard.title', 'AI Orchestrator Deep-Dive Summary')}
+                {t('tickets.aiSummaryCard.title', 'KI-Zusammenfassung')}
               </h3>
               {hasRealInference ? (
                 <Badge className="bg-[#E6F4EA] hover:bg-[#E6F4EA]/80 text-[#137333] dark:bg-emerald-950/50 dark:text-emerald-400 border-none font-bold text-[9px] tracking-wider px-2 py-0.5 rounded-full shadow-none">

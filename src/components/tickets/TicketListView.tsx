@@ -47,7 +47,7 @@ import { TicketsCardGrid } from './TicketsCardGrid';
 import { useTranslation } from '../../lib/context/I18nContext';
 import type { Ticket as TicketType, KBArticle, TicketStatus, TicketPriority } from '../../types';
 import type { TicketQueueStats, TopStatusFilterId } from '../../lib/ticketViewFilters';
-import { ticketsShareCustomer } from '../../lib/ticketMerge';
+import { formatTicketCode, ticketsShareCustomer } from '../../lib/ticketMerge';
 import { isTicketAssignedToUser } from '../../lib/ticketAssignee';
 import { useTicketCategories } from '../../hooks/useTicketCategories';
 import { useTicketStatuses } from '../../hooks/useTicketStatuses';
@@ -201,11 +201,8 @@ export function TicketListView(props: TicketListViewProps) {
   );
   const canBulkMerge = selectedTickets.length >= 2 && ticketsShareCustomer(selectedTickets);
 
-  const formatTicketRef = (id: string) => {
-    const upper = id.toUpperCase();
-    if (upper.startsWith('TKT')) return `#${upper}`;
-    return `#TKT-${id.slice(-4).toUpperCase()}`;
-  };
+  const formatTicketRef = (id: string, customId?: string | null) =>
+    formatTicketCode({ id, customId: customId || undefined });
 
   function stripHtml(html: string) {
     if (!html) return '';
@@ -1303,7 +1300,7 @@ export function TicketListView(props: TicketListViewProps) {
                               {safeString(ticket.subject)}
                              </h3>
                              <span className="text-[10px] text-slate-400 font-medium font-mono tabular-nums">
-                               {formatTicketRef(ticket.id)}
+                               {formatTicketRef(ticket.id, ticket.customId)}
                              </span>
                           </div>
 

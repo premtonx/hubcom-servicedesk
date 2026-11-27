@@ -36,6 +36,7 @@ import {
 } from '../../services/emailChannelApi';
 import { EmailCcInput } from './EmailCcInput';
 import { sanitizeTimelineHtml } from '../../lib/sanitize-html';
+import { formatTicketCode } from '../../lib/ticketMerge';
 
 export interface EmailComposerSendMeta {
   fromAddress: string;
@@ -300,7 +301,7 @@ export function EmailComposer({
             {t('tickets.emailComposer.subject', 'Betreff:')}
           </span>
           <span className="font-semibold text-foreground">
-            Re: {ticket.subject} [Ref: #{ticket.id.slice(-5).toUpperCase()}]
+            Re: {ticket.subject} [Ref: {formatTicketCode(ticket)}]
           </span>
         </div>
       </div>
