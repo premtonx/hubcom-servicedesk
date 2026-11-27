@@ -303,7 +303,7 @@ async function probeEmail(): Promise<{
           state: 'not_configured',
           detail: 'Kein E-Mail-Kanal konfiguriert',
           checkedAt,
-          href: '/admin/email-channels',
+          href: '/admin/mail?section=email-channels&tab=overview',
         },
         actions: [
           {
@@ -311,7 +311,7 @@ async function probeEmail(): Promise<{
             title: 'E-Mail-Kanal fehlt',
             detail: 'Legen Sie unter Mail & Schnittstellen einen Kanal an.',
             severity: 'warning',
-            href: '/admin/email-channels',
+            href: '/admin/mail?section=email-channels&tab=overview',
           },
         ],
       };
@@ -338,7 +338,7 @@ async function probeEmail(): Promise<{
         title: `E-Mail-Kanal gestört: ${c.email || c.name || c.id}`,
         detail: c.lastError || `Status: ${c.status}`,
         severity: 'error',
-        href: '/admin/email-channels',
+        href: '/admin/mail?section=email-channels&tab=overview',
       });
     }
     for (const c of pending) {
@@ -347,7 +347,7 @@ async function probeEmail(): Promise<{
         title: `E-Mail-Kanal ausstehend: ${c.email || c.name || c.id}`,
         detail: 'Verifizierung oder Verbindung noch nicht abgeschlossen.',
         severity: 'warning',
-        href: '/admin/email-channels',
+        href: '/admin/mail?section=email-channels&tab=overview',
       });
     }
 
@@ -376,7 +376,7 @@ async function probeEmail(): Promise<{
           state,
           detail,
           checkedAt: String(lastCheck),
-          href: '/admin/email-channels',
+          href: '/admin/mail?section=email-channels&tab=overview',
         },
         actions,
       };
@@ -389,7 +389,7 @@ async function probeEmail(): Promise<{
         state,
         detail,
         checkedAt,
-        href: '/admin/email-channels',
+        href: '/admin/mail?section=email-channels&tab=overview',
       },
       actions,
     };
@@ -401,7 +401,7 @@ async function probeEmail(): Promise<{
         state: 'unknown',
         detail: safeErrorMessage(err, 'E-Mail-Status nicht verfügbar'),
         checkedAt,
-        href: '/admin/email-channels',
+        href: '/admin/mail?section=email-channels&tab=overview',
       },
       actions: [
         {
@@ -409,7 +409,7 @@ async function probeEmail(): Promise<{
           title: 'E-Mail-Statusprüfung fehlgeschlagen',
           detail: safeErrorMessage(err, 'Kanäle konnten nicht geladen werden'),
           severity: 'error',
-          href: '/admin/email-channels',
+          href: '/admin/mail?section=email-channels&tab=overview',
         },
       ],
     };

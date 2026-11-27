@@ -32,7 +32,12 @@ const CredentialVaultPage = lazy(() => import('./components/pages/CredentialVaul
 const InsightsPage = lazy(() => import('./components/pages/InsightsPage'));
 const AuditLogPage = lazy(() => import('./components/pages/AuditLogPage'));
 const GeistDeskMigratorPage = lazy(() => import('./components/pages/GeistDeskMigratorPage'));
-const EmailChannelsPage = lazy(() => import('./components/pages/EmailChannelsPage'));
+const AdminMailIntegrationsWorkspace = lazy(
+  () => import('./components/admin/mail/AdminMailIntegrationsWorkspace'),
+);
+const AdminMailLegacyRedirect = lazy(
+  () => import('./components/admin/mail/AdminMailLegacyRedirect'),
+);
 const LegalSettingsPage = lazy(() => import('./components/pages/LegalSettingsPage'));
 const AdminHubPage = lazy(() => import('./components/pages/AdminHubPage'));
 const AdminHubLayout = lazy(() => import('./components/admin/hub/AdminHubLayout'));
@@ -662,17 +667,56 @@ function AppRoutes() {
                       }
                     >
                       <Route index element={<LazyPage><AdminHubPage /></LazyPage>} />
-                      <Route path="mcp" element={<Navigate to="/admin?tab=integrations" replace />} />
+                      <Route
+                        path="mcp"
+                        element={
+                          <Navigate
+                            to="/admin/mail?section=api-mcp&tab=overview"
+                            replace
+                          />
+                        }
+                      />
                       <Route path="ai" element={<Navigate to="/admin?tab=ai-engine" replace />} />
                       <Route path="legal" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Legal Settings" />}><LazyPage><LegalSettingsPage /></LazyPage></ErrorBoundary>} />
-                      <Route path="notifications" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Notification Engine" />}><LazyPage><NotificationEnginePage /></LazyPage></ErrorBoundary>} />
+                      <Route
+                        path="mail"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Mail & Schnittstellen" />}>
+                            <LazyPage>
+                              <AdminMailIntegrationsWorkspace />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
+                      <Route
+                        path="notifications"
+                        element={
+                          <LazyPage>
+                            <AdminMailLegacyRedirect />
+                          </LazyPage>
+                        }
+                      />
                       <Route path="schema" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Company Schema" />}><LazyPage><CompanySchemaPage /></LazyPage></ErrorBoundary>} />
                       <Route path="contact-schema" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Contact Schema" />}><LazyPage><ContactSchemaPage /></LazyPage></ErrorBoundary>} />
                       <Route path="pii" element={<ErrorBoundary fallback={<ModuleCrashFallback module="PII Shield" />}><LazyPage><PIIShieldPage /></LazyPage></ErrorBoundary>} />
                       <Route path="audit" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Audit Log" />}><LazyPage><AuditLogPage /></LazyPage></ErrorBoundary>} />
                       <Route path="sovereignty" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Sovereignty Center" />}><LazyPage><SovereigntyCenterPage /></LazyPage></ErrorBoundary>} />
-                      <Route path="integrations" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Integrations" />}><LazyPage><IntegrationsPage /></LazyPage></ErrorBoundary>} />
-                      <Route path="polyglot" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Polyglot Bridge" />}><LazyPage><PolyglotBridgeAdminPage /></LazyPage></ErrorBoundary>} />
+                      <Route
+                        path="integrations"
+                        element={
+                          <LazyPage>
+                            <AdminMailLegacyRedirect />
+                          </LazyPage>
+                        }
+                      />
+                      <Route
+                        path="polyglot"
+                        element={
+                          <LazyPage>
+                            <AdminMailLegacyRedirect />
+                          </LazyPage>
+                        }
+                      />
                       <Route path="groups" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Groups" />}><LazyPage><GroupsPage /></LazyPage></ErrorBoundary>} />
                       <Route path="workforce" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Benutzerverwaltung" />}><LazyPage><UserManagementPage /></LazyPage></ErrorBoundary>} />
                       <Route path="users" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Benutzerverwaltung" />}><LazyPage><UserManagementPage /></LazyPage></ErrorBoundary>} />
@@ -684,7 +728,14 @@ function AppRoutes() {
                       <Route path="time-tracking/overview" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Zeiterfassung Gesamt" />}><LazyPage><TimeTrackingOverviewPage /></LazyPage></ErrorBoundary>} />
                       <Route path="ticket-configuration" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Ticket Configuration" />}><LazyPage><TicketCategoriesAdminPage /></LazyPage></ErrorBoundary>} />
                       <Route path="ticket-categories" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Ticket Configuration" />}><LazyPage><TicketCategoriesAdminPage /></LazyPage></ErrorBoundary>} />
-                      <Route path="email-channels" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Email Channels" />}><LazyPage><EmailChannelsPage /></LazyPage></ErrorBoundary>} />
+                      <Route
+                        path="email-channels"
+                        element={
+                          <LazyPage>
+                            <AdminMailLegacyRedirect />
+                          </LazyPage>
+                        }
+                      />
                       <Route path="customers" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Customers" />}><LazyPage><CustomersPage /></LazyPage></ErrorBoundary>} />
                       <Route path="settings" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Systemeinstellungen" />}><LazyPage><SettingsPage /></LazyPage></ErrorBoundary>} />
                       <Route path="branding" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Firmenbranding" />}><LazyPage><BrandingAdminPage /></LazyPage></ErrorBoundary>} />
@@ -692,7 +743,10 @@ function AppRoutes() {
                       <Route path="rag/search" element={<ErrorBoundary fallback={<ModuleCrashFallback module="RAG Search" />}><LazyPage><AdminHubRagSearchPage /></LazyPage></ErrorBoundary>} />
                       <Route path="insights" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Insights" />}><LazyPage><InsightsPage /></LazyPage></ErrorBoundary>} />
                     </Route>
-                    <Route path="email-channels" element={<Navigate to="/admin/email-channels" replace />} />
+                    <Route
+                      path="email-channels"
+                      element={<Navigate to="/admin/mail?section=email-channels&tab=overview" replace />}
+                    />
                     <Route path="*" element={<Navigate to="/tickets" replace />} />
                     </Route>
                   </>

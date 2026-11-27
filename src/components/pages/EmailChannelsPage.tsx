@@ -232,7 +232,21 @@ function buildSavePayload(editing: Partial<EmailChannelConfig>): Partial<EmailCh
   };
 }
 
-export default function EmailChannelsPage() {
+export type EmailChannelsPageProps = {
+  /** When true, hide page chrome (used inside Mail & Schnittstellen workspace). */
+  embedded?: boolean;
+  /** Which sub-tab of the mail workspace is focused. */
+  viewMode?: 'overview' | 'configuration' | 'settings' | 'test' | 'logs';
+  focusChannelId?: string | null;
+  onChannelsChanged?: () => void;
+};
+
+export default function EmailChannelsPage({
+  embedded = false,
+  viewMode = 'configuration',
+  focusChannelId = null,
+  onChannelsChanged,
+}: EmailChannelsPageProps = {}) {
   const { user } = useAuth();
   const [channels, setChannels] = useState<EmailChannelConfig[]>([]);
   const [loading, setLoading] = useState(true);
@@ -261,16 +275,39 @@ export default function EmailChannelsPage() {
           .map((c) => c.forwardingDomain || '')
           .find((d) => d && d.toLowerCase() !== 'localhost' && d.toLowerCase() !== '127.0.0.1') || '';
       setForwardingDomain(domain || DEFAULT_INBOUND_DOMAIN);
+      onChannelsChanged?.();
     } catch (err: any) {
       toast.error(err?.response?.data?.error || err?.message || 'Failed to load email channels');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onChannelsChanged]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const openCreateFromShell = () => {
+      setTestResult(null);
+      setDnsCheckMessage(null);
+      setOauthFlow(null);
+      setEditing(emptyDraft(forwardingDomain));
+    };
+    window.addEventListener('hubcom-mail-open-create-channel', openCreateFromShell);
+    return () => window.removeEventListener('hubcom-mail-open-create-channel', openCreateFromShell);
+  }, [forwardingDomain]);
+
+  useEffect(() => {
+    if (!focusChannelId || !channels.length) return;
+    const ch = channels.find((c) => c.id === focusChannelId);
+    if (ch) {
+      setTestResult(null);
+      setDnsCheckMessage(null);
+      setOauthFlow(null);
+      setEditing({ ...ch });
+    }
+  }, [focusChannelId, channels]);
 
   // Auto-refresh listener: when a forwarding channel receives a verification
   // ping or inbound test payload, the server flips its status to "connected".
@@ -537,31 +574,66 @@ export default function EmailChannelsPage() {
     }
   };
 
+  const viewHint =
+    viewMode === 'settings'
+      ? 'Einstellungen — SMTP, Signatur und Standard-Absender je Kanal.'
+      : viewMode === 'test'
+        ? 'Testen — Verbindungstests und DNS-Prüfungen je Kanal.'
+        : viewMode === 'logs'
+          ? 'Logs — Status, letzte Tests und Fehlermeldungen der Kanäle.'
+          : null;
+
   return (
-    <div className="p-6 md:p-8 max-w-6xl mx-auto space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight text-slate-900">E-Mail-Kanäle / Absender</h1>
-          <p className="text-sm text-slate-500 mt-1 max-w-2xl">
-            Mehrere Absender-Adressen verwalten (z.&nbsp;B. support@hubcom.de, it-service@citadelle.de) inkl.
-            Anzeigename, SMTP und Standard-Absender für den Ticket-Composer. Zusätzlich: Webhook-, IMAP- und Graph-Ingestion.
-          </p>
+    <div
+      className={
+        embedded ? 'space-y-4' : 'p-6 md:p-8 max-w-6xl mx-auto space-y-6'
+      }
+    >
+      {!embedded ? (
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900">E-Mail-Kanäle / Absender</h1>
+            <p className="text-sm text-slate-500 mt-1 max-w-2xl">
+              Mehrere Absender-Adressen verwalten (z.&nbsp;B. support@hubcom.de, it-service@citadelle.de) inkl.
+              Anzeigename, SMTP und Standard-Absender für den Ticket-Composer. Zusätzlich: Webhook-, IMAP- und Graph-Ingestion.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => void load()} className="gap-1.5">
+              <RefreshCw className={cn('w-3.5 h-3.5', loading && 'animate-spin')} />
+              Aktualisieren
+            </Button>
+            <Button type="button" size="sm" onClick={openCreate} className="gap-1.5">
+              <Plus className="w-3.5 h-3.5" />
+              Kanal hinzufügen
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => void load()} className="gap-1.5">
-            <RefreshCw className={cn('w-3.5 h-3.5', loading && 'animate-spin')} />
-            Refresh
-          </Button>
-          <Button type="button" size="sm" onClick={openCreate} className="gap-1.5">
-            <Plus className="w-3.5 h-3.5" />
-            Channel hinzufügen
-          </Button>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {viewHint ? (
+            <p className="text-[11px] text-slate-500 font-semibold">{viewHint}</p>
+          ) : (
+            <p className="text-[11px] text-slate-500 font-semibold">
+              Konfiguration — Kanäle anlegen, bearbeiten und speichern.
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => void load()} className="gap-1.5 h-8">
+              <RefreshCw className={cn('w-3.5 h-3.5', loading && 'animate-spin')} />
+              Aktualisieren
+            </Button>
+            <Button type="button" size="sm" onClick={openCreate} className="gap-1.5 h-8">
+              <Plus className="w-3.5 h-3.5" />
+              Kanal hinzufügen
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="flex items-center gap-3">
         <Input
-          placeholder="Search addresses..."
+          placeholder="Adressen suchen…"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="max-w-sm h-9"
@@ -571,11 +643,11 @@ export default function EmailChannelsPage() {
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
         {loading ? (
           <div className="p-10 flex items-center justify-center text-slate-400 gap-2 text-sm">
-            <Loader2 className="w-4 h-4 animate-spin" /> Loading channels…
+            <Loader2 className="w-4 h-4 animate-spin" /> Kanäle werden geladen…
           </div>
         ) : filtered.length === 0 ? (
           <div className="p-10 text-center text-sm text-slate-500">
-            No email channels yet. Add a webhook or IMAP/Graph channel to start mail-to-ticket.
+            Noch keine E-Mail-Kanäle. Legen Sie einen Webhook-, IMAP- oder Graph-Kanal an.
           </div>
         ) : (
           <table className="w-full text-sm">

@@ -82,6 +82,11 @@ export default function AdminHubLayout() {
       navigate('/admin/customers');
       return;
     }
+    // Mail & Schnittstellen opens the secondary-nav workspace on E-Mail-Kanäle.
+    if (tabId === 'integrations') {
+      navigate('/admin/mail?section=email-channels&tab=overview');
+      return;
+    }
     navigate(`/admin?tab=${tabId}`);
   };
 
@@ -172,8 +177,11 @@ export default function AdminHubLayout() {
 
         {/* Right content panel only — swaps via <Outlet /> */}
         <div className="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col">
-          {/* Kunden is a top-level section — no „← Infrastruktur / Kunden“ breadcrumb. */}
-          {subRoute && !isHubIndex && subRoute.parentTab !== 'kunden' ? (
+          {/* Kunden / Mail workspace have their own chrome — skip hub breadcrumb. */}
+          {subRoute &&
+          !isHubIndex &&
+          subRoute.parentTab !== 'kunden' &&
+          !location.pathname.startsWith('/admin/mail') ? (
             <div className="shrink-0 px-6 lg:px-8 pt-4 pb-1">
               <nav className="text-xs text-muted-foreground flex items-center gap-1.5 min-w-0">
                 <button
@@ -188,7 +196,14 @@ export default function AdminHubLayout() {
               </nav>
             </div>
           ) : null}
-          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden flex flex-col">
+          <div
+            className={
+              location.pathname.startsWith('/admin/mail') ||
+              location.pathname.startsWith('/admin/customers')
+                ? 'flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col'
+                : 'flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden flex flex-col'
+            }
+          >
             <Outlet context={{ telemetry, refreshTelemetry }} />
           </div>
         </div>
