@@ -137,6 +137,8 @@ export interface TicketDetailViewProps {
   onOpenMerge?: () => void;
   onQuickResolve?: () => void;
   organizationNameById?: Record<string, string>;
+  /** Scroll/highlight target after a successful public reply. */
+  highlightMessageId?: string | null;
   organizationLogoById?: Record<string, string | null>;
 }
 
@@ -207,6 +209,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
     onQuickResolve,
     organizationNameById = {},
     organizationLogoById = {},
+    highlightMessageId = null,
   } = props;
 
   const useInjectedTaxonomy = Boolean(statusConfigsProp && priorityConfigsProp) || portalMode;
@@ -750,13 +753,20 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                                           if (updatedTicket) {
                                             setAllTickets(prev => prev.map(t => t.id === selectedTicket.id ? updatedTicket : t));
                                           }
-                                          toast.success(t('tickets.notes.noteLogged', 'Internal note logged.'));
+                                          toast.success(
+                                            t('tickets.notes.noteLogged', 'Interne Notiz gespeichert'),
+                                          );
                                         } catch (err) {
-                                          toast.error(t('tickets.notes.noteFailed', 'Failed to log internal note.'));
+                                          toast.error(
+                                            t(
+                                              'tickets.notes.noteFailed',
+                                              'Interne Notiz konnte nicht gespeichert werden.',
+                                            ),
+                                          );
                                         }
                                       }}
                                     >
-                                      {t('tickets.notes.postNoteBtn', 'Post Note')}
+                                      {t('tickets.notes.postNoteBtn', 'Notiz posten')}
                                     </Button>
                                   </div>
                                 </div>
@@ -791,13 +801,21 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                                   if (updatedTicket) {
                                     setAllTickets(prev => prev.map(t => t.id === selectedTicket.id ? updatedTicket : t));
                                   }
-                                  toast.success(t('tickets.notes.noteLogged', 'Internal note logged.'));
+                                  toast.success(
+                                    t('tickets.notes.noteLogged', 'Interne Notiz gespeichert'),
+                                  );
                                 } catch (e) {
-                                  toast.error(t('tickets.notes.noteFailed', 'Failed to log internal note.'));
+                                  toast.error(
+                                    t(
+                                      'tickets.notes.noteFailed',
+                                      'Interne Notiz konnte nicht gespeichert werden.',
+                                    ),
+                                  );
                                 }
                               }}
                               isTranslating={isTranslating}
                               translatedTicket={translatedTicket}
+                              highlightMessageId={highlightMessageId}
                             />
     
                             {/* On-demand Öffentliche Antwort — collapsed until Antworten */}
@@ -834,6 +852,12 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                                           'tickets.composer.forwardHint',
                                           'Weiterleiten: Empfänger in CC ergänzen und senden.',
                                         ),
+                                        {
+                                          description: t(
+                                            'tickets.composer.forwardHintDesc',
+                                            'Nach dem Senden erscheint „E-Mail weitergeleitet“.',
+                                          ),
+                                        },
                                       );
                                     }}
                                   >

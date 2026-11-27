@@ -223,24 +223,40 @@ router.post('/:id/replies', authenticate, attachClientOrganizationContext, async
         ? `${(channel.displayName || channel.name || 'Support').trim()} <${channel.email}>`
         : null);
 
+    // Stamp ticket org onto the message so portal/staff_scoped FORCE RLS can
+    // see the row. Unassigned tickets (Kein Unternehmen) keep organization_id
+    // NULL — staff_scoped/super_admin allow NULL; portal never replies on those.
+    const orgStamp =
+      ticketOrgId
+        ? { organizationId: ticketOrgId, organization_id: ticketOrgId }
+        : { organizationId: null, organization_id: null };
+
     // Persist composer body only — never duplicate the legal signature footer
     // into ticket history. Signature is applied exclusively at outbound send.
-    const messageRecord = await addDocDirect(`tickets/${ticketId}/messages`, {
+    const looksHtml = /<\/?[a-z][\s\S]*>/i.test(data.content);
+    const messagePayload = {
       ticketId,
       senderId: isClient ? req.user!.id : data.senderId || req.user!.id,
       senderType: isClient ? 'customer' : data.senderType,
       senderName: data.senderName || req.user!.email || 'Agent',
       content: data.content,
+      html_content: looksHtml ? data.content : null,
+      text_content: looksHtml ? null : data.content,
       originalContent: data.originalContent || null,
       fromAddress: fromAddress || null,
       toAddress: toAddress || null,
       cc,
-      deliveryStatus: 'pending',
+      deliveryStatus: 'pending' as const,
       is_internal: false,
       isInternal: false,
+      type: 'reply' as const,
+      channel: 'email',
+      ...orgStamp,
       createdAt: now,
       updatedAt: now,
-    });
+    };
+
+    const messageRecord = await addDocDirect(`tickets/${ticketId}/messages`, messagePayload);
 
     await updateDocDirect('tickets', ticketId, {
       updatedAt: now,
@@ -326,6 +342,32 @@ router.post('/:id/replies', authenticate, attachClientOrganizationContext, async
       deliveredAt: delivered ? new Date().toISOString() : null,
     });
 
+    const persistedMessage = {
+      id: messageRecord.id,
+      ticketId,
+      senderId: messagePayload.senderId,
+      senderType: messagePayload.senderType,
+      senderName: messagePayload.senderName,
+      content: data.content,
+      html_content: messagePayload.html_content,
+      text_content: messagePayload.text_content,
+      originalContent: data.originalContent || null,
+      fromAddress: fromAddress || mailFrom || null,
+      toAddress: toAddress || null,
+      cc,
+      deliveryStatus,
+      deliveryReason: deliveryReason || null,
+      mailFrom: mailFrom || fromAddress || null,
+      is_internal: false,
+      isInternal: false,
+      organizationId: ticketOrgId,
+      organization_id: ticketOrgId,
+      type: 'reply',
+      channel: 'email',
+      createdAt: now,
+      updatedAt: now,
+    };
+
     return res.status(200).json({
       success: true,
       savedToDb: true,
@@ -334,24 +376,13 @@ router.post('/:id/replies', authenticate, attachClientOrganizationContext, async
       deliveryReason: deliveryReason || null,
       mailFrom: mailFrom || fromAddress || null,
       domainVerified: typeof domainVerified === 'boolean' ? domainVerified : null,
-      message: {
-        id: messageRecord.id,
-        ticketId,
-        senderId: data.senderId || req.user!.id,
-        senderType: data.senderType,
-        senderName: data.senderName || req.user!.email || 'Agent',
-        content: data.content,
-        originalContent: data.originalContent || null,
-        fromAddress: fromAddress || mailFrom || null,
-        toAddress: toAddress || null,
-        cc,
-        deliveryStatus,
-        createdAt: now,
-      },
+      message: persistedMessage,
     });
   } catch (e: any) {
     safeLog('error', '[ticket-replies] failed to persist reply', e?.message || e);
-    return res.status(500).json({ error: 'Failed to save reply to the database.' });
+    return res.status(500).json({
+      error: 'Antwort konnte nicht in der Datenbank gespeichert werden.',
+    });
   }
 });
 

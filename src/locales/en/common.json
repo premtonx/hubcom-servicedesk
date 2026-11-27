@@ -713,14 +713,37 @@
       "noNotesYet": "No internal agent notes logged yet.",
       "typeNotePlaceholder": "Type an internal note to notify workforce, share state...",
       "postNoteBtn": "Post Note",
-      "noteLogged": "Internal note logged.",
-      "noteFailed": "Failed to log internal note."
+      "noteLogged": "Interne Notiz gespeichert",
+      "noteFailed": "Interne Notiz konnte nicht gespeichert werden."
     },
+    "replySent": "Antwort erfolgreich gesendet",
+    "replyFailed": "Antwort konnte nicht gesendet werden.",
+    "replySavedLocally": "Antwort gespeichert. Ausgehende E-Mail nicht verfügbar — nur im Ticket-Verlauf.",
+    "emailForwarded": "E-Mail weitergeleitet",
     "composer": {
       "noActiveDraft": "No active response draft",
       "clickReplyDesc": "Click reply on any message or details header to write a message to the client.",
       "expandResponseForm": "Expand Response Form",
-      "collapseResponseEditor": "Collapse Response Editor"
+      "collapseResponseEditor": "Collapse Response Editor",
+      "reply": "Antworten",
+      "publicReply": "Öffentliche Antwort",
+      "forward": "Weiterleiten",
+      "forwardHint": "Weiterleiten: Empfänger in CC ergänzen und senden.",
+      "forwardHintDesc": "Nach dem Senden erscheint „E-Mail weitergeleitet“.",
+      "discardClose": "Schließen / Verwerfen"
+    },
+    "conversation": {
+      "replyBadge": "Antwort",
+      "customer": "Kunde",
+      "agent": "Agent",
+      "savedLocally": "Nur lokal gespeichert",
+      "savedLocallyHint": "Antwort wurde in der Datenbank gespeichert. Ausgehende E-Mail war nicht verfügbar.",
+      "showSignature": "… Signatur anzeigen",
+      "attachments": "Anhänge",
+      "reply": "Antworten",
+      "quote": "Zitieren",
+      "copy": "Kopieren",
+      "messageCopied": "Nachricht kopiert!"
     },
     "kbConvert": {
       "badge": "Knowledge Base / RAG",

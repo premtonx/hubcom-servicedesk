@@ -413,6 +413,21 @@ export async function getDoc(ref: DocumentReference): Promise<DocumentSnapshot> 
 /** In-flight get_docs promises keyed by collection + constraints (dedupe bursts). */
 const getDocsInFlight = new Map<string, Promise<any>>();
 
+/**
+ * Drop coalesced in-flight get_docs so the next read hits the network.
+ * Pass a collection path prefix (e.g. `tickets/abc/messages`) to scope the clear.
+ */
+export function invalidateGetDocsCoalesce(collectionPrefix?: string): void {
+  if (!collectionPrefix) {
+    getDocsInFlight.clear();
+    return;
+  }
+  const needle = String(collectionPrefix);
+  for (const key of [...getDocsInFlight.keys()]) {
+    if (key.includes(needle)) getDocsInFlight.delete(key);
+  }
+}
+
 export async function getDocs(q: Query): Promise<QuerySnapshot> {
   const key = buildGetDocsCoalesceKey(q.rawPath, q.constraints);
   let pending = getDocsInFlight.get(key);

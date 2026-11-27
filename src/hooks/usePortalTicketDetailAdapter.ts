@@ -73,7 +73,7 @@ export function usePortalTicketDetailAdapter(options?: {
       },
 
       async reply(ticketId, payload) {
-        await clientPortalApi.reply(ticketId, payload);
+        return clientPortalApi.reply(ticketId, payload);
       },
 
       async updateStatus(ticketId, status: TicketStatus) {

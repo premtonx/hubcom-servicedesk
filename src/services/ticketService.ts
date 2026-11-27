@@ -11,6 +11,7 @@ import {
   getDoc,
   getDocs,
   arrayUnion,
+  invalidateGetDocsCoalesce,
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { Ticket, Message, OperationType, TicketChecklistItem } from '../types';
@@ -273,6 +274,18 @@ export const ticketService = {
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, path);
     });
+  },
+
+  /**
+   * Force-fetch ticket messages, bypassing any in-flight get_docs coalesce
+   * so a just-persisted outbound reply is visible immediately.
+   */
+  listMessages: async (ticketId: string): Promise<Message[]> => {
+    const path = `${TICKETS_COLLECTION}/${ticketId}/messages`;
+    invalidateGetDocsCoalesce(path);
+    const q = query(collection(db, path), orderBy('createdAt', 'asc'));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Message[];
   },
 
   sendMessage: async (

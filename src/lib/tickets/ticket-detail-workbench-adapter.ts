@@ -230,7 +230,7 @@ export interface TicketDetailWorkbenchAdapter {
       attachments?: PortalTicketAttachment[];
       is_internal?: boolean;
     },
-  ): Promise<void>;
+  ): Promise<{ success?: boolean; message?: Record<string, unknown> } | void>;
 
   updateStatus?(ticketId: string, status: TicketStatus): Promise<Ticket | null>;
 

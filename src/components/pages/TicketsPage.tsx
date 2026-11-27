@@ -15,6 +15,7 @@ import {
 import { suggestNeuralLinks, SuggestedLink } from '../../services/neuralLinkService';
 import { cn, safeString } from '../../lib/utils';
 import { toast } from 'sonner';
+import { showReplySentToast } from '../../lib/tickets/reply-sent-toast';
 import { Ticket as TicketType, Message, KBArticle, Company, Contact, TicketChecklistItem } from '../../types';
 import type { AiCritiqueLog, AiTicketExecutionStatus } from '../../types/ai-orchestrator';
 import { redactPII, isTextSensitive } from '../../lib/ai/pii-shield';
@@ -205,6 +206,7 @@ export default function TicketsPage() {
   const [allTickets, setAllTickets] = useState<TicketType[]>([]);
   const [kbArticles, setKbArticles] = useState<KBArticle[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(ticketId || null);
   /** Auto-collapse KI-SUPPORT-OPERATIONEN into icon rail when a ticket detail is open. */
   const [detailQueueExpanded, setDetailQueueExpanded] = useState(false);
@@ -1825,6 +1827,10 @@ export default function TicketsPage() {
       (selectedTicket as any)?.contactEmail ||
       (selectedTicket as any)?.requesterEmail ||
       null;
+    const recipientName =
+      selectedTicket?.customerName ||
+      (selectedTicket as any)?.contactName ||
+      null;
     const optimisticMessage: Message = {
       id: tempId,
       ticketId: selectedTicketId,
@@ -1832,6 +1838,7 @@ export default function TicketsPage() {
       senderType: 'agent',
       senderName: user.displayName || user.email || 'Agent',
       content: contentToSend,
+      html_content: /<\/?[a-z][\s\S]*>/i.test(contentToSend) ? contentToSend : undefined,
       originalContent: originalContent,
       deliveryStatus: 'pending',
       fromAddress: meta?.fromAddress || null,
@@ -1848,8 +1855,10 @@ export default function TicketsPage() {
     setMessages(prev => [...prev.filter(m => m.id !== tempId), optimisticMessage]);
 
     // 2. Immediately clear editor content and collapse composer window
-    setReplyText("");
-    setLiveTranslation("");
+    setReplyText('');
+    setLiveTranslation('');
+    setLegalViolation(null);
+    setIsComposerExpanded(false);
 
     try {
       const result = await ticketService.sendMessage(selectedTicketId, {
@@ -1869,22 +1878,45 @@ export default function TicketsPage() {
       const deliveryStatus =
         result?.deliveryStatus ||
         (result?.delivered === false ? 'saved_locally' : 'delivered');
+      const persistedId = persisted?.id || tempId;
 
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === tempId
-            ? {
-                ...m,
-                id: persisted?.id || m.id,
-                deliveryStatus,
-                deliveryReason: result?.deliveryReason ?? null,
-                fromAddress: persisted?.fromAddress ?? m.fromAddress,
-                toAddress: persisted?.toAddress ?? m.toAddress,
-                cc: persisted?.cc ?? m.cc,
-              }
-            : m,
-        ),
-      );
+      // Replace temp with full persisted record (never drop the outbound reply)
+      setMessages((prev) => {
+        const withoutTemp = prev.filter((m) => m.id !== tempId && m.id !== persistedId);
+        const merged: Message = {
+          ...optimisticMessage,
+          ...(persisted || {}),
+          id: persistedId,
+          content: persisted?.content || contentToSend,
+          html_content:
+            (persisted as any)?.html_content ||
+            optimisticMessage.html_content ||
+            undefined,
+          deliveryStatus,
+          deliveryReason: result?.deliveryReason ?? null,
+          fromAddress: persisted?.fromAddress ?? optimisticMessage.fromAddress,
+          toAddress: persisted?.toAddress ?? optimisticMessage.toAddress,
+          cc: persisted?.cc ?? optimisticMessage.cc,
+          mailFrom: (persisted as any)?.mailFrom ?? null,
+          createdAt: persisted?.createdAt || optimisticMessage.createdAt,
+        };
+        return [...withoutTemp, merged];
+      });
+
+      // Force refetch past any in-flight get_docs coalesce so reload stays consistent
+      try {
+        const fresh = await ticketService.listMessages(selectedTicketId);
+        if (Array.isArray(fresh) && fresh.length > 0) {
+          setMessages(fresh);
+        }
+      } catch (refetchErr) {
+        console.warn('[tickets] post-reply message refetch failed', refetchErr);
+      }
+
+      setHighlightMessageId(persistedId);
+      window.setTimeout(() => {
+        setHighlightMessageId((cur) => (cur === persistedId ? null : cur));
+      }, 2200);
 
       logAudit({
         module: 'tickets',
@@ -1897,31 +1929,31 @@ export default function TicketsPage() {
         },
       });
 
-      if (result?.delivered === false) {
-        const detail =
-          typeof result?.deliveryReason === 'string' && result.deliveryReason.trim()
-            ? ` ${result.deliveryReason.slice(0, 220)}`
-            : '';
-        toast.success(
-          t(
-            'tickets.replySavedLocally',
-            'Reply saved. Outbound email unavailable — stored in ticket history only.',
-          ) + detail,
-        );
-      } else {
-        toast.success(
-          originalContent
-            ? t('tickets.replySentTranslated', 'Reply sent (translated for client).')
-            : t('tickets.replySent', 'Reply sent.'),
-        );
-      }
+      const ticketStatus = String(selectedTicket?.status || '');
+      showReplySentToast({
+        delivered: result?.delivered !== false && deliveryStatus !== 'saved_locally',
+        recipient: { name: recipientName, email: toAddress },
+        showStaffActions: true,
+        currentStatus: ticketStatus,
+        onSetWaiting: async () => {
+          await handleInlineUpdate(selectedTicketId, { status: 'waiting_customer' as any });
+        },
+        onResolve: async () => {
+          await handleInlineUpdate(selectedTicketId, {
+            status: 'resolved' as any,
+            resolvedAt: new Date() as any,
+          });
+        },
+      });
     } catch (e) {
       // Rollback on write failure
       setReplyText(cachedReplyText);
       setLiveTranslation(cachedLiveTranslation);
       setIsComposerExpanded(true);
       setMessages(prev => prev.filter(m => m.id !== tempId));
-      toast.error(t('tickets.replyFailed', 'Failed to send reply.'));
+      toast.error(
+        t('tickets.replyFailed', 'Antwort konnte nicht gesendet werden.'),
+      );
     }
   };
 
@@ -2183,6 +2215,7 @@ export default function TicketsPage() {
                     onQuickResolve={() => setPendingResolveStatus('resolved')}
                     contactSchema={contactSchema}
                     messages={messages}
+                    highlightMessageId={highlightMessageId}
                     allTickets={allTickets}
                     activeDetailTab={activeDetailTab}
                     setActiveDetailTab={setActiveDetailTab}

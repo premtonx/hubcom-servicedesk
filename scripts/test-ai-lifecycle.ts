@@ -2778,6 +2778,7 @@ async function main(): Promise<void> {
   testStaffOrgPermissionMatrixLifecycle();
   testStaffPermissionMatrixUiLifecycle();
   testSecurityPerimeterLifecycle();
+  testOutboundReplyThreadToastLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);
@@ -2785,6 +2786,46 @@ async function main(): Promise<void> {
   if (failed > 0) {
     process.exit(1);
   }
+}
+
+function testOutboundReplyThreadToastLifecycle(): void {
+  console.log('\n[Tickets] outbound reply persist + German toast lifecycle');
+  const root = process.cwd();
+  const replyRoutes = fs.readFileSync(path.join(root, 'src/routes/ticketReplyRoutes.ts'), 'utf8');
+  const ticketsPage = fs.readFileSync(
+    path.join(root, 'src/components/pages/TicketsPage.tsx'),
+    'utf8',
+  );
+  const toastSrc = fs.readFileSync(
+    path.join(root, 'src/lib/tickets/reply-sent-toast.tsx'),
+    'utf8',
+  );
+  const de = fs.readFileSync(path.join(root, 'src/locales/de/common.json'), 'utf8');
+
+  assert(
+    replyRoutes.includes('organizationId') &&
+      replyRoutes.includes('organization_id') &&
+      replyRoutes.includes('persistedMessage') &&
+      replyRoutes.includes('is_internal: false'),
+    'reply API stamps org + returns persisted public message',
+  );
+  assert(
+    !ticketsPage.includes('Reply sent (translated for client).') &&
+      !toastSrc.includes('Reply sent (translated for client).') &&
+      !de.includes('Reply sent (translated for client).') &&
+      toastSrc.includes('Antwort erfolgreich gesendet') &&
+      toastSrc.includes('Im Ticket-Verlauf veröffentlicht') &&
+      toastSrc.includes('Auf „Wartend“ setzen') &&
+      de.includes('Interne Notiz gespeichert') &&
+      de.includes('E-Mail weitergeleitet'),
+    'English reply toast removed; German interactive toast + adjacent strings present',
+  );
+  assert(
+    ticketsPage.includes('listMessages') &&
+      ticketsPage.includes('setIsComposerExpanded(false)') &&
+      ticketsPage.includes('setHighlightMessageId'),
+    'post-send refetch + composer collapse + highlight wired',
+  );
 }
 
 function testSecurityPerimeterLifecycle(): void {

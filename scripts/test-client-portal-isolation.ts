@@ -8802,6 +8802,7 @@ async function main(): Promise<void> {
   await testTenantRlsSystemBootUnderForceRls();
   await testTenantRlsStaffApiDbUnderForceRls();
   await testTenantRlsVaultExchangeDashboardUnderForceRls();
+  await testOutboundReplyMessagePersistUnderForceRls();
   testAiPollingExemptFromGenerationRateLimit();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
@@ -10015,6 +10016,176 @@ function testTenantRlsSourceContracts(): void {
       ddl.includes('USING'),
     'geistdesk_documents RLS allows system/super_admin via USING + WITH CHECK',
   );
+
+  const replyRoutes = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/ticketReplyRoutes.ts'),
+    'utf8',
+  );
+  const ticketsPage = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/TicketsPage.tsx'),
+    'utf8',
+  );
+  const replyToast = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/tickets/reply-sent-toast.tsx'),
+    'utf8',
+  );
+  const firebaseClient = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/firebase-custom-client.ts'),
+    'utf8',
+  );
+  const ticketServiceSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/services/ticketService.ts'),
+    'utf8',
+  );
+  assert(
+    replyRoutes.includes('organizationId: ticketOrgId') &&
+      replyRoutes.includes('organization_id: ticketOrgId') &&
+      replyRoutes.includes('is_internal: false') &&
+      replyRoutes.includes('message: persistedMessage') &&
+      replyRoutes.includes('Antwort konnte nicht in der Datenbank gespeichert werden.') &&
+      !replyRoutes.includes('Reply sent (translated for client).'),
+    'staff reply route stamps org (incl. null), returns persisted message, German DB error',
+  );
+  assert(
+    ticketsPage.includes('showReplySentToast') &&
+      ticketsPage.includes('listMessages') &&
+      ticketsPage.includes('setIsComposerExpanded(false)') &&
+      ticketsPage.includes('setHighlightMessageId') &&
+      !ticketsPage.includes('Reply sent (translated for client).') &&
+      replyToast.includes('Antwort erfolgreich gesendet') &&
+      replyToast.includes('Auf „Wartend“ setzen') &&
+      replyToast.includes('Lösen') &&
+      replyToast.includes('duration: 6000') &&
+      firebaseClient.includes('invalidateGetDocsCoalesce') &&
+      ticketServiceSrc.includes('invalidateGetDocsCoalesce') &&
+      ticketServiceSrc.includes('listMessages:'),
+    'FE reply UX: German toast, composer collapse, highlight, coalesce bypass refetch',
+  );
+}
+
+/**
+ * FORCE RLS + hubcom_app: public reply messages persist for tenant-linked and
+ * unassigned (organization_id NULL) tickets and remain visible in thread query.
+ */
+async function testOutboundReplyMessagePersistUnderForceRls(): Promise<void> {
+  console.log('\n[Tenant RLS] outbound reply message persist under FORCE RLS');
+
+  if (!process.env.DATABASE_URL && !process.env.PG_DATABASE_URL) {
+    console.log('  (skip) DATABASE_URL not set');
+    return;
+  }
+
+  const { initDb, getOwnerPgPool, addDocDirect, getDocsDirect, queryDb } = await import(
+    '../src/lib/postgres-backend.js'
+  );
+  await initDb();
+  await ensureTenantRlsPolicies((sql) => queryDb(sql));
+  const owner = getOwnerPgPool();
+  await owner.query(`ALTER TABLE geistdesk_documents FORCE ROW LEVEL SECURITY`);
+
+  const dpg = '11111111-1111-4111-8111-111111111101';
+  const marker = `reply-persist-${Date.now()}`;
+  const ticketOrg = `tkt-reply-org-${marker}`;
+  const ticketNull = `tkt-reply-null-${marker}`;
+  const adminCtx = resolveTenantContextFromUser({ role: 'HUBCOM_ADMIN', id: 'admin-reply' })!;
+
+  await owner.query(
+    `INSERT INTO geistdesk_documents (collection, id, data) VALUES
+       ('tickets', $1, jsonb_build_object('organizationId', $2::text, 'subject', $3::text, 'customerEmail', 'kunde@example.test')),
+       ('tickets', $4, jsonb_build_object('organizationId', NULL, 'organization_id', NULL, 'subject', $3::text, 'customerEmail', 'orphan@example.test'))
+     ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data`,
+    [ticketOrg, dpg, marker, ticketNull],
+  );
+
+  let orgMsgId: string | null = null;
+  let nullMsgId: string | null = null;
+  let persistError: string | null = null;
+  try {
+    await withTenantContext(adminCtx, async () => {
+      const orgMsg = await addDocDirect(`tickets/${ticketOrg}/messages`, {
+        ticketId: ticketOrg,
+        senderId: 'admin-reply',
+        senderType: 'agent',
+        senderName: 'Agent Reply',
+        content: `<p>Org reply ${marker}</p>`,
+        html_content: `<p>Org reply ${marker}</p>`,
+        organizationId: dpg,
+        organization_id: dpg,
+        is_internal: false,
+        isInternal: false,
+        deliveryStatus: 'delivered',
+        fromAddress: 'support@hubcom.test',
+        toAddress: 'kunde@example.test',
+        type: 'reply',
+        channel: 'email',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      orgMsgId = String(orgMsg.id);
+
+      const nullMsg = await addDocDirect(`tickets/${ticketNull}/messages`, {
+        ticketId: ticketNull,
+        senderId: 'admin-reply',
+        senderType: 'agent',
+        senderName: 'Agent Reply',
+        content: `<p>Null-org reply ${marker}</p>`,
+        html_content: `<p>Null-org reply ${marker}</p>`,
+        organizationId: null,
+        organization_id: null,
+        is_internal: false,
+        isInternal: false,
+        deliveryStatus: 'delivered',
+        fromAddress: 'support@hubcom.test',
+        toAddress: 'orphan@example.test',
+        type: 'reply',
+        channel: 'email',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      nullMsgId = String(nullMsg.id);
+    });
+  } catch (err: any) {
+    persistError = String(err?.code || err?.message || err);
+  }
+
+  assert(
+    persistError == null,
+    `outbound reply inserts under hubcom_app/FORCE succeed (got ${persistError})`,
+  );
+  assert(Boolean(orgMsgId && nullMsgId), 'both org-linked and null-org message ids returned');
+
+  const orgThread = await withTenantContext(adminCtx, async () => {
+    return getDocsDirect(`tickets/${ticketOrg}/messages`, []);
+  });
+  const nullThread = await withTenantContext(adminCtx, async () => {
+    return getDocsDirect(`tickets/${ticketNull}/messages`, []);
+  });
+
+  const orgHit = (orgThread || []).find((m: any) => String(m.id) === orgMsgId);
+  const nullHit = (nullThread || []).find((m: any) => String(m.id) === nullMsgId);
+
+  assert(
+    Boolean(orgHit) &&
+      String(orgHit.organizationId || orgHit.organization_id) === dpg &&
+      orgHit.is_internal === false &&
+      String(orgHit.content || '').includes(marker),
+    'tenant-linked outbound reply visible in ticket thread query with org stamp',
+  );
+  assert(
+    Boolean(nullHit) &&
+      (nullHit.organizationId == null || nullHit.organizationId === '') &&
+      (nullHit.organization_id == null || nullHit.organization_id === '') &&
+      nullHit.is_internal === false &&
+      String(nullHit.content || '').includes(marker),
+    'unassigned (organization_id NULL) outbound reply visible in ticket thread under hubcom_app',
+  );
+
+  await owner
+    .query(`DELETE FROM geistdesk_documents WHERE id = ANY($1::text[]) OR collection = ANY($2::text[])`, [
+      [ticketOrg, ticketNull, orgMsgId, nullMsgId].filter(Boolean),
+      [`tickets/${ticketOrg}/messages`, `tickets/${ticketNull}/messages`],
+    ])
+    .catch(() => undefined);
 }
 
 /**

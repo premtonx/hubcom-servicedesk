@@ -713,14 +713,37 @@
       "noNotesYet": "Noch keine internen Notizen protokolliert.",
       "typeNotePlaceholder": "Geben Sie eine interne Notiz ein, um das Team zu benachrichtigen oder den Status zu teilen...",
       "postNoteBtn": "Notiz posten",
-      "noteLogged": "Interne Notiz protokolliert.",
-      "noteFailed": "Interne Notiz konnte nicht protokolliert werden."
+      "noteLogged": "Interne Notiz gespeichert",
+      "noteFailed": "Interne Notiz konnte nicht gespeichert werden."
     },
+    "replySent": "Antwort erfolgreich gesendet",
+    "replyFailed": "Antwort konnte nicht gesendet werden.",
+    "replySavedLocally": "Antwort gespeichert. Ausgehende E-Mail nicht verfügbar — nur im Ticket-Verlauf.",
+    "emailForwarded": "E-Mail weitergeleitet",
     "composer": {
       "noActiveDraft": "Kein aktiver Antwortentwurf",
       "clickReplyDesc": "Klicken Sie bei einer Nachricht oder im Header auf Antworten, um dem Kunden zu schreiben.",
       "expandResponseForm": "Antwortformular aufklappen",
-      "collapseResponseEditor": "Antwort-Editor einklappen"
+      "collapseResponseEditor": "Antwort-Editor einklappen",
+      "reply": "Antworten",
+      "publicReply": "Öffentliche Antwort",
+      "forward": "Weiterleiten",
+      "forwardHint": "Weiterleiten: Empfänger in CC ergänzen und senden.",
+      "forwardHintDesc": "Nach dem Senden erscheint „E-Mail weitergeleitet“.",
+      "discardClose": "Schließen / Verwerfen"
+    },
+    "conversation": {
+      "replyBadge": "Antwort",
+      "customer": "Kunde",
+      "agent": "Agent",
+      "savedLocally": "Nur lokal gespeichert",
+      "savedLocallyHint": "Antwort wurde in der Datenbank gespeichert. Ausgehende E-Mail war nicht verfügbar.",
+      "showSignature": "… Signatur anzeigen",
+      "attachments": "Anhänge",
+      "reply": "Antworten",
+      "quote": "Zitieren",
+      "copy": "Kopieren",
+      "messageCopied": "Nachricht kopiert!"
     },
     "kbConvert": {
       "badge": "Wissensdatenbank / RAG",

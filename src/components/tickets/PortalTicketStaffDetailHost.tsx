@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { showReplySentToast } from '../../lib/tickets/reply-sent-toast';
 import { TicketDetailView } from './TicketDetailView';
 import { TicketDetailContextPane } from './TicketDetailContextPane';
 import { useClientPortalSession } from '../../hooks/useClientPortalSession';
@@ -185,7 +186,7 @@ export function PortalTicketStaffDetailHost({
   const [company, setCompany] = useState<Company | null>(null);
 
   const [activeDetailTab, setActiveDetailTab] = useState('conversation');
-  const [isComposerExpanded, setIsComposerExpanded] = useState(true);
+  const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [newAgentComment, setNewAgentComment] = useState('');
   const [areNotesExpanded, setAreNotesExpanded] = useState(false);
@@ -193,6 +194,7 @@ export function PortalTicketStaffDetailHost({
   const [newTagInput, setNewTagInput] = useState('');
   const [isAiDrafting, setIsAiDrafting] = useState(false);
   const [linkInput, setLinkInput] = useState('');
+  const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!ticketId) return;
@@ -380,18 +382,53 @@ export function PortalTicketStaffDetailHost({
     async (metaSend?: { fromAddress?: string; fromChannelId?: string; cc?: string[] }) => {
       const body = replyText.trim();
       if (!body) return;
+      const cached = replyText;
+      setReplyText('');
+      setIsComposerExpanded(false);
       try {
-        await adapter.reply!(ticketId, {
+        const result = await adapter.reply!(ticketId, {
           content: body,
           senderName: session?.name || session?.email,
           is_internal: false,
         });
-        setReplyText('');
-        toast.success('Antwort gesendet.');
         void metaSend;
+        const persisted = (result as any)?.message;
+        const persistedId = persisted?.id ? String(persisted.id) : null;
+        if (persistedId) {
+          const now = new Date().toISOString();
+          const outbound: Message = {
+            id: persistedId,
+            ticketId,
+            senderId: String(session?.id || ''),
+            senderType: 'customer',
+            senderName: session?.name || session?.email || 'Kunde',
+            content: body,
+            html_content: /<\/?[a-z][\s\S]*>/i.test(body) ? body : undefined,
+            deliveryStatus: 'delivered',
+            createdAt: persisted?.createdAt || now,
+            ...(persisted || {}),
+          } as Message;
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === persistedId)) {
+              return prev.map((m) => (m.id === persistedId ? { ...m, ...outbound } : m));
+            }
+            return [...prev, outbound];
+          });
+          setHighlightMessageId(persistedId);
+          window.setTimeout(() => {
+            setHighlightMessageId((cur) => (cur === persistedId ? null : cur));
+          }, 2200);
+        }
+        showReplySentToast({
+          delivered: false,
+          recipient: null,
+          showStaffActions: false,
+        });
         await reload();
       } catch (err: any) {
-        toast.error(err?.message || 'Antwort fehlgeschlagen.');
+        setReplyText(cached);
+        setIsComposerExpanded(true);
+        toast.error(err?.message || 'Antwort konnte nicht gesendet werden.');
       }
     },
     [adapter, reload, replyText, session, ticketId],
@@ -455,6 +492,7 @@ export function PortalTicketStaffDetailHost({
         ticketCompany={company}
         contactSchema={[]}
         messages={messages}
+        highlightMessageId={highlightMessageId}
         allTickets={[ticket]}
         activeDetailTab={activeDetailTab}
         setActiveDetailTab={setActiveDetailTab}

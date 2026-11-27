@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { getInitials, safeString } from '../../lib/utils';
 import { 
@@ -27,6 +27,8 @@ interface ConversationTimelineProps {
   onAddAgentComment: (text: string) => void;
   isTranslating: boolean;
   translatedTicket: { subject: string; description: string } | null;
+  /** Scroll + brief highlight after a successful outbound reply. */
+  highlightMessageId?: string | null;
 }
 
 import { sanitizeTimelineHtml } from '../../lib/sanitize-html';
@@ -99,10 +101,19 @@ export function ConversationTimeline({
   onInternalNoteAction,
   onAddAgentComment,
   isTranslating,
-  translatedTicket
+  translatedTicket,
+  highlightMessageId = null,
 }: ConversationTimelineProps) {
   const { t } = useTranslation();
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+  const highlightRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!highlightMessageId) return;
+    const el = highlightRef.current;
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlightMessageId]);
 
   // We compile all chronological timeline items, beginning with the opening post.
   const timelineItems = useMemo(() => {
@@ -123,12 +134,12 @@ export function ConversationTimeline({
     }> = [
       {
         id: 'opening-post',
-        senderName: safeString(ticket.customerName, 'Customer'),
+        senderName: safeString(ticket.customerName, 'Kunde'),
         senderType: 'customer',
         createdAt: ticket.createdAt,
         content: translatedTicket?.description || ticket.description,
         html_content: ticket.html_content,
-        channel: 'via Email',
+        channel: 'via E-Mail',
         attachments: undefined,
         fromAddress: ticket.customerEmail || ticket.from_email || null,
         toAddress: ticket.mailbox || (ticket as any).supportEmail || null,
@@ -145,14 +156,30 @@ export function ConversationTimeline({
         isBot = true;
       }
 
+      const isAgentMsg = !isBot && msg.senderType !== 'customer';
+      const viaEmail =
+        msg.deliveryStatus === 'delivered' ||
+        msg.deliveryStatus === 'saved_locally' ||
+        Boolean(msg.fromAddress || msg.mailFrom || msg.toAddress);
+
       items.push({
         id: msg.id,
-        senderName: senderName || (msg.senderType === 'customer' ? 'Customer' : 'Agent'),
+        senderName:
+          senderName ||
+          (msg.senderType === 'customer'
+            ? t('tickets.conversation.customer', 'Kunde')
+            : t('tickets.conversation.agent', 'Agent')),
         senderType: isBot ? 'bot' : (msg.senderType === 'customer' ? 'customer' : 'agent'),
         createdAt: msg.createdAt,
         content: msg.content,
         html_content: msg.html_content,
-        channel: isBot ? 'via System' : (msg.senderType === 'customer' ? 'via Email' : 'via Web'),
+        channel: isBot
+          ? 'via System'
+          : isAgentMsg
+            ? viaEmail
+              ? 'via E-Mail'
+              : 'via Web'
+            : 'via E-Mail',
         deliveryStatus: msg.deliveryStatus,
         attachments: msg.attachments,
         fromAddress: msg.fromAddress || msg.mailFrom || null,
@@ -162,7 +189,7 @@ export function ConversationTimeline({
     });
 
     return items;
-  }, [ticket, messages, translatedTicket]);
+  }, [ticket, messages, translatedTicket, t]);
 
   return (
     <div id="conversation-timeline-redesign" className="space-y-6">
@@ -205,9 +232,17 @@ export function ConversationTimeline({
             ? getInitials(item.senderName)
             : isCustomer ? 'C' : isBot ? 'GE' : 'A';
 
+          const isHighlighted = Boolean(highlightMessageId && item.id === highlightMessageId);
+          const roleLabel = isBot
+            ? 'Bot'
+            : isCustomer
+              ? t('tickets.conversation.customer', 'Kunde')
+              : t('tickets.conversation.replyBadge', 'Antwort');
+
           return (
             <div 
-              key={item.id} 
+              key={item.id}
+              ref={isHighlighted ? highlightRef : undefined}
               className="relative group"
               onMouseEnter={() => setHoveredMessageId(item.id)}
               onMouseLeave={() => setHoveredMessageId(null)}
@@ -221,11 +256,19 @@ export function ConversationTimeline({
               </div>
 
               {/* Message Card frame */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-slate-200 dark:hover:border-slate-700 transition-all duration-200 flex gap-4">
+              <div className={cn(
+                "bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-slate-200 dark:hover:border-slate-700 transition-all duration-200 flex gap-4",
+                isAgent && "border-indigo-100/90 bg-indigo-50/20 dark:bg-indigo-950/20",
+                isHighlighted && "ticket-message-highlight border-emerald-300",
+              )}>
                 {/* Internal Avatar inside card */}
                 <Avatar className={cn(
                   "w-9 h-9 border shadow-sm shrink-0 mt-0.5",
-                  isBot ? "bg-emerald-50 border-emerald-100 text-emerald-800" : "bg-blue-50 border-blue-100 text-blue-800"
+                  isBot
+                    ? "bg-emerald-50 border-emerald-100 text-emerald-800"
+                    : isAgent
+                      ? "bg-indigo-50 border-indigo-100 text-indigo-800"
+                      : "bg-blue-50 border-blue-100 text-blue-800"
                 )}>
                   <AvatarFallback className="font-extrabold text-xs">
                     {initials}
@@ -243,9 +286,13 @@ export function ConversationTimeline({
                       {/* Role Badge following mockup */}
                       <Badge className={cn(
                         "text-[9px] font-black uppercase px-2 py-0.5 rounded-full border-none pointer-events-none tracking-wider",
-                        isCustomer ? "bg-blue-100 text-blue-850" : isBot ? "bg-emerald-100 text-emerald-850" : "bg-indigo-150 text-indigo-850"
+                        isCustomer
+                          ? "bg-blue-100 text-blue-800"
+                          : isBot
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-indigo-100 text-indigo-800"
                       )}>
-                        {item.senderType === 'bot' ? 'Bot' : item.senderType}
+                        {roleLabel}
                       </Badge>
                       <span className="text-[11px] text-slate-400 font-semibold font-mono">
                         {timeDisplay}
@@ -256,11 +303,11 @@ export function ConversationTimeline({
                           className="text-[9px] font-bold uppercase tracking-wide border-amber-200 bg-amber-50 text-amber-800 gap-1 px-1.5 py-0"
                           title={t(
                             'tickets.conversation.savedLocallyHint',
-                            'Reply was stored in the database. Outbound email was not available.',
+                            'Antwort wurde in der Datenbank gespeichert. Ausgehende E-Mail war nicht verfügbar.',
                           )}
                         >
                           <AlertCircle className="w-3 h-3" />
-                          {t('tickets.conversation.savedLocally', '⚠️ Nur lokal gespeichert / Saved Locally')}
+                          {t('tickets.conversation.savedLocally', 'Nur lokal gespeichert')}
                         </Badge>
                       ) : null}
                       <span className="text-[11px] text-slate-400 font-medium">
