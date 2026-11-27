@@ -1,9 +1,13 @@
 /**
  * Pure RBAC for Hubcom Staff Admin portal-* settings endpoints.
- * CLIENT_* → 403; SYSTEM_ADMIN (ADMIN/admin normalize) → allow.
+ * CLIENT_* → 403; org management requires SUPER_ADMIN or ORG_ADMIN assignment.
  */
 
 import { isClientPortalRole, isHubcomStaffRole } from './roles.js';
+import {
+  evaluateCanManageOrganization,
+  normalizeHubcomMatrixRole,
+} from '../staff-org-access.js';
 
 export type AdminPortalSettingsAccess =
   | { ok: true }
@@ -11,13 +15,18 @@ export type AdminPortalSettingsAccess =
 
 /**
  * Evaluate whether a caller may hit `/api/admin/organizations/:orgId/portal-*`
- * (or Mandanten-KI `ai-settings`). Mutations require SYSTEM_ADMIN.
+ * (or Mandanten-KI `ai-settings`).
+ *
+ * Prefer passing `organizationId` + `accessRows` for the matrix check.
+ * Legacy callers without accessRows: SUPER_ADMIN / is_admin only.
  */
 export function evaluateAdminOrgPortalSettingsAccess(params: {
   role: string | null | undefined;
   is_admin?: boolean;
-  /** When true, AGENT/staff reads are also allowed (list only). Default: mutations = SYSTEM_ADMIN. */
+  /** When true, AGENT/staff reads are also allowed (list only). */
   readOnlyStaff?: boolean;
+  organizationId?: string;
+  accessRows?: Array<{ organization_id: string; access_role: string }>;
 }): AdminPortalSettingsAccess {
   const role = String(params.role || '').trim();
   if (!role) {
@@ -31,15 +40,33 @@ export function evaluateAdminOrgPortalSettingsAccess(params: {
     };
   }
   if (params.readOnlyStaff) {
-    if (isHubcomStaffRole(role) || role === 'SYSTEM_ADMIN' || params.is_admin) {
+    if (isHubcomStaffRole(role) || role === 'SYSTEM_ADMIN' || role === 'SUPER_ADMIN' || params.is_admin) {
       return { ok: true };
     }
     return { ok: false, status: 403, error: 'Forbidden: Hubcom staff only.' };
   }
-  // ADMIN / SUPER_ADMIN / admin → SYSTEM_ADMIN at auth; only SYSTEM_ADMIN mutates.
-  if (role === 'SYSTEM_ADMIN' || params.is_admin === true) {
+
+  if (params.organizationId && Array.isArray(params.accessRows)) {
+    const ok = evaluateCanManageOrganization({
+      role,
+      is_admin: params.is_admin,
+      organizationId: params.organizationId,
+      accessRows: params.accessRows,
+    });
+    if (ok) return { ok: true };
+    return {
+      ok: false,
+      status: 403,
+      error: 'Forbidden: Keine ORG_ADMIN-Berechtigung für diese Organisation.',
+    };
+  }
+
+  // Legacy callers without accessRows: only explicit SUPER_ADMIN / SYSTEM_ADMIN / is_admin.
+  // Raw "admin" is normalized in authMiddleware before these checks run.
+  if (role === 'SUPER_ADMIN' || role === 'SYSTEM_ADMIN' || params.is_admin === true) {
     return { ok: true };
   }
+  void normalizeHubcomMatrixRole;
   return {
     ok: false,
     status: 403,

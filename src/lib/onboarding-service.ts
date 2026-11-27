@@ -353,7 +353,11 @@ function toStatus(config: ModuleConfig, hasAdmin: boolean, isAuthenticatedAdmin:
 export async function getOnboardingStatus(req?: Request): Promise<OnboardingStatus> {
   const config = (await loadModuleConfigDoc()) || emptyModuleConfig();
   const user = (req as { user?: { role?: string; is_admin?: boolean } | null } | undefined)?.user;
-  const isAuthenticatedAdmin = user?.role === 'SYSTEM_ADMIN' || user?.is_admin === true;
+  const isAuthenticatedAdmin =
+    user?.role === 'SYSTEM_ADMIN' ||
+    user?.role === 'SUPER_ADMIN' ||
+    user?.role === 'HUBCOM_ADMIN' ||
+    user?.is_admin === true;
   const status = toStatus(config, await hasPrimaryAdmin(), isAuthenticatedAdmin);
   status.health.pgvector = await probePgvector();
   return status;
@@ -722,7 +726,7 @@ async function upsertPrimaryAdminUser(input: {
     email: cleanEmail,
     passwordHash,
     authMethod: 'password',
-    role: 'admin',
+    role: 'SUPER_ADMIN',
     is_admin: true,
     isDeactivated: false,
     can_create_tickets: true,
@@ -739,7 +743,7 @@ async function upsertPrimaryAdminUser(input: {
     id: userId,
     email: cleanEmail,
     name: adminName,
-    role: 'admin',
+    role: 'SUPER_ADMIN',
     is_admin: true,
     tenantId,
   };
@@ -748,7 +752,7 @@ async function upsertPrimaryAdminUser(input: {
     id: userId,
     email: cleanEmail,
     name: adminName,
-    role: 'SYSTEM_ADMIN',
+    role: 'SUPER_ADMIN',
     is_admin: true,
     tenantId,
   };
@@ -917,7 +921,7 @@ export async function completeOnboarding(
     id: userId,
     email: cleanEmail,
     name: adminName,
-    role: 'admin',
+    role: 'SUPER_ADMIN',
     is_admin: true,
     tenantId,
   };
@@ -926,7 +930,7 @@ export async function completeOnboarding(
     id: userId,
     email: cleanEmail,
     name: adminName,
-    role: 'SYSTEM_ADMIN',
+    role: 'SUPER_ADMIN',
     is_admin: true,
     tenantId,
   };
@@ -978,7 +982,7 @@ export async function completeOnboarding(
     email: cleanEmail,
     ...(passwordHash ? { passwordHash } : {}),
     authMethod: existingUser.authMethod || 'password',
-    role: 'admin',
+    role: 'SUPER_ADMIN',
     is_admin: true,
     isDeactivated: false,
     can_create_tickets: true,
@@ -1072,7 +1076,7 @@ async function resumeOnboardingSteps(
     id: userId,
     email: cleanEmail,
     name: adminName,
-    role: 'admin',
+    role: 'SUPER_ADMIN',
     is_admin: true,
     tenantId,
   };

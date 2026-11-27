@@ -105,13 +105,21 @@ async function resolveOrgForReturns(
     return { organizationId, role };
   }
 
-  if (!isHubcomStaffRole(role) && role !== 'SYSTEM_ADMIN') {
+  if (!isHubcomStaffRole(role) && role !== 'SYSTEM_ADMIN' && role !== 'SUPER_ADMIN') {
     res.status(403).json({ error: 'Forbidden.' });
     return null;
   }
   const organizationId = String(preferredOrgId || req.query.organizationId || '').trim();
   if (!organizationId) {
     res.status(400).json({ error: 'organizationId ist erforderlich.' });
+    return null;
+  }
+  const { canAccessOrganization } = await import('../lib/staff-org-access.js');
+  const allowed = await canAccessOrganization(req.user as any, organizationId);
+  if (!allowed) {
+    res.status(403).json({
+      error: 'Forbidden: Keine Berechtigung für diese Organisation.',
+    });
     return null;
   }
   const org = await getOrganization(organizationId);

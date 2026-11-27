@@ -63,6 +63,12 @@ export async function requireTicketAccess(
   }
 
   if (isHubcomStaffRole(req.user.role) || req.user.role === 'SYSTEM_ADMIN' || req.user.is_admin) {
+    const { staffCanViewTicket } = await import('../staff-org-access.js');
+    const allowed = await staffCanViewTicket(req.user, ticket);
+    if (!allowed) {
+      res.status(404).json({ error: 'Ticket not found.' });
+      return null;
+    }
     return ticket;
   }
 

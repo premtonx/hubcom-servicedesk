@@ -305,6 +305,16 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
       if (userDoc.isDeactivated) {
         return fail('Ihr Konto wurde deaktiviert. Bitte wenden Sie sich an den Administrator.');
       }
+      const { normalizeApprovalStatus } = await import('../lib/client-portal/sso-approval.js');
+      const staffStatus = normalizeApprovalStatus(
+        userDoc.approval_status ?? userDoc.approvalStatus,
+      );
+      if (staffStatus === 'pending_approval') {
+        return ssoFail('pending');
+      }
+      if (staffStatus === 'rejected') {
+        return ssoFail('rejected');
+      }
       await updateDocDirect('users', userDoc.id, {
         entraObjectId: identity.entraObjectId || userDoc.entraObjectId || null,
         upn: identity.upn || userDoc.upn || null,
@@ -315,7 +325,9 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
       });
       userDoc = await getDocDirect('users', userDoc.id);
     } else if (settings.jitProvisioning && isHubcomTenant) {
-      const role = normalizeRole(settings.defaultRole);
+      const { normalizeHubcomMatrixRole } = await import('../lib/staff-org-access.js');
+      const role = normalizeHubcomMatrixRole(settings.defaultRole || 'HUBCOM_USER');
+      const approvalRequired = settings.staffSsoApprovalRequired !== false;
       const created = await addDocDirect('users', {
         name: identity.name,
         email: identity.email,
@@ -325,9 +337,12 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
         passwordHash: null,
         kuerzel: deriveKuerzel(identity.name),
         role,
-        is_admin: role === 'SYSTEM_ADMIN',
+        is_admin: role === 'SUPER_ADMIN',
         company: '',
-        approval_status: 'active',
+        approval_status: approvalRequired ? 'pending_approval' : 'active',
+        approvalRequestedAt: approvalRequired ? now : null,
+        organizationId: null,
+        organization_id: null,
         isDeactivated: false,
         can_create_tickets: true,
         can_view_knowledgebase: true,
@@ -336,6 +351,10 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
         updatedAt: now,
       });
       userDoc = { id: created.id, ...created.data };
+      if (approvalRequired) {
+        // No session cookie — admin must approve and assign orgs first.
+        return ssoFail('pending');
+      }
     } else if (!userDoc && entraTenantId && !isHubcomTenant) {
       return ssoFail('unknown_tenant');
     } else {
@@ -348,13 +367,20 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
       return fail('Anmeldung fehlgeschlagen.');
     }
 
-    // Final approval gate (defense in depth for portal roles).
+    // Final approval gate (defense in depth for portal + Hubcom staff).
     if (isClientPortalRole(userDoc.role)) {
       const { isPortalLoginAllowed } = await import('../lib/client-portal/sso-approval.js');
       const gate = isPortalLoginAllowed(userDoc);
       if (gate.ok === false) {
         return ssoFail(gate.reason);
       }
+    } else {
+      const { normalizeApprovalStatus } = await import('../lib/client-portal/sso-approval.js');
+      const staffStatus = normalizeApprovalStatus(
+        userDoc.approval_status ?? userDoc.approvalStatus,
+      );
+      if (staffStatus === 'pending_approval') return ssoFail('pending');
+      if (staffStatus === 'rejected') return ssoFail('rejected');
     }
 
     const token = issueSessionToken({ id: userDoc.id, email: userDoc.email });

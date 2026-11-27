@@ -166,6 +166,12 @@ import {
   evaluateAdminOrgPortalSettingsAccess,
 } from '../src/lib/client-portal/admin-org-portal-settings-access.js';
 import {
+  canManageHubcomCore,
+  evaluateAccessibleOrganizationIds,
+  evaluateCanManageOrganization,
+  normalizeHubcomMatrixRole,
+} from '../src/lib/staff-org-access.js';
+import {
   assertPortalSettingsPathsSafe,
   resolvePortalSettingsPaths,
 } from '../src/lib/client-portal/portal-settings-api-base.js';
@@ -7990,7 +7996,7 @@ function testAdminOrgPortalSettingsApiIsolation(): void {
       portalSettingsSrc.includes('portal-email/test') &&
       portalSettingsSrc.includes('portal-members/:userId/approve') &&
       portalSettingsSrc.includes('portal-members/:userId/reject') &&
-      portalSettingsSrc.includes("requireRole(['SYSTEM_ADMIN'])") &&
+      portalSettingsSrc.includes('requireCanManageOrganization') &&
       portalSettingsSrc.includes('updateOrganizationBranding') &&
       portalSettingsSrc.includes('updateOrganizationSsoSettings') &&
       portalSettingsSrc.includes('updateOrganizationSecondLevelSettings') &&
@@ -8180,8 +8186,8 @@ function testAdminCustomersPortalSettingsUiIsolation(): void {
     portalSettingsSrc.includes("router.get('/:id/portal-members'") &&
       portalSettingsSrc.includes('pendingApprovals') &&
       portalSettingsSrc.includes('invites') &&
-      portalSettingsSrc.includes("requireRole(['SYSTEM_ADMIN'])"),
-    'GET portal-members returns members/pendingApprovals/invites under SYSTEM_ADMIN',
+      portalSettingsSrc.includes('requireCanManageOrganization'),
+    'GET portal-members returns members/pendingApprovals/invites under org-manage gate',
   );
   assert(
     customersPage.includes("value: 'portal'") &&
@@ -8370,10 +8376,198 @@ async function main(): Promise<void> {
   testAdminOrgPortalSettingsApiIsolation();
   testAdminCustomersPortalSettingsUiIsolation();
   testAdminMailIntegrationsWorkspaceIsolation();
+  testStaffOrgPermissionMatrixIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
   console.log('OK: client portal isolation suite passed.');
+}
+
+/**
+ * Part 1 — Hubcom System Role + Multi-Client Organization Permission Matrix.
+ */
+function testStaffOrgPermissionMatrixIsolation(): void {
+  console.log('\n[Staff Org Matrix] HUBCOM roles + per-org ORG_ADMIN isolation');
+
+  const DPG = 'org-dpg-matrix-0001';
+  const CITADELLE = 'org-citadelle-matrix-0002';
+  const OTHER = 'org-other-matrix-0003';
+
+  assert(
+    normalizeHubcomMatrixRole('SYSTEM_ADMIN') === 'SUPER_ADMIN' &&
+      normalizeHubcomMatrixRole('admin', true) === 'SUPER_ADMIN' &&
+      normalizeHubcomMatrixRole('agent') === 'HUBCOM_AGENT' &&
+      normalizeHubcomMatrixRole('team_lead') === 'HUBCOM_ADMIN',
+    'legacy Hubcom roles normalize into matrix codes',
+  );
+
+  assert(canManageHubcomCore({ role: 'SUPER_ADMIN' }) === true, 'SUPER_ADMIN manages Hubcom core');
+  assert(canManageHubcomCore({ role: 'HUBCOM_ADMIN' }) === true, 'HUBCOM_ADMIN manages Hubcom core');
+  assert(canManageHubcomCore({ role: 'HUBCOM_USER' }) === false, 'HUBCOM_USER cannot manage Hubcom core');
+  assert(canManageHubcomCore({ role: 'CLIENT_ADMIN' }) === false, 'CLIENT_ADMIN cannot manage Hubcom core');
+
+  const hubcomAdminAccess = [
+    { organization_id: DPG, access_role: 'ORG_ADMIN' },
+    { organization_id: CITADELLE, access_role: 'ORG_ADMIN' },
+  ];
+
+  assert(
+    JSON.stringify(
+      evaluateAccessibleOrganizationIds({
+        role: 'HUBCOM_ADMIN',
+        accessRows: hubcomAdminAccess,
+      }),
+    ) === JSON.stringify([DPG, CITADELLE]),
+    'HUBCOM_ADMIN sees only assigned orgs (DPG + Citadelle), never OtherOrg',
+  );
+  assert(
+    evaluateAccessibleOrganizationIds({ role: 'SUPER_ADMIN', accessRows: [] }) === 'ALL',
+    'SUPER_ADMIN accessible orgs = ALL',
+  );
+
+  assert(
+    evaluateCanManageOrganization({
+      role: 'HUBCOM_ADMIN',
+      organizationId: DPG,
+      accessRows: hubcomAdminAccess,
+    }) === true,
+    'HUBCOM_ADMIN + ORG_ADMIN may manage DPG portal settings',
+  );
+  assert(
+    evaluateCanManageOrganization({
+      role: 'HUBCOM_ADMIN',
+      organizationId: CITADELLE,
+      accessRows: hubcomAdminAccess,
+    }) === true,
+    'HUBCOM_ADMIN + ORG_ADMIN may manage Citadelle portal settings',
+  );
+  assert(
+    evaluateCanManageOrganization({
+      role: 'HUBCOM_ADMIN',
+      organizationId: OTHER,
+      accessRows: hubcomAdminAccess,
+    }) === false,
+    'HUBCOM_ADMIN without assignment → OtherOrg 403',
+  );
+  assert(
+    evaluateAdminOrgPortalSettingsAccess({
+      role: 'HUBCOM_ADMIN',
+      organizationId: OTHER,
+      accessRows: hubcomAdminAccess,
+    }).ok === false,
+    'portal-* evaluator denies OtherOrg for HUBCOM_ADMIN',
+  );
+  assert(
+    evaluateAdminOrgPortalSettingsAccess({
+      role: 'HUBCOM_ADMIN',
+      organizationId: DPG,
+      accessRows: hubcomAdminAccess,
+    }).ok === true,
+    'portal-* evaluator allows DPG for HUBCOM_ADMIN + ORG_ADMIN',
+  );
+
+  const hubcomUserAccess = [
+    { organization_id: DPG, access_role: 'ORG_ADMIN' },
+    { organization_id: CITADELLE, access_role: 'ORG_ADMIN' },
+  ];
+  assert(
+    canManageHubcomCore({ role: 'HUBCOM_USER' }) === false,
+    'HUBCOM_USER cannot access global Hubcom Admin settings',
+  );
+  assert(
+    evaluateCanManageOrganization({
+      role: 'HUBCOM_USER',
+      organizationId: DPG,
+      accessRows: hubcomUserAccess,
+    }) === true,
+    'HUBCOM_USER + ORG_ADMIN may fully manage DPG portal settings',
+  );
+  assert(
+    evaluateCanManageOrganization({
+      role: 'HUBCOM_USER',
+      organizationId: OTHER,
+      accessRows: hubcomUserAccess,
+    }) === false,
+    'HUBCOM_USER → OtherOrg 403',
+  );
+
+  // Ticket visibility (sync pure path via evaluate helpers + staffCanViewTicket needs DB —
+  // cover ownership rules with inlined filter logic expectations via evaluateAccessibleOrganizationIds).
+  const userOrgs = evaluateAccessibleOrganizationIds({
+    role: 'HUBCOM_USER',
+    accessRows: hubcomUserAccess,
+  });
+  assert(
+    Array.isArray(userOrgs) && userOrgs.includes(OTHER) === false,
+    'HUBCOM_USER ticket/org scope excludes OtherOrg',
+  );
+
+  // Source contracts: table + APIs + CLIENT_* stay on portal.
+  const accessSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/staff-org-access.ts'),
+    'utf8',
+  );
+  const staffRoutes = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/staffUsersRoutes.ts'),
+    'utf8',
+  );
+  const orgRoutes = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/organizationAdminRoutes.ts'),
+    'utf8',
+  );
+  const portalSettings = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/organizationAdminPortalSettingsRoutes.ts'),
+    'utf8',
+  );
+  const serverSrc = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
+  const ddl = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/postgres-backend.ts'),
+    'utf8',
+  );
+
+  assert(
+    ddl.includes('CREATE TABLE IF NOT EXISTS user_organization_access') &&
+      ddl.includes("CHECK (access_role IN ('ORG_ADMIN', 'ORG_AGENT'))") &&
+      ddl.includes('SUPER_ADMIN'),
+    'idempotent user_organization_access DDL + SUPER_ADMIN migration present',
+  );
+  assert(
+    accessSrc.includes('canManageHubcomCore') &&
+      accessSrc.includes('getAccessibleOrganizationIds') &&
+      accessSrc.includes('canManageOrganization'),
+    'central RBAC helpers exported',
+  );
+  assert(
+    staffRoutes.includes("/staff-users") &&
+      staffRoutes.includes('/staff-users/invite') &&
+      staffRoutes.includes('/staff-users/:userId') &&
+      staffRoutes.includes('requireCanManageHubcomCore'),
+    'staff-users invite/list/patch APIs mounted under Hubcom core gate',
+  );
+  assert(
+    orgRoutes.includes('/:id/staff-access') &&
+      orgRoutes.includes('getAccessibleOrganizationIds') &&
+      orgRoutes.includes("requireCanManageOrganization('id')"),
+    'org list filtered + staff-access + ai-settings use org manage gate',
+  );
+  assert(
+    portalSettings.includes('requireCanManageOrganization') &&
+      !portalSettings.includes("requireRole(['SYSTEM_ADMIN'])"),
+    'portal-* uses canManageOrganization (not blanket SYSTEM_ADMIN)',
+  );
+  assert(
+    serverSrc.includes('staffUsersRoutes') && serverSrc.includes('/api/admin'),
+    'server mounts staffUsersRoutes on /api/admin',
+  );
+
+  // CLIENT_* remain portal-only (no /api/db in portal settings paths).
+  const portalPaths = resolvePortalSettingsPaths('portal');
+  assert(
+    assertPortalSettingsPathsSafe(portalPaths) &&
+      portalPaths.membersBase === '/api/portal/team' &&
+      !portalPaths.brandingGet.includes('/api/db'),
+    'CLIENT_* portal settings paths stay on /api/portal/* with zero /api/db',
+  );
 }
 
 main().catch((err) => {

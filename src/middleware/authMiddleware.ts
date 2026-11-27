@@ -2,12 +2,16 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import jwksClient from "jwks-rsa";
 import { getDocDirect, getDocsDirect } from "../lib/postgres-backend.js";
-import { isClientPortalRole } from "../lib/client-portal/roles.js";
+import { isClientPortalRole, isHubcomStaffRole } from "../lib/client-portal/roles.js";
 import {
   getOrganization,
   getOrganizationByM365TenantId,
 } from "../lib/client-portal/organizations.js";
-import { isPortalLoginAllowed } from "../lib/client-portal/sso-approval.js";
+import { isPortalLoginAllowed, normalizeApprovalStatus } from "../lib/client-portal/sso-approval.js";
+import {
+  canManageHubcomCore,
+  normalizeHubcomMatrixRole,
+} from "../lib/staff-org-access.js";
 
 // JWT and Microsoft JWKS Clients
 const JWKS_URI = "https://login.microsoftonline.com/common/discovery/v2.0/keys";
@@ -69,25 +73,33 @@ function resolveEffectiveRole(userDoc: any, roleDoc: any | null): {
   computedRole: string;
   isAdminClaim: boolean;
 } {
-  let computedRole = userDoc.role || 'agent';
+  let computedRole = userDoc.role || 'HUBCOM_AGENT';
   let isAdminClaim = userDoc.is_admin === true;
 
   if (roleDoc) {
     const roleName = String(roleDoc.name || '');
-    if (roleName === 'admin' || roleDoc.is_admin === true || roleName === 'SYSTEM_ADMIN') {
-      computedRole = 'SYSTEM_ADMIN';
+    if (
+      roleName === 'admin' ||
+      roleDoc.is_admin === true ||
+      roleName === 'SYSTEM_ADMIN' ||
+      roleName === 'SUPER_ADMIN'
+    ) {
+      computedRole = 'SUPER_ADMIN';
       isAdminClaim = true;
     } else if (isClientPortalRole(roleName)) {
       computedRole = roleName;
       isAdminClaim = false;
+    } else if (roleName) {
+      computedRole = roleName;
     }
   }
 
   if (isClientPortalRole(computedRole)) {
     isAdminClaim = false;
-  } else if (computedRole === 'admin' || computedRole === 'SYSTEM_ADMIN' || isAdminClaim) {
-    computedRole = 'SYSTEM_ADMIN';
-    isAdminClaim = true;
+  } else {
+    const matrix = normalizeHubcomMatrixRole(computedRole, isAdminClaim);
+    computedRole = matrix;
+    isAdminClaim = matrix === 'SUPER_ADMIN';
   }
 
   return { computedRole, isAdminClaim };
@@ -253,6 +265,24 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
           sso_status: reason,
         });
       }
+    } else if (isHubcomStaffRole(userDoc.role) || userDoc.is_admin === true) {
+      // Hubcom internal M365 Admin-Freigabe: pending staff wait for SUPER_ADMIN / HUBCOM_ADMIN.
+      const staffStatus = normalizeApprovalStatus(
+        userDoc.approval_status ?? userDoc.approvalStatus,
+      );
+      if (staffStatus === 'pending_approval') {
+        return res.status(403).json({
+          error:
+            "Forbidden: Your Hubcom Microsoft 365 access request is pending admin approval.",
+          sso_status: "pending",
+        });
+      }
+      if (staffStatus === 'rejected') {
+        return res.status(403).json({
+          error: "Forbidden: Your Hubcom Microsoft 365 access request was rejected.",
+          sso_status: "rejected",
+        });
+      }
     }
 
     // Resolve effective role strictly from the verified DB record.
@@ -267,9 +297,9 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
 
     let { computedRole, isAdminClaim } = resolveEffectiveRole(userDoc, roleDoc);
 
-    // Never auto-promote client portal accounts to SYSTEM_ADMIN.
+    // Never auto-promote client portal accounts to SUPER_ADMIN.
     if (isServerBetaAutoAdminEnabled() && !isClientPortalRole(computedRole)) {
-      computedRole = "SYSTEM_ADMIN";
+      computedRole = "SUPER_ADMIN";
       isAdminClaim = true;
     }
 
@@ -434,7 +464,7 @@ export async function optionalAuthenticate(req: AuthenticatedRequest, _res: Resp
         }
         let { computedRole, isAdminClaim } = resolveEffectiveRole(userDoc, roleDoc);
         if (isServerBetaAutoAdminEnabled() && !isClientPortalRole(computedRole)) {
-          computedRole = "SYSTEM_ADMIN";
+          computedRole = "SUPER_ADMIN";
           isAdminClaim = true;
         }
         const organizationId = resolveUserOrganizationId(userDoc as Record<string, unknown>);
@@ -461,6 +491,10 @@ export async function optionalAuthenticate(req: AuthenticatedRequest, _res: Resp
 /**
  * Strict Role-Based Access Control Rule Middleware
  * @param allowedRolesArray Array of allowed role codes (e.g., ["SYSTEM_ADMIN", "team_lead"])
+ *
+ * `SYSTEM_ADMIN` in the allow-list also admits `SUPER_ADMIN` and `HUBCOM_ADMIN`
+ * (Hubcom core admins). Org-scoped portal-* endpoints should use
+ * `requireCanManageOrganization` instead.
  */
 export function requireRole(allowedRolesArray: string[]) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): any => {
@@ -470,21 +504,66 @@ export function requireRole(allowedRolesArray: string[]) {
       });
     }
 
-    const currentRole = req.user.role;
+    const currentRole = String(req.user.role || '');
+    const matrixRole = normalizeHubcomMatrixRole(currentRole, req.user.is_admin === true);
 
-    // Admin-only endpoints require SYSTEM_ADMIN explicitly.
-    if (allowedRolesArray.includes("SYSTEM_ADMIN") && currentRole !== "SYSTEM_ADMIN") {
+    // Admin-only endpoints: SYSTEM_ADMIN allow-list → Hubcom core (SUPER_ADMIN / HUBCOM_ADMIN).
+    if (allowedRolesArray.includes("SYSTEM_ADMIN") || allowedRolesArray.includes("SUPER_ADMIN")) {
+      if (canManageHubcomCore({ role: matrixRole, is_admin: req.user.is_admin })) {
+        return next();
+      }
       return res.status(403).json({
         error: "Forbidden: Strict Administrative access required. This transaction has been audited."
       });
     }
 
-    if (!allowedRolesArray.includes(currentRole)) {
-      return res.status(403).json({
-        error: `Forbidden: Resource restricted. Allowed roles: [${allowedRolesArray.join(", ")}]. Current: ${currentRole}`
-      });
+    if (
+      allowedRolesArray.includes(currentRole) ||
+      allowedRolesArray.includes(String(matrixRole))
+    ) {
+      return next();
     }
 
-    next();
+    return res.status(403).json({
+      error: `Forbidden: Resource restricted. Allowed roles: [${allowedRolesArray.join(", ")}]. Current: ${currentRole}`
+    });
+  };
+}
+
+/** Middleware: SUPER_ADMIN or HUBCOM_ADMIN only (Hubcom core settings). */
+export function requireCanManageHubcomCore(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+): any {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized.' });
+  }
+  if (!canManageHubcomCore(req.user)) {
+    return res.status(403).json({
+      error: 'Forbidden: Hubcom core administrative access required.',
+    });
+  }
+  return next();
+}
+
+/** Middleware factory: require ORG_ADMIN (or SUPER_ADMIN) for :orgId / :id. */
+export function requireCanManageOrganization(paramName: 'id' | 'orgId' = 'id') {
+  return async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<any> => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized.' });
+    }
+    const { canManageOrganization } = await import('../lib/staff-org-access.js');
+    const orgId = String(req.params?.[paramName] || '').trim();
+    if (!orgId) {
+      return res.status(400).json({ error: 'organizationId ist erforderlich.' });
+    }
+    const allowed = await canManageOrganization(req.user, orgId);
+    if (!allowed) {
+      return res.status(403).json({
+        error: 'Forbidden: Keine ORG_ADMIN-Berechtigung für diese Organisation.',
+      });
+    }
+    return next();
   };
 }
