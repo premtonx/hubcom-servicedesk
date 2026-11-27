@@ -97,6 +97,7 @@ export const ADMIN_HUB_SUBROUTES: Array<{ path: string; meta: AdminHubSubRouteMe
   { path: '/admin/roles', meta: { parentTab: 'system', label: 'RBAC Command' } },
   { path: '/admin/import', meta: { parentTab: 'system', label: 'Data Import & Migration' } },
   { path: '/admin/customers', meta: { parentTab: 'kunden', label: 'Client Organizations' } },
+  { path: '/admin/organizations', meta: { parentTab: 'kunden', label: 'Client Organizations' } },
   { path: '/admin/contact-schema', meta: { parentTab: 'kunden', label: 'Kontaktprofil' } },
   { path: '/admin/schema', meta: { parentTab: 'kunden', label: 'Unternehmensschema' } },
   { path: '/admin/settings', meta: { parentTab: 'system', label: 'Systemeinstellungen' } },

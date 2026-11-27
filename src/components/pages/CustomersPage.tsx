@@ -28,7 +28,8 @@ import {
   ArrowRight,
   Globe,
   ChevronLeft,
-  Package,
+  LayoutDashboard,
+  History,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { cn } from '../../lib/utils';
@@ -61,8 +62,10 @@ import CompanyHeader from './companies/CompanyHeader';
 import CompanyKPI from './companies/CompanyKPI';
 import CompanyOverviewTab from './companies/CompanyOverviewTab';
 import CompanyOtherTabs from './companies/CompanyOtherTabs';
-import CompanyPortalTab from './companies/CompanyPortalTab';
-import CompanyReturnsTab from './companies/CompanyReturnsTab';
+import CompanyPortalTab, {
+  COMPANY_PORTAL_SEGMENTS,
+  type CompanyPortalSegment,
+} from './companies/CompanyPortalTab';
 import { CompanyStaffAssignmentsCard } from '../companies/CompanyStaffAssignmentsCard';
 import { hydrateCompany } from './companies/utils';
 import axios from 'axios';
@@ -94,6 +97,13 @@ const BRANCHES = [
 ];
 
 type StaffOption = { id: string; name: string; email: string; role: string };
+
+const PORTAL_SEGMENTS: ReadonlyArray<CompanyPortalSegment> = [
+  'branding',
+  'members',
+  'email',
+  'ai',
+];
 
 export default function CustomersPage() {
   const { t } = useTranslation();
@@ -752,10 +762,24 @@ export default function CustomersPage() {
   }, [scopedCompanies, selectedCompanyId]);
 
   useEffect(() => {
-    if (activeSubTab === 'portal' && !canEditPortalSettings) {
+    if (
+      PORTAL_SEGMENTS.includes(activeSubTab as CompanyPortalSegment) &&
+      !canEditPortalSettings
+    ) {
+      setActiveSubTab('overview');
+      return;
+    }
+    // Legacy nested-portal / removed tabs → flat replacements
+    if (activeSubTab === 'portal') {
+      setActiveSubTab(portalFocusInvite ? 'members' : 'branding');
+    } else if (
+      activeSubTab === 'tickets' ||
+      activeSubTab === 'assets-vault' ||
+      activeSubTab === 'returns'
+    ) {
       setActiveSubTab('overview');
     }
-  }, [activeSubTab, canEditPortalSettings]);
+  }, [activeSubTab, canEditPortalSettings, portalFocusInvite]);
 
   return (
     <div className="flex h-full bg-background overflow-hidden">
@@ -812,7 +836,7 @@ export default function CustomersPage() {
                   canEditPortalSettings
                     ? () => {
                         setPortalFocusInvite(false);
-                        setActiveSubTab('portal');
+                        setActiveSubTab('branding');
                       }
                     : undefined
                 }
@@ -820,7 +844,7 @@ export default function CustomersPage() {
                   canEditPortalSettings
                     ? () => {
                         setPortalFocusInvite(true);
-                        setActiveSubTab('portal');
+                        setActiveSubTab('members');
                       }
                     : undefined
                 }
@@ -832,69 +856,45 @@ export default function CustomersPage() {
 
               <CompanyKPI metrics={companyKpis} showReturns={hardwareReturnsEnabled} />
 
-              {/* 6 primary tabs — wrap, never clip */}
-              <div className="border-b border-muted">
+              {/* High-contrast segmented customer detail menu */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
                 <Tabs
                   value={activeSubTab}
                   onValueChange={(val) => {
                     setActiveSubTab(val);
-                    if (val !== 'portal') setPortalFocusInvite(false);
+                    if (val !== 'members') setPortalFocusInvite(false);
                   }}
                   className="w-full"
                 >
-                  <TabsList className="bg-transparent border-none p-0 h-auto flex flex-wrap gap-x-4 gap-y-1 select-none w-full max-w-full">
+                  <TabsList className="bg-slate-100/90 border border-slate-200/80 p-1 h-auto flex flex-wrap gap-1 select-none w-full max-w-full rounded-xl">
                     {[
-                      { value: 'overview', label: t('nav.overview', 'Übersicht') },
+                      {
+                        value: 'overview',
+                        label: t('nav.overview', 'Übersicht'),
+                        icon: LayoutDashboard,
+                      },
                       ...(canEditPortalSettings
-                        ? [
-                            {
-                              value: 'portal',
-                              label: t('companies.portalTab', 'Kunden-Portal'),
-                              icon: Globe,
-                            },
-                          ]
+                        ? COMPANY_PORTAL_SEGMENTS.map((s) => ({
+                            value: s.id,
+                            label: s.label,
+                            icon: s.icon,
+                          }))
                         : []),
-                      {
-                        value: 'tickets',
-                        label: t('nav.tickets', 'Tickets'),
-                        count: ticketHistory.length,
-                      },
-                      ...(hardwareReturnsEnabled
-                        ? [
-                            {
-                              value: 'returns',
-                              label: t('companies.returnsTab', 'Rücklieferungen'),
-                              count: companyKpis.openReturnsCount ?? 0,
-                              icon: Package,
-                            },
-                          ]
-                        : []),
-                      {
-                        value: 'assets-vault',
-                        label: t('companies.assetsAndVault', 'Assets & Tresor'),
-                        count:
-                          (companyKpis.assetsCount ?? 0) +
-                          (companyKpis.vaultEntriesCount ?? 0),
-                      },
                       {
                         value: 'activity',
-                        label: t('companies.activityTimeline', 'Verlauf'),
+                        label: t('companies.activityTimeline', 'Aktivitätschronik'),
+                        icon: History,
                       },
-                    ].map(tab => {
+                    ].map((tab) => {
                       const Icon = tab.icon;
                       return (
                         <TabsTrigger
                           key={tab.value}
                           value={tab.value}
-                          className="px-1.5 py-2 text-xs font-bold bg-transparent border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary text-muted-foreground hover:text-foreground hover:border-muted-foreground/30 rounded-none transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                          className="px-3 py-2.5 text-xs font-bold rounded-lg border border-transparent bg-transparent data-[state=active]:bg-slate-900 data-[state=active]:text-white data-[state=active]:border-slate-900 data-[state=active]:shadow-md text-slate-600 hover:text-slate-900 hover:bg-white/80 transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
                         >
-                          {Icon && <Icon className="w-3.5 h-3.5 text-indigo-500" />}
+                          <Icon className="w-3.5 h-3.5 shrink-0 opacity-80" />
                           <span>{tab.label}</span>
-                          {tab.count !== undefined && (
-                            <span className="text-[10px] scale-90 px-1 bg-muted text-muted-foreground rounded-full border border-muted-foreground/10 shrink-0 font-extrabold font-mono">
-                              {tab.count}
-                            </span>
-                          )}
                         </TabsTrigger>
                       );
                     })}
@@ -918,20 +918,25 @@ export default function CustomersPage() {
                     vaultItems={companyVaultItems}
                     onTabChange={(tab) => {
                       if (tab === 'vault' || tab === 'assets') {
-                        setActiveSubTab('assets-vault');
+                        setActiveSubTab('overview');
                         return;
                       }
                       if (tab === 'contracts' || tab === 'contacts' || tab === 'insights') {
                         setActiveSubTab('overview');
                         return;
                       }
+                      if (tab === 'activity') {
+                        setActiveSubTab('activity');
+                        return;
+                      }
                       setActiveSubTab(tab);
                     }}
-                    onOpenVaultClick={() => setActiveSubTab('assets-vault')}
-                    onViewAllTicketsClick={() => setActiveSubTab('tickets')}
+                    onOpenVaultClick={() => setActiveSubTab('overview')}
+                    onViewAllTicketsClick={() => navigate('/tickets')}
                   />
                 </div>
-              ) : activeSubTab === 'portal' && canEditPortalSettings ? (
+              ) : PORTAL_SEGMENTS.includes(activeSubTab as CompanyPortalSegment) &&
+                canEditPortalSettings ? (
                 <CompanyPortalTab
                   organizationId={
                     hydratedCompany.organizationId ||
@@ -939,57 +944,13 @@ export default function CustomersPage() {
                     null
                   }
                   companyName={hydratedCompany.name}
-                  focusInvite={portalFocusInvite}
+                  segment={activeSubTab as CompanyPortalSegment}
+                  focusInvite={portalFocusInvite && activeSubTab === 'members'}
                   onOpenEmailConfig={() => navigate('/admin/email-channels')}
                 />
-              ) : activeSubTab === 'returns' && hardwareReturnsEnabled ? (
-                <CompanyReturnsTab
-                  organizationId={
-                    hydratedCompany.organizationId ||
-                    (hydratedCompany as any).organization_id ||
-                    null
-                  }
-                />
-              ) : activeSubTab === 'assets-vault' ? (
-                <div className="space-y-8">
-                  <CompanyOtherTabs
-                    activeSubTab="assets"
-                    company={hydratedCompany}
-                    employees={employees}
-                    contactSchema={contactSchema}
-                    ticketHistory={ticketHistory}
-                    onAddContactClick={() => setIsContactDialogOpen(true)}
-                    onSelectTicket={(ticketId) => navigate(`/tickets/${ticketId}`)}
-                    onVaultItemsChange={setCompanyVaultItems}
-                  />
-                  <CompanyOtherTabs
-                    activeSubTab="vault"
-                    company={hydratedCompany}
-                    employees={employees}
-                    contactSchema={contactSchema}
-                    ticketHistory={ticketHistory}
-                    onAddContactClick={() => setIsContactDialogOpen(true)}
-                    onSelectTicket={(ticketId) => navigate(`/tickets/${ticketId}`)}
-                    onVaultItemsChange={setCompanyVaultItems}
-                    onContactsChanged={() => {
-                      if (!selectedCompanyId) return;
-                      setOrgEnrichment((prev) => ({ ...prev }));
-                    }}
-                    onCompanyUpdated={(patch) => {
-                      if (!selectedCompanyId) return;
-                      setOrgEnrichment((prev) => ({
-                        ...prev,
-                        [selectedCompanyId]: {
-                          ...(prev[selectedCompanyId] || {}),
-                          ...patch,
-                        },
-                      }));
-                    }}
-                  />
-                </div>
               ) : (
                 <CompanyOtherTabs 
-                  activeSubTab={activeSubTab}
+                  activeSubTab="activity"
                   company={hydratedCompany}
                   employees={employees}
                   contactSchema={contactSchema}

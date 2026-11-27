@@ -8200,8 +8200,11 @@ function testAdminCustomersPortalSettingsUiIsolation(): void {
       portalTab.includes('Branding & Module') &&
       portalTab.includes('Mitarbeiter & Rollen') &&
       portalTab.includes('E-Mail, M365 & SSO') &&
-      portalTab.includes('KI & Lokaler Server'),
-    'CompanyPortalTab mounts 4 shared segments with mode=admin',
+      portalTab.includes('KI & Lokaler Server') &&
+      portalTab.includes('COMPANY_PORTAL_SEGMENTS') &&
+      !portalTab.includes('Kunden-Portal —') &&
+      !portalTab.includes('role="tablist"'),
+    'CompanyPortalTab mounts 4 shared segments with mode=admin (no nested sub-tabs)',
   );
   assert(
     brandingPage.includes("mode = 'portal'") &&
@@ -8246,12 +8249,20 @@ function testAdminCustomersPortalSettingsUiIsolation(): void {
     'GET portal-members returns members/pendingApprovals/invites under org-manage gate',
   );
   assert(
-    customersPage.includes("value: 'portal'") &&
-      customersPage.includes("value: 'assets-vault'") &&
-      customersPage.includes('flex-wrap') &&
+    customersPage.includes("value: 'overview'") &&
+      customersPage.includes("value: 'activity'") &&
+      customersPage.includes('Aktivitätschronik') &&
+      customersPage.includes('data-[state=active]:bg-slate-900') &&
+      customersPage.includes('COMPANY_PORTAL_SEGMENTS') &&
+      customersPage.includes("setActiveSubTab('branding')") &&
+      customersPage.includes("setActiveSubTab('members')") &&
+      customersPage.includes("segment={activeSubTab as CompanyPortalSegment}") &&
+      !customersPage.includes("value: 'portal'") &&
+      !customersPage.includes("value: 'tickets'") &&
+      !customersPage.includes("value: 'assets-vault'") &&
       customersPage.includes('/api/admin/organizations') &&
       !customersPage.includes("Kunden-Portal & Branding"),
-    'CustomersPage has 6-tab compact nav + org list logos',
+    'CustomersPage has flattened high-contrast detail tabs (no Tickets/Assets/Portal wrapper)',
   );
   assert(
     sidebar.includes('offene Tickets') &&
@@ -8359,8 +8370,12 @@ function testAdminMailIntegrationsWorkspaceIsolation(): void {
     layout.includes('buildAdminHubNavBereiche') &&
       layout.includes('w-[260px]') &&
       layout.includes('aria-expanded') &&
-      layout.includes('ChevronDown'),
-    'Admin-Hub uses unified 260px accordion sidebar under Bereiche',
+      layout.includes('ChevronDown') &&
+      layout.includes('railCollapsed') &&
+      layout.includes('isKundenWorkspace') &&
+      layout.includes('PanelLeftOpen') &&
+      layout.includes("w-14"),
+    'Admin-Hub uses unified 260px accordion sidebar under Bereiche (auto-collapses on Kunden)',
   );
   assert(
     layout.includes("/admin/mail?section=email-channels") ||
@@ -8500,8 +8515,15 @@ function testAdminHubAccordionSidebarIsolation(): void {
 
   assert(
     findAdminHubSubRoute('/admin/schema')?.parentTab === 'kunden' &&
-      findAdminHubSubRoute('/admin/contact-schema')?.parentTab === 'kunden',
-    'schema + contact-schema deep links resolve parent Bereich Kunden',
+      findAdminHubSubRoute('/admin/contact-schema')?.parentTab === 'kunden' &&
+      findAdminHubSubRoute('/admin/organizations')?.parentTab === 'kunden',
+    'schema + contact-schema + organizations deep links resolve parent Bereich Kunden',
+  );
+  const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
+  assert(
+    appSrc.includes('path="organizations"') &&
+      appSrc.includes('Navigate to="/admin/customers"'),
+    '/admin/organizations aliases to /admin/customers',
   );
   assert(
     isAdminHubNavChildActive(

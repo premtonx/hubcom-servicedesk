@@ -1,7 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Link, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronDown, Home, Lock } from 'lucide-react';
+import {
+  Building2,
+  ChevronDown,
+  ChevronRight,
+  Database,
+  Home,
+  Lock,
+  Mail,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Shield,
+  Sparkles,
+  Users,
+  type LucideIcon,
+} from 'lucide-react';
 import { useTranslation } from '../../../lib/context/I18nContext';
 import { cn } from '../../../lib/utils';
 import { usePermissions } from '../../../hooks/usePermissions';
@@ -24,6 +38,17 @@ import {
   type AdminHubSubsystemState,
   type AdminHubTelemetry,
 } from './adminHubTelemetry';
+
+const BEREICH_ICONS: Record<AdminHubTabId, LucideIcon> = {
+  uebersicht: Home,
+  kunden: Building2,
+  staff: Users,
+  'ai-engine': Sparkles,
+  rag: Database,
+  governance: Shield,
+  integrations: Mail,
+  system: Lock,
+};
 
 function controlPlaneBadge(state: AdminHubSubsystemState): {
   label: string;
@@ -88,6 +113,7 @@ export default function AdminHubLayout() {
   const subRoute = findAdminHubSubRoute(location.pathname);
   const isHubIndex = /^\/admin\/?$/.test(location.pathname);
   const search = location.search || '';
+  const isKundenWorkspace = activeSection === 'kunden';
 
   const navTree = useMemo(() => {
     const all = buildAdminHubNavBereiche();
@@ -102,11 +128,18 @@ export default function AdminHubLayout() {
   }, [canManageHubcomCore, hasPermission]);
 
   const [expandedId, setExpandedId] = useState<AdminHubTabId | null>(activeSection);
+  /** Slim icon rail while Kunden workspace is active (user can reopen anytime). */
+  const [railCollapsed, setRailCollapsed] = useState(isKundenWorkspace);
 
   // Deep links / route changes auto-expand the parent Bereich.
   useEffect(() => {
     setExpandedId(activeSection);
   }, [activeSection]);
+
+  // Auto-collapse BEREICHE when Kunden is active; restore when leaving.
+  useEffect(() => {
+    setRailCollapsed(isKundenWorkspace);
+  }, [isKundenWorkspace]);
 
   const refreshTelemetry = () => {
     void axios
@@ -201,18 +234,84 @@ export default function AdminHubLayout() {
 
       <div className="flex-1 min-h-0 w-full flex overflow-hidden">
         <aside
-          className="shrink-0 w-[260px] border-r border-slate-200/80 bg-white/80 backdrop-blur-sm flex flex-col min-h-0 overflow-y-auto"
+          className={cn(
+            'shrink-0 border-r border-slate-200/80 bg-white/80 backdrop-blur-sm flex flex-col min-h-0 overflow-y-auto transition-[width] duration-200 ease-out',
+            railCollapsed ? 'w-14' : 'w-[260px]',
+          )}
           aria-label={t('nav.admin', 'Admin Hub')}
+          data-rail-collapsed={railCollapsed ? 'true' : 'false'}
         >
-          <div className="px-3 pt-4 pb-2">
-            <p className="px-2 text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
-              {t('admin.hubNav', 'Bereiche')}
-            </p>
+          <div
+            className={cn(
+              'pt-3 pb-2 flex items-center gap-1',
+              railCollapsed ? 'px-1.5 flex-col' : 'px-3 justify-between',
+            )}
+          >
+            {!railCollapsed ? (
+              <p className="px-2 text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
+                {t('admin.hubNav', 'Bereiche')}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setRailCollapsed((v) => !v)}
+              className={cn(
+                'inline-flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors',
+                railCollapsed ? 'w-10 h-10' : 'w-8 h-8',
+              )}
+              aria-expanded={!railCollapsed}
+              aria-label={
+                railCollapsed
+                  ? t('admin.hubNavExpand', 'Bereiche einblenden')
+                  : t('admin.hubNavCollapse', 'Bereiche einklappen')
+              }
+              title={
+                railCollapsed
+                  ? t('admin.hubNavExpand', 'Bereiche einblenden')
+                  : t('admin.hubNavCollapse', 'Bereiche einklappen')
+              }
+            >
+              {railCollapsed ? (
+                <PanelLeftOpen className="w-4 h-4" />
+              ) : (
+                <PanelLeftClose className="w-4 h-4" />
+              )}
+            </button>
           </div>
-          <nav className="flex flex-col gap-0.5 p-2 pb-6" aria-label={t('admin.hubNav', 'Bereiche')}>
+          <nav
+            className={cn(
+              'flex flex-col gap-0.5 pb-6',
+              railCollapsed ? 'p-1.5' : 'p-2',
+            )}
+            aria-label={t('admin.hubNav', 'Bereiche')}
+          >
             {navTree.map((bereich) => {
               const isActiveBereich = activeSection === bereich.id;
-              const isExpanded = expandedId === bereich.id;
+              const isExpanded = expandedId === bereich.id && !railCollapsed;
+              const BereichIcon = BEREICH_ICONS[bereich.id] || Lock;
+
+              if (railCollapsed) {
+                return (
+                  <button
+                    key={bereich.id}
+                    type="button"
+                    onClick={() => {
+                      setRailCollapsed(false);
+                      goToBereich(bereich);
+                    }}
+                    aria-current={isActiveBereich ? 'page' : undefined}
+                    title={t(bereich.labelKey, bereich.label)}
+                    className={cn(
+                      'w-10 h-10 mx-auto inline-flex items-center justify-center rounded-xl transition-colors',
+                      isActiveBereich
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50',
+                    )}
+                  >
+                    <BereichIcon className="w-4 h-4" />
+                  </button>
+                );
+              }
 
               if (bereich.kind === 'leaf') {
                 return (
@@ -228,6 +327,7 @@ export default function AdminHubLayout() {
                         : 'bg-transparent text-slate-500 font-semibold hover:text-slate-900 hover:bg-slate-50',
                     )}
                   >
+                    <BereichIcon className="w-3.5 h-3.5 shrink-0 opacity-70" />
                     <span className="truncate">{t(bereich.labelKey, bereich.label)}</span>
                   </button>
                 );
@@ -246,6 +346,7 @@ export default function AdminHubLayout() {
                         : 'bg-transparent text-slate-500 font-semibold hover:text-slate-900 hover:bg-slate-50',
                     )}
                   >
+                    <BereichIcon className="w-3.5 h-3.5 shrink-0 opacity-70" />
                     <span className="truncate flex-1 min-w-0">
                       {t(bereich.labelKey, bereich.label)}
                     </span>
@@ -293,6 +394,9 @@ export default function AdminHubLayout() {
                                   )}
                                 />
                                 <span className="truncate">{child.label}</span>
+                                {childActive ? (
+                                  <ChevronRight className="w-3 h-3 ml-auto opacity-60" />
+                                ) : null}
                               </button>
                             </li>
                           );
@@ -338,7 +442,8 @@ export default function AdminHubLayout() {
           <div
             className={
               location.pathname.startsWith('/admin/mail') ||
-              location.pathname.startsWith('/admin/customers')
+              location.pathname.startsWith('/admin/customers') ||
+              location.pathname.startsWith('/admin/organizations')
                 ? 'flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col'
                 : 'flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden flex flex-col'
             }

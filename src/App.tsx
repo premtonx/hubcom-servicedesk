@@ -790,6 +790,7 @@ function AppRoutes() {
                         }
                       />
                       <Route path="customers" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Customers" />}><LazyPage><CustomersPage /></LazyPage></ErrorBoundary>} />
+                      <Route path="organizations" element={<Navigate to="/admin/customers" replace />} />
                       <Route path="settings" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Systemeinstellungen" />}><LazyPage><SettingsPage /></LazyPage></ErrorBoundary>} />
                       <Route path="branding" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Firmenbranding" />}><LazyPage><BrandingAdminPage /></LazyPage></ErrorBoundary>} />
                       <Route path="rag/pipeline" element={<ErrorBoundary fallback={<ModuleCrashFallback module="RAG Pipeline" />}><LazyPage><AdminHubRagPipelinePage /></LazyPage></ErrorBoundary>} />
