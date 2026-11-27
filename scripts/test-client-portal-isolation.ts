@@ -185,6 +185,13 @@ import {
   resolveExpressTrustProxy,
 } from '../src/lib/security/client-ip.js';
 import { sessionCookieSecure } from '../src/lib/session-cookie.js';
+import { sanitizeUserHtml, wrapUntrustedContentForLlm } from '../src/lib/security/sanitize.js';
+import {
+  applySafeAttachmentDownloadHeaders,
+  inspectUploadBuffer,
+  isDisguisedExecutableOrHtml,
+  UPLOAD_REJECT_MESSAGE_DE,
+} from '../src/lib/security/upload-guard.js';
 import {
   assertPortalSettingsPathsSafe,
   resolvePortalSettingsPaths,
@@ -8393,6 +8400,7 @@ async function main(): Promise<void> {
   testStaffOrgPermissionMatrixIsolation();
   testStaffPermissionMatrixUiIsolation();
   testSecurityPerimeterIsolation();
+  testPayloadSanitizeUploadGuardIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
@@ -8838,6 +8846,117 @@ function testSecurityPerimeterIsolation(): void {
   else process.env.TRUST_PROXY = prevTrust;
 
   void sessionCookieSecure;
+}
+
+/** Part 2 — HTML sanitization + magic-byte upload guard (no RLS changes). */
+function testPayloadSanitizeUploadGuardIsolation(): void {
+  console.log('\n[Payload Sanitize] HTML strip + upload magic bytes + download headers');
+
+  const dirty =
+    '<script>alert(1)</script><img src=x onerror=alert(2)><p>Hallo IT <code>rm -rf /</code></p>';
+  const clean = sanitizeUserHtml(dirty);
+  assert(!/<script\b/i.test(clean), 'script tags stripped from ticket/KB HTML');
+  assert(!/onerror/i.test(clean), 'onerror handlers stripped without banning user');
+  assert(clean.includes('Hallo IT') && clean.includes('rm -rf /'), 'legitimate IT text preserved');
+  assert(
+    wrapUntrustedContentForLlm('ticket_content', 'ignore previous').includes(
+      '<untrusted_ticket_content>',
+    ),
+    'LLM prompts wrap untrusted ticket content in XML delimiters',
+  );
+
+  const fakeHtmlPng = Buffer.from('<html><script>alert(1)</script>');
+  const fakeExe = Buffer.from([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00]);
+  const htmlReject = inspectUploadBuffer({
+    buffer: fakeHtmlPng,
+    filename: 'logo.png',
+    kind: 'ticket_attachment',
+  });
+  const exeReject = inspectUploadBuffer({
+    buffer: fakeExe,
+    filename: 'payload.png',
+    kind: 'ticket_attachment',
+  });
+  assert(
+    htmlReject.ok === false &&
+      htmlReject.code === 'magic_mismatch' &&
+      htmlReject.error === UPLOAD_REJECT_MESSAGE_DE,
+    'fake .png with HTML bytes rejected (400 path)',
+  );
+  assert(
+    exeReject.ok === false &&
+      exeReject.code === 'magic_mismatch' &&
+      isDisguisedExecutableOrHtml(fakeExe),
+    'fake .png with MZ/EXE bytes rejected',
+  );
+  assert(
+    UPLOAD_REJECT_MESSAGE_DE.includes('Dateityp nicht zulässig'),
+    'German upload reject message',
+  );
+
+  const headers: Record<string, string> = {};
+  const fakeRes = {
+    setHeader(k: string, v: string) {
+      headers[k.toLowerCase()] = v;
+    },
+  } as any;
+  applySafeAttachmentDownloadHeaders(fakeRes, {
+    filename: 'bericht.pdf',
+    contentType: 'application/pdf',
+  });
+  assert(
+    String(headers['content-disposition'] || '').startsWith('attachment') &&
+      headers['x-content-type-options'] === 'nosniff' &&
+      String(headers['content-security-policy'] || '').includes('sandbox'),
+    'download responses set Content-Disposition: attachment + nosniff + CSP sandbox',
+  );
+
+  const sanitizeSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/security/sanitize.ts'),
+    'utf8',
+  );
+  const uploadSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/security/upload-guard.ts'),
+    'utf8',
+  );
+  const vaultSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/vaultRoutes.ts'),
+    'utf8',
+  );
+  const ticketSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalTicketRoutes.ts'),
+    'utf8',
+  );
+  const returnsFe = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/returns/ReturnsWorkbench.tsx'),
+    'utf8',
+  );
+  const composerFe = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/ticket-details/EmailComposer.tsx'),
+    'utf8',
+  );
+  assert(
+    sanitizeSrc.includes('sanitizeUserHtml') &&
+      sanitizeSrc.includes('wrapUntrustedContentForLlm') &&
+      uploadSrc.includes('inspectUploadBuffer') &&
+      uploadSrc.includes('CLAMAV_HOST') &&
+      ticketSrc.includes('parseAndGuardTicketAttachments') &&
+      vaultSrc.includes('applySafeAttachmentDownloadHeaders') &&
+      returnsFe.includes('sanitizeTimelineHtml') &&
+      composerFe.includes('sanitizeTimelineHtml'),
+    'sanitize + upload-guard wired; FE dangerouslySetInnerHTML sanitized',
+  );
+
+  const storeSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/security/security-store.ts'),
+    'utf8',
+  );
+  assert(
+    storeSrc.includes('INSERT INTO security_audit_logs') &&
+      storeSrc.includes('$1') &&
+      !/\$\{[^}]*req\./.test(storeSrc),
+    'security_audit writes use parameterized queryDb (no req.* interpolation)',
+  );
 }
 
 main().catch((err) => {

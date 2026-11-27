@@ -38,12 +38,33 @@ const TIMELINE_ALLOWED_TAGS = [
   'td',
 ];
 
+const FORBID_TAGS = [
+  'script',
+  'iframe',
+  'object',
+  'embed',
+  'svg',
+  'math',
+  'form',
+  'input',
+  'button',
+  'textarea',
+  'select',
+  'link',
+  'meta',
+  'base',
+  'style',
+];
+
 /** Sanitize rich HTML before rendering with dangerouslySetInnerHTML. */
 export function sanitizeRichHtml(html: string): string {
   if (!html) return '';
   return DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true },
     ADD_ATTR: ['target', 'rel', 'class'],
+    FORBID_TAGS,
+    FORBID_ATTR: ['srcdoc', 'formaction'],
+    ALLOW_DATA_ATTR: false,
   });
 }
 
@@ -122,6 +143,7 @@ export function sanitizeTimelineHtml(raw: string): string {
     return DOMPurify.sanitize(content, {
       ALLOWED_TAGS: TIMELINE_ALLOWED_TAGS,
       ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'alt', 'title'],
+      FORBID_TAGS,
       ALLOW_DATA_ATTR: false,
     });
   }

@@ -2,6 +2,11 @@
  * Validation helpers for per-organization portal branding (logo + title + favicon).
  */
 
+import {
+  inspectBase64Upload,
+  UPLOAD_REJECT_MESSAGE_DE,
+} from '../security/upload-guard-core.js';
+
 export const ORG_LOGO_MAX_BYTES = 512 * 1024;
 export const ORG_LOGO_ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
@@ -69,6 +74,22 @@ export function parseAndValidateLogoDataUrl(raw: unknown): {
     return { ok: false, error: 'Logo must be 512 KB or smaller.' };
   }
 
+  const ext =
+    mime === 'image/png'
+      ? '.png'
+      : mime === 'image/webp'
+        ? '.webp'
+        : '.jpg';
+  const magic = inspectBase64Upload({
+    base64OrDataUrl: value,
+    filename: `logo${ext}`,
+    kind: 'branding',
+    maxBytes: ORG_LOGO_MAX_BYTES,
+  });
+  if (magic.ok === false) {
+    return { ok: false, error: UPLOAD_REJECT_MESSAGE_DE };
+  }
+
   return { ok: true, dataUrl: `data:${mime};base64,${b64}`, mime, bytes };
 }
 
@@ -105,6 +126,24 @@ export function parseAndValidateFaviconDataUrl(raw: unknown): {
   const bytes = Math.floor((b64.length * 3) / 4);
   if (bytes > ORG_FAVICON_MAX_BYTES) {
     return { ok: false, error: 'Favicon must be 256 KB or smaller.' };
+  }
+
+  const ext =
+    mime.includes('icon')
+      ? '.ico'
+      : mime === 'image/png'
+        ? '.png'
+        : mime === 'image/webp'
+          ? '.webp'
+          : '.jpg';
+  const magic = inspectBase64Upload({
+    base64OrDataUrl: value,
+    filename: `favicon${ext}`,
+    kind: 'branding',
+    maxBytes: ORG_FAVICON_MAX_BYTES,
+  });
+  if (magic.ok === false) {
+    return { ok: false, error: UPLOAD_REJECT_MESSAGE_DE };
   }
 
   return { ok: true, dataUrl: `data:${mime};base64,${b64}`, mime, bytes };

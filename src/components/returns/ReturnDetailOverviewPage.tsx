@@ -35,6 +35,7 @@ import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
 import { cn } from '../../lib/utils';
+import { sanitizeTimelineHtml } from '../../lib/sanitize-html';
 import {
   formatDateDeOnly,
   toIsoDateOnly,
@@ -1041,7 +1042,11 @@ export function ReturnDetailOverviewPage({
                 <p className="text-sm font-semibold">{sendModal.subject}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 max-h-48 overflow-auto text-xs">
-                <div dangerouslySetInnerHTML={{ __html: sendModal.htmlPreview }} />
+                <div
+                  dangerouslySetInnerHTML={{
+                    __html: sanitizeTimelineHtml(sendModal.htmlPreview || ''),
+                  }}
+                />
               </div>
             </div>
             <div className="px-5 py-4 border-t flex justify-end gap-2">

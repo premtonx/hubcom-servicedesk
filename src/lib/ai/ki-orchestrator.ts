@@ -269,12 +269,18 @@ export async function buildGroundedRagContext(params: {
     if (hit.sourceType === 'RESOLVED_TICKET') linkedTicketMap.set(hit.sourceId, hit.title);
   }
 
-  const promptBlock = snippets
-    .map(
-      (hit, idx) =>
-        `[${idx + 1}] (${hit.sourceType === 'RESOLVED_TICKET' ? 'Ticket' : 'KB'} · ${hit.title} · id=${hit.sourceId})\n${hit.chunkContent}`,
-    )
-    .join('\n\n---\n\n');
+  const { wrapUntrustedContentForLlm, LLM_UNTRUSTED_DATA_INSTRUCTION } = await import(
+    '../security/sanitize.js'
+  );
+  const promptBlock =
+    `${LLM_UNTRUSTED_DATA_INSTRUCTION}\n\n` +
+    snippets
+      .map(
+        (hit, idx) =>
+          `[${idx + 1}] (${hit.sourceType === 'RESOLVED_TICKET' ? 'Ticket' : 'KB'} · ${hit.title} · id=${hit.sourceId})\n` +
+          wrapUntrustedContentForLlm('kb_chunk', hit.chunkContent),
+      )
+      .join('\n\n---\n\n');
 
   return {
     snippets,

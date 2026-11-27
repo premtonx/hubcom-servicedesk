@@ -753,8 +753,13 @@ router.get("/dropzones/download", authenticate, async (req: any, res: Response):
       metadata.filename || metadata.requestName || `dropzone-${item.id}.bin`,
     );
 
-    res.setHeader("Content-Type", mimeType || "application/octet-stream");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    const { applySafeAttachmentDownloadHeaders } = await import(
+      "../lib/security/upload-guard.js"
+    );
+    applySafeAttachmentDownloadHeaders(res, {
+      filename,
+      contentType: mimeType || "application/octet-stream",
+    });
     res.setHeader("Content-Length", String(buffer.length));
     return res.status(200).send(buffer);
   } catch (e: any) {
