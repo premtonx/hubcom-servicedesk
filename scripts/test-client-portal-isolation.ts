@@ -5776,15 +5776,22 @@ function testZeiterfassungStandaloneAndOwnershipIsolation(): void {
       rlsSrc.includes("user_id = NULLIF(current_setting('app.current_user_id', true), '')"),
     'regular staff scoped to own entries; HUBCOM_ADMIN/SUPER_ADMIN see all',
   );
+  const headerClockSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/layout/HeaderZeiterfassungPopover.tsx'),
+    'utf8',
+  );
   assert(
     formSrc.includes('ZeiterfassungForm') &&
       formSrc.includes('Sonder-Stundensatz') &&
       workspaceSrc.includes('Meine Zeiterfassung') &&
       workspaceSrc.includes('Zeiterfassung Gesamt') &&
-      layoutSrc.includes("path: '/time-tracking'") &&
+      layoutSrc.includes('HeaderZeiterfassungPopover') &&
+      headerClockSrc.includes("to=\"/time-tracking\"") &&
+      headerClockSrc.includes('timeEntryService.create') &&
+      !layoutSrc.includes("key: 'timeTracking'") &&
       customersSrc.includes('CompanyTimeTrackingTab') &&
       customersSrc.includes("value: 'time-tracking'"),
-    'shared form + nav workspace + Kunden Zeiterfassung tab wired',
+    'shared form + header clock popover + Kunden Zeiterfassung tab wired (no main-nav tab)',
   );
   assert(
     adminSrc.includes('SharePoint Excel Auto-Sync') &&
