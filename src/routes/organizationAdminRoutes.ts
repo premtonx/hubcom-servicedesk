@@ -5,8 +5,16 @@
 
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { authenticate, requireRole } from '../middleware/authMiddleware.js';
+import {
+  authenticate,
+  requireCanManageOrganization,
+  requireRole,
+} from '../middleware/authMiddleware.js';
 import { forbidClientPortalRoles } from '../middleware/clientPortalMiddleware.js';
+import {
+  getAccessibleOrganizationIds,
+  organizationIsAccessible,
+} from '../lib/staff-org-access.js';
 import {
   createOrganization,
   getOrganization,
@@ -146,11 +154,16 @@ const brandingSchema = z.object({
  * GET /api/admin/organizations
  * Hubcom staff (SYSTEM_ADMIN / AGENT / …) — read-only for Kunden sidebar.
  */
-router.get('/', requireHubcomStaff, async (_req: Request, res: Response): Promise<any> => {
+router.get('/', requireHubcomStaff, async (req: Request, res: Response): Promise<any> => {
   try {
     const organizations = await listOrganizations({ includeInactive: true });
+    const accessible = await getAccessibleOrganizationIds(req.user as any);
+    const scoped =
+      accessible === 'ALL'
+        ? organizations
+        : organizations.filter((o) => organizationIsAccessible(accessible, o.id));
     const counts = await fetchOrganizationPortalListCounts();
-    const withCounts = mergeOrganizationsWithPortalCounts(organizations, counts);
+    const withCounts = mergeOrganizationsWithPortalCounts(scoped, counts);
     return res.json({
       organizations: withCounts.map((o) => ({
         ...o,
@@ -422,7 +435,7 @@ const orgAiSettingsSchema = z.object({
  */
 router.get(
   '/:id/ai-settings',
-  requireRole(['SYSTEM_ADMIN']),
+  requireCanManageOrganization('id'),
   async (req: Request, res: Response): Promise<any> => {
     try {
       const id = routeParam(req.params.id);
@@ -457,7 +470,7 @@ router.get(
  */
 router.put(
   '/:id/ai-settings',
-  requireRole(['SYSTEM_ADMIN']),
+  requireCanManageOrganization('id'),
   async (req: Request, res: Response): Promise<any> => {
     const id = routeParam(req.params.id);
     const parsed = orgAiSettingsSchema.safeParse(req.body || {});
@@ -491,7 +504,7 @@ router.put(
  */
 router.post(
   '/:id/ai-settings/test',
-  requireRole(['SYSTEM_ADMIN']),
+  requireCanManageOrganization('id'),
   async (req: Request, res: Response): Promise<any> => {
     try {
       const id = routeParam(req.params.id);
@@ -529,7 +542,7 @@ router.post(
  */
 router.post(
   '/:id/ai-settings/models',
-  requireRole(['SYSTEM_ADMIN']),
+  requireCanManageOrganization('id'),
   async (req: Request, res: Response): Promise<any> => {
     try {
       const id = routeParam(req.params.id);
@@ -569,7 +582,7 @@ router.post(
  */
 router.post(
   '/:id/ai-settings/reindex',
-  requireRole(['SYSTEM_ADMIN']),
+  requireCanManageOrganization('id'),
   async (req: Request, res: Response): Promise<any> => {
     try {
       const id = routeParam(req.params.id);
@@ -1246,6 +1259,98 @@ router.delete(
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ error: safeErrorMessage(err, 'Löschen fehlgeschlagen') });
+    }
+  },
+);
+
+/**
+ * GET /api/admin/organizations/:id/staff-access
+ * List Hubcom colleagues assigned to this client organization.
+ */
+router.get(
+  '/:id/staff-access',
+  requireCanManageOrganization('id'),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const organizationId = routeParam(req.params.id);
+      const org = await getOrganization(organizationId);
+      if (!org) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+      const { listOrganizationStaffAccess } = await import('../lib/staff-org-access.js');
+      const access = await listOrganizationStaffAccess(organizationId);
+      const users = await Promise.all(
+        access.map(async (row) => {
+          const u = await getDocDirect('users', row.user_id);
+          return {
+            user_id: row.user_id,
+            access_role: row.access_role,
+            created_at: row.created_at,
+            created_by: row.created_by,
+            name: u?.name || '',
+            email: u?.email || '',
+            role: u?.role || null,
+          };
+        }),
+      );
+      return res.json({ organizationId, staff_access: users });
+    } catch (err: any) {
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'Staff-Zugriff konnte nicht geladen werden') });
+    }
+  },
+);
+
+/**
+ * PUT /api/admin/organizations/:id/staff-access
+ * Replace staff assignments for this organization.
+ * Body: { assignments: [{ user_id, access_role: 'ORG_ADMIN'|'ORG_AGENT' }] }
+ */
+router.put(
+  '/:id/staff-access',
+  requireCanManageOrganization('id'),
+  async (req: Request, res: Response): Promise<any> => {
+    const organizationId = routeParam(req.params.id);
+    const schema = z.object({
+      assignments: z
+        .array(
+          z.object({
+            user_id: z.string().min(1),
+            access_role: z.enum(['ORG_ADMIN', 'ORG_AGENT']),
+          }),
+        )
+        .default([]),
+    });
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Ungültige Staff-Zugriff-Daten',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    try {
+      const org = await getOrganization(organizationId);
+      if (!org) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
+
+      for (const a of parsed.data.assignments) {
+        const u = await getDocDirect('users', a.user_id);
+        if (!u || isClientPortalRole(String(u.role || ''))) {
+          return res.status(400).json({
+            error: `Benutzer ${a.user_id} ist kein Hubcom-Mitarbeiter.`,
+          });
+        }
+      }
+
+      const { replaceOrganizationStaffAccess } = await import('../lib/staff-org-access.js');
+      const access = await replaceOrganizationStaffAccess({
+        organizationId,
+        assignments: parsed.data.assignments,
+        createdBy: String(req.user?.id || ''),
+      });
+      return res.json({ success: true, organizationId, staff_access: access });
+    } catch (err: any) {
+      return res
+        .status(500)
+        .json({ error: safeErrorMessage(err, 'Staff-Zugriff konnte nicht gespeichert werden') });
     }
   },
 );

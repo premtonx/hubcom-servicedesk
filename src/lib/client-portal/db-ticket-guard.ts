@@ -2,7 +2,7 @@
  * Helpers used by POST /api/db to enforce client-portal ticket isolation.
  */
 
-import { isClientOrgWideTicketRole, isClientPortalRole } from './roles.js';
+import { isClientOrgWideTicketRole, isClientPortalRole, isHubcomStaffRole } from './roles.js';
 import {
   clientCanMutateTicket,
   clientCanViewTicket,
@@ -13,6 +13,7 @@ import {
   stripClientSpoofFields,
   ticketOrganizationId,
 } from './ticket-visibility.js';
+import { filterTicketsForStaff, staffCanViewTicket } from '../staff-org-access.js';
 
 export function parseTicketMessagesCollection(
   collection: string,
@@ -196,6 +197,30 @@ export async function postFilterClientDbResult(params: {
   docs?: any[];
   ticketIdForMessages?: string;
 }): Promise<{ doc?: any; docs?: any[]; denied?: boolean }> {
+  // Hubcom staff matrix: filter tickets by accessible organizations / ownership.
+  if (
+    !isClientPortalRole(params.user.role) &&
+    (isHubcomStaffRole(params.user.role) ||
+      params.user.role === 'SYSTEM_ADMIN' ||
+      params.user.is_admin)
+  ) {
+    if (params.collection === 'tickets') {
+      if (params.action === 'get_docs' && Array.isArray(params.docs)) {
+        const filtered = await filterTicketsForStaff(params.user, params.docs);
+        return { docs: filtered };
+      }
+      if (params.doc) {
+        const canView = await staffCanViewTicket(params.user, {
+          ...params.doc,
+          id: params.doc.id,
+        });
+        if (!canView) return { denied: true };
+        return { doc: params.doc };
+      }
+    }
+    return { doc: params.doc, docs: params.docs };
+  }
+
   if (!isClientPortalRole(params.user.role)) {
     return { doc: params.doc, docs: params.docs };
   }

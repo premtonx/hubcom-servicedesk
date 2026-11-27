@@ -7,7 +7,14 @@ import { getDocDirect, setDocDirect } from '../postgres-backend.js';
 export const ENTRA_SETTINGS_COLLECTION = 'entra_settings';
 export const ENTRA_SETTINGS_DOC_ID = 'default';
 
-export type EntraDefaultRole = 'SYSTEM_ADMIN' | 'agent' | 'customer';
+export type EntraDefaultRole =
+  | 'SUPER_ADMIN'
+  | 'SYSTEM_ADMIN'
+  | 'HUBCOM_ADMIN'
+  | 'HUBCOM_AGENT'
+  | 'HUBCOM_USER'
+  | 'agent'
+  | 'customer';
 
 export interface EntraSettings {
   id: string;
@@ -22,6 +29,11 @@ export interface EntraSettings {
   defaultRole: EntraDefaultRole;
   allowedDomains: string[];
   jitProvisioning: boolean;
+  /**
+   * Admin-Freigabe für Hubcom-interne M365-Logins (neue Kollegen → pending_approval).
+   * Default true.
+   */
+  staffSsoApprovalRequired: boolean;
   updatedAt: string;
   createdAt: string;
 }
@@ -34,6 +46,7 @@ export interface EntraSettingsPublic {
   defaultRole: EntraDefaultRole;
   allowedDomains: string[];
   jitProvisioning: boolean;
+  staffSsoApprovalRequired: boolean;
   hasClientSecret: boolean;
   configured: boolean;
   updatedAt?: string;
@@ -45,9 +58,10 @@ const DEFAULTS: Omit<EntraSettings, 'id'> = {
   clientId: '',
   clientSecret: null,
   redirectUri: '',
-  defaultRole: 'agent',
+  defaultRole: 'HUBCOM_USER',
   allowedDomains: [],
   jitProvisioning: false,
+  staffSsoApprovalRequired: true,
   updatedAt: new Date(0).toISOString(),
   createdAt: new Date(0).toISOString(),
 };
@@ -82,9 +96,10 @@ export function redactEntraSettings(doc: EntraSettings): EntraSettingsPublic {
     tenantId,
     clientId,
     redirectUri: (doc.redirectUri || '').trim(),
-    defaultRole: doc.defaultRole || 'agent',
+    defaultRole: doc.defaultRole || 'HUBCOM_USER',
     allowedDomains: Array.isArray(doc.allowedDomains) ? doc.allowedDomains : [],
     jitProvisioning: doc.jitProvisioning === true,
+    staffSsoApprovalRequired: doc.staffSsoApprovalRequired !== false,
     hasClientSecret: Boolean(secret),
     configured: Boolean(doc.enabled && tenantId && clientId && secret),
     updatedAt: doc.updatedAt,
@@ -115,11 +130,12 @@ export async function getEntraSettings(): Promise<EntraSettings> {
         ? String(doc.clientSecret)
         : env.clientSecret || null,
     redirectUri: String(doc.redirectUri || env.redirectUri || ''),
-    defaultRole: (doc.defaultRole as EntraDefaultRole) || 'agent',
+    defaultRole: (doc.defaultRole as EntraDefaultRole) || 'HUBCOM_USER',
     allowedDomains: Array.isArray(doc.allowedDomains)
       ? doc.allowedDomains.map((d: string) => String(d).toLowerCase().trim()).filter(Boolean)
       : [],
     jitProvisioning: doc.jitProvisioning === true,
+    staffSsoApprovalRequired: doc.staffSsoApprovalRequired !== false,
     updatedAt: String(doc.updatedAt || new Date().toISOString()),
     createdAt: String(doc.createdAt || new Date().toISOString()),
   };
@@ -151,9 +167,11 @@ export async function saveEntraSettings(
     clientId: (input.clientId ?? existing.clientId ?? '').trim(),
     clientSecret,
     redirectUri: (input.redirectUri ?? existing.redirectUri ?? '').trim(),
-    defaultRole: input.defaultRole || existing.defaultRole || 'agent',
+    defaultRole: input.defaultRole || existing.defaultRole || 'HUBCOM_USER',
     allowedDomains: domains,
     jitProvisioning: input.jitProvisioning ?? existing.jitProvisioning,
+    staffSsoApprovalRequired:
+      input.staffSsoApprovalRequired ?? existing.staffSsoApprovalRequired !== false,
     createdAt: existing.createdAt || now,
     updatedAt: now,
   };

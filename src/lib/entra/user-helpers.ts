@@ -4,7 +4,11 @@ export type ManagedAuthMethod = 'password' | 'microsoft365';
 
 /** Staff + portal roles returned by the admin user API. */
 export type ManagedRole =
+  | 'SUPER_ADMIN'
   | 'SYSTEM_ADMIN'
+  | 'HUBCOM_ADMIN'
+  | 'HUBCOM_AGENT'
+  | 'HUBCOM_USER'
   | 'agent'
   | 'customer'
   | 'team_lead'
@@ -22,17 +26,27 @@ export function normalizeAuthMethod(raw: unknown): ManagedAuthMethod {
 
 export function normalizeRole(raw: unknown): ManagedRole {
   const v = String(raw || '').trim();
-  if (v === 'SYSTEM_ADMIN' || v === 'admin' || v === 'Administrator') return 'SYSTEM_ADMIN';
+  if (
+    v === 'SUPER_ADMIN' ||
+    v === 'SYSTEM_ADMIN' ||
+    v === 'admin' ||
+    v === 'Administrator'
+  ) {
+    return 'SUPER_ADMIN';
+  }
+  if (v === 'HUBCOM_ADMIN' || v === 'team_lead' || v === 'TEAM_LEAD') return 'HUBCOM_ADMIN';
+  if (v === 'HUBCOM_AGENT' || v === 'agent' || v === 'AGENT') return 'HUBCOM_AGENT';
+  if (v === 'HUBCOM_USER') return 'HUBCOM_USER';
   if (v === 'CLIENT_ADMIN') return 'CLIENT_ADMIN';
   if (v === 'CLIENT_SUPPORTER') return 'CLIENT_SUPPORTER';
   if (v === 'CLIENT_USER') return 'CLIENT_USER';
   if (v === 'customer' || v === 'Kunde') return 'customer';
-  if (v === 'team_lead') return 'team_lead';
-  return 'agent';
+  return 'HUBCOM_AGENT';
 }
 
 export function isAdminRole(role: unknown): boolean {
-  return normalizeRole(role) === 'SYSTEM_ADMIN';
+  const r = normalizeRole(role);
+  return r === 'SUPER_ADMIN' || r === 'SYSTEM_ADMIN' || r === 'HUBCOM_ADMIN';
 }
 
 export function isClientPortalManagedRole(role: unknown): boolean {

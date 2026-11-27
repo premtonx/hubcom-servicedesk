@@ -159,6 +159,12 @@ import {
   evaluateAdminOrgPortalSettingsAccess,
 } from '../src/lib/client-portal/admin-org-portal-settings-access.js';
 import {
+  canManageHubcomCore,
+  evaluateAccessibleOrganizationIds,
+  evaluateCanManageOrganization,
+  normalizeHubcomMatrixRole,
+} from '../src/lib/staff-org-access.js';
+import {
   assertPortalSettingsPathsSafe,
   resolvePortalSettingsPaths,
 } from '../src/lib/client-portal/portal-settings-api-base.js';
@@ -2684,9 +2690,11 @@ function testAdminOrgPortalSettingsLifecycle(): void {
     adminOrgSrc.includes('forbidClientPortalRoles') &&
       adminOrgSrc.includes('organizationAdminPortalSettingsRoutes') &&
       adminOrgSrc.includes('open_tickets_count') &&
+      adminOrgSrc.includes('getAccessibleOrganizationIds') &&
       portalSettingsSrc.includes('portal-branding') &&
       portalSettingsSrc.includes('portal-email') &&
       portalSettingsSrc.includes('portal-members') &&
+      portalSettingsSrc.includes('requireCanManageOrganization') &&
       adminOrgSrc.includes('ai-settings') &&
       !portalSettingsSrc.includes("'/api/db'"),
     'admin portal-* + ai-settings + CLIENT_* gate + no /api/db',
@@ -2759,6 +2767,7 @@ async function main(): Promise<void> {
   testOrgLocalAiStrictLifecycle();
   testKbOutdatedRagLifecycle();
   testAdminOrgPortalSettingsLifecycle();
+  testStaffOrgPermissionMatrixLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);
@@ -2766,6 +2775,87 @@ async function main(): Promise<void> {
   if (failed > 0) {
     process.exit(1);
   }
+}
+
+/** Part 1 — Hubcom staff role matrix + per-org ORG_ADMIN lifecycle contracts. */
+function testStaffOrgPermissionMatrixLifecycle(): void {
+  console.log('\n[Staff Org Matrix] lifecycle — HUBCOM_ADMIN / HUBCOM_USER + ORG_ADMIN scope');
+
+  const DPG = 'dpg-matrix-life';
+  const CITADELLE = 'citadelle-matrix-life';
+  const OTHER = 'other-matrix-life';
+  const access = [
+    { organization_id: DPG, access_role: 'ORG_ADMIN' },
+    { organization_id: CITADELLE, access_role: 'ORG_ADMIN' },
+  ];
+
+  assert(normalizeHubcomMatrixRole('SYSTEM_ADMIN') === 'SUPER_ADMIN', 'SYSTEM_ADMIN → SUPER_ADMIN');
+  assert(canManageHubcomCore({ role: 'HUBCOM_ADMIN' }) === true, 'HUBCOM_ADMIN manages Hubcom core');
+  assert(canManageHubcomCore({ role: 'HUBCOM_USER' }) === false, 'HUBCOM_USER blocked from Hubcom core');
+
+  assert(
+    evaluateCanManageOrganization({
+      role: 'HUBCOM_ADMIN',
+      organizationId: DPG,
+      accessRows: access,
+    }) &&
+      evaluateCanManageOrganization({
+        role: 'HUBCOM_ADMIN',
+        organizationId: CITADELLE,
+        accessRows: access,
+      }) &&
+      !evaluateCanManageOrganization({
+        role: 'HUBCOM_ADMIN',
+        organizationId: OTHER,
+        accessRows: access,
+      }),
+    'HUBCOM_ADMIN + ORG_ADMIN on DPG/Citadelle; OtherOrg 403',
+  );
+
+  assert(
+    evaluateCanManageOrganization({
+      role: 'HUBCOM_USER',
+      organizationId: DPG,
+      accessRows: access,
+    }) &&
+      !canManageHubcomCore({ role: 'HUBCOM_USER' }) &&
+      !evaluateCanManageOrganization({
+        role: 'HUBCOM_USER',
+        organizationId: OTHER,
+        accessRows: access,
+      }),
+    'HUBCOM_USER manages assigned orgs only; Hubcom core + OtherOrg denied',
+  );
+
+  const ids = evaluateAccessibleOrganizationIds({ role: 'HUBCOM_ADMIN', accessRows: access });
+  assert(
+    Array.isArray(ids) && ids.includes(DPG) && ids.includes(CITADELLE) && !ids.includes(OTHER),
+    'accessible org ids exclude OtherOrg',
+  );
+
+  const staffSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/staffUsersRoutes.ts'),
+    'utf8',
+  );
+  const ddl = fs.readFileSync(path.join(process.cwd(), 'src/lib/postgres-backend.ts'), 'utf8');
+  assert(
+    staffSrc.includes('/staff-users/invite') &&
+      staffSrc.includes('organization_access') &&
+      ddl.includes('user_organization_access'),
+    'staff-users APIs + user_organization_access schema wired',
+  );
+
+  for (const role of ['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER'] as const) {
+    assert(
+      evaluateAdminOrgPortalSettingsAccess({ role }).ok === false,
+      `${role} stays forbidden on admin portal-*`,
+    );
+  }
+  const portalPaths = resolvePortalSettingsPaths('portal');
+  assert(
+    assertPortalSettingsPathsSafe(portalPaths) && portalPaths.membersBase.startsWith('/api/portal/'),
+    'CLIENT_* remain on /api/portal/* with zero /api/db',
+  );
 }
 
 main().catch((err) => {

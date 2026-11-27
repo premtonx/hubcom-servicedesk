@@ -618,6 +618,21 @@ export async function initDb() {
       ON ticket_participants (user_id);
     CREATE INDEX IF NOT EXISTS idx_ticket_participants_ticket
       ON ticket_participants (ticket_id);
+
+    -- Hubcom staff ↔ client organization permission matrix
+    CREATE TABLE IF NOT EXISTS user_organization_access (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id TEXT NOT NULL,
+      organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      access_role TEXT NOT NULL CHECK (access_role IN ('ORG_ADMIN', 'ORG_AGENT')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by TEXT,
+      CONSTRAINT uq_user_organization_access UNIQUE (user_id, organization_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_org_access_user
+      ON user_organization_access (user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_org_access_org
+      ON user_organization_access (organization_id);
   `);
 
   // Unify CRM companies ↔ MSP organizations (idempotent; non-fatal on fresh DB).
@@ -631,6 +646,43 @@ export async function initDb() {
       '[initDb] org↔company sync skipped:',
       syncErr?.message || syncErr,
     );
+  }
+
+  // Migrate legacy Hubcom admins → SUPER_ADMIN (never strip access).
+  try {
+    const migrated = await pgPool.query(`
+      UPDATE geistdesk_documents
+         SET data = data
+               || jsonb_build_object(
+                    'role', 'SUPER_ADMIN',
+                    'is_admin', true,
+                    'updatedAt', to_jsonb(NOW()::text)
+                  ),
+             updated_at = NOW()
+       WHERE collection = 'users'
+         AND COALESCE(data->>'organizationId', data->>'organization_id', '') = ''
+         AND COALESCE(data->>'role', '') NOT IN (
+               'CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER', 'customer', 'CLIENT'
+             )
+         AND (
+               data->>'is_admin' IN ('true', '1')
+            OR lower(COALESCE(data->>'role', '')) IN ('admin', 'system_admin', 'administrator')
+         )
+         AND COALESCE(data->>'role', '') <> 'SUPER_ADMIN'
+    `);
+    if ((migrated.rowCount || 0) > 0) {
+      console.log(`[initDb] migrated ${migrated.rowCount} Hubcom admin(s) → SUPER_ADMIN`);
+    }
+  } catch (migErr: any) {
+    console.warn('[initDb] SUPER_ADMIN migration skipped:', migErr?.message || migErr);
+  }
+
+  // Seed Hubcom matrix role docs (idempotent).
+  try {
+    const { seedHubcomMatrixRoles } = await import('./staff-role-seeds.js');
+    await seedHubcomMatrixRoles();
+  } catch (seedErr: any) {
+    console.warn('[initDb] Hubcom matrix role seed skipped:', seedErr?.message || seedErr);
   }
 
   // Detach Hardware-Rücklieferungen from normal tickets (idempotent data backfill).

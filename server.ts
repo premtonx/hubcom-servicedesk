@@ -504,10 +504,12 @@ async function startServer() {
       return res.status(400).json({ error: "Invalid database operation.", details: parsedBody.error.flatten() });
     }
     let { action, collection, id, data, constraints } = parsedBody.data;
+    const { canManageHubcomCore } = await import("./src/lib/staff-org-access.js");
+    const userIsHubcomCoreAdmin = canManageHubcomCore(req.user);
     const access = assertDbCollectionAccess({
       collection,
       action,
-      userIsAdmin: req.user?.role === "SYSTEM_ADMIN",
+      userIsAdmin: userIsHubcomCoreAdmin,
       userId: req.user?.id,
       docId: id,
       userRole: req.user?.role,
@@ -517,7 +519,7 @@ async function startServer() {
     }
 
     // Compute authorization directly from the verified database role on every single API request
-    const userIsAdmin = req.user?.role === "SYSTEM_ADMIN";
+    const userIsAdmin = userIsHubcomCoreAdmin;
     const userCanCreateTickets = req.user?.dbRecord?.can_create_tickets !== false;
     const userCanViewKnowledgeBase = req.user?.dbRecord?.can_view_knowledgebase !== false;
     const uid = req.user?.id;
@@ -874,6 +876,8 @@ async function startServer() {
   app.use("/api/admin/demo-data", demoDataAdminRoutes);
   const { default: userAdminRoutes } = await import("./src/routes/userAdminRoutes.js");
   app.use("/api/admin", userAdminRoutes);
+  const { default: staffUsersRoutes } = await import("./src/routes/staffUsersRoutes.js");
+  app.use("/api/admin", staffUsersRoutes);
   const { default: microsoftAuthRoutes } = await import("./src/routes/microsoftAuthRoutes.js");
   app.use("/api/auth", microsoftAuthRoutes);
   app.use("/api/admin/organizations", organizationAdminRoutes);

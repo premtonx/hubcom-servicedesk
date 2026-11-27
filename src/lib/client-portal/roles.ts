@@ -13,7 +13,11 @@ export type ClientPortalRole = (typeof CLIENT_ROLES)[number];
 
 /** Hubcom internal staff role codes commonly used for RBAC. */
 export const HUBCOM_STAFF_ROLES = [
+  'SUPER_ADMIN',
   'SYSTEM_ADMIN',
+  'HUBCOM_ADMIN',
+  'HUBCOM_AGENT',
+  'HUBCOM_USER',
   'admin',
   'agent',
   'team_lead',
@@ -28,7 +32,7 @@ export function isClientPortalRole(role: string | null | undefined): role is Cli
 export function isHubcomStaffRole(role: string | null | undefined): boolean {
   const r = String(role || '').trim();
   if (!r || isClientPortalRole(r)) return false;
-  if (r === 'customer' || r === 'CLIENT') return false;
+  if (r === 'customer' || r === 'CLIENT' || r === 'Kunde') return false;
   return true;
 }
 

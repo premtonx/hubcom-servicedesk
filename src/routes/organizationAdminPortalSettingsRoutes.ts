@@ -6,7 +6,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { requireRole } from '../middleware/authMiddleware.js';
+import { requireCanManageOrganization } from '../middleware/authMiddleware.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 import {
@@ -58,8 +58,11 @@ import { getDocDirect, updateDocDirect } from '../lib/postgres-backend.js';
 
 const router = Router();
 
-/** SYSTEM_ADMIN only — Hubcom Staff Admin (ADMIN/admin normalize to SYSTEM_ADMIN). */
-const requireStaffAdmin = requireRole(['SYSTEM_ADMIN']);
+/**
+ * Portal-* mirrors require SUPER_ADMIN or ORG_ADMIN on :id
+ * (HUBCOM_ADMIN / HUBCOM_USER with ORG_ADMIN assignment).
+ */
+const requireStaffAdmin = requireCanManageOrganization('id');
 
 const optionalText = (max: number) =>
   z
