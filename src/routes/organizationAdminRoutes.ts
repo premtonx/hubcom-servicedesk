@@ -1269,13 +1269,21 @@ router.delete(
  */
 router.get(
   '/:id/staff-access',
-  requireCanManageOrganization('id'),
+  requireHubcomStaff,
   async (req: Request, res: Response): Promise<any> => {
     try {
       const organizationId = routeParam(req.params.id);
       const org = await getOrganization(organizationId);
       if (!org) return res.status(404).json({ error: 'Organisation nicht gefunden.' });
-      const { listOrganizationStaffAccess } = await import('../lib/staff-org-access.js');
+      const { canAccessOrganization, listOrganizationStaffAccess } = await import(
+        '../lib/staff-org-access.js'
+      );
+      const allowed = await canAccessOrganization(req.user as any, organizationId);
+      if (!allowed) {
+        return res.status(403).json({
+          error: 'Forbidden: Keine Berechtigung für diese Organisation.',
+        });
+      }
       const access = await listOrganizationStaffAccess(organizationId);
       const users = await Promise.all(
         access.map(async (row) => {

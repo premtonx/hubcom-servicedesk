@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type MouseEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { 
   Building2, 
@@ -63,12 +63,19 @@ import CompanyOverviewTab from './companies/CompanyOverviewTab';
 import CompanyOtherTabs from './companies/CompanyOtherTabs';
 import CompanyPortalTab from './companies/CompanyPortalTab';
 import CompanyReturnsTab from './companies/CompanyReturnsTab';
+import { CompanyStaffAssignmentsCard } from '../companies/CompanyStaffAssignmentsCard';
 import { hydrateCompany } from './companies/utils';
 import axios from 'axios';
 import CSVImporter from '../CSVImporter';
 import { useTranslation } from '../../lib/context/I18nContext';
 import { useAuth } from '../../lib/hooks';
+import { useStaffSession } from '../../hooks/useStaffSession';
 import { isHubcomStaffRole } from '../../lib/client-portal/roles';
+import {
+  sessionCanAccessOrg,
+  sessionCanManageOrgPortal,
+  sessionIsSuperAdmin,
+} from '../../lib/staff-access-ui';
 import {
   blankNewCompanyForm,
   type NewCompanyFormState,
@@ -91,6 +98,7 @@ type StaffOption = { id: string; name: string; email: string; role: string };
 export default function CustomersPage() {
   const { t } = useTranslation();
   const { user: authUser } = useAuth();
+  const { user: staffSessionUser, isSuperAdmin } = useStaffSession();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
@@ -701,8 +709,19 @@ export default function CustomersPage() {
       : t('companies.noContractShort', 'Kein Vertrag'),
   };
 
+  /** Scope CRM companies to accessible organizations (SUPER_ADMIN → all). */
+  const scopedCompanies = useMemo(() => {
+    if (sessionIsSuperAdmin(staffSessionUser) || isSuperAdmin) return companies;
+    return companies.filter((c) => {
+      const orgId =
+        String((c as any).organizationId || (c as any).organization_id || '').trim();
+      if (!orgId) return false;
+      return sessionCanAccessOrg(staffSessionUser, orgId);
+    });
+  }, [companies, staffSessionUser, isSuperAdmin]);
+
   /** Merge org branding logos + counts onto CRM companies for the left list. */
-  const companiesForSidebar = companies.map((c) => {
+  const companiesForSidebar = scopedCompanies.map((c) => {
     const orgId =
       (c as any).organizationId || (c as any).organization_id || null;
     const meta = orgId ? orgListMeta[String(orgId)] : undefined;
@@ -715,6 +734,28 @@ export default function CustomersPage() {
       openReturnsCountOverride: meta.open_returns_count,
     } as Company;
   });
+
+  const canEditPortalSettings = sessionCanManageOrgPortal(
+    staffSessionUser,
+    selectedOrgId ? String(selectedOrgId) : null,
+  );
+
+  // Drop selection / portal tab when out of scope.
+  useEffect(() => {
+    if (
+      selectedCompanyId &&
+      scopedCompanies.length > 0 &&
+      !scopedCompanies.some((c) => c.id === selectedCompanyId)
+    ) {
+      setSelectedCompanyId(scopedCompanies[0]?.id || null);
+    }
+  }, [scopedCompanies, selectedCompanyId]);
+
+  useEffect(() => {
+    if (activeSubTab === 'portal' && !canEditPortalSettings) {
+      setActiveSubTab('overview');
+    }
+  }, [activeSubTab, canEditPortalSettings]);
 
   return (
     <div className="flex h-full bg-background overflow-hidden">
@@ -767,14 +808,22 @@ export default function CustomersPage() {
                   setIsEditDialogOpen(true);
                 }}
                 onViewContractClick={() => setActiveSubTab('overview')}
-                onPortalClick={() => {
-                  setPortalFocusInvite(false);
-                  setActiveSubTab('portal');
-                }}
-                onInviteClientAdminClick={() => {
-                  setPortalFocusInvite(true);
-                  setActiveSubTab('portal');
-                }}
+                onPortalClick={
+                  canEditPortalSettings
+                    ? () => {
+                        setPortalFocusInvite(false);
+                        setActiveSubTab('portal');
+                      }
+                    : undefined
+                }
+                onInviteClientAdminClick={
+                  canEditPortalSettings
+                    ? () => {
+                        setPortalFocusInvite(true);
+                        setActiveSubTab('portal');
+                      }
+                    : undefined
+                }
                 sidebarCollapsed={sidebarCollapsed}
                 onExpandSidebar={toggleSidebarCollapsed}
                 companies={companiesForSidebar}
@@ -796,11 +845,15 @@ export default function CustomersPage() {
                   <TabsList className="bg-transparent border-none p-0 h-auto flex flex-wrap gap-x-4 gap-y-1 select-none w-full max-w-full">
                     {[
                       { value: 'overview', label: t('nav.overview', 'Übersicht') },
-                      {
-                        value: 'portal',
-                        label: t('companies.portalTab', 'Kunden-Portal'),
-                        icon: Globe,
-                      },
+                      ...(canEditPortalSettings
+                        ? [
+                            {
+                              value: 'portal',
+                              label: t('companies.portalTab', 'Kunden-Portal'),
+                              icon: Globe,
+                            },
+                          ]
+                        : []),
                       {
                         value: 'tickets',
                         label: t('nav.tickets', 'Tickets'),
@@ -851,25 +904,34 @@ export default function CustomersPage() {
 
               {/* Tab views body */}
               {activeSubTab === 'overview' ? (
-                <CompanyOverviewTab 
-                  company={hydratedCompany}
-                  ticketHistory={ticketHistory}
-                  vaultItems={companyVaultItems}
-                  onTabChange={(tab) => {
-                    if (tab === 'vault' || tab === 'assets') {
-                      setActiveSubTab('assets-vault');
-                      return;
+                <div className="space-y-4">
+                  <CompanyStaffAssignmentsCard
+                    organizationId={
+                      hydratedCompany.organizationId ||
+                      (hydratedCompany as any).organization_id ||
+                      null
                     }
-                    if (tab === 'contracts' || tab === 'contacts' || tab === 'insights') {
-                      setActiveSubTab('overview');
-                      return;
-                    }
-                    setActiveSubTab(tab);
-                  }}
-                  onOpenVaultClick={() => setActiveSubTab('assets-vault')}
-                  onViewAllTicketsClick={() => setActiveSubTab('tickets')}
-                />
-              ) : activeSubTab === 'portal' ? (
+                  />
+                  <CompanyOverviewTab 
+                    company={hydratedCompany}
+                    ticketHistory={ticketHistory}
+                    vaultItems={companyVaultItems}
+                    onTabChange={(tab) => {
+                      if (tab === 'vault' || tab === 'assets') {
+                        setActiveSubTab('assets-vault');
+                        return;
+                      }
+                      if (tab === 'contracts' || tab === 'contacts' || tab === 'insights') {
+                        setActiveSubTab('overview');
+                        return;
+                      }
+                      setActiveSubTab(tab);
+                    }}
+                    onOpenVaultClick={() => setActiveSubTab('assets-vault')}
+                    onViewAllTicketsClick={() => setActiveSubTab('tickets')}
+                  />
+                </div>
+              ) : activeSubTab === 'portal' && canEditPortalSettings ? (
                 <CompanyPortalTab
                   organizationId={
                     hydratedCompany.organizationId ||

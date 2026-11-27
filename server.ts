@@ -476,6 +476,33 @@ async function startServer() {
       },
     );
     // Prefer the middleware-computed role + organizationId (session-derived).
+    let staffAccess: {
+      canManageHubcomCore: boolean;
+      accessibleOrganizationIds: 'ALL' | string[];
+      organizationAccess: Array<{ organization_id: string; access_role: string }>;
+    } | null = null;
+    try {
+      const {
+        canManageHubcomCore,
+        getAccessibleOrganizationIds,
+        listUserOrganizationAccess,
+      } = await import('./src/lib/staff-org-access.js');
+      const { isClientPortalRole } = await import('./src/lib/client-portal/roles.js');
+      if (!isClientPortalRole(req.user?.role)) {
+        const accessible = await getAccessibleOrganizationIds(req.user);
+        const rows = await listUserOrganizationAccess(String(req.user?.id || ''));
+        staffAccess = {
+          canManageHubcomCore: canManageHubcomCore(req.user),
+          accessibleOrganizationIds: accessible,
+          organizationAccess: rows.map((r) => ({
+            organization_id: r.organization_id,
+            access_role: r.access_role,
+          })),
+        };
+      }
+    } catch (err: any) {
+      console.warn('[session] staffAccess enrichment skipped:', err?.message || err);
+    }
     return res.json({
       user: {
         ...base,
@@ -484,6 +511,7 @@ async function startServer() {
         is_admin: req.user?.is_admin === true,
         organizationId: req.user?.organizationId ?? base?.organizationId ?? null,
         organization_id: req.user?.organizationId ?? base?.organization_id ?? null,
+        staffAccess,
       },
     });
   });

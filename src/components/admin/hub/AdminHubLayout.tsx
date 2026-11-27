@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Link, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Home } from 'lucide-react';
 import { useTranslation } from '../../../lib/context/I18nContext';
 import { cn } from '../../../lib/utils';
 import {
+  ADMIN_HUB_CORE_ONLY_TABS,
   ADMIN_HUB_TABS,
   findAdminHubSubRoute,
   resolveActiveAdminHubSection,
@@ -17,6 +18,7 @@ import {
   type AdminHubSubsystemState,
   type AdminHubTelemetry,
 } from './adminHubTelemetry';
+import { useStaffSession } from '../../../hooks/useStaffSession';
 
 function controlPlaneBadge(state: AdminHubSubsystemState): {
   label: string;
@@ -58,10 +60,19 @@ export default function AdminHubLayout() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [telemetry, setTelemetry] = useState<AdminHubTelemetry>(EMPTY_TELEMETRY);
+  const { canManageHubcomCore } = useStaffSession();
 
   const activeSection = resolveActiveAdminHubSection(location.pathname, searchParams);
   const subRoute = findAdminHubSubRoute(location.pathname);
   const isHubIndex = /^\/admin\/?$/.test(location.pathname);
+
+  const visibleTabs = useMemo(
+    () =>
+      ADMIN_HUB_TABS.filter(
+        (tab) => canManageHubcomCore || !ADMIN_HUB_CORE_ONLY_TABS.includes(tab.id),
+      ),
+    [canManageHubcomCore],
+  );
 
   const refreshTelemetry = () => {
     void axios
@@ -80,6 +91,11 @@ export default function AdminHubLayout() {
     // Kunden is a first-class workspace — open the directory directly.
     if (tabId === 'kunden') {
       navigate('/admin/customers');
+      return;
+    }
+    // Mitarbeiter & Berechtigungen workspace.
+    if (tabId === 'staff') {
+      navigate('/admin/staff');
       return;
     }
     // Mail & Schnittstellen opens the secondary-nav workspace on E-Mail-Kanäle.
@@ -152,7 +168,7 @@ export default function AdminHubLayout() {
             </p>
           </div>
           <nav className="flex flex-col gap-0.5 p-2" aria-label={t('admin.hubNav', 'Bereiche')}>
-            {ADMIN_HUB_TABS.map((tab) => {
+            {visibleTabs.map((tab) => {
               const isActive = activeSection === tab.id;
               return (
                 <button

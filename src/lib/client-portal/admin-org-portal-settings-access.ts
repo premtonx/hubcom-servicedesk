@@ -7,7 +7,7 @@ import { isClientPortalRole, isHubcomStaffRole } from './roles.js';
 import {
   evaluateCanManageOrganization,
   normalizeHubcomMatrixRole,
-} from '../staff-org-access.js';
+} from '../staff-org-access-shared.js';
 
 export type AdminPortalSettingsAccess =
   | { ok: true }
