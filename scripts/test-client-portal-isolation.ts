@@ -172,10 +172,15 @@ import {
   normalizeHubcomMatrixRole,
 } from '../src/lib/staff-org-access.js';
 import {
+  ADMIN_FAILED_LOGIN_COOLDOWN_MS,
   evaluateCsrfOrigin,
+  isAdminIpAllowlisted,
   isHoneypotPath,
+  isHubcomCoreAdminRole,
   LOCKOUT_MESSAGE_DE,
+  parseAdminIpAllowlist,
   progressiveLockoutMs,
+  shouldApplyAdminLoginCooldown,
   shouldTriggerCrossTenantBan,
   shouldTriggerLoginLockout,
 } from '../src/lib/security/security-policy.js';
@@ -8735,13 +8740,14 @@ function testSecurityPerimeterIsolation(): void {
   const honeyIp = '198.51.100.9';
   const honeyBan = engine.honeypot(honeyIp, '/.env');
   assert(
-    honeyBan.reason === 'honeypot_probe' &&
+    !!honeyBan &&
+      honeyBan.reason === 'honeypot_probe' &&
       engine.isBanned('ip', honeyIp) &&
       engine.audits.some((a) => a.event_type === 'honeypot_probe'),
     'hitting /.env immediately triggers IP ban + audit',
   );
   assert(engine.isBanned('ip', honeyIp) === true, 'subsequent requests from honeypot IP stay banned');
-  const lifted = engine.unban(honeyBan.id, 'admin-1');
+  const lifted = engine.unban(honeyBan!.id, 'admin-1');
   assert(
     lifted?.is_active === false && engine.isBanned('ip', honeyIp) === false,
     'admin unban clears honeypot IP ban',
@@ -8763,6 +8769,141 @@ function testSecurityPerimeterIsolation(): void {
     'cross-tenant probe logs critical alert',
   );
   assert(shouldTriggerCrossTenantBan(10) === true, 'cross-tenant threshold is 10');
+
+  // 3b) HUBCOM_ADMIN / ADMIN_IP_ALLOWLIST never auto-ban; portal/external still ban
+  assert(isHubcomCoreAdminRole('HUBCOM_ADMIN') === true, 'HUBCOM_ADMIN is core-admin exempt');
+  assert(isHubcomCoreAdminRole('SUPER_ADMIN') === true, 'SUPER_ADMIN is core-admin exempt');
+  assert(isHubcomCoreAdminRole('PORTAL_USER') === false, 'PORTAL_USER is not core-admin exempt');
+  assert(isHubcomCoreAdminRole('CLIENT_ADMIN') === false, 'CLIENT_ADMIN is not core-admin exempt');
+  assert(
+    parseAdminIpAllowlist('203.0.113.10, 198.51.100.20').length === 2,
+    'ADMIN_IP_ALLOWLIST parses comma-separated IPs',
+  );
+  assert(
+    isAdminIpAllowlisted('203.0.113.10', ['203.0.113.10']) === true,
+    'allowlisted IP matches',
+  );
+  assert(shouldApplyAdminLoginCooldown(5) === true, 'admin cooldown after 5 failed logins');
+  assert(ADMIN_FAILED_LOGIN_COOLDOWN_MS === 2_000, 'admin cooldown is 2 seconds');
+
+  const adminEngine = createMemorySecurityEngine({
+    adminIpAllowlist: ['203.0.113.99'],
+    accountRoles: {
+      'hubcom-admin@example.com': 'HUBCOM_ADMIN',
+      'super@example.com': 'SUPER_ADMIN',
+    },
+    userRoles: {
+      'hubcom-admin-1': 'HUBCOM_ADMIN',
+      'portal-user-x': 'PORTAL_USER',
+    },
+  });
+  for (let i = 0; i < 4; i++) {
+    const mid = adminEngine.recordFailedLogin(
+      '198.51.100.40',
+      'hubcom-admin@example.com',
+      10_000 + i,
+    );
+    assert(mid.lockouts.length === 0, `HUBCOM_ADMIN failed login ${i + 1}/5 does not ban yet`);
+  }
+  const adminFifth = adminEngine.recordFailedLogin(
+    '198.51.100.40',
+    'hubcom-admin@example.com',
+    10_000 + 4,
+  );
+  assert(adminFifth.lockouts.length === 0, 'HUBCOM_ADMIN repeated failures never insert security_bans');
+  assert(adminFifth.exempt === true, 'HUBCOM_ADMIN lockout path is exempt');
+  assert(
+    adminFifth.cooldownMs === ADMIN_FAILED_LOGIN_COOLDOWN_MS,
+    'HUBCOM_ADMIN gets soft cooldown instead of ban',
+  );
+  assert(
+    adminEngine.bans.filter((b) => b.is_active).length === 0,
+    'no active security_bans after HUBCOM_ADMIN failed logins',
+  );
+  assert(
+    adminEngine.audits.some(
+      (a) =>
+        a.event_type === 'login_lockout' &&
+        a.severity === 'warning' &&
+        (a.details_json as any)?.exempt === true,
+    ),
+    'HUBCOM_ADMIN lockout writes warning security_audit_logs without ban',
+  );
+
+  for (let i = 0; i < 5; i++) {
+    adminEngine.recordFailedLogin('203.0.113.99', 'portal-attacker@example.com', 11_000 + i);
+  }
+  assert(
+    adminEngine.bans.filter((b) => b.is_active).length === 0,
+    'ADMIN_IP_ALLOWLIST IP never receives login auto-ban',
+  );
+  assert(
+    adminEngine.audits.some(
+      (a) =>
+        a.event_type === 'login_lockout' &&
+        a.severity === 'warning' &&
+        (a.details_json as any)?.reason === 'admin_ip_allowlist',
+    ),
+    'allowlisted IP login threshold writes warning audit only',
+  );
+
+  const allowHoney = adminEngine.honeypot('203.0.113.99', '/.env', 12_000);
+  assert(allowHoney === null, 'allowlisted IP honeypot does not create ban');
+  assert(
+    adminEngine.isBanned('ip', '203.0.113.99') === false,
+    'allowlisted IP stays unbanned after honeypot probe',
+  );
+  assert(
+    adminEngine.audits.some(
+      (a) =>
+        a.event_type === 'honeypot_probe' &&
+        a.severity === 'warning' &&
+        (a.details_json as any)?.exempt === true,
+    ),
+    'allowlisted IP honeypot still writes warning audit',
+  );
+
+  for (let i = 0; i < 10; i++) {
+    adminEngine.record403('198.51.100.55', 'hubcom-admin-1', 13_000 + i);
+  }
+  assert(
+    adminEngine.bans.filter(
+      (b) =>
+        b.is_active &&
+        (b.target_value === 'hubcom-admin-1' || b.target_value === '198.51.100.55'),
+    ).length === 0,
+    'HUBCOM_ADMIN 403 probes never create account or IP security_bans',
+  );
+  assert(
+    adminEngine.audits.some(
+      (a) =>
+        a.event_type === 'cross_tenant_probe_ban' &&
+        a.severity === 'warning' &&
+        (a.details_json as any)?.exempt === true,
+    ),
+    'HUBCOM_ADMIN 403 threshold writes warning audit without ban',
+  );
+
+  const portalEngine = createMemorySecurityEngine({
+    adminIpAllowlist: ['203.0.113.99'],
+    userRoles: { 'portal-user-x': 'PORTAL_USER' },
+  });
+  for (let i = 0; i < 5; i++) {
+    portalEngine.recordFailedLogin('203.0.113.200', 'portal-user@example.com', 14_000 + i);
+  }
+  assert(
+    portalEngine.bans.some((b) => b.is_active && b.reason === 'login_brute_force'),
+    'non-admin / external IP still auto-bans on failed logins',
+  );
+  for (let i = 0; i < 10; i++) {
+    portalEngine.record403('203.0.113.201', 'portal-user-x', 15_000 + i);
+  }
+  assert(
+    portalEngine.bans.some(
+      (b) => b.is_active && b.reason === 'cross_tenant_probe' && b.target_value === 'portal-user-x',
+    ),
+    'PORTAL_USER cross-tenant 403 still auto-bans',
+  );
 
   // 4) Security headers + CSRF + trust proxy contracts in source
   const serverSrc = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
@@ -8791,6 +8932,22 @@ function testSecurityPerimeterIsolation(): void {
     'utf8',
   );
 
+  const policySrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/security/security-policy.ts'),
+    'utf8',
+  );
+  const storeSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/security/security-store.ts'),
+    'utf8',
+  );
+  assert(
+    policySrc.includes('isAdminIpAllowlisted') &&
+      policySrc.includes('isHubcomCoreAdminRole') &&
+      storeSrc.includes('shouldSkipAutoBan') &&
+      serverSrc.includes('lock.exempt') &&
+      serverSrc.includes('cooldownMs'),
+    'ADMIN_IP_ALLOWLIST + Hubcom core-admin autoban exemption wired end-to-end',
+  );
   assert(
     serverSrc.includes('contentSecurityPolicy') &&
       serverSrc.includes("object-src") &&
@@ -8924,9 +9081,11 @@ function testSecurityPerimeterIsolation(): void {
   assert(
     composeSrc.includes('DATABASE_APP_URL: ${DATABASE_APP_URL:-}') &&
       composeSrc.includes('TRUST_PROXY: ${TRUST_PROXY:-1}') &&
+      composeSrc.includes('ADMIN_IP_ALLOWLIST: ${ADMIN_IP_ALLOWLIST:-}') &&
       envExample.includes('DATABASE_APP_URL=') &&
-      envExample.includes('TRUST_PROXY=1'),
-    'compose + .env.example forward DATABASE_APP_URL and TRUST_PROXY',
+      envExample.includes('TRUST_PROXY=1') &&
+      envExample.includes('ADMIN_IP_ALLOWLIST='),
+    'compose + .env.example forward DATABASE_APP_URL, TRUST_PROXY, ADMIN_IP_ALLOWLIST',
   );
 
   const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');

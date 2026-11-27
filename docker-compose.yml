@@ -63,6 +63,8 @@ services:
       DATABASE_SSL_INSECURE: ${DATABASE_SSL_INSECURE:-false}
       # Trust X-Forwarded-For / CF-Connecting-IP behind Traefik/Nginx (rate limits + bans).
       TRUST_PROXY: ${TRUST_PROXY:-1}
+      # Comma-separated trusted admin/office IPs exempt from automatic IP bans.
+      ADMIN_IP_ALLOWLIST: ${ADMIN_IP_ALLOWLIST:-}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET - run ./install.sh}
       VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY:?Set VAULT_ENCRYPTION_KEY - run ./install.sh}
       EMAIL_CHANNEL_SECRET_KEY: ${EMAIL_CHANNEL_SECRET_KEY:-}

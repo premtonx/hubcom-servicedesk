@@ -159,3 +159,44 @@ export function isSecurityAutobanDisabled(): boolean {
     .toLowerCase();
   return raw === '1' || raw === 'true' || raw === 'yes';
 }
+
+/** Soft delay for Hubcom core admins after repeated failed logins (never a hard ban). */
+export const ADMIN_FAILED_LOGIN_COOLDOWN_MS = 2_000;
+
+/**
+ * Comma-separated trusted admin / office IPs that must never receive automatic
+ * IP bans (honeypot, login lockout, cross-tenant probes).
+ */
+export function parseAdminIpAllowlist(
+  raw: string | null | undefined = process.env.ADMIN_IP_ALLOWLIST,
+): string[] {
+  return String(raw || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function isAdminIpAllowlisted(
+  ip: string | null | undefined,
+  allowlist: string[] = parseAdminIpAllowlist(),
+): boolean {
+  const normalized = String(ip || '').trim().toLowerCase();
+  if (!normalized || allowlist.length === 0) return false;
+  return allowlist.includes(normalized);
+}
+
+/** Roles that must never be auto-banned (account lockouts). */
+export function isHubcomCoreAdminRole(role: string | null | undefined): boolean {
+  const r = String(role || '').trim().toUpperCase();
+  return (
+    r === 'SUPER_ADMIN' ||
+    r === 'SYSTEM_ADMIN' ||
+    r === 'HUBCOM_ADMIN' ||
+    r === 'ADMIN' ||
+    r === 'ADMINISTRATOR'
+  );
+}
+
+export function shouldApplyAdminLoginCooldown(failCountInWindow: number): boolean {
+  return failCountInWindow >= LOGIN_FAIL_THRESHOLD;
+}

@@ -10,7 +10,9 @@ import {
   HONEYPOT_MESSAGE_DE,
   LOCKOUT_MESSAGE_DE,
   evaluateCsrfOrigin,
+  isAdminIpAllowlisted,
   isHoneypotPath,
+  isHubcomCoreAdminRole,
   isSecurityAutobanDisabled,
   normalizeRequestPath,
 } from '../lib/security/security-policy.js';
@@ -18,6 +20,7 @@ import {
   applyCrossTenantBan,
   applyHoneypotBan,
   findActiveBan,
+  lookupActiveUserRoleByEmail,
   recordForbidden403,
   writeSecurityAuditLog,
 } from '../lib/security/security-store.js';
@@ -42,7 +45,7 @@ export async function securityBanAndHoneypotMiddleware(
     const ip = getTrustedClientIp(req);
     (req as any).clientIp = ip;
 
-    if (!isSecurityAutobanDisabled()) {
+    if (!isSecurityAutobanDisabled() && !isAdminIpAllowlisted(ip)) {
       const ipBan = await findActiveBan('ip', ip);
       if (ipBan) {
         res.setHeader('Retry-After', retryAfterSeconds(ipBan.banned_until));
@@ -127,6 +130,7 @@ export function crossTenant403TrackerMiddleware(
 
     const ip = (req as any).clientIp || getTrustedClientIp(req);
     const userId = (req as any).user?.id || null;
+    const role = (req as any).user?.role || null;
 
     void (async () => {
       try {
@@ -138,6 +142,7 @@ export function crossTenant403TrackerMiddleware(
             target: t.target,
             ip,
             user_id: userId,
+            role,
             path,
             method: req.method,
             count: t.ban_type === 'ip' ? strike.ipCount : strike.userCount,
@@ -158,6 +163,11 @@ export async function assertLoginNotBanned(params: {
   email: string;
 }): Promise<{ banned: boolean; message?: string }> {
   if (isSecurityAutobanDisabled()) return { banned: false };
+  if (isAdminIpAllowlisted(params.ip)) return { banned: false };
+
+  const role = await lookupActiveUserRoleByEmail(params.email);
+  if (isHubcomCoreAdminRole(role)) return { banned: false };
+
   const ipBan = await findActiveBan('ip', params.ip);
   if (ipBan) {
     return { banned: true, message: LOCKOUT_MESSAGE_DE };
