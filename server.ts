@@ -442,6 +442,8 @@ async function startServer() {
       if (!userDoc) {
         // Burn a verification cycle to dampen account-enumeration timing signals.
         await verifyPassword(password, matches?.[0]?.passwordHash || "");
+        const candidateRole =
+          (matches || []).find((m: any) => m && !m.isDeactivated)?.role || null;
         await writeSecurityAuditLog({
           event_type: "failed_login",
           severity: "warning",
@@ -452,15 +454,31 @@ async function startServer() {
         });
         const attempt = recordFailedLoginAttempt({ ip: clientIp, email: cleanEmail });
         if (attempt.lockoutTriggered) {
+          let anyBan = false;
+          let cooldownMs = 0;
           for (const t of attempt.lockoutTargets) {
-            await applyProgressiveLoginLockout({
+            const lock = await applyProgressiveLoginLockout({
               ban_type: t.ban_type,
               target: t.target,
               ip: clientIp,
               path: "/api/auth/login",
+              loginEmail: cleanEmail,
+              role: candidateRole,
             });
+            if (lock.exempt) {
+              cooldownMs = Math.max(cooldownMs, lock.cooldownMs || 0);
+            } else if (lock.ban) {
+              anyBan = true;
+            }
           }
-          return res.status(429).json({ error: LOCKOUT_MESSAGE_DE, ban: true });
+          if (anyBan) {
+            return res.status(429).json({ error: LOCKOUT_MESSAGE_DE, ban: true });
+          }
+          // Hubcom core admins / allowlisted IPs: soft cooldown, never hard lockout.
+          if (cooldownMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, cooldownMs));
+          }
+          return res.status(401).json({ error: "Invalid credentials." });
         }
         return res.status(401).json({ error: "Invalid credentials." });
       }

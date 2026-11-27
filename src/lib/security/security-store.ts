@@ -5,12 +5,16 @@
 
 import { queryDb } from '../postgres-backend.js';
 import {
+  ADMIN_FAILED_LOGIN_COOLDOWN_MS,
   CROSS_TENANT_403_WINDOW_MS,
   HONEYPOT_BAN_MS,
   LOGIN_FAIL_WINDOW_MS,
   PROGRESSIVE_LOCKOUT_MS,
   appendEventInWindow,
   countEventsInWindow,
+  isAdminIpAllowlisted,
+  isHubcomCoreAdminRole,
+  parseAdminIpAllowlist,
   progressiveLockoutMs,
   type SecurityBanType,
   type SecuritySeverity,
@@ -128,6 +132,111 @@ export async function findActiveBan(
   } catch {
     return null;
   }
+}
+
+/** Active (non-deactivated) user role by email — used to exempt Hubcom core admins. */
+export async function lookupActiveUserRoleByEmail(email: string): Promise<string | null> {
+  const clean = String(email || '').trim().toLowerCase();
+  if (!clean) return null;
+  try {
+    const res = await queryDb(
+      `SELECT data->>'role' AS role
+         FROM geistdesk_documents
+        WHERE collection = 'users'
+          AND lower(COALESCE(data->>'email', '')) = $1
+          AND lower(COALESCE(data->>'isDeactivated', 'false')) NOT IN ('true', '1', 'yes')
+        ORDER BY updated_at DESC NULLS LAST
+        LIMIT 1`,
+      [clean],
+    );
+    const role = res.rows?.[0]?.role;
+    return role ? String(role) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Active user role by document id — used for cross-tenant account ban exemption. */
+export async function lookupActiveUserRoleById(userId: string): Promise<string | null> {
+  const id = String(userId || '').trim();
+  if (!id) return null;
+  try {
+    const res = await queryDb(
+      `SELECT data->>'role' AS role
+         FROM geistdesk_documents
+        WHERE collection = 'users'
+          AND id = $1
+          AND lower(COALESCE(data->>'isDeactivated', 'false')) NOT IN ('true', '1', 'yes')
+        LIMIT 1`,
+      [id],
+    );
+    const role = res.rows?.[0]?.role;
+    return role ? String(role) : null;
+  } catch {
+    return null;
+  }
+}
+
+export type AutoBanSkipReason = 'admin_ip_allowlist' | 'hubcom_core_admin';
+
+/**
+ * Decide whether an automatic ban must be skipped for Hubcom core admins
+ * or IPs listed in ADMIN_IP_ALLOWLIST. Manual bans still use createSecurityBan.
+ */
+export async function shouldSkipAutoBan(params: {
+  ban_type: SecurityBanType;
+  target: string;
+  ip?: string | null;
+  /** Failed-login email context (exempts IP bans when the target account is a core admin). */
+  loginEmail?: string | null;
+  role?: string | null;
+  userId?: string | null;
+}): Promise<{ skip: boolean; reason: AutoBanSkipReason | null; role: string | null }> {
+  if (isAdminIpAllowlisted(params.ip) || isAdminIpAllowlisted(params.target)) {
+    return { skip: true, reason: 'admin_ip_allowlist', role: params.role || null };
+  }
+
+  let role = params.role ? String(params.role) : null;
+
+  if (params.ban_type === 'account') {
+    if (!role) {
+      const target = String(params.target || '').trim();
+      role = target.includes('@')
+        ? await lookupActiveUserRoleByEmail(target)
+        : await lookupActiveUserRoleById(target);
+    }
+    if (isHubcomCoreAdminRole(role)) {
+      return { skip: true, reason: 'hubcom_core_admin', role };
+    }
+  }
+
+  if (params.ban_type === 'ip' && params.loginEmail) {
+    if (!role) {
+      role = await lookupActiveUserRoleByEmail(params.loginEmail);
+    }
+    if (isHubcomCoreAdminRole(role)) {
+      return { skip: true, reason: 'hubcom_core_admin', role };
+    }
+  }
+
+  // Cross-tenant IP bans from a Hubcom core admin session must not lock their IP.
+  if (params.ban_type === 'ip' && params.userId) {
+    if (!role) {
+      role = await lookupActiveUserRoleById(params.userId);
+    }
+    if (isHubcomCoreAdminRole(role)) {
+      return { skip: true, reason: 'hubcom_core_admin', role };
+    }
+  }
+
+  if (params.userId && !role) {
+    role = await lookupActiveUserRoleById(params.userId);
+  }
+  if (params.ban_type === 'account' && isHubcomCoreAdminRole(role)) {
+    return { skip: true, reason: 'hubcom_core_admin', role };
+  }
+
+  return { skip: false, reason: null, role };
 }
 
 export async function countPriorStrikes(
@@ -401,7 +510,48 @@ export async function applyProgressiveLoginLockout(params: {
   target: string;
   ip?: string | null;
   path?: string | null;
-}): Promise<{ ban: SecurityBanRow | null; durationMs: number }> {
+  loginEmail?: string | null;
+  role?: string | null;
+}): Promise<{
+  ban: SecurityBanRow | null;
+  durationMs: number;
+  exempt: boolean;
+  cooldownMs: number;
+  skipReason: AutoBanSkipReason | null;
+}> {
+  const skip = await shouldSkipAutoBan({
+    ban_type: params.ban_type,
+    target: params.target,
+    ip: params.ip || null,
+    loginEmail: params.loginEmail || null,
+    role: params.role || null,
+  });
+  if (skip.skip) {
+    await writeSecurityAuditLog({
+      event_type: 'login_lockout',
+      severity: 'warning',
+      ip_address: params.ip || null,
+      user_id: params.ban_type === 'account' ? params.target : null,
+      path: params.path || '/api/auth/login',
+      method: 'POST',
+      details: {
+        ban_type: params.ban_type,
+        target: params.target,
+        exempt: true,
+        reason: skip.reason,
+        role: skip.role,
+        cooldown_ms: ADMIN_FAILED_LOGIN_COOLDOWN_MS,
+      },
+    });
+    return {
+      ban: null,
+      durationMs: 0,
+      exempt: true,
+      cooldownMs: ADMIN_FAILED_LOGIN_COOLDOWN_MS,
+      skipReason: skip.reason,
+    };
+  }
+
   const prior = await countPriorStrikes(params.ban_type, params.target);
   const durationMs = progressiveLockoutMs(prior);
   const ban = await createSecurityBan({
@@ -426,7 +576,13 @@ export async function applyProgressiveLoginLockout(params: {
       progressive_steps_ms: [...PROGRESSIVE_LOCKOUT_MS],
     },
   });
-  return { ban, durationMs };
+  return {
+    ban,
+    durationMs,
+    exempt: false,
+    cooldownMs: 0,
+    skipReason: null,
+  };
 }
 
 export async function applyHoneypotBan(params: {
@@ -434,6 +590,22 @@ export async function applyHoneypotBan(params: {
   path: string;
   method?: string;
 }): Promise<SecurityBanRow | null> {
+  if (isAdminIpAllowlisted(params.ip)) {
+    await writeSecurityAuditLog({
+      event_type: 'honeypot_probe',
+      severity: 'warning',
+      ip_address: params.ip,
+      path: params.path,
+      method: params.method || 'GET',
+      details: {
+        exempt: true,
+        reason: 'admin_ip_allowlist',
+        duration_ms: HONEYPOT_BAN_MS,
+      },
+    });
+    return null;
+  }
+
   const ban = await createSecurityBan({
     ban_type: 'ip',
     target_value: params.ip,
@@ -456,10 +628,38 @@ export async function applyCrossTenantBan(params: {
   target: string;
   ip?: string | null;
   user_id?: string | null;
+  role?: string | null;
   path?: string | null;
   method?: string | null;
   count?: number;
 }): Promise<SecurityBanRow | null> {
+  const skip = await shouldSkipAutoBan({
+    ban_type: params.ban_type,
+    target: params.target,
+    ip: params.ip || null,
+    role: params.role || null,
+    userId: params.user_id || null,
+  });
+  if (skip.skip) {
+    await writeSecurityAuditLog({
+      event_type: 'cross_tenant_probe_ban',
+      severity: 'warning',
+      ip_address: params.ip || null,
+      user_id: params.user_id || null,
+      path: params.path || null,
+      method: params.method || null,
+      details: {
+        ban_type: params.ban_type,
+        target: params.target,
+        forbidden_count: params.count || 10,
+        exempt: true,
+        reason: skip.reason,
+        role: skip.role,
+      },
+    });
+    return null;
+  }
+
   const ban = await createSecurityBan({
     ban_type: params.ban_type,
     target_value: params.target,
@@ -523,13 +723,46 @@ function mapAudit(row: any): SecurityAuditRow {
   };
 }
 
+export type MemorySecurityEngineOptions = {
+  /** Override ADMIN_IP_ALLOWLIST for deterministic tests. */
+  adminIpAllowlist?: string[];
+  /** email (lower) → role for login lockout exemptions. */
+  accountRoles?: Record<string, string>;
+  /** userId → role for cross-tenant account exemptions. */
+  userRoles?: Record<string, string>;
+};
+
 /** In-memory engine for isolation tests (no Postgres). */
-export function createMemorySecurityEngine() {
+export function createMemorySecurityEngine(options: MemorySecurityEngineOptions = {}) {
   const bans: SecurityBanRow[] = [];
   const audits: SecurityAuditRow[] = [];
   const fails = new Map<string, number[]>();
   const forbiddens = new Map<string, number[]>();
   let seq = 0;
+  const allowlist =
+    options.adminIpAllowlist != null
+      ? options.adminIpAllowlist.map((s) => s.trim().toLowerCase()).filter(Boolean)
+      : parseAdminIpAllowlist();
+  const accountRoles = options.accountRoles || {};
+  const userRoles = options.userRoles || {};
+
+  function roleForEmail(email: string): string | null {
+    return accountRoles[email.toLowerCase()] || null;
+  }
+
+  function roleForUser(userId: string): string | null {
+    return userRoles[userId] || null;
+  }
+
+  function ipAllowlisted(ip: string): boolean {
+    return isAdminIpAllowlisted(ip, allowlist);
+  }
+
+  function loginExempt(ip: string, email: string): AutoBanSkipReason | null {
+    if (ipAllowlisted(ip)) return 'admin_ip_allowlist';
+    if (isHubcomCoreAdminRole(roleForEmail(email))) return 'hubcom_core_admin';
+    return null;
+  }
 
   return {
     bans,
@@ -549,6 +782,37 @@ export function createMemorySecurityEngine() {
         LOGIN_FAIL_WINDOW_MS,
       );
       const lockouts: SecurityBanRow[] = [];
+      const thresholdHit = ipCount >= 5 || emailCount >= 5;
+      const skipReason = thresholdHit ? loginExempt(ip, email) : null;
+
+      if (thresholdHit && skipReason) {
+        audits.push({
+          id: `aud-${++seq}`,
+          event_type: 'login_lockout',
+          severity: 'warning',
+          ip_address: ip,
+          user_id: email.toLowerCase(),
+          organization_id: null,
+          path: '/api/auth/login',
+          method: 'POST',
+          details_json: {
+            exempt: true,
+            reason: skipReason,
+            cooldown_ms: ADMIN_FAILED_LOGIN_COOLDOWN_MS,
+            role: roleForEmail(email),
+          },
+          created_at: new Date(nowMs).toISOString(),
+        });
+        return {
+          ipCount,
+          emailCount,
+          lockouts,
+          exempt: true,
+          cooldownMs: ADMIN_FAILED_LOGIN_COOLDOWN_MS,
+          skipReason,
+        };
+      }
+
       if (ipCount >= 5) {
         const prior = bans.filter((b) => b.ban_type === 'ip' && b.target_value === ip.toLowerCase())
           .length;
@@ -612,9 +876,31 @@ export function createMemorySecurityEngine() {
           created_at: new Date(nowMs).toISOString(),
         });
       }
-      return { ipCount, emailCount, lockouts };
+      return {
+        ipCount,
+        emailCount,
+        lockouts,
+        exempt: false,
+        cooldownMs: 0,
+        skipReason: null as AutoBanSkipReason | null,
+      };
     },
     honeypot(ip: string, path: string, nowMs = Date.now()) {
+      if (ipAllowlisted(ip)) {
+        audits.push({
+          id: `aud-${++seq}`,
+          event_type: 'honeypot_probe',
+          severity: 'warning',
+          ip_address: ip,
+          user_id: null,
+          organization_id: null,
+          path,
+          method: 'GET',
+          details_json: { exempt: true, reason: 'admin_ip_allowlist' },
+          created_at: new Date(nowMs).toISOString(),
+        });
+        return null;
+      }
       const ban: SecurityBanRow = {
         id: `ban-${++seq}`,
         ban_type: 'ip',
@@ -665,54 +951,108 @@ export function createMemorySecurityEngine() {
       );
       const lockouts: SecurityBanRow[] = [];
       if (ipCount >= 10 || userCount >= 10) {
+        const userRole = roleForUser(userId);
+        const accountExempt = ipAllowlisted(ip)
+          ? ('admin_ip_allowlist' as const)
+          : isHubcomCoreAdminRole(userRole)
+            ? ('hubcom_core_admin' as const)
+            : null;
+        const ipExempt = ipAllowlisted(ip)
+          ? ('admin_ip_allowlist' as const)
+          : isHubcomCoreAdminRole(userRole)
+            ? ('hubcom_core_admin' as const)
+            : null;
+
         if (userCount >= 10) {
-          const ban: SecurityBanRow = {
-            id: `ban-${++seq}`,
-            ban_type: 'account',
-            target_value: userId,
-            reason: 'cross_tenant_probe',
-            strike_count: 1,
-            banned_until: new Date(nowMs + 60 * 60 * 1000).toISOString(),
-            is_active: true,
-            created_at: new Date(nowMs).toISOString(),
-            lifted_at: null,
-            lifted_by: null,
-          };
-          bans.push(ban);
-          lockouts.push(ban);
+          if (accountExempt) {
+            audits.push({
+              id: `aud-${++seq}`,
+              event_type: 'cross_tenant_probe_ban',
+              severity: 'warning',
+              ip_address: ip,
+              user_id: userId,
+              organization_id: null,
+              path: null,
+              method: null,
+              details_json: {
+                exempt: true,
+                reason: accountExempt,
+                role: userRole,
+                ban_type: 'account',
+              },
+              created_at: new Date(nowMs).toISOString(),
+            });
+          } else {
+            const ban: SecurityBanRow = {
+              id: `ban-${++seq}`,
+              ban_type: 'account',
+              target_value: userId,
+              reason: 'cross_tenant_probe',
+              strike_count: 1,
+              banned_until: new Date(nowMs + 60 * 60 * 1000).toISOString(),
+              is_active: true,
+              created_at: new Date(nowMs).toISOString(),
+              lifted_at: null,
+              lifted_by: null,
+            };
+            bans.push(ban);
+            lockouts.push(ban);
+          }
         }
         if (ipCount >= 10) {
-          const ban: SecurityBanRow = {
-            id: `ban-${++seq}`,
-            ban_type: 'ip',
-            target_value: ip.toLowerCase(),
-            reason: 'cross_tenant_probe',
-            strike_count: 1,
-            banned_until: new Date(nowMs + 60 * 60 * 1000).toISOString(),
-            is_active: true,
-            created_at: new Date(nowMs).toISOString(),
-            lifted_at: null,
-            lifted_by: null,
-          };
-          bans.push(ban);
-          lockouts.push(ban);
+          if (ipExempt) {
+            audits.push({
+              id: `aud-${++seq}`,
+              event_type: 'cross_tenant_probe_ban',
+              severity: 'warning',
+              ip_address: ip,
+              user_id: userId,
+              organization_id: null,
+              path: null,
+              method: null,
+              details_json: {
+                exempt: true,
+                reason: ipExempt,
+                ban_type: 'ip',
+              },
+              created_at: new Date(nowMs).toISOString(),
+            });
+          } else {
+            const ban: SecurityBanRow = {
+              id: `ban-${++seq}`,
+              ban_type: 'ip',
+              target_value: ip.toLowerCase(),
+              reason: 'cross_tenant_probe',
+              strike_count: 1,
+              banned_until: new Date(nowMs + 60 * 60 * 1000).toISOString(),
+              is_active: true,
+              created_at: new Date(nowMs).toISOString(),
+              lifted_at: null,
+              lifted_by: null,
+            };
+            bans.push(ban);
+            lockouts.push(ban);
+          }
         }
-        audits.push({
-          id: `aud-${++seq}`,
-          event_type: 'cross_tenant_probe_ban',
-          severity: 'critical',
-          ip_address: ip,
-          user_id: userId,
-          organization_id: null,
-          path: null,
-          method: null,
-          details_json: { ipCount, userCount },
-          created_at: new Date(nowMs).toISOString(),
-        });
+        if (lockouts.length > 0) {
+          audits.push({
+            id: `aud-${++seq}`,
+            event_type: 'cross_tenant_probe_ban',
+            severity: 'critical',
+            ip_address: ip,
+            user_id: userId,
+            organization_id: null,
+            path: null,
+            method: null,
+            details_json: { ipCount, userCount },
+            created_at: new Date(nowMs).toISOString(),
+          });
+        }
       }
       return { ipCount, userCount, lockouts };
     },
     isBanned(banType: SecurityBanType, target: string, nowMs = Date.now()) {
+      if (banType === 'ip' && ipAllowlisted(target)) return false;
       const t = target.toLowerCase();
       return bans.some(
         (b) =>
