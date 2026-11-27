@@ -95,7 +95,8 @@ Core (compose-required):
 
 Strongly recommended:
 
-- `DATABASE_APP_URL` (optional `hubcom_app` NOBYPASSRLS runtime URL)
+- `DATABASE_APP_URL` (optional `hubcom_app` NOBYPASSRLS runtime URL; compose forwards `${DATABASE_APP_URL:-}`)
+- `TRUST_PROXY` (compose default `1` behind Traefik/Nginx so rate limits/bans see the real client IP)
 - `AI_SECRETS_KEY`, `MASTER_KEY_SALT`, `EMAIL_CHANNEL_SECRET_KEY`
 - `INBOUND_MAIL_WEBHOOK_SECRET`, `INBOUND_EMAIL_DOMAIN`, `EMAIL_INGESTION_INTERVAL_MS`
 - Graph/OIDC: `MICROSOFT_PROVIDER_CLIENT_ID`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`, `OIDC_*`, `GRAPH_CLIENT_STATE_SECRET`

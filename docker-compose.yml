@@ -58,7 +58,11 @@ services:
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost}
       # Nested defaults keep boots working when GEISTDESK_DATABASE_URL is blank in .env
       DATABASE_URL: ${GEISTDESK_DATABASE_URL:-postgresql://${POSTGRES_USER:-geist_user}:${POSTGRES_PASSWORD:-geist_password}@geistdesk-db:5432/${POSTGRES_DB:-geistdesk_prod}?sslmode=disable}
+      # Optional NOBYPASSRLS runtime role (hubcom_app). Empty keeps owner DATABASE_URL.
+      DATABASE_APP_URL: ${DATABASE_APP_URL:-}
       DATABASE_SSL_INSECURE: ${DATABASE_SSL_INSECURE:-false}
+      # Trust X-Forwarded-For / CF-Connecting-IP behind Traefik/Nginx (rate limits + bans).
+      TRUST_PROXY: ${TRUST_PROXY:-1}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET - run ./install.sh}
       VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY:?Set VAULT_ENCRYPTION_KEY - run ./install.sh}
       EMAIL_CHANNEL_SECRET_KEY: ${EMAIL_CHANNEL_SECRET_KEY:-}

@@ -51,9 +51,15 @@ export function shouldSkipGeneralApiRateLimit(req: Request): boolean {
   const path = String(req.path || '').split('?')[0];
   if (GENERAL_API_RATE_LIMIT_SKIP_PATHS.has(path)) return true;
 
-  // Authenticated reads (dashboard SPA fan-out) — do not burn the shared IP budget.
   const method = String(req.method || 'GET').toUpperCase();
-  if ((method === 'GET' || method === 'HEAD') && hasSessionCookie(req)) {
+  const authed = hasSessionCookie(req);
+
+  // Authenticated dashboard/read fan-out (incl. legacy POST /api/db) must never
+  // false-positive 429; login/credential routes keep their own strict limiters.
+  if (authed && (method === 'GET' || method === 'HEAD')) {
+    return true;
+  }
+  if (authed && path === '/db') {
     return true;
   }
   return false;

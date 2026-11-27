@@ -8897,10 +8897,29 @@ function testSecurityPerimeterIsolation(): void {
     shouldSkipGeneralApiRateLimit({
       path: '/db',
       method: 'POST',
+      headers: { cookie: 'session=verified-admin-token' },
+      cookies: { session: 'verified-admin-token' },
+    } as any) === true,
+    'authenticated /api/db dashboard reads skip general API limiter',
+  );
+  assert(
+    shouldSkipGeneralApiRateLimit({
+      path: '/db',
+      method: 'POST',
       headers: {},
       cookies: {},
     } as any) === false,
     'unauthenticated mutating API still rate-limited',
+  );
+
+  const composeSrc = fs.readFileSync(path.join(process.cwd(), 'docker-compose.yml'), 'utf8');
+  const envExample = fs.readFileSync(path.join(process.cwd(), '.env.example'), 'utf8');
+  assert(
+    composeSrc.includes('DATABASE_APP_URL: ${DATABASE_APP_URL:-}') &&
+      composeSrc.includes('TRUST_PROXY: ${TRUST_PROXY:-1}') &&
+      envExample.includes('DATABASE_APP_URL=') &&
+      envExample.includes('TRUST_PROXY=1'),
+    'compose + .env.example forward DATABASE_APP_URL and TRUST_PROXY',
   );
 
   const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
