@@ -25,6 +25,7 @@ import {
   parseAndValidateLogoDataUrl,
   resolvePortalTitle,
 } from '../lib/client-portal/org-branding.js';
+import { parsePortalThemePatch } from '../lib/client-portal/portal-theme.js';
 import { parseAndValidateDashboardBannerDataUrl } from '../lib/dashboard-banner-validate.js';
 import { getSystemFavicon } from '../lib/system-favicon.js';
 import {
@@ -44,6 +45,7 @@ async function loadOrgBranding(organizationId: string | null | undefined) {
   if (!organizationId) return null;
   const org = await getOrganization(organizationId);
   if (!org) return null;
+  const theme = org.portal_theme;
   return {
     id: org.id,
     name: org.name,
@@ -56,6 +58,12 @@ async function loadOrgBranding(organizationId: string | null | undefined) {
     secure_exchange_enabled: org.secure_exchange_enabled !== false,
     vault_enabled: org.vault_enabled !== false,
     enabledModules: organizationEnabledModules(org),
+    portal_theme: theme,
+    primaryColor: theme.primaryColor,
+    secondaryColor: theme.secondaryColor,
+    sidebarColor: theme.sidebarColor,
+    themeMode: theme.themeMode,
+    allowUserThemeToggle: theme.allowUserThemeToggle,
   };
 }
 
@@ -136,6 +144,11 @@ const portalBrandingSchema = z.object({
   logoDataUrl: z.string().min(1).optional().nullable(),
   portal_title: z.string().max(120).optional().nullable(),
   clearLogo: z.boolean().optional(),
+  primaryColor: z.string().optional(),
+  secondaryColor: z.string().optional(),
+  sidebarColor: z.string().nullable().optional(),
+  themeMode: z.enum(['light', 'dark', 'system']).optional(),
+  allowUserThemeToggle: z.boolean().optional(),
 });
 
 const portalModulesSchema = z.object({
@@ -214,7 +227,16 @@ router.put(
         return res.status(403).json({ error: 'Organization missing.' });
       }
 
-      const patch: { logo_url?: string | null; portal_title?: string | null } = {};
+      const themeParsed = parsePortalThemePatch(parsed.data);
+      if (themeParsed.ok === false) {
+        return res.status(400).json({ error: themeParsed.error });
+      }
+
+      const patch: {
+        logo_url?: string | null;
+        portal_title?: string | null;
+        portal_theme?: typeof themeParsed.patch;
+      } = {};
       if (parsed.data.clearLogo) {
         patch.logo_url = null;
       } else if (parsed.data.logoDataUrl !== undefined && parsed.data.logoDataUrl !== null) {
@@ -227,9 +249,13 @@ router.put(
       if (parsed.data.portal_title !== undefined) {
         patch.portal_title = parsed.data.portal_title;
       }
+      if (Object.keys(themeParsed.patch).length > 0) {
+        patch.portal_theme = themeParsed.patch;
+      }
 
       const organization = await updateOrganizationBranding(organizationId, patch);
       if (!organization) return res.status(404).json({ error: 'Organization not found.' });
+      const theme = organization.portal_theme;
       return res.json({
         organization: {
           id: organization.id,
@@ -237,6 +263,12 @@ router.put(
           logo_url: organization.logo_url,
           portal_title: organization.portal_title,
           resolved_portal_title: resolvePortalTitle(organization.name, organization.portal_title),
+          portal_theme: theme,
+          primaryColor: theme.primaryColor,
+          secondaryColor: theme.secondaryColor,
+          sidebarColor: theme.sidebarColor,
+          themeMode: theme.themeMode,
+          allowUserThemeToggle: theme.allowUserThemeToggle,
         },
       });
     } catch (err: any) {

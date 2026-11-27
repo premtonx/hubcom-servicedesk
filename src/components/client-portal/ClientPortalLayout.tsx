@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Ticket,
@@ -12,6 +12,8 @@ import {
   Shield,
   Lock,
   Package,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import axios from 'axios';
 import { cn } from '../../lib/utils';
@@ -29,6 +31,14 @@ import {
   resolveSecureExchangeModuleFlag,
   resolveVaultModuleFlag,
 } from '../../lib/client-portal/portal-modules-nav';
+import {
+  DEFAULT_PORTAL_THEME,
+  portalThemeCssVars,
+  portalThemeFromOrganization,
+  portalThemeStorageKey,
+  type PortalThemeMode,
+  type PortalThemeSettings,
+} from '../../lib/client-portal/portal-theme';
 
 /** Create lives inside /portal/tickets + dashboard — not as a sidebar nav item. */
 const NAV_CORE = [
@@ -80,11 +90,48 @@ interface OrgBranding {
   hardware_returns_enabled?: boolean;
   secure_exchange_enabled?: boolean;
   vault_enabled?: boolean;
+  portal_theme?: PortalThemeSettings;
+  primaryColor?: string;
+  secondaryColor?: string;
+  sidebarColor?: string | null;
+  themeMode?: PortalThemeMode;
+  allowUserThemeToggle?: boolean;
+  settings?: Record<string, unknown>;
   enabledModules?: {
     hardwareReturns?: boolean;
     secureExchange?: boolean;
     vault?: boolean;
   };
+}
+
+function resolveOrgTheme(org: OrgBranding | null): PortalThemeSettings {
+  if (!org) return DEFAULT_PORTAL_THEME;
+  if (org.portal_theme) return org.portal_theme;
+  if (org.primaryColor || org.themeMode) {
+    return {
+      primaryColor: org.primaryColor || DEFAULT_PORTAL_THEME.primaryColor,
+      secondaryColor: org.secondaryColor || DEFAULT_PORTAL_THEME.secondaryColor,
+      sidebarColor: org.sidebarColor ?? null,
+      themeMode: org.themeMode || DEFAULT_PORTAL_THEME.themeMode,
+      allowUserThemeToggle: org.allowUserThemeToggle !== false,
+    };
+  }
+  return portalThemeFromOrganization({ settings: org.settings || {} });
+}
+
+function usePrefersDark(): boolean {
+  const [prefersDark, setPrefersDark] = useState(() =>
+    typeof window !== 'undefined'
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+      : false,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => setPrefersDark(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return prefersDark;
 }
 
 export default function ClientPortalLayout() {
@@ -96,6 +143,8 @@ export default function ClientPortalLayout() {
   const [hardwareReturnsEnabled, setHardwareReturnsEnabled] = useState<boolean | null>(null);
   const [secureExchangeEnabled, setSecureExchangeEnabled] = useState<boolean | null>(null);
   const [vaultEnabled, setVaultEnabled] = useState<boolean | null>(null);
+  const [userThemeOverride, setUserThemeOverride] = useState<'light' | 'dark' | null>(null);
+  const prefersDark = usePrefersDark();
   // Ticket list + ticket detail need a non-scrolling shell; /portal/tickets/new must scroll.
   const isTicketCreate = location.pathname === '/portal/tickets/new';
   const isTicketDetail =
@@ -138,10 +187,51 @@ export default function ClientPortalLayout() {
         setVaultEnabled(false);
       }
     })();
+
+    const onBrandingChanged = () => {
+      void axios
+        .get('/api/portal/organization', { withCredentials: true })
+        .then((res) => {
+          if (active) setOrg(res.data?.organization || null);
+        })
+        .catch(() => {});
+    };
+    window.addEventListener('hubcom-portal-branding-changed', onBrandingChanged);
     return () => {
       active = false;
+      window.removeEventListener('hubcom-portal-branding-changed', onBrandingChanged);
     };
   }, [session?.organizationId]);
+
+  useEffect(() => {
+    if (!session?.organizationId || typeof window === 'undefined') {
+      setUserThemeOverride(null);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(portalThemeStorageKey(session.organizationId));
+      if (raw === 'light' || raw === 'dark') setUserThemeOverride(raw);
+      else setUserThemeOverride(null);
+    } catch {
+      setUserThemeOverride(null);
+    }
+  }, [session?.organizationId]);
+
+  const theme = useMemo(() => resolveOrgTheme(org), [org]);
+
+  const resolvedDark = useMemo(() => {
+    if (theme.allowUserThemeToggle && userThemeOverride) {
+      return userThemeOverride === 'dark';
+    }
+    if (theme.themeMode === 'dark') return true;
+    if (theme.themeMode === 'system') return prefersDark;
+    return false;
+  }, [theme.allowUserThemeToggle, theme.themeMode, userThemeOverride, prefersDark]);
+
+  const themeVars = useMemo(
+    () => portalThemeCssVars(theme, resolvedDark),
+    [theme, resolvedDark],
+  );
 
   if (loading || !session) {
     return (
@@ -178,24 +268,72 @@ export default function ClientPortalLayout() {
     org?.resolved_portal_title || resolvePortalTitle(orgName, org?.portal_title);
   const initials = organizationInitials(orgName);
 
+  const persistUserTheme = (next: 'light' | 'dark') => {
+    setUserThemeOverride(next);
+    if (!session.organizationId) return;
+    try {
+      localStorage.setItem(portalThemeStorageKey(session.organizationId), next);
+    } catch {
+      /* ignore quota */
+    }
+  };
+
   return (
-    <div className="h-screen w-screen flex overflow-hidden bg-[#f7f8fa] text-slate-900">
-      <aside className="w-64 shrink-0 border-r border-slate-200 bg-white flex flex-col min-h-0">
-        <div className="px-5 pt-6 pb-4 border-b border-slate-100">
+    <div
+      className={cn(
+        'portal-shell h-screen w-screen flex overflow-hidden text-slate-900',
+        resolvedDark && 'dark',
+      )}
+      data-portal-theme={resolvedDark ? 'dark' : 'light'}
+      style={
+        {
+          ...themeVars,
+          background: 'var(--portal-page-bg, #f7f8fa)',
+          color: 'var(--portal-page-fg, #0f172a)',
+        } as CSSProperties
+      }
+    >
+      <aside
+        className="w-64 shrink-0 border-r flex flex-col min-h-0"
+        style={{
+          background: 'var(--portal-sidebar-bg)',
+          color: 'var(--portal-sidebar-fg)',
+          borderColor: 'color-mix(in srgb, var(--portal-sidebar-fg) 12%, transparent)',
+        }}
+      >
+        <div
+          className="px-5 pt-6 pb-4 border-b"
+          style={{
+            borderColor: 'color-mix(in srgb, var(--portal-sidebar-fg) 12%, transparent)',
+          }}
+        >
           <div className="flex items-center gap-2.5 min-w-0">
             {org?.logo_url ? (
               <img
                 src={org.logo_url}
                 alt=""
-                className="w-9 h-9 rounded-xl object-contain border border-slate-100 bg-white shrink-0"
+                className="w-9 h-9 rounded-xl object-contain border shrink-0"
+                style={{
+                  background: resolvedDark ? '#0B1120' : '#FFFFFF',
+                  borderColor: 'color-mix(in srgb, var(--portal-sidebar-fg) 12%, transparent)',
+                }}
               />
             ) : (
-              <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center text-[11px] font-black shrink-0">
+              <div
+                className="w-9 h-9 rounded-xl flex items-center justify-center text-[11px] font-black shrink-0"
+                style={{
+                  background: 'var(--portal-primary)',
+                  color: 'var(--portal-primary-foreground)',
+                }}
+              >
                 {initials}
               </div>
             )}
             <div className="min-w-0">
-              <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
+              <p
+                className="text-[10px] font-extrabold uppercase tracking-widest"
+                style={{ opacity: 0.55 }}
+              >
                 Kunden-Portal
               </p>
               <p className="text-sm font-black truncate">{portalTitle}</p>
@@ -211,10 +349,8 @@ export default function ClientPortalLayout() {
               end={item.end}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors',
-                  isActive
-                    ? 'bg-slate-900 text-white'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+                  'portal-nav-link flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors',
+                  isActive ? 'portal-nav-link-active' : 'opacity-80 hover:opacity-100',
                 )
               }
             >
@@ -224,16 +360,39 @@ export default function ClientPortalLayout() {
           ))}
         </nav>
 
-        <div className="border-t border-slate-100 p-4 space-y-3">
+        <div
+          className="border-t p-4 space-y-3"
+          style={{
+            borderColor: 'color-mix(in srgb, var(--portal-sidebar-fg) 12%, transparent)',
+          }}
+        >
           <div className="flex items-start gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
-              <Building2 className="w-4 h-4 text-slate-500" />
+            <div
+              className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+              style={{
+                background: 'color-mix(in srgb, var(--portal-sidebar-fg) 10%, transparent)',
+              }}
+            >
+              <Building2 className="w-4 h-4" style={{ opacity: 0.7 }} />
             </div>
             <div className="min-w-0">
               <p className="text-sm font-bold truncate">{session.name || session.email}</p>
-              <p className="text-[11px] text-slate-500 truncate">{session.role.replace('CLIENT_', '')}</p>
+              <p className="text-[11px] truncate" style={{ opacity: 0.65 }}>
+                {session.role.replace('CLIENT_', '')}
+              </p>
             </div>
           </div>
+          {theme.allowUserThemeToggle ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full gap-2"
+              onClick={() => persistUserTheme(resolvedDark ? 'light' : 'dark')}
+            >
+              {resolvedDark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+              {resolvedDark ? 'Hell' : 'Dunkel'}
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="outline"
@@ -246,7 +405,7 @@ export default function ClientPortalLayout() {
             <LogOut className="w-3.5 h-3.5" />
             Abmelden
           </Button>
-          <p className="text-[10px] text-center text-slate-400 font-medium tracking-wide">
+          <p className="text-[10px] text-center font-medium tracking-wide" style={{ opacity: 0.45 }}>
             Powered by Hubcom
           </p>
         </div>
@@ -266,6 +425,8 @@ export default function ClientPortalLayout() {
             hardwareReturnsEnabled: hardwareReturnsEnabled === true,
             secureExchangeEnabled: secureExchangeEnabled !== false,
             vaultEnabled: vaultEnabled !== false,
+            portalTheme: theme,
+            portalDark: resolvedDark,
           }}
         />
       </main>

@@ -61,6 +61,13 @@ import {
 } from '../src/lib/client-portal/sso-approval.js';
 import { parseAndValidateDashboardBannerDataUrl } from '../src/lib/dashboard-banner-validate.js';
 import { parseAndValidateFaviconDataUrl } from '../src/lib/client-portal/org-branding.js';
+import {
+  contrastForeground,
+  DEFAULT_PORTAL_THEME,
+  mergePortalThemeIntoSettings,
+  normalizePortalThemeSettings,
+  parsePortalThemePatch,
+} from '../src/lib/client-portal/portal-theme.js';
 import { parseAndValidateSystemFaviconDataUrl } from '../src/lib/system-favicon-validate.js';
 import {
   buildPortalDocumentTitle,
@@ -1480,6 +1487,115 @@ function testPortalBrandingBoundaries(): void {
   assert(
     ticketMatchesPortalStatusFilter('open', 'resolved') === false,
     'open does not match Gelöst tab',
+  );
+}
+
+/**
+ * Portal 3-color branding + theme: CLIENT_ADMIN saves only for own org;
+ * Org A theme merge must not rewrite Org B settings blob.
+ */
+function testPortalThemeBrandingIsolation(): void {
+  console.log('\n[Portal Theme] colors/theme isolation CLIENT_ADMIN Org A vs Org B');
+
+  const defaults = normalizePortalThemeSettings({});
+  assert(defaults.primaryColor === DEFAULT_PORTAL_THEME.primaryColor, 'default primary Hubcom blue');
+  assert(defaults.themeMode === 'light', 'default themeMode light');
+  assert(defaults.allowUserThemeToggle === true, 'default allowUserThemeToggle true');
+  assert(defaults.sidebarColor === null, 'default sidebar adaptive (null)');
+
+  const bad = parsePortalThemePatch({ primaryColor: 'not-a-color' });
+  assert(bad.ok === false, 'invalid primaryColor rejected');
+  const good = parsePortalThemePatch({
+    primaryColor: '#112233',
+    secondaryColor: '#aabbcc',
+    sidebarColor: null,
+    themeMode: 'dark',
+    allowUserThemeToggle: false,
+  });
+  assert(good.ok === true && good.patch.themeMode === 'dark', 'valid theme patch accepted');
+
+  assert(contrastForeground('#000000') === '#FFFFFF', 'dark bg → white fg');
+  assert(contrastForeground('#FFFFFF') === '#0F172A', 'light bg → dark fg');
+
+  const orgASettings = mergePortalThemeIntoSettings(
+    { existing_a: true },
+    { primaryColor: '#FF5500', themeMode: 'dark' },
+  );
+  const orgBSettings = { existing_b: true, portal_theme: DEFAULT_PORTAL_THEME };
+  assert(
+    (orgASettings.portal_theme as any).primaryColor === '#FF5500' &&
+      (orgASettings as any).existing_a === true,
+    'Org A theme merge keeps own settings keys',
+  );
+  assert(
+    (orgBSettings.portal_theme as any).primaryColor === DEFAULT_PORTAL_THEME.primaryColor &&
+      !(orgASettings as any).existing_b,
+    'Org A save does not touch Org B branding settings',
+  );
+
+  const portalRoutesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/clientPortalRoutes.ts'),
+    'utf8',
+  );
+  const adminPortalSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/organizationAdminPortalSettingsRoutes.ts'),
+    'utf8',
+  );
+  const layoutSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/ClientPortalLayout.tsx'),
+    'utf8',
+  );
+  const cardSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/client-portal/OrgPortalBrandingCard.tsx'),
+    'utf8',
+  );
+  const cssSrc = fs.readFileSync(path.join(process.cwd(), 'src/index.css'), 'utf8');
+  const orgsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/client-portal/organizations.ts'),
+    'utf8',
+  );
+
+  assert(
+    portalRoutesSrc.includes("requireClientPortalRole(['CLIENT_ADMIN'])") &&
+      portalRoutesSrc.includes("'/organization/branding'") &&
+      portalRoutesSrc.includes('resolveOrganizationIdFromUser') &&
+      portalRoutesSrc.includes('parsePortalThemePatch') &&
+      portalRoutesSrc.includes('primaryColor') &&
+      portalRoutesSrc.includes('themeMode'),
+    'CLIENT_ADMIN portal branding PUT scopes org via session + theme fields',
+  );
+  assert(
+    adminPortalSrc.includes('portal-branding') &&
+      adminPortalSrc.includes('parsePortalThemePatch') &&
+      adminPortalSrc.includes('requireStaffAdmin') &&
+      adminPortalSrc.includes('primaryColor'),
+    'HUBCOM_ADMIN/SUPER_ADMIN admin portal-branding accepts theme fields',
+  );
+  assert(
+    orgsSrc.includes('mergePortalThemeIntoSettings') &&
+      orgsSrc.includes('portal_theme') &&
+      orgsSrc.includes('updateOrganizationBranding'),
+    'theme persisted under organizations.settings.portal_theme via updateOrganizationBranding',
+  );
+  assert(
+    layoutSrc.includes('portal-shell') &&
+      layoutSrc.includes('portalThemeCssVars') &&
+      layoutSrc.includes('allowUserThemeToggle') &&
+      layoutSrc.includes('portalThemeStorageKey') &&
+      cssSrc.includes('.portal-shell') &&
+      cssSrc.includes('--portal-primary') &&
+      cssSrc.includes('.portal-shell.dark') &&
+      !layoutSrc.includes("document.documentElement.classList"),
+    'portal CSS vars + dark theme scoped to .portal-shell (not html/staff routes)',
+  );
+  assert(
+    cardSrc.includes('Farben & Erscheinungsbild') &&
+      cardSrc.includes('Farben aus Logo übernehmen') &&
+      cardSrc.includes('Auf Standard zurücksetzen') &&
+      cardSrc.includes('Live-Vorschau') &&
+      cardSrc.includes('Nutzer-Umschaltung im Portal erlauben') &&
+      cardSrc.includes('extractDominantLogoColors'),
+    'shared branding card exposes color pickers, logo extract, live preview',
   );
 }
 
@@ -8628,6 +8744,7 @@ async function main(): Promise<void> {
   testPortalSessionBootstrapWithoutRolesDb();
   await testStaffTicketOrgStampAndPortalVisibility();
   testPortalBrandingBoundaries();
+  testPortalThemeBrandingIsolation();
   testPortalKbIsolation();
   testPortalExchangeIsolation();
   testPortalTresorVaultIsolation();

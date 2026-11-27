@@ -45,6 +45,7 @@ import {
   parseAndValidateLogoDataUrl,
   resolvePortalTitle,
 } from '../lib/client-portal/org-branding.js';
+import { parsePortalThemePatch } from '../lib/client-portal/portal-theme.js';
 import { parseAndValidateDashboardBannerDataUrl } from '../lib/dashboard-banner-validate.js';
 import { findOrganizationEmailChannel } from '../lib/email-ingestion/channel-store.js';
 import {
@@ -149,6 +150,11 @@ const brandingSchema = z.object({
   logoDataUrl: z.string().min(1).optional().nullable(),
   portal_title: z.string().max(120).optional().nullable(),
   clearLogo: z.boolean().optional(),
+  primaryColor: z.string().optional(),
+  secondaryColor: z.string().optional(),
+  sidebarColor: z.string().nullable().optional(),
+  themeMode: z.enum(['light', 'dark', 'system']).optional(),
+  allowUserThemeToggle: z.boolean().optional(),
 });
 
 /**
@@ -625,7 +631,16 @@ router.put(
       const existing = await getOrganization(id);
       if (!existing) return res.status(404).json({ error: 'Organization not found.' });
 
-      const patch: { logo_url?: string | null; portal_title?: string | null } = {};
+      const themeParsed = parsePortalThemePatch(parsed.data);
+      if (themeParsed.ok === false) {
+        return res.status(400).json({ error: themeParsed.error });
+      }
+
+      const patch: {
+        logo_url?: string | null;
+        portal_title?: string | null;
+        portal_theme?: typeof themeParsed.patch;
+      } = {};
 
       if (parsed.data.clearLogo) {
         patch.logo_url = null;
@@ -639,6 +654,9 @@ router.put(
 
       if (parsed.data.portal_title !== undefined) {
         patch.portal_title = parsed.data.portal_title;
+      }
+      if (Object.keys(themeParsed.patch).length > 0) {
+        patch.portal_theme = themeParsed.patch;
       }
 
       const organization = await updateOrganizationBranding(id, patch);

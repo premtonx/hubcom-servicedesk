@@ -207,3 +207,112 @@
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* ── Client Portal theme (scoped to .portal-shell only; never affects /dashboard|/tickets|/kb|/admin) ── */
+.portal-shell {
+  --portal-page-bg: #f7f8fa;
+  --portal-page-fg: #0f172a;
+  --portal-surface: #ffffff;
+  --portal-surface-2: #f8fafc;
+  --portal-border: #e2e8f0;
+  --portal-muted: #64748b;
+  --portal-primary: #2563eb;
+  --portal-primary-foreground: #ffffff;
+  --portal-secondary: #0ea5e9;
+  --portal-sidebar-bg: #ffffff;
+  --portal-sidebar-fg: #0f172a;
+}
+
+.portal-shell .portal-nav-link-active {
+  background: var(--portal-primary) !important;
+  color: var(--portal-primary-foreground) !important;
+}
+
+.portal-shell.dark {
+  --portal-page-bg: #0b1120;
+  --portal-page-fg: #e2e8f0;
+  --portal-surface: #111827;
+  --portal-surface-2: #1e293b;
+  --portal-border: #334155;
+  --portal-muted: #94a3b8;
+  color-scheme: dark;
+
+  /* Remap shadcn tokens for portal descendants only (inherited, not :root) */
+  --background: #0b1120;
+  --foreground: #e2e8f0;
+  --card: #111827;
+  --card-foreground: #e2e8f0;
+  --popover: #111827;
+  --popover-foreground: #e2e8f0;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --border: #334155;
+  --input: #334155;
+  --primary: var(--portal-primary);
+  --primary-foreground: var(--portal-primary-foreground);
+  --secondary: #1e293b;
+  --secondary-foreground: #e2e8f0;
+  --accent: #1e293b;
+  --accent-foreground: #e2e8f0;
+  --sidebar: var(--portal-sidebar-bg);
+  --sidebar-foreground: var(--portal-sidebar-fg);
+}
+
+/* Hardcoded portal surfaces → dark slate */
+.portal-shell.dark .bg-white,
+.portal-shell.dark .bg-white\/85,
+.portal-shell.dark .bg-white\/90,
+.portal-shell.dark .bg-white\/40 {
+  background-color: var(--portal-surface) !important;
+}
+.portal-shell.dark .bg-\[\#F8F9FA\],
+.portal-shell.dark .bg-\[\#f7f8fa\],
+.portal-shell.dark .bg-\[\#F8FAFC\] {
+  background-color: var(--portal-page-bg) !important;
+}
+.portal-shell.dark .bg-slate-50,
+.portal-shell.dark .bg-slate-50\/50,
+.portal-shell.dark .bg-slate-50\/80 {
+  background-color: var(--portal-surface-2) !important;
+}
+.portal-shell.dark .bg-slate-100,
+.portal-shell.dark .bg-slate-100\/80 {
+  background-color: #1e293b !important;
+}
+.portal-shell.dark .border-slate-100,
+.portal-shell.dark .border-slate-200,
+.portal-shell.dark .border-slate-200\/80 {
+  border-color: var(--portal-border) !important;
+}
+.portal-shell.dark .text-slate-900,
+.portal-shell.dark .text-slate-800,
+.portal-shell.dark .text-gray-700 {
+  color: #f1f5f9 !important;
+}
+.portal-shell.dark .text-slate-600,
+.portal-shell.dark .text-slate-500,
+.portal-shell.dark .text-slate-400 {
+  color: var(--portal-muted) !important;
+}
+.portal-shell.dark .hover\:bg-slate-50:hover,
+.portal-shell.dark .hover\:bg-slate-100:hover {
+  background-color: #1e293b !important;
+}
+.portal-shell.dark .bg-\[\#1B6CA8\],
+.portal-shell.dark .hover\:bg-\[\#155a8a\]:hover {
+  background-color: var(--portal-primary) !important;
+  color: var(--portal-primary-foreground) !important;
+}
+.portal-shell .bg-\[\#1B6CA8\] {
+  background-color: var(--portal-primary);
+  color: var(--portal-primary-foreground);
+}
+.portal-shell .hover\:bg-\[\#155a8a\]:hover {
+  filter: brightness(0.92);
+}
+/* Chart / recharts labels inside portal dark shell */
+.portal-shell.dark .recharts-cartesian-axis-tick text,
+.portal-shell.dark .recharts-legend-item-text,
+.portal-shell.dark .recharts-text {
+  fill: #cbd5e1 !important;
+}

@@ -14,6 +14,11 @@ import {
   resolveSsoApprovalMode,
   type SsoApprovalMode,
 } from './sso-approval.js';
+import {
+  mergePortalThemeIntoSettings,
+  portalThemeFromOrganization,
+  type PortalThemeSettings,
+} from './portal-theme.js';
 
 export interface OrganizationRecord {
   id: string;
@@ -61,6 +66,8 @@ export interface OrganizationRecord {
   secure_exchange_enabled: boolean;
   /** Per-org Tresor module (default true). */
   vault_enabled: boolean;
+  /** Client Portal theme (from settings.portal_theme). */
+  portal_theme: PortalThemeSettings;
   created_at: string;
   updated_at: string;
 }
@@ -197,6 +204,7 @@ function mapRow(row: any): OrganizationRecord {
       row.vault_enabled == null
         ? true
         : row.vault_enabled === true || row.vault_enabled === 't',
+    portal_theme: portalThemeFromOrganization({ settings: settings || {} }),
     created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
     updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : '',
   };
@@ -645,13 +653,21 @@ export async function updateOrganizationBranding(
     portal_title?: string | null;
     portal_banner_url?: string | null;
     favicon_url?: string | null;
+    portal_theme?: Partial<PortalThemeSettings>;
   },
 ): Promise<OrganizationRecord | null> {
+  const existing = await getOrganization(id);
+  if (!existing) return null;
+  const nextSettings =
+    input.portal_theme !== undefined
+      ? mergePortalThemeIntoSettings(existing.settings, input.portal_theme)
+      : undefined;
   return updateOrganization(id, {
     logo_url: input.logo_url,
     portal_title: input.portal_title,
     portal_banner_url: input.portal_banner_url,
     favicon_url: input.favicon_url,
+    ...(nextSettings ? { settings: nextSettings } : {}),
   });
 }
 
