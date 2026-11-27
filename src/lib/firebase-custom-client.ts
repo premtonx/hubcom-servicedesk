@@ -462,9 +462,13 @@ export function onSnapshot(
 ) {
   let isStopped = false;
   let lastHash = '';
+  // Skip overlapping polls (e.g. slow /api/db after backend restart) to avoid
+  // retry bursts from subscribeToCustomers / ticket listeners.
+  let inFlight = false;
 
   const checkUpdates = async () => {
-    if (isStopped) return;
+    if (isStopped || inFlight) return;
+    inFlight = true;
     try {
       if (target instanceof DocumentReference) {
         const snap = await getDoc(target);
@@ -505,14 +509,18 @@ export function onSnapshot(
         return;
       }
       if (onError) onError(e);
+    } finally {
+      inFlight = false;
     }
   };
 
   // Immediate fetch of current data 
-  checkUpdates();
+  void checkUpdates();
 
   // Poll database every 3 seconds representing real-time synchronization
-  const intervalId = setInterval(checkUpdates, 3000);
+  const intervalId = setInterval(() => {
+    void checkUpdates();
+  }, 3000);
 
   return () => {
     isStopped = true;

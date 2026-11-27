@@ -6,8 +6,21 @@
 {$DOMAIN:localhost} {
 	encode gzip zstd
 
+	# Concurrent POST /api/db polls (onSnapshot / subscribeToCustomers) need
+	# generous read timeouts + HTTP/1.1 keepalive so slow DB/RLS work never
+	# surfaces as 502 Bad Gateway at the edge.
 	handle /api/* {
-		reverse_proxy backend:5000
+		reverse_proxy backend:5000 {
+			transport http {
+				versions 1.1
+				keepalive 30s
+				keepalive_idle_conns 32
+				response_header_timeout 120s
+				read_timeout 120s
+				write_timeout 120s
+				dial_timeout 10s
+			}
+		}
 	}
 
 	handle {

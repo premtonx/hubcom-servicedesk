@@ -319,7 +319,7 @@ export default function RolesPage() {
                           <span className="text-sm font-black text-slate-700">
                             {Object.values(role.permissions || {}).reduce(
                               (acc: number, p: any) =>
-                                acc + Object.values(p).filter((v) => v === true).length,
+                                acc + Object.values(p ?? {}).filter((v) => v === true).length,
                               0,
                             )}
                           </span>

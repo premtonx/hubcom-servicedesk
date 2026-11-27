@@ -47,8 +47,8 @@ import { Navigate } from 'react-router-dom';
 
 type DraftAccess = Record<string, CompanyAccessChoice>;
 
-function assignmentsFromDraft(draft: DraftAccess): StaffOrgAssignment[] {
-  return Object.entries(draft)
+function assignmentsFromDraft(draft: DraftAccess | null | undefined): StaffOrgAssignment[] {
+  return Object.entries(draft ?? {})
     .filter(([, v]) => v === 'ORG_ADMIN' || v === 'ORG_AGENT')
     .map(([organization_id, access_role]) => ({
       organization_id,
@@ -195,8 +195,8 @@ export default function StaffPermissionsPage() {
   };
 
   const setAllNone = (setter: (d: DraftAccess) => void, current: DraftAccess) => {
-    const next: DraftAccess = { ...current };
-    for (const id of Object.keys(next)) next[id] = 'none';
+    const next: DraftAccess = { ...(current ?? {}) };
+    for (const id of Object.keys(next ?? {})) next[id] = 'none';
     setter(next);
   };
 

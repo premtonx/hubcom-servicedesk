@@ -30,8 +30,10 @@ export function resolveLanguagePreset(isoCode: string): { lang: string; flagCode
   );
 }
 
-export function getActiveSupportedLanguages(languages: PolyglotLanguage[]): PolyglotLanguage[] {
-  return languages.filter((entry) => entry.enabled);
+export function getActiveSupportedLanguages(
+  languages: PolyglotLanguage[] | null | undefined,
+): PolyglotLanguage[] {
+  return (Array.isArray(languages) ? languages : []).filter((entry) => entry.enabled);
 }
 
 function isNestedPhraseDictionary(value: unknown): value is Record<string, Record<string, string>> {
@@ -41,15 +43,17 @@ function isNestedPhraseDictionary(value: unknown): value is Record<string, Recor
 
 /** Merge imported JSON (flat locale file or nested phrase map) into the custom dictionary store. */
 export function mergeImportedDictionaryJson(
-  existing: PolyglotBridgeSettings['customDictionary'],
+  existing: PolyglotBridgeSettings['customDictionary'] | null | undefined,
   parsed: unknown,
   localeHint?: string,
 ): PolyglotBridgeSettings['customDictionary'] {
-  const merged: PolyglotBridgeSettings['customDictionary'] = { ...existing };
+  const base =
+    existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {};
+  const merged: PolyglotBridgeSettings['customDictionary'] = { ...base };
 
   if (isNestedPhraseDictionary(parsed)) {
-    for (const [phrase, targets] of Object.entries(parsed)) {
-      merged[phrase] = { ...(merged[phrase] ?? {}), ...targets };
+    for (const [phrase, targets] of Object.entries(parsed ?? {})) {
+      merged[phrase] = { ...(merged[phrase] ?? {}), ...(targets ?? {}) };
     }
     return merged;
   }
@@ -62,7 +66,7 @@ export function mergeImportedDictionaryJson(
   const preset = resolveLanguagePreset(iso);
   const targetLabel = preset.lang;
 
-  for (const [sourceKey, rawValue] of Object.entries(parsed as Record<string, unknown>)) {
+  for (const [sourceKey, rawValue] of Object.entries((parsed ?? {}) as Record<string, unknown>)) {
     if (typeof rawValue !== 'string' || !rawValue.trim()) continue;
     merged[sourceKey] = { ...(merged[sourceKey] ?? {}), [targetLabel]: rawValue.trim() };
   }

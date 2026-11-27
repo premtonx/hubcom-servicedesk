@@ -186,6 +186,14 @@ import {
 } from '../src/lib/security/security-policy.js';
 import { createMemorySecurityEngine } from '../src/lib/security/security-store.js';
 import {
+  normalizeModuleConfig,
+  normalizePolyglotBridgeSettings,
+} from '../src/lib/module-config.js';
+import {
+  getActiveSupportedLanguages,
+  mergeImportedDictionaryJson,
+} from '../src/lib/polyglot-bridge.js';
+import {
   isTrustProxyEnabled,
   resolveExpressTrustProxy,
 } from '../src/lib/security/client-ip.js';
@@ -8420,6 +8428,7 @@ async function main(): Promise<void> {
   testStaffOrgPermissionMatrixIsolation();
   testStaffPermissionMatrixUiIsolation();
   testSecurityPerimeterIsolation();
+  testAdminHubPolyglotNullSafetyIsolation();
   testPayloadSanitizeUploadGuardIsolation();
   testTenantRlsSourceContracts();
   await testTenantRlsLiveSqlIsolation();
@@ -9099,6 +9108,101 @@ function testSecurityPerimeterIsolation(): void {
       onboardingHook.includes('429') &&
       onboardingHook.includes('Keep any previously known status'),
     '429/network onboarding status never forces /onboarding redirect',
+  );
+}
+
+/** Admin-Hub: Polyglot Bridge + /api/db polling must never crash on null maps. */
+function testAdminHubPolyglotNullSafetyIsolation(): void {
+  console.log('\n[Admin Hub] Polyglot null-safety + onSnapshot overlap skip + proxy timeouts');
+
+  const nullPolyglot = normalizePolyglotBridgeSettings({
+    customDictionary: null as unknown as Record<string, Record<string, string>>,
+  });
+  assert(
+    nullPolyglot.customDictionary != null &&
+      typeof nullPolyglot.customDictionary === 'object' &&
+      Object.keys(nullPolyglot.customDictionary).length === 0,
+    'normalizePolyglotBridgeSettings coerces null customDictionary to {}',
+  );
+  assert(
+    Object.entries(nullPolyglot.customDictionary).length === 0,
+    'Object.entries on normalized customDictionary never throws',
+  );
+
+  const nullConfig = normalizeModuleConfig({
+    languages: null as unknown as undefined,
+    polyglot: null as unknown as undefined,
+  });
+  assert(Array.isArray(nullConfig.languages) && nullConfig.languages.length > 0, 'null languages → defaults');
+  assert(
+    Object.keys(nullConfig.polyglot.customDictionary ?? {}).length === 0,
+    'null polyglot → safe empty customDictionary',
+  );
+  assert(
+    getActiveSupportedLanguages(null as unknown as undefined).length === 0,
+    'getActiveSupportedLanguages(null) returns []',
+  );
+  const merged = mergeImportedDictionaryJson(null, { hello: 'Hallo' }, 'de');
+  assert(
+    Object.keys(merged ?? {}).length === 1 && merged.hello?.German === 'Hallo',
+    'mergeImportedDictionaryJson tolerates null existing dictionary',
+  );
+
+  const panel = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/admin/PolyglotBridgeConfigPanel.tsx'),
+    'utf8',
+  );
+  const hook = fs.readFileSync(
+    path.join(process.cwd(), 'src/hooks/useWorkspaceModuleConfig.ts'),
+    'utf8',
+  );
+  const fb = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/firebase-custom-client.ts'),
+    'utf8',
+  );
+  const serverSrc = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
+  const caddy = fs.readFileSync(path.join(process.cwd(), 'deploy/Caddyfile'), 'utf8');
+  const caddyAcme = fs.readFileSync(
+    path.join(process.cwd(), 'deploy/Caddyfile.acmedns'),
+    'utf8',
+  );
+  const nginx = fs.readFileSync(
+    path.join(process.cwd(), 'deploy/nginx-frontend.conf'),
+    'utf8',
+  );
+
+  assert(
+    panel.includes('customDictionary ?? {}') ||
+      panel.includes('Object.keys(customDictionary ?? {})') ||
+      panel.includes('Object.keys(customDictionary'),
+    'PolyglotBridgeConfigPanel uses safe dictionary key enumeration',
+  );
+  assert(
+    hook.includes('normalizeModuleConfig(next)') && hook.includes('normalizeModuleConfig'),
+    'useWorkspaceModuleConfig normalizes before optimistic setConfig',
+  );
+  assert(
+    fb.includes('inFlight') &&
+      fb.includes('if (isStopped || inFlight) return') &&
+      fb.includes('inFlight = false'),
+    'onSnapshot / subscribeToCustomers skip overlapping in-flight polls',
+  );
+  assert(
+    serverSrc.includes('42501') &&
+      serverSrc.includes('returning empty result') &&
+      serverSrc.includes('get_docs'),
+    'POST /api/db get_docs returns [] on RLS deny instead of unhandled 500',
+  );
+  assert(
+    caddy.includes('read_timeout 120s') &&
+      caddy.includes('keepalive') &&
+      caddy.includes('versions 1.1') &&
+      caddyAcme.includes('read_timeout 120s') &&
+      caddyAcme.includes('keepalive') &&
+      nginx.includes('proxy_read_timeout 120s') &&
+      nginx.includes('proxy_send_timeout 120s') &&
+      nginx.includes('proxy_http_version 1.1'),
+    'Caddy + Caddyfile.acmedns + nginx harden /api proxy timeouts against 502',
   );
 }
 
