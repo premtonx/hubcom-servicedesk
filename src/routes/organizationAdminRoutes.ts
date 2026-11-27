@@ -5,6 +5,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
+import { tenantRlsMiddleware } from "../lib/security/tenant-rls.js";
 import {
   authenticate,
   requireCanManageOrganization,
@@ -81,7 +82,7 @@ import organizationAdminPortalSettingsRoutes from './organizationAdminPortalSett
 
 const router = Router();
 
-router.use(authenticate, forbidClientPortalRoles);
+router.use(authenticate, tenantRlsMiddleware, forbidClientPortalRoles);
 
 /** Unified portal-* settings mirrors (branding / email / members) for :orgId. */
 router.use(organizationAdminPortalSettingsRoutes);

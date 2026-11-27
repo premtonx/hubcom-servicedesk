@@ -15,7 +15,10 @@ import {
 import { TENANT_RLS_DDL } from './tenant-rls-ddl.js';
 import { isClientPortalRole } from '../client-portal/roles.js';
 import { resolveOrganizationIdFromUser } from '../client-portal/ticket-visibility.js';
-import { normalizeHubcomMatrixRole } from '../staff-org-access-shared.js';
+import {
+  canManageHubcomCore,
+  normalizeHubcomMatrixRole,
+} from '../staff-org-access-shared.js';
 
 export type TenantContextInput = {
   mode: TenantRlsMode;
@@ -170,9 +173,14 @@ export function systemRlsMiddleware(
     .catch((err) => finish(err));
 }
 
-/** Resolve RLS context from an authenticated Express request. */
-export function resolveTenantContextFromRequest(req: any): TenantContextInput | null {
-  const user = req?.user;
+/**
+ * Resolve RLS context from an authenticated user (sync; uses staffAccess when present).
+ * - SUPER_ADMIN / HUBCOM_ADMIN / unrestricted Hubcom core → super_admin
+ * - Scoped HUBCOM_AGENT / HUBCOM_USER → staff_scoped
+ * - CLIENT_* portal → portal
+ * - Unauthenticated callers should use system mode via systemRlsMiddleware
+ */
+export function resolveTenantContextFromUser(user: any): TenantContextInput | null {
   if (!user) return null;
 
   if (isClientPortalRole(user.role)) {
@@ -182,7 +190,12 @@ export function resolveTenantContextFromRequest(req: any): TenantContextInput | 
   }
 
   const matrix = normalizeHubcomMatrixRole(user.role, user.is_admin === true);
-  if (matrix === 'SUPER_ADMIN') {
+  // Hubcom core admins retain full visibility under FORCE RLS (PII & Compliance, /api/db).
+  if (
+    matrix === 'SUPER_ADMIN' ||
+    matrix === 'HUBCOM_ADMIN' ||
+    canManageHubcomCore(user)
+  ) {
     return { mode: 'super_admin' };
   }
 
@@ -194,35 +207,60 @@ export function resolveTenantContextFromRequest(req: any): TenantContextInput | 
   const allowed = Array.isArray(accessible)
     ? accessible.map(String)
     : Array.isArray(staffAccess?.organizationAccess)
-      ? staffAccess.organizationAccess.map((r: any) => String(r.organization_id || '')).filter(Boolean)
+      ? staffAccess.organizationAccess
+          .map((r: any) => String(r.organization_id || ''))
+          .filter(Boolean)
       : [];
 
-  if (
-    matrix === 'HUBCOM_ADMIN' ||
-    matrix === 'HUBCOM_AGENT' ||
-    matrix === 'HUBCOM_USER'
-  ) {
+  if (matrix === 'HUBCOM_AGENT' || matrix === 'HUBCOM_USER') {
     return { mode: 'staff_scoped', allowedOrgIds: allowed };
   }
 
   return { mode: 'system' };
 }
 
+/** Resolve RLS context from an authenticated Express request. */
+export function resolveTenantContextFromRequest(req: any): TenantContextInput | null {
+  return resolveTenantContextFromUser(req?.user);
+}
+
+/**
+ * Ensure req.user.staffAccess is populated (needed for staff_scoped RLS).
+ * Safe to call after authenticate; no-ops for portal users.
+ */
+export async function enrichRequestStaffAccess(req: any): Promise<void> {
+  const user = req?.user;
+  if (!user || isClientPortalRole(user.role) || user.staffAccess) return;
+  try {
+    const {
+      canManageHubcomCore: canCore,
+      getAccessibleOrganizationIds,
+      listUserOrganizationAccess,
+    } = await import('../staff-org-access.js');
+    const accessible = await getAccessibleOrganizationIds(user);
+    const rows = await listUserOrganizationAccess(String(user.id || ''));
+    user.staffAccess = {
+      canManageHubcomCore: canCore(user),
+      accessibleOrganizationIds: accessible,
+      organizationAccess: rows.map((r) => ({
+        organization_id: r.organization_id,
+        access_role: r.access_role,
+      })),
+    };
+  } catch {
+    /* staff access optional — matrix role still drives SUPER_ADMIN / HUBCOM_ADMIN */
+  }
+}
+
 /**
  * Express middleware: bind the request to a tenant RLS transaction until the
- * response finishes. Mount after authenticate on /api/portal and scoped staff APIs.
+ * response finishes. Mount after authenticate on /api/db, /api/admin, portal, etc.
  */
 export function tenantRlsMiddleware(
   req: any,
   res: Response,
   next: NextFunction,
 ): void {
-  const ctx = resolveTenantContextFromRequest(req);
-  if (!ctx) {
-    next();
-    return;
-  }
-
   let settled = false;
   const finish = (err?: unknown) => {
     if (settled) return;
@@ -232,22 +270,32 @@ export function tenantRlsMiddleware(
     }
   };
 
-  void withTenantContext(ctx, async () => {
-    await new Promise<void>((resolve, reject) => {
-      const done = () => {
-        res.removeListener('finish', done);
-        res.removeListener('close', done);
-        resolve();
-      };
-      res.on('finish', done);
-      res.on('close', done);
-      try {
-        next();
-      } catch (err) {
-        reject(err);
-      }
+  void (async () => {
+    await enrichRequestStaffAccess(req);
+    const ctx = resolveTenantContextFromRequest(req);
+    if (!ctx) {
+      next();
+      return;
+    }
+    await withTenantContext(ctx, async () => {
+      await new Promise<void>((resolve, reject) => {
+        const done = () => {
+          res.removeListener('finish', done);
+          res.removeListener('close', done);
+          resolve();
+        };
+        res.on('finish', done);
+        res.on('close', done);
+        try {
+          next();
+        } catch (err) {
+          reject(err);
+        }
+      });
     });
-  }).then(() => finish()).catch((err) => finish(err));
+  })()
+    .then(() => finish())
+    .catch((err) => finish(err));
 }
 
 /** Pure evaluator for tests (mirrors SQL helpers without Postgres). */

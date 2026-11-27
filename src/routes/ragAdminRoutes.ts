@@ -18,8 +18,10 @@ import { hybridSearchKnowledge } from '../lib/ai/ki-orchestrator.js';
 import { cosineSearchRagChunks } from '../lib/ai/rag-search.js';
 import { enqueuePendingRagIndex, loadRagStatus } from '../lib/ai/rag-status.js';
 import { queryDb } from '../lib/postgres-backend.js';
+import { tenantRlsMiddleware } from '../lib/security/tenant-rls.js';
 
 const router = Router();
+const adminOnly = [authenticate, tenantRlsMiddleware, requireRole(['SYSTEM_ADMIN'])] as const;
 
 const updateConfigSchema = z.object({
   resolutionMode: z.string().optional(),
@@ -33,8 +35,7 @@ const updateConfigSchema = z.object({
 /** GET /api/admin/rag/status — indexed KB articles vs chunks, solved tickets vs vectors. */
 router.get(
   '/status',
-  authenticate,
-  requireRole(['SYSTEM_ADMIN']),
+  ...adminOnly,
   async (req: Request, res: Response) => {
     try {
       const tenantId = resolveTenantFromRequest(req);
@@ -48,8 +49,7 @@ router.get(
 /** GET /api/admin/rag/config — read RAG pipeline configuration. */
 router.get(
   '/config',
-  authenticate,
-  requireRole(['SYSTEM_ADMIN']),
+  ...adminOnly,
   async (req: Request, res: Response) => {
     try {
       const tenantId = resolveTenantFromRequest(req);
@@ -63,8 +63,7 @@ router.get(
 /** PUT /api/admin/rag/config — update resolution mode / PII redaction / chunk overlap. */
 router.put(
   '/config',
-  authenticate,
-  requireRole(['SYSTEM_ADMIN']),
+  ...adminOnly,
   async (req: Request, res: Response) => {
     try {
       const parsed = updateConfigSchema.safeParse(req.body || {});
@@ -113,8 +112,7 @@ const searchTestSchema = z.object({
 /** GET /api/admin/rag/search-test — cosine similarity end-to-end within the tenant. */
 router.get(
   '/search-test',
-  authenticate,
-  requireRole(['SYSTEM_ADMIN']),
+  ...adminOnly,
   async (req: Request, res: Response) => {
     try {
       const parsed = searchTestSchema.safeParse({
@@ -169,8 +167,7 @@ router.get(
 /** POST /api/admin/rag/index-pending — alias of /api/rag/index-pending. */
 router.post(
   '/index-pending',
-  authenticate,
-  requireRole(['SYSTEM_ADMIN']),
+  ...adminOnly,
   async (req: Request, res: Response) => {
     try {
       const type = String(req.body?.type || 'kb');
@@ -189,8 +186,7 @@ router.post(
 /** GET /api/admin/rag/backfill?type=kb|ticket — enqueue re-index for all published/solved sources. */
 router.get(
   '/backfill',
-  authenticate,
-  requireRole(['SYSTEM_ADMIN']),
+  ...adminOnly,
   async (req: Request, res: Response) => {
     try {
       const tenantId = resolveTenantFromRequest(req);

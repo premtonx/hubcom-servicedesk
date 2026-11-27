@@ -8,6 +8,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { authenticate, requireRole } from '../middleware/authMiddleware.js';
+import { tenantRlsMiddleware } from '../lib/security/tenant-rls.js';
 import {
   getDemoDataStatus,
   resetDemoData,
@@ -22,10 +23,11 @@ const seedBodySchema = z.object({
   skipIfPresent: z.boolean().optional(),
 });
 
+const adminOnly = [authenticate, tenantRlsMiddleware, requireRole(['SYSTEM_ADMIN'])] as const;
+
 router.get(
   '/status',
-  authenticate,
-  requireRole(['SYSTEM_ADMIN']),
+  ...adminOnly,
   async (_req: Request, res: Response) => {
     try {
       const status = await getDemoDataStatus();
@@ -39,8 +41,7 @@ router.get(
 
 router.post(
   '/seed',
-  authenticate,
-  requireRole(['SYSTEM_ADMIN']),
+  ...adminOnly,
   async (req: Request, res: Response) => {
     try {
       const parsed = seedBodySchema.safeParse(req.body || {});
@@ -65,8 +66,7 @@ router.post(
 
 router.delete(
   '/reset',
-  authenticate,
-  requireRole(['SYSTEM_ADMIN']),
+  ...adminOnly,
   async (req: Request, res: Response) => {
     try {
       const replaceLegacy =

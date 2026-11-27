@@ -546,7 +546,9 @@ async function startServer() {
     return res.json({ success: true });
   });
 
-  app.get("/api/auth/session", authenticate, async (req: any, res) => {
+  const { tenantRlsMiddleware } = await import("./src/lib/security/tenant-rls.js");
+
+  app.get("/api/auth/session", authenticate, tenantRlsMiddleware, async (req: any, res) => {
     const base = sanitizeUserDoc(
       req.user?.dbRecord || {
         id: req.user.id,
@@ -606,7 +608,7 @@ async function startServer() {
     data: z.record(z.string(), z.unknown()).optional(),
     constraints: z.array(z.unknown()).max(200).optional(),
   });
-  app.post("/api/db", authenticate, async (req: any, res) => {
+  app.post("/api/db", authenticate, tenantRlsMiddleware, async (req: any, res) => {
     const parsedBody = dbActionSchema.safeParse(req.body || {});
     if (!parsedBody.success) {
       return res.status(400).json({ error: "Invalid database operation.", details: parsedBody.error.flatten() });
@@ -995,11 +997,8 @@ async function startServer() {
   app.use("/api/organizations", organizationAdminRoutes);
   app.use("/api/admin", adminRoutes);
   // Tenant RLS: bind /api/portal/* to SET LOCAL org context for the request txn.
-  {
-    const { tenantRlsMiddleware } = await import("./src/lib/security/tenant-rls.js");
-    app.use("/api/portal", authenticate, tenantRlsMiddleware);
-    app.use("/api/returns", authenticate, tenantRlsMiddleware);
-  }
+  app.use("/api/portal", authenticate, tenantRlsMiddleware);
+  app.use("/api/returns", authenticate, tenantRlsMiddleware);
   app.use("/api/portal/team", clientPortalTeamRoutes);
   app.use("/api/portal/email-channel", clientPortalEmailRoutes);
   const { default: clientPortalKbRoutes } = await import("./src/routes/clientPortalKbRoutes.js");
