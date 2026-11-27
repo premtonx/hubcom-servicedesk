@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { routeParam } from "../lib/route-params.js";
 import { safeErrorMessage, safeLog } from "../lib/safe-log.js";
 import { authenticate, requireRole } from "../middleware/authMiddleware.js";
+import { tenantRlsMiddleware } from "../lib/security/tenant-rls.js";
 import { forbidClientPortalRoles } from "../middleware/clientPortalMiddleware.js";
 import { 
   getDocDirect, 
@@ -84,7 +85,7 @@ import { isHubcomStaffRole } from "../lib/client-portal/roles.js";
 const router = Router();
 
 // Client portal roles (CLIENT_*) can never reach Hubcom Admin Hub APIs.
-router.use(authenticate, forbidClientPortalRoles);
+router.use(authenticate, tenantRlsMiddleware, forbidClientPortalRoles);
 
 /**
  * GET /api/admin/hub-stats

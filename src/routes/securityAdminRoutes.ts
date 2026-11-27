@@ -16,6 +16,7 @@ import {
   requireCanManageHubcomCore,
 } from '../middleware/authMiddleware.js';
 import { forbidClientPortalRoles } from '../middleware/clientPortalMiddleware.js';
+import { tenantRlsMiddleware } from '../lib/security/tenant-rls.js';
 import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 import {
@@ -29,7 +30,7 @@ import {
 
 const router = Router();
 
-router.use(authenticate, forbidClientPortalRoles, requireCanManageHubcomCore);
+router.use(authenticate, tenantRlsMiddleware, forbidClientPortalRoles, requireCanManageHubcomCore);
 
 router.get('/overview', async (_req, res) => {
   try {

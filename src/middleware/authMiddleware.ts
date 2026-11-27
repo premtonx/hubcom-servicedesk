@@ -215,164 +215,204 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       });
     }
 
-    // Resolve the user strictly from the database. No record => no access.
-    let userDoc: any = null;
-    if (verifiedUid) {
-      userDoc = await getDocDirect("users", verifiedUid);
-      // Entra OID oft ≠ internes Document-ID — per entraObjectId nachschlagen.
-      if (!userDoc) {
-        const byOid = await getDocsDirect("users", [
-          { type: "where", field: "entraObjectId", op: "==", value: verifiedUid },
+    // FORCE RLS + hubcom_app: user/role lookups must run with app.rls_mode=system.
+    const { withSystemTenantContext } = await import("../lib/security/tenant-rls.js");
+    const resolved = await withSystemTenantContext(async () => {
+      // Resolve the user strictly from the database. No record => no access.
+      let userDoc: any = null;
+      if (verifiedUid) {
+        userDoc = await getDocDirect("users", verifiedUid);
+        // Entra OID oft ≠ internes Document-ID — per entraObjectId nachschlagen.
+        if (!userDoc) {
+          const byOid = await getDocsDirect("users", [
+            { type: "where", field: "entraObjectId", op: "==", value: verifiedUid },
+          ]);
+          if (byOid && byOid.length > 0) userDoc = byOid[0];
+        }
+      }
+      if (!userDoc && verifiedEmail) {
+        const results = await getDocsDirect("users", [
+          { type: "where", field: "email", op: "==", value: verifiedEmail.toLowerCase().trim() },
         ]);
-        if (byOid && byOid.length > 0) userDoc = byOid[0];
+        if (results && results.length > 0) {
+          userDoc = results[0];
+        }
       }
-    }
-    if (!userDoc && verifiedEmail) {
-      const results = await getDocsDirect("users", [
-        { type: "where", field: "email", op: "==", value: verifiedEmail.toLowerCase().trim() }
-      ]);
-      if (results && results.length > 0) {
-        userDoc = results[0];
+
+      if (!userDoc) {
+        return { errorStatus: 401 as const, error: "Unauthorized: No active user profile is provisioned for this identity." };
       }
-    }
 
-    if (!userDoc) {
-      // Deleted / never-provisioned account: reject as Unauthorized so clients
-      // clear the session cookie. Soft-deactivated accounts stay 403 below.
-      return res.status(401).json({
-        error: "Unauthorized: No active user profile is provisioned for this identity."
-      });
-    }
-
-    if (userDoc.isDeactivated) {
-      return res.status(403).json({
-        error: "Forbidden: Your workforce account has been deactivated."
-      });
-    }
-
-    // M365 Admin-Freigabe: pending/rejected portal users never access /api/portal/*.
-    if (isClientPortalRole(userDoc.role)) {
-      const gate = isPortalLoginAllowed(userDoc);
-      if (gate.ok === false) {
-        const reason = gate.reason;
-        return res.status(403).json({
-          error:
-            reason === "pending"
-              ? "Forbidden: Your Microsoft 365 access request is pending admin approval."
-              : reason === "rejected"
-                ? "Forbidden: Your Microsoft 365 access request was rejected."
-                : "Forbidden: Portal access is not active for this account.",
-          sso_status: reason,
-        });
+      if (userDoc.isDeactivated) {
+        return { errorStatus: 403 as const, error: "Forbidden: Your workforce account has been deactivated." };
       }
-    } else if (isHubcomStaffRole(userDoc.role) || userDoc.is_admin === true) {
-      // Hubcom internal M365 Admin-Freigabe: pending staff wait for SUPER_ADMIN / HUBCOM_ADMIN.
-      const staffStatus = normalizeApprovalStatus(
-        userDoc.approval_status ?? userDoc.approvalStatus,
-      );
-      if (staffStatus === 'pending_approval') {
-        return res.status(403).json({
-          error:
-            "Forbidden: Your Hubcom Microsoft 365 access request is pending admin approval.",
-          sso_status: "pending",
-        });
-      }
-      if (staffStatus === 'rejected') {
-        return res.status(403).json({
-          error: "Forbidden: Your Hubcom Microsoft 365 access request was rejected.",
-          sso_status: "rejected",
-        });
-      }
-    }
 
-    // Resolve effective role strictly from the verified DB record.
-    let roleDoc: any = null;
-    if (userDoc.roleId) {
-      try {
-        roleDoc = await getDocDirect("roles", userDoc.roleId);
-      } catch (err) {
-        console.error("[Auth Middleware] Failed looking up associated role doc:", err);
-      }
-    }
-
-    let { computedRole, isAdminClaim } = resolveEffectiveRole(userDoc, roleDoc);
-
-    // Never auto-promote client portal accounts to SUPER_ADMIN.
-    if (isServerBetaAutoAdminEnabled() && !isClientPortalRole(computedRole)) {
-      computedRole = "SUPER_ADMIN";
-      isAdminClaim = true;
-    }
-
-    let organizationId = resolveUserOrganizationId(userDoc as Record<string, unknown>);
-
-    // Optional per-client M365 SSO: map Entra tid → organization, reject unknown tenants.
-    if (microsoftTenantId) {
-      const hubcomTenant = (
-        process.env.MICROSOFT_PROVIDER_TENANT_ID ||
-        process.env.AZURE_TENANT_ID ||
-        process.env.SSO_TENANT_ID ||
-        ""
-      )
-        .trim()
-        .toLowerCase();
-      const tid = microsoftTenantId.toLowerCase();
-      const mappedOrg = await getOrganizationByM365TenantId(tid);
-      const isHubcomTenant = Boolean(hubcomTenant && hubcomTenant === tid);
-
-      if (mappedOrg) {
-        // Pre-created or domain-matched users land in their client portal org.
-        if (!organizationId) {
-          const emailDomain = String(verifiedEmail || userDoc.email || "")
-            .split("@")[1]
-            ?.toLowerCase();
-          const orgDomain = (mappedOrg.domain || "").toLowerCase();
-          const domainOk = Boolean(emailDomain && orgDomain && emailDomain === orgDomain);
-          if (domainOk || isClientPortalRole(computedRole)) {
-            organizationId = mappedOrg.id;
-          }
-        } else if (organizationId !== mappedOrg.id && isClientPortalRole(computedRole)) {
-          return res.status(403).json({
+      // M365 Admin-Freigabe: pending/rejected portal users never access /api/portal/*.
+      if (isClientPortalRole(userDoc.role)) {
+        const gate = isPortalLoginAllowed(userDoc);
+        if (gate.ok === false) {
+          const reason = gate.reason;
+          return {
+            errorStatus: 403 as const,
             error:
-              "Forbidden: Microsoft 365 tenant does not match this user's organization SSO mapping.",
-          });
+              reason === "pending"
+                ? "Forbidden: Your Microsoft 365 access request is pending admin approval."
+                : reason === "rejected"
+                  ? "Forbidden: Your Microsoft 365 access request was rejected."
+                  : "Forbidden: Portal access is not active for this account.",
+            sso_status: reason,
+          };
         }
-      } else if (!isHubcomTenant && isClientPortalRole(computedRole)) {
-        // Client portal accounts must come from a linked Entra tenant (or Hubcom's).
-        if (organizationId) {
-          const userOrg = await getOrganization(organizationId);
-          if (userOrg?.sso_enabled && userOrg.m365_tenant_id) {
-            return res.status(403).json({
+      } else if (isHubcomStaffRole(userDoc.role) || userDoc.is_admin === true) {
+        const staffStatus = normalizeApprovalStatus(
+          userDoc.approval_status ?? userDoc.approvalStatus,
+        );
+        if (staffStatus === "pending_approval") {
+          return {
+            errorStatus: 403 as const,
+            error:
+              "Forbidden: Your Hubcom Microsoft 365 access request is pending admin approval.",
+            sso_status: "pending",
+          };
+        }
+        if (staffStatus === "rejected") {
+          return {
+            errorStatus: 403 as const,
+            error: "Forbidden: Your Hubcom Microsoft 365 access request was rejected.",
+            sso_status: "rejected",
+          };
+        }
+      }
+
+      let roleDoc: any = null;
+      if (userDoc.roleId) {
+        try {
+          roleDoc = await getDocDirect("roles", userDoc.roleId);
+        } catch (err) {
+          console.error("[Auth Middleware] Failed looking up associated role doc:", err);
+        }
+      }
+
+      let { computedRole, isAdminClaim } = resolveEffectiveRole(userDoc, roleDoc);
+
+      if (isServerBetaAutoAdminEnabled() && !isClientPortalRole(computedRole)) {
+        computedRole = "SUPER_ADMIN";
+        isAdminClaim = true;
+      }
+
+      let organizationId = resolveUserOrganizationId(userDoc as Record<string, unknown>);
+
+      if (microsoftTenantId) {
+        const hubcomTenant = (
+          process.env.MICROSOFT_PROVIDER_TENANT_ID ||
+          process.env.AZURE_TENANT_ID ||
+          process.env.SSO_TENANT_ID ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
+        const tid = microsoftTenantId.toLowerCase();
+        const mappedOrg = await getOrganizationByM365TenantId(tid);
+        const isHubcomTenant = Boolean(hubcomTenant && hubcomTenant === tid);
+
+        if (mappedOrg) {
+          if (!organizationId) {
+            const emailDomain = String(verifiedEmail || userDoc.email || "")
+              .split("@")[1]
+              ?.toLowerCase();
+            const orgDomain = (mappedOrg.domain || "").toLowerCase();
+            const domainOk = Boolean(emailDomain && orgDomain && emailDomain === orgDomain);
+            if (domainOk || isClientPortalRole(computedRole)) {
+              organizationId = mappedOrg.id;
+            }
+          } else if (organizationId !== mappedOrg.id && isClientPortalRole(computedRole)) {
+            return {
+              errorStatus: 403 as const,
               error:
-                "Forbidden: Unknown or unlinked Microsoft 365 tenant. Contact Hubcom to enable SSO for your organization.",
-            });
+                "Forbidden: Microsoft 365 tenant does not match this user's organization SSO mapping.",
+            };
+          }
+        } else if (!isHubcomTenant && isClientPortalRole(computedRole)) {
+          if (organizationId) {
+            const userOrg = await getOrganization(organizationId);
+            if (userOrg?.sso_enabled && userOrg.m365_tenant_id) {
+              return {
+                errorStatus: 403 as const,
+                error:
+                  "Forbidden: Unknown or unlinked Microsoft 365 tenant. Contact Hubcom to enable SSO for your organization.",
+              };
+            }
           }
         }
-      } else if (!isHubcomTenant && !mappedOrg && !organizationId) {
-        // Strict reject for tokens from arbitrary external tenants with no provisioned mapping.
-        // Hubcom staff (non-client) signed in via Hubcom tenant pass above; others without a
-        // pre-provisioned user+org mapping are already blocked by the no-userDoc check.
       }
+
+      if (isClientPortalRole(computedRole) && !organizationId) {
+        return {
+          errorStatus: 403 as const,
+          error: "Forbidden: Client portal accounts must be linked to an organization.",
+        };
+      }
+
+      let staffAccess:
+        | {
+            canManageHubcomCore: boolean;
+            accessibleOrganizationIds: "ALL" | string[];
+            organizationAccess: Array<{ organization_id: string; access_role: string }>;
+          }
+        | null = null;
+      if (!isClientPortalRole(computedRole)) {
+        try {
+          const {
+            getAccessibleOrganizationIds,
+            listUserOrganizationAccess,
+          } = await import("../lib/staff-org-access.js");
+          const provisional = {
+            id: userDoc.id || verifiedUid,
+            role: computedRole,
+            is_admin: isAdminClaim,
+            organizationId,
+          };
+          const accessible = await getAccessibleOrganizationIds(provisional);
+          const rows = await listUserOrganizationAccess(String(provisional.id || ""));
+          staffAccess = {
+            canManageHubcomCore: canManageHubcomCore(provisional),
+            accessibleOrganizationIds: accessible,
+            organizationAccess: rows.map((r) => ({
+              organization_id: r.organization_id,
+              access_role: r.access_role,
+            })),
+          };
+        } catch (err: any) {
+          console.warn("[Auth Middleware] staffAccess enrichment skipped:", err?.message || err);
+        }
+      }
+
+      return {
+        user: {
+          id: userDoc.id || verifiedUid,
+          uid: userDoc.id || verifiedUid,
+          name: userDoc.name || "Default User",
+          email: userDoc.email || verifiedEmail || "",
+          role: computedRole,
+          is_admin: isAdminClaim,
+          kuerzel: typeof userDoc.kuerzel === "string" ? userDoc.kuerzel : "",
+          tenantId: resolveUserTenantId(userDoc as Record<string, unknown>),
+          organizationId,
+          dbRecord: userDoc,
+          staffAccess,
+        },
+      };
+    });
+
+    if ("errorStatus" in resolved && resolved.errorStatus) {
+      const body: Record<string, string> = { error: resolved.error };
+      if ("sso_status" in resolved && resolved.sso_status) {
+        body.sso_status = String(resolved.sso_status);
+      }
+      return res.status(resolved.errorStatus).json(body);
     }
 
-    if (isClientPortalRole(computedRole) && !organizationId) {
-      return res.status(403).json({
-        error: "Forbidden: Client portal accounts must be linked to an organization.",
-      });
-    }
-
-    req.user = {
-      id: userDoc.id || verifiedUid,
-      uid: userDoc.id || verifiedUid,
-      name: userDoc.name || "Default User",
-      email: userDoc.email || verifiedEmail || "",
-      role: computedRole,
-      is_admin: isAdminClaim,
-      kuerzel: typeof userDoc.kuerzel === "string" ? userDoc.kuerzel : "",
-      tenantId: resolveUserTenantId(userDoc as Record<string, unknown>),
-      organizationId,
-      dbRecord: userDoc
-    };
-
+    req.user = (resolved as { user: any }).user;
     next();
   } catch (error: any) {
     console.error("[Authentication Core Failure]:", error?.message || error);

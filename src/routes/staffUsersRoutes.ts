@@ -14,6 +14,7 @@ import {
   requireCanManageHubcomCore,
 } from '../middleware/authMiddleware.js';
 import { forbidClientPortalRoles } from '../middleware/clientPortalMiddleware.js';
+import { tenantRlsMiddleware } from '../lib/security/tenant-rls.js';
 import {
   addDocDirect,
   getDocDirect,
@@ -38,7 +39,7 @@ import { deriveKuerzel } from '../lib/entra/user-helpers.js';
 
 const router = Router();
 
-router.use(authenticate, forbidClientPortalRoles, requireCanManageHubcomCore);
+router.use(authenticate, tenantRlsMiddleware, forbidClientPortalRoles, requireCanManageHubcomCore);
 
 const matrixRoleEnum = z.enum([
   'SUPER_ADMIN',

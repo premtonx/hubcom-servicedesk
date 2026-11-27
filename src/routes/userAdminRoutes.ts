@@ -6,6 +6,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { authenticate, requireRole } from '../middleware/authMiddleware.js';
+import { tenantRlsMiddleware } from '../lib/security/tenant-rls.js';
 import {
   addDocDirect,
   deleteDocDirect,
@@ -34,7 +35,7 @@ import { listOrganizations } from '../lib/client-portal/organizations.js';
 
 const router = Router();
 /** SYSTEM_ADMIN only — cross-company directory. Client portal users use /api/admin/organizations/:id/users. */
-const adminOnly = [authenticate, requireRole(['SYSTEM_ADMIN'])] as const;
+const adminOnly = [authenticate, tenantRlsMiddleware, requireRole(['SYSTEM_ADMIN'])] as const;
 
 const roleEnum = z.enum(['SYSTEM_ADMIN', 'agent', 'customer', 'admin', 'team_lead']);
 const authMethodEnum = z.enum(['password', 'microsoft365', 'sso']);

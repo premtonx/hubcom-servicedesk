@@ -57,8 +57,9 @@ Defense-in-depth isolation uses **Row Level Security** plus transaction-local GU
 | Mode | Who | Effect |
 |---|---|---|
 | `portal` | `CLIENT_*` | Only rows for `app.current_org_id` |
-| `staff_scoped` | `HUBCOM_ADMIN` / `AGENT` / `USER` | Internal (`organization_id IS NULL`) + allowed org ids |
-| `super_admin` / `system` | `SUPER_ADMIN`, workers | Full access |
+| `staff_scoped` | Scoped `HUBCOM_AGENT` / `HUBCOM_USER` | Internal (`organization_id IS NULL`) + `allowed_org_ids` |
+| `super_admin` | `SUPER_ADMIN`, `HUBCOM_ADMIN` | Full access (Admin-Hub / `/api/db`) |
+| `system` | Boot, workers, pre-auth | Full access |
 | unset | — | Fail closed (`false`) |
 
 Covered: `geistdesk_documents` (tickets / messages / KB JSONB), `"KnowledgeEmbedding"`,
@@ -85,13 +86,17 @@ When `DATABASE_APP_URL` is active, init also `FORCE ROW LEVEL SECURITY` on core 
 Owner `DATABASE_URL` stays available for migrations; the runtime pool uses `hubcom_app`.
 
 **Boot / pre-auth:** `ensureDefaultTicketConfig`, `ensureOnboardingState` /
-`ensureInitializationFlag`, workers, `/api/auth/*`, `/api/admin/onboarding/*`, and
+`ensureInitializationFlag`, workers, `/api/auth/*` (login), `/api/admin/onboarding/*`, and
 system-favicon run inside `withTenantContext({ mode: 'system' })` (or
 `systemRlsMiddleware`) so FORCE RLS never returns `42501` or a false
-uninitialized status. Portal/staff routes keep strict org isolation.
+uninitialized status.
 
-Code: `src/lib/security/tenant-rls*.ts`, wired on `/api/portal` + `/api/returns` +
-system middleware on auth/onboarding.
+**Authenticated APIs:** `POST /api/db`, `GET /api/auth/session`, `/api/admin/*`,
+`/api/portal/*`, and `/api/returns` run `tenantRlsMiddleware` after `authenticate`
+so Hubcom admins keep full visibility under FORCE RLS while portal users stay
+org-isolated.
+
+Code: `src/lib/security/tenant-rls*.ts`.
 
 ## Required environment
 
