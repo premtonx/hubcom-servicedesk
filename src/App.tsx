@@ -236,7 +236,14 @@ function OnboardingGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (isSystemAdmin && !status?.isInitialized && status?.hasAdminUser !== true) {
+  // Only redirect when status was loaded successfully. A null status after a
+  // 429/network error must not send an initialized workspace to /onboarding.
+  if (
+    isSystemAdmin &&
+    status != null &&
+    status.isInitialized !== true &&
+    status.hasAdminUser !== true
+  ) {
     return <Navigate to="/onboarding" replace />;
   }
 
@@ -293,8 +300,16 @@ function AppRoutes() {
   const { user, loading } = useAuth();
   const { status, loading: onboardingLoading } = useOnboardingStatus();
   const { userProfile, role, loading: permissionsLoading } = usePermissions();
-  const firstRun = status?.hasAdminUser !== true && status?.isInitialized !== true;
-  const needsResume = status?.needsResume === true && status?.hasAdminUser === true;
+  // Require a successful status payload. Transient 429/network errors leave
+  // status null — never treat that as first-run onboarding.
+  const firstRun =
+    status != null &&
+    status.hasAdminUser !== true &&
+    status.isInitialized !== true;
+  const needsResume =
+    status != null &&
+    status.needsResume === true &&
+    status.hasAdminUser === true;
   const isCustomer =
     !!user && isCustomerRole(userProfile?.role, role?.name);
 

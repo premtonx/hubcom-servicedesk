@@ -199,6 +199,12 @@ import {
   withTenantContext,
 } from '../src/lib/security/tenant-rls.js';
 import {
+  CREDENTIAL_RATE_LIMIT_PER_MINUTE,
+  GENERAL_API_RATE_LIMIT_PER_MINUTE,
+  GENERAL_API_RATE_LIMIT_SKIP_PATHS,
+  shouldSkipGeneralApiRateLimit,
+} from '../src/middleware/rate-limiters.js';
+import {
   assertPortalSettingsPathsSafe,
   resolvePortalSettingsPaths,
 } from '../src/lib/client-portal/portal-settings-api-base.js';
@@ -8854,6 +8860,61 @@ function testSecurityPerimeterIsolation(): void {
   else process.env.TRUST_PROXY = prevTrust;
 
   void sessionCookieSecure;
+
+  // General API vs auth rate limits (PR #111 false-positive 429 fix)
+  assert(
+    GENERAL_API_RATE_LIMIT_PER_MINUTE >= 600,
+    'general API rate limit floor is ≥600/min per IP',
+  );
+  assert(
+    CREDENTIAL_RATE_LIMIT_PER_MINUTE === 30,
+    'auth/credential endpoints allow 30 requests/min',
+  );
+  assert(
+    GENERAL_API_RATE_LIMIT_SKIP_PATHS.has('/auth/session') &&
+      GENERAL_API_RATE_LIMIT_SKIP_PATHS.has('/admin/onboarding/status') &&
+      GENERAL_API_RATE_LIMIT_SKIP_PATHS.has('/admin/system-favicon'),
+    'session/status/favicon skipped from general API rate limit',
+  );
+  assert(
+    shouldSkipGeneralApiRateLimit({
+      path: '/admin/onboarding/status',
+      method: 'GET',
+      headers: {},
+    } as any) === true,
+    'onboarding status path skips general API limiter',
+  );
+  assert(
+    shouldSkipGeneralApiRateLimit({
+      path: '/db',
+      method: 'GET',
+      headers: { cookie: 'session=verified-admin-token' },
+      cookies: { session: 'verified-admin-token' },
+    } as any) === true,
+    'authenticated GET reads skip general API limiter',
+  );
+  assert(
+    shouldSkipGeneralApiRateLimit({
+      path: '/db',
+      method: 'POST',
+      headers: {},
+      cookies: {},
+    } as any) === false,
+    'unauthenticated mutating API still rate-limited',
+  );
+
+  const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
+  const onboardingHook = fs.readFileSync(
+    path.join(process.cwd(), 'src/hooks/useOnboardingStatus.ts'),
+    'utf8',
+  );
+  assert(
+    appSrc.includes('status != null') &&
+      appSrc.includes('status.isInitialized !== true') &&
+      onboardingHook.includes('429') &&
+      onboardingHook.includes('Keep any previously known status'),
+    '429/network onboarding status never forces /onboarding redirect',
+  );
 }
 
 /** Part 2 — HTML sanitization + magic-byte upload guard (no RLS changes). */
