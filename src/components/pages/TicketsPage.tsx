@@ -341,7 +341,7 @@ export default function TicketsPage() {
   const [contactSchema, setContactSchema] = useState<CustomField[]>([]);
 
   const [areNotesExpanded, setAreNotesExpanded] = useState(false);
-  const [isComposerExpanded, setIsComposerExpanded] = useState(true);
+  const [isComposerExpanded, setIsComposerExpanded] = useState(false);
 
   useEffect(() => {
     setAreNotesExpanded(false);
