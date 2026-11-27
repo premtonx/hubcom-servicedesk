@@ -1,5 +1,9 @@
 import { normalizeAccountHealth } from './account-health';
 import { withChecklistTaskIdsFromAi } from './ticket-checklist-utils';
+import {
+  buildLlmPromptWithUntrustedData,
+  LLM_UNTRUSTED_DATA_INSTRUCTION,
+} from './security/sanitize';
 
 export interface TicketAnalysisPayload {
   aiSummary: string;
@@ -76,12 +80,9 @@ export function buildTicketDeepDivePrompt(ticket: {
   description?: string;
   sentiment?: string;
 }, messagesText: string): string {
-  return `You are an elite Sovereign AI Support operations engineer. Perform a deep-dive analysis on the following Hubcom ServiceDesk support ticket.
-        
-SUBJECT: ${ticket.subject ?? ''}
-DESCRIPTION: ${ticket.description ?? ''}
-RECENT THREAD ACTIVITY:
-${messagesText || 'No additional activity logged.'}
+  return buildLlmPromptWithUntrustedData({
+    systemRules: `You are an elite Sovereign AI Support operations engineer. Perform a deep-dive analysis on a Hubcom ServiceDesk support ticket.
+${LLM_UNTRUSTED_DATA_INSTRUCTION}
 
 IMPORTANT: Respond strictly with a valid JSON object. Do not wrap with markdown code fences (no \`\`\`json).
 The JSON object must have exactly these keys:
@@ -92,7 +93,19 @@ The JSON object must have exactly these keys:
 5. "aiSentiment": One of "Angry", "Neutral", "Positive" depending on user language and frustration.
 6. "accountHealth": One of "good", "at_risk", "bad" — overall customer/account relationship health inferred from tone, frustration, escalation risk, and thread context.
 
-Respond only with the raw valid JSON payload.`;
+Respond only with the raw valid JSON payload.`,
+    untrustedBlocks: [
+      {
+        kind: 'ticket_content',
+        content: `SUBJECT: ${ticket.subject ?? ''}\nDESCRIPTION: ${ticket.description ?? ''}`,
+      },
+      {
+        kind: 'thread_history',
+        content: messagesText || 'No additional activity logged.',
+      },
+    ],
+    task: 'Analyze the untrusted ticket data and return the JSON payload only.',
+  });
 }
 
 function stripJsonFences(raw: string): string {

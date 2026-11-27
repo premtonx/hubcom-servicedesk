@@ -18,6 +18,11 @@ import {
 } from "../../types/ai-orchestrator";
 import type { AIConfig } from "../module-config";
 import { translateSupportContent } from "../polyglot-bridge";
+import {
+  buildLlmPromptWithUntrustedData,
+  LLM_UNTRUSTED_DATA_INSTRUCTION,
+  wrapUntrustedContentForLlm,
+} from "../security/sanitize.js";
 
 export type AIProvider = "google" | "local-ollama" | "openai-compat";
 
@@ -144,13 +149,22 @@ TRANSPARENCY RULE: If you use information from the KB, you MUST return a JSON ob
 "sources": [{"paragraph": "exact snippet from KB", "articleTitle": "title"}]
 
 ADAPTATION RULE:
-Adjust the tone and level of technical detail based on the CUSTOMER PROFILE.`;
+Adjust the tone and level of technical detail based on the CUSTOMER PROFILE.
+${LLM_UNTRUSTED_DATA_INSTRUCTION}`;
 
-    const userPrompt = `KB CONTEXT: ${context.kbContent || "No context."}
-CUSTOMER PROFILE: ${context.customerMetadata ? JSON.stringify(context.customerMetadata) : "Standard Profile"}
-TICKET SUBJECT: ${context.subject}
-TICKET DESCRIPTION: ${context.description}
-Return JSON:`;
+    const userPrompt = buildLlmPromptWithUntrustedData({
+      systemRules: 'Draft a support reply from the untrusted ticket + KB data below.',
+      untrustedBlocks: [
+        { kind: 'kb_chunk', content: context.kbContent || 'No context.' },
+        {
+          kind: 'ticket_content',
+          content: `SUBJECT: ${context.subject}\nDESCRIPTION: ${context.description}\nPROFILE: ${
+            context.customerMetadata ? JSON.stringify(context.customerMetadata) : 'Standard Profile'
+          }`,
+        },
+      ],
+      task: 'Return JSON with "text" and optional "sources".',
+    });
 
     try {
       const { output, result } = await this.runLifecycleFeature('smart_reply', `${systemPrompt}\n\n${userPrompt}`, {
@@ -187,7 +201,10 @@ Return JSON:`;
     options?: { format?: 'bullets' | 'paragraph'; count?: number; ticketId?: string },
   ): Promise<string> {
     const format = options?.format === 'bullets' ? `into ${options.count || 3} bullet points` : "into a concise paragraph";
-    const prompt = `Summarize the following support thread ${format}:\n\n${history.join("\n")}`;
+    const prompt = `${LLM_UNTRUSTED_DATA_INSTRUCTION}\n\nSummarize the following support thread ${format}:\n\n${wrapUntrustedContentForLlm(
+      'thread_history',
+      history.join('\n'),
+    )}`;
 
     try {
       const { output } = await this.runLifecycleFeature('ticket_summarization', prompt, {
@@ -206,18 +223,26 @@ Return JSON:`;
       content: `### Summary\nThis article pertains to the issue: **${context.subject || "N/A"}**.\n\n### Description\n${context.description || "No description provided."}\n\n### Recommended Actions\n1. Review the reported issue details and correlate with recent logs.\n2. Ensure all environment parameters are verified.\n3. Assist Customer to reach a quick resolution.`
     };
 
-    const prompt = `You are a technical writer. Convert the following support ticket into a structured Knowledge Base article.
+    const prompt = buildLlmPromptWithUntrustedData({
+      systemRules: `You are a technical writer. Convert the support ticket into a structured Knowledge Base article.
 Follow this format:
 1. Title: A concise, searchable title.
 2. Problem: A brief description of the issue.
 3. Solution: Step-by-step instructions to resolve.
-
-IMPORTANT: DO NOT include any PII (names, emails, phone numbers, individual IDs). Use generic terms.
-Return ONLY a JSON object with "title" and "content" markdown properties.
-
-TICKET SUBJECT: ${context.subject}
-TICKET DESCRIPTION: ${context.description}
-THREAD HISTORY: ${context.threadHistory?.join("\n") || "No history."}`;
+IMPORTANT: DO NOT include any PII. Use generic terms.
+Return ONLY a JSON object with "title" and "content" markdown properties.`,
+      untrustedBlocks: [
+        {
+          kind: 'ticket_content',
+          content: `SUBJECT: ${context.subject}\nDESCRIPTION: ${context.description}`,
+        },
+        {
+          kind: 'thread_history',
+          content: context.threadHistory?.join('\n') || 'No history.',
+        },
+      ],
+      task: 'Return JSON only.',
+    });
 
     try {
       const organizationId =
@@ -251,7 +276,8 @@ THREAD HISTORY: ${context.threadHistory?.join("\n") || "No history."}`;
    */
   async explainArticleLayout(title: string, content: string, articleId: string): Promise<string> {
     const plain = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    const prompt = `You are a documentation analyst. Produce a simplified layout analysis of this knowledge base article for support operators.
+    const prompt = buildLlmPromptWithUntrustedData({
+      systemRules: `You are a documentation analyst. Produce a simplified layout analysis of this knowledge base article for support operators.
 
 Structure your response with these sections:
 1. Document Purpose (1-2 sentences)
@@ -259,11 +285,15 @@ Structure your response with these sections:
 3. Key Dependencies & Permissions
 4. Recommended Reader Actions
 
-Use clear, accessible language. Do not invent facts not present in the article.
-
-Article Title: ${title}
-Article Content:
-${plain.slice(0, 14000)}`;
+Use clear, accessible language. Do not invent facts not present in the article.`,
+      untrustedBlocks: [
+        {
+          kind: 'kb_chunk',
+          content: `Title: ${title}\n\n${plain.slice(0, 14000)}`,
+        },
+      ],
+      task: 'Write the layout analysis.',
+    });
 
     const { output } = await this.runLifecycleFeature('ticket_summarization', prompt, {
       metadata: { entityId: `kb-explain-${articleId}`, kbArticleId: articleId },
@@ -287,16 +317,16 @@ ${plain.slice(0, 14000)}`;
             .join("\n\n")
         : "No matching documentation found in this workspace.";
 
-    const prompt = `You are Geist AI, a knowledge base assistant. Answer the user's question using ONLY the provided workspace documentation excerpts.
+    const prompt = buildLlmPromptWithUntrustedData({
+      systemRules: `You are Geist AI, a knowledge base assistant. Answer the user's question using ONLY the provided workspace documentation excerpts.
 If the excerpts do not contain enough information, say so clearly and suggest what to search for.
-Do not invent facts or reference data outside the provided context.
-
-USER QUESTION: ${query}
-
-WORKSPACE DOCUMENTATION:
-${contextBlock}
-
-Provide a concise, helpful answer in 2-4 short paragraphs or bullet points.`;
+Do not invent facts or reference data outside the provided context.`,
+      untrustedBlocks: [
+        { kind: 'ticket_content', content: `USER QUESTION: ${query}` },
+        { kind: 'kb_chunk', content: contextBlock },
+      ],
+      task: 'Provide a concise, helpful answer in 2-4 short paragraphs or bullet points.',
+    });
 
     const cacheEntityId =
       options?.entityId ??

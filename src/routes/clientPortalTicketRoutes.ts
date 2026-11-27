@@ -66,11 +66,16 @@ import { routeParam } from '../lib/route-params.js';
 import { safeErrorMessage, safeLog } from '../lib/safe-log.js';
 import { listTicketCategories } from '../lib/ticket-categories/store.js';
 import { normalizeAccountHealth } from '../lib/account-health.js';
+import {
+  MAX_TICKET_ATTACHMENTS,
+  parseAndGuardTicketAttachments,
+  sanitizeTicketTextFields,
+} from '../lib/security/parse-ticket-attachments.js';
+import { getTrustedClientIp } from '../lib/security/client-ip.js';
 
 const router = Router();
 
-const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
-const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENTS = MAX_TICKET_ATTACHMENTS;
 
 function onlyClientPortal(req: Request, res: Response, next: NextFunction): void {
   if (isClientPortalRole(req.user?.role)) {
@@ -86,27 +91,6 @@ function sessionCtx(req: Request) {
     role: String(req.user!.role),
     organizationId: resolveOrganizationIdFromUser(req.user!),
   };
-}
-
-function parseAttachments(raw: unknown) {
-  if (!Array.isArray(raw)) return [];
-  return raw.slice(0, MAX_ATTACHMENTS).map((item: any) => {
-    const filename = String(item?.filename || 'anhang').slice(0, 255);
-    const contentType = String(item?.contentType || 'application/octet-stream').slice(0, 120);
-    const contentBase64 = typeof item?.contentBase64 === 'string' ? item.contentBase64 : '';
-    const size =
-      Number(item?.size) ||
-      (contentBase64 ? Math.floor((contentBase64.length * 3) / 4) : 0);
-    if (size > MAX_ATTACHMENT_BYTES) {
-      return { filename, contentType, size, omitted: true, reason: 'exceeds_size_limit' };
-    }
-    return {
-      filename,
-      contentType,
-      size,
-      contentBase64: contentBase64 || undefined,
-    };
-  });
 }
 
 async function nextPortalCustomId(): Promise<string> {
@@ -308,12 +292,24 @@ router.post('/tickets', async (req: Request, res: Response): Promise<any> => {
 
     const now = new Date().toISOString();
     const customId = await nextPortalCustomId();
-    const attachments = parseAttachments(data.attachments);
-
-    const ticketPayload = {
+    const guarded = await parseAndGuardTicketAttachments(data.attachments, {
+      ip: getTrustedClientIp(req),
+      userId: session.id,
+      path: '/api/portal/tickets',
+    });
+    if (guarded.ok === false) {
+      return res.status(guarded.status).json({ error: guarded.error });
+    }
+    const attachments = guarded.attachments;
+    const text = sanitizeTicketTextFields({
       subject: data.subject,
       description: data.description,
-      html_content: data.description,
+    });
+
+    const ticketPayload = {
+      subject: text.subject || data.subject,
+      description: text.description || data.description,
+      html_content: text.description || data.description,
       status: 'open',
       priority: data.priority,
       team: 'support',
@@ -350,7 +346,7 @@ router.post('/tickets', async (req: Request, res: Response): Promise<any> => {
         senderId: session.id,
         senderType: 'customer',
         senderName: req.user!.name || req.user!.email || 'Kunde',
-        content: data.description,
+        content: text.description || data.description,
         attachments,
         is_internal: false,
         isInternal: false,
@@ -451,13 +447,32 @@ async function handlePortalReply(req: Request, res: Response): Promise<any> {
     }
 
     const now = new Date().toISOString();
-    const attachments = wantsInternal ? [] : parseAttachments(parsed.data.attachments);
+    let attachments: Array<{
+      filename: string;
+      contentType: string;
+      size: number;
+      contentBase64?: string;
+      omitted?: boolean;
+      reason?: string;
+    }> = [];
+    if (!wantsInternal) {
+      const guarded = await parseAndGuardTicketAttachments(parsed.data.attachments, {
+        ip: getTrustedClientIp(req),
+        userId: session.id,
+        path: `/api/portal/tickets/${id}/messages`,
+      });
+      if (guarded.ok === false) {
+        return res.status(guarded.status).json({ error: guarded.error });
+      }
+      attachments = guarded.attachments;
+    }
+    const text = sanitizeTicketTextFields({ content: parsed.data.content });
     const messageRecord = await addDocDirect(`tickets/${id}/messages`, {
       ticketId: id,
       senderId: session.id,
       senderType: wantsInternal ? 'internal' : 'customer',
       senderName: parsed.data.senderName || req.user!.name || req.user!.email || 'Kunde',
-      content: parsed.data.content,
+      content: text.content || parsed.data.content,
       attachments,
       deliveryStatus: wantsInternal ? 'internal' : 'delivered',
       is_internal: wantsInternal,

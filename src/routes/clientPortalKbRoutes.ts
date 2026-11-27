@@ -261,16 +261,26 @@ router.post(
       const { executeAiFeatureRequest, requireLifecycleOutput } = await import(
         '../lib/ai-orchestrator-service.js'
       );
-      const prompt = `You are a technical writer. Convert the following support ticket into a structured Knowledge Base article.
+      const { buildLlmPromptWithUntrustedData } = await import('../lib/security/sanitize.js');
+      const prompt = buildLlmPromptWithUntrustedData({
+        systemRules: `You are a technical writer. Convert the following support ticket into a structured Knowledge Base article.
 Follow this format:
 1. Title: A concise, searchable title.
 2. Problem: A brief description of the issue.
 3. Solution: Step-by-step instructions to resolve.
-IMPORTANT: DO NOT include any PII. Return ONLY JSON with "title" and "content".
-
-TICKET SUBJECT: ${parsed.data.subject}
-TICKET DESCRIPTION: ${parsed.data.description || ''}
-THREAD HISTORY: ${(parsed.data.threadHistory || []).join('\n') || 'No history.'}`;
+IMPORTANT: DO NOT include any PII. Return ONLY JSON with "title" and "content".`,
+        untrustedBlocks: [
+          {
+            kind: 'ticket_content',
+            content: `SUBJECT: ${parsed.data.subject}\nDESCRIPTION: ${parsed.data.description || ''}`,
+          },
+          {
+            kind: 'thread_history',
+            content: (parsed.data.threadHistory || []).join('\n') || 'No history.',
+          },
+        ],
+        task: 'Return JSON with title and content.',
+      });
       let title = `KB: ${parsed.data.subject}`;
       let content = `### Summary\n${parsed.data.description || parsed.data.subject}`;
       try {
@@ -688,8 +698,11 @@ router.post(
         return res.status(403).json({ error: 'Organization missing.' });
       }
 
-      const title = String((req.body as any)?.title || '').trim();
-      const content = String((req.body as any)?.content || '').trim();
+      const { sanitizeUserHtml, sanitizePlainTextField } = await import(
+        '../lib/security/sanitize.js'
+      );
+      const title = sanitizePlainTextField(String((req.body as any)?.title || '').trim(), 500);
+      const content = sanitizeUserHtml(String((req.body as any)?.content || '').trim());
       if (!title || !content) {
         return res.status(400).json({ error: 'Titel und Inhalt sind erforderlich.' });
       }

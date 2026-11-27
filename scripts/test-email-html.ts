@@ -27,6 +27,12 @@ import {
   buildSecondLevelAssignmentEmail,
   formatBerlinDateTime,
 } from '../src/lib/client-portal/second-level-notify.ts';
+import { sanitizeUserHtml } from '../src/lib/security/sanitize.ts';
+import {
+  applySafeAttachmentDownloadHeaders,
+  inspectUploadBuffer,
+  UPLOAD_REJECT_MESSAGE_DE,
+} from '../src/lib/security/upload-guard.ts';
 
 let passed = 0;
 let failed = 0;
@@ -389,6 +395,44 @@ check('renders metadata grid, Berlin time, escaped XSS, CTA', () => {
   const prepared = prepareOutboundEmailHtml(built.html);
   assert.ok(looksLikeHtml(prepared), 'prepared HTML');
   assert.ok(!prepared.includes('&lt;table'), 'tags not double-escaped');
+});
+
+console.log('\n[7] Payload sanitize + upload guard (Part 2)');
+check('strips script/onerror from ticket-like HTML without dropping IT text', () => {
+  const dirty =
+    '<script>alert(1)</script><img src=x onerror=alert(2)><p>Log: ERROR 0x800</p>';
+  const clean = sanitizeUserHtml(dirty);
+  assert.ok(!/<script\b/i.test(clean), 'no script');
+  assert.ok(!/onerror/i.test(clean), 'no onerror');
+  assert.ok(clean.includes('Log: ERROR 0x800'), 'IT text kept');
+});
+check('rejects disguised HTML/EXE uploaded as .png', () => {
+  const html = inspectUploadBuffer({
+    buffer: Buffer.from('<html><script>x</script>'),
+    filename: 'a.png',
+    kind: 'ticket_attachment',
+  });
+  const exe = inspectUploadBuffer({
+    buffer: Buffer.from([0x4d, 0x5a, 0x00, 0x00]),
+    filename: 'b.png',
+    kind: 'ticket_attachment',
+  });
+  assert.equal(html.ok, false);
+  assert.equal(exe.ok, false);
+  assert.equal(html.error, UPLOAD_REJECT_MESSAGE_DE);
+});
+check('safe download headers include attachment + nosniff', () => {
+  const headers: Record<string, string> = {};
+  applySafeAttachmentDownloadHeaders(
+    {
+      setHeader(k: string, v: string) {
+        headers[k.toLowerCase()] = v;
+      },
+    } as any,
+    { filename: 'a.pdf', contentType: 'application/pdf' },
+  );
+  assert.match(headers['content-disposition'] || '', /^attachment/);
+  assert.equal(headers['x-content-type-options'], 'nosniff');
 });
 
 console.log('\n================================');

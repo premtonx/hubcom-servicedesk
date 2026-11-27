@@ -35,6 +35,7 @@ import {
   type EmailFromOption,
 } from '../../services/emailChannelApi';
 import { EmailCcInput } from './EmailCcInput';
+import { sanitizeTimelineHtml } from '../../lib/sanitize-html';
 
 export interface EmailComposerSendMeta {
   fromAddress: string;
@@ -460,7 +461,9 @@ export function EmailComposer({
             {signaturePreviewHtml ? (
               <div
                 className="prose prose-sm max-w-none text-slate-700"
-                dangerouslySetInnerHTML={{ __html: signaturePreviewHtml }}
+                dangerouslySetInnerHTML={{
+                  __html: sanitizeTimelineHtml(signaturePreviewHtml || ''),
+                }}
               />
             ) : (
               <p className="text-xs text-slate-400 italic">

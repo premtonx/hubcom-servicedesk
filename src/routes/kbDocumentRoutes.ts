@@ -43,6 +43,12 @@ import {
   type ExternalSourceInput,
 } from '../lib/kb/external-sources.js';
 import { enqueueExternalSourceSync } from '../lib/kb/sync-external-source.js';
+import {
+  guardUploadOrReject,
+  UPLOAD_INFECTED_MESSAGE_DE,
+  UPLOAD_REJECT_MESSAGE_DE,
+} from '../lib/security/upload-guard.js';
+import { getTrustedClientIp } from '../lib/security/client-ip.js';
 
 const router = Router();
 
@@ -75,6 +81,23 @@ router.post('/upload', authenticate, upload.single('file'), async (req: Request,
     if (!isAllowedDocumentExtension(file.originalname)) {
       return res.status(415).json({
         error: 'Unsupported file type. Allowed: .pdf, .docx, .txt, .md, .csv.',
+      });
+    }
+    const guarded = await guardUploadOrReject({
+      buffer: file.buffer,
+      filename: file.originalname,
+      kind: 'kb_document',
+      claimedMime: file.mimetype,
+      ip: getTrustedClientIp(req),
+      userId: (req as any).user?.id || null,
+      path: '/api/kb/documents/upload',
+    });
+    if (guarded.ok === false) {
+      return res.status(guarded.code === 'infected' ? 422 : 400).json({
+        error:
+          guarded.code === 'infected'
+            ? UPLOAD_INFECTED_MESSAGE_DE
+            : UPLOAD_REJECT_MESSAGE_DE,
       });
     }
 

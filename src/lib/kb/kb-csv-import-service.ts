@@ -192,9 +192,12 @@ export async function importKbCsvArticles(
     }
     try {
       const category = resolveCategory(article.category || defaultCategory);
+      const { sanitizeUserHtml, sanitizePlainTextField } = await import(
+        '../security/sanitize.js'
+      );
       const created = await addDocDirect('kb_articles', {
-        title: article.title,
-        content: article.content,
+        title: sanitizePlainTextField(article.title, 500),
+        content: sanitizeUserHtml(article.content),
         category,
         subCategory: '',
         tags: ['sharepoint-import'].concat(

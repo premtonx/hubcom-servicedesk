@@ -249,13 +249,22 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
           : null,
       );
       if (!ctx) return;
+      const { sanitizePlainTextField, sanitizeUserHtml } = await import(
+        '../lib/security/sanitize.js'
+      );
       const result = await createHardwareReturnFromWorkbench({
         organizationId: ctx.organizationId,
         actorId: String(req.user?.id || ''),
         actorName: req.user?.name || null,
         actorEmail: req.user?.email || null,
-        subject: parsed.data.subject,
-        description: parsed.data.description,
+        subject:
+          parsed.data.subject != null
+            ? sanitizePlainTextField(parsed.data.subject, 500)
+            : parsed.data.subject,
+        description:
+          parsed.data.description != null
+            ? sanitizeUserHtml(parsed.data.description)
+            : parsed.data.description,
         requesterId: parsed.data.requesterId,
         customerName: parsed.data.customerName,
         customerEmail: parsed.data.customerEmail,
@@ -316,7 +325,14 @@ function mountReturnsRoutes(router: Router, mode: 'staff' | 'portal'): void {
           ...(hwPatch as any),
           ...(parsed.data.subject !== undefined ? { subject: parsed.data.subject } : {}),
           ...(parsed.data.description !== undefined
-            ? { description: parsed.data.description }
+            ? {
+                description:
+                  parsed.data.description == null
+                    ? null
+                    : (
+                        await import('../lib/security/sanitize.js')
+                      ).sanitizeUserHtml(parsed.data.description),
+              }
             : {}),
           ...(parsed.data.status !== undefined ? { status: parsed.data.status as any } : {}),
           ...(parsed.data.customerName !== undefined

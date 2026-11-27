@@ -24,11 +24,16 @@ import {
 } from '../lib/portal/access.js';
 import { toPortalStatusGroup } from '../lib/portal/status.js';
 import { listTicketCategories } from '../lib/ticket-categories/store.js';
+import {
+  MAX_TICKET_ATTACHMENTS,
+  parseAndGuardTicketAttachments,
+  sanitizeTicketTextFields,
+} from '../lib/security/parse-ticket-attachments.js';
+import { getTrustedClientIp } from '../lib/security/client-ip.js';
 
 const router = Router();
 
-const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
-const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENTS = MAX_TICKET_ATTACHMENTS;
 
 function requireCustomer(req: Request, res: Response, next: NextFunction): any {
   const role = String((req as any).user?.role || '').toLowerCase();
@@ -42,34 +47,6 @@ function requireCustomer(req: Request, res: Response, next: NextFunction): any {
 
 function customerCtx(req: Request): CustomerContext {
   return resolveCustomerContext((req as any).user || {});
-}
-
-function parseAttachments(raw: unknown): Array<{
-  filename: string;
-  contentType: string;
-  size: number;
-  contentBase64?: string;
-  omitted?: boolean;
-  reason?: string;
-}> {
-  if (!Array.isArray(raw)) return [];
-  return raw.slice(0, MAX_ATTACHMENTS).map((item: any) => {
-    const filename = String(item?.filename || 'anhang').slice(0, 255);
-    const contentType = String(item?.contentType || 'application/octet-stream').slice(0, 120);
-    const contentBase64 = typeof item?.contentBase64 === 'string' ? item.contentBase64 : '';
-    const size =
-      Number(item?.size) ||
-      (contentBase64 ? Math.floor((contentBase64.length * 3) / 4) : 0);
-    if (size > MAX_ATTACHMENT_BYTES) {
-      return { filename, contentType, size, omitted: true, reason: 'exceeds_size_limit' };
-    }
-    return {
-      filename,
-      contentType,
-      size,
-      contentBase64: contentBase64 || undefined,
-    };
-  });
 }
 
 async function nextPortalCustomId(): Promise<string> {
@@ -243,11 +220,23 @@ router.post('/tickets', async (req: Request, res: Response) => {
 
     const now = new Date().toISOString();
     const customId = await nextPortalCustomId();
-    const attachments = parseAttachments(data.attachments);
-
-    const ticketPayload = {
+    const guarded = await parseAndGuardTicketAttachments(data.attachments, {
+      ip: getTrustedClientIp(req),
+      userId: ctx.userId,
+      path: '/api/portal/tickets',
+    });
+    if (guarded.ok === false) {
+      return res.status(guarded.status).json({ error: guarded.error });
+    }
+    const attachments = guarded.attachments;
+    const text = sanitizeTicketTextFields({
       subject: data.subject,
       description: data.description,
+    });
+
+    const ticketPayload = {
+      subject: text.subject || data.subject,
+      description: text.description || data.description,
       status: 'open',
       priority: data.priority,
       team: 'support',
@@ -281,7 +270,7 @@ router.post('/tickets', async (req: Request, res: Response) => {
         senderId: ctx.userId,
         senderType: 'customer',
         senderName: ctx.name,
-        content: data.description,
+        content: text.description || data.description,
         attachments,
         createdAt: now,
         updatedAt: now,
@@ -327,14 +316,23 @@ router.post('/tickets/:id/replies', async (req: Request, res: Response) => {
     }
 
     const now = new Date().toISOString();
-    const attachments = parseAttachments(parsed.data.attachments);
+    const guarded = await parseAndGuardTicketAttachments(parsed.data.attachments, {
+      ip: getTrustedClientIp(req),
+      userId: ctx.userId,
+      path: `/api/portal/tickets/${id}/replies`,
+    });
+    if (guarded.ok === false) {
+      return res.status(guarded.status).json({ error: guarded.error });
+    }
+    const attachments = guarded.attachments;
+    const text = sanitizeTicketTextFields({ content: parsed.data.content });
 
     const messageRecord = await addDocDirect(`tickets/${id}/messages`, {
       ticketId: id,
       senderId: ctx.userId,
       senderType: 'customer',
       senderName: ctx.name,
-      content: parsed.data.content,
+      content: text.content || parsed.data.content,
       attachments,
       deliveryStatus: 'delivered',
       createdAt: now,

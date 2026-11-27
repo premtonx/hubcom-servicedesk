@@ -264,6 +264,15 @@ router.patch('/:id', authenticate, async (req: Request, res: Response) => {
       }
     }
 
+    if (typeof patch.content === 'string') {
+      const { sanitizeUserHtml } = await import('../lib/security/sanitize.js');
+      patch.content = sanitizeUserHtml(patch.content);
+    }
+    if (typeof patch.title === 'string') {
+      const { sanitizePlainTextField } = await import('../lib/security/sanitize.js');
+      patch.title = sanitizePlainTextField(patch.title, 500);
+    }
+
     if (Object.keys(patch).length === 0) {
       return res.status(400).json({ error: 'No supported fields to update.' });
     }
