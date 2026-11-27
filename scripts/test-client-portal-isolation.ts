@@ -193,6 +193,12 @@ import {
   UPLOAD_REJECT_MESSAGE_DE,
 } from '../src/lib/security/upload-guard.js';
 import {
+  assertSetLocalDoesNotBleed,
+  ensureTenantRlsPolicies,
+  evaluateRlsOrgAllowed,
+  withTenantContext,
+} from '../src/lib/security/tenant-rls.js';
+import {
   assertPortalSettingsPathsSafe,
   resolvePortalSettingsPaths,
 } from '../src/lib/client-portal/portal-settings-api-base.js';
@@ -8401,6 +8407,8 @@ async function main(): Promise<void> {
   testStaffPermissionMatrixUiIsolation();
   testSecurityPerimeterIsolation();
   testPayloadSanitizeUploadGuardIsolation();
+  testTenantRlsSourceContracts();
+  await testTenantRlsLiveSqlIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
@@ -8957,6 +8965,249 @@ function testPayloadSanitizeUploadGuardIsolation(): void {
       !/\$\{[^}]*req\./.test(storeSrc),
     'security_audit writes use parameterized queryDb (no req.* interpolation)',
   );
+}
+
+/** Part 3 — PostgreSQL RLS source contracts. */
+function testTenantRlsSourceContracts(): void {
+  console.log('\n[Tenant RLS] source contracts — withTenantContext + policies');
+
+  assert(
+    evaluateRlsOrgAllowed({
+      mode: 'portal',
+      orgId: 'org-dpg',
+      currentOrgId: 'org-dpg',
+    }) === true,
+    'portal mode allows matching org',
+  );
+  assert(
+    evaluateRlsOrgAllowed({
+      mode: 'portal',
+      orgId: 'org-other',
+      currentOrgId: 'org-dpg',
+    }) === false,
+    'portal mode denies OtherOrg',
+  );
+  assert(
+    evaluateRlsOrgAllowed({
+      mode: '',
+      orgId: 'org-dpg',
+      currentOrgId: 'org-dpg',
+    }) === false,
+    'unset mode fail-closed',
+  );
+  assert(
+    evaluateRlsOrgAllowed({
+      mode: 'staff_scoped',
+      orgId: null,
+      allowedOrgIds: ['org-dpg'],
+    }) === true,
+    'staff_scoped allows internal null org',
+  );
+  assert(
+    evaluateRlsOrgAllowed({
+      mode: 'staff_scoped',
+      orgId: 'org-other',
+      allowedOrgIds: ['org-dpg'],
+    }) === false,
+    'staff_scoped denies unassigned OtherOrg',
+  );
+  assert(
+    assertSetLocalDoesNotBleed({
+      firstOrg: 'dpg',
+      secondOrg: 'other',
+      seenAfterFirst: ['dpg', 'dpg'],
+      seenAfterSecond: ['other'],
+    }),
+    'SET LOCAL pool-bleed detector helper',
+  );
+
+  const ddl = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/security/tenant-rls-ddl.ts'),
+    'utf8',
+  );
+  const rls = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/security/tenant-rls.ts'),
+    'utf8',
+  );
+  const pg = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/postgres-backend.ts'),
+    'utf8',
+  );
+  const serverSrc = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
+  const docs = fs.readFileSync(
+    path.join(process.cwd(), 'docs/ARCHITECTURE.md'),
+    'utf8',
+  );
+
+  assert(
+    ddl.includes('ENABLE ROW LEVEL SECURITY') &&
+      ddl.includes('hubcom_app') &&
+      ddl.includes('NOBYPASSRLS') &&
+      ddl.includes('app.current_org_id') &&
+      ddl.includes('CREATE OR REPLACE VIEW tickets') &&
+      ddl.includes('KnowledgeEmbedding'),
+    'RLS DDL covers tickets view, embeddings, hubcom_app',
+  );
+  assert(
+    rls.includes('withTenantContext') &&
+      rls.includes('SET LOCAL ROLE hubcom_app') &&
+      rls.includes('set_config') &&
+      pg.includes('getTenantRlsClient') &&
+      pg.includes('dbQuery') &&
+      pg.includes('ensureTenantRlsPolicies') &&
+      serverSrc.includes('tenantRlsMiddleware') &&
+      docs.includes('DATABASE_APP_URL') &&
+      docs.includes('hubcom_app'),
+    'withTenantContext + portal middleware + docs wired',
+  );
+}
+
+/**
+ * Live SQL isolation: unfiltered SELECTs under portal context return 0 OtherOrg rows.
+ * Skips cleanly when DATABASE_URL is unavailable.
+ */
+async function testTenantRlsLiveSqlIsolation(): Promise<void> {
+  console.log('\n[Tenant RLS] live SQL — unfiltered SELECT under portal context');
+
+  if (!process.env.DATABASE_URL && !process.env.PG_DATABASE_URL) {
+    console.log('  (skip) DATABASE_URL not set');
+    return;
+  }
+
+  const { initDb, queryDb } = await import('../src/lib/postgres-backend.js');
+  await initDb();
+  await ensureTenantRlsPolicies((sql) => queryDb(sql));
+
+  const dpg: string = '11111111-1111-4111-8111-111111111101';
+  const other: string = '22222222-2222-4222-8222-222222222202';
+  const marker = `rls-test-${Date.now()}`;
+
+  // Seed orgs (ignore conflicts)
+  await queryDb(
+    `INSERT INTO organizations (id, name, slug, settings)
+     VALUES ($1::uuid, 'RLS DPG', $2, '{}'::jsonb)
+     ON CONFLICT (id) DO NOTHING`,
+    [dpg, `rls-dpg-${marker}`],
+  ).catch(async () => {
+    await queryDb(
+      `INSERT INTO organizations (id, name, settings)
+       VALUES ($1::uuid, 'RLS DPG', '{}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+      [dpg],
+    ).catch(() => undefined);
+  });
+  await queryDb(
+    `INSERT INTO organizations (id, name, slug, settings)
+     VALUES ($1::uuid, 'RLS Other', $2, '{}'::jsonb)
+     ON CONFLICT (id) DO NOTHING`,
+    [other, `rls-other-${marker}`],
+  ).catch(async () => {
+    await queryDb(
+      `INSERT INTO organizations (id, name, settings)
+       VALUES ($1::uuid, 'RLS Other', '{}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+      [other],
+    ).catch(() => undefined);
+  });
+
+  const ticketDpg = `tkt-dpg-${marker}`;
+  const ticketOther = `tkt-other-${marker}`;
+  await queryDb(
+    `INSERT INTO geistdesk_documents (collection, id, data)
+     VALUES (
+       'tickets',
+       $1::text,
+       jsonb_build_object('organizationId', $2::text, 'subject', $3::text)
+     )
+     ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data`,
+    [ticketDpg, dpg, marker],
+  );
+  await queryDb(
+    `INSERT INTO geistdesk_documents (collection, id, data)
+     VALUES (
+       'tickets',
+       $1::text,
+       jsonb_build_object('organizationId', $2::text, 'subject', $3::text)
+     )
+     ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data`,
+    [ticketOther, other, marker],
+  );
+
+  // KnowledgeEmbedding rows (skip if table/extension missing)
+  let embeddingsOk = true;
+  try {
+    await queryDb(
+      `INSERT INTO "KnowledgeEmbedding"
+         (id, tenant_id, organization_id, source_type, source_id, chunk_index, chunk_content, embedding)
+       VALUES
+         (gen_random_uuid(), $1, $2, 'KB_ARTICLE', $3, 0, $4, NULL),
+         (gen_random_uuid(), $1, $5, 'KB_ARTICLE', $6, 0, $4, NULL)`,
+      [`org:${dpg}`, dpg, `src-dpg-${marker}`, marker, other, `src-other-${marker}`],
+    );
+  } catch (err: any) {
+    embeddingsOk = false;
+    console.log('  (note) KnowledgeEmbedding seed skipped:', err?.message || err);
+  }
+
+  // Intentionally unfiltered SELECTs — PostgreSQL RLS must hide OtherOrg.
+  const dpgTicketOrgs = await withTenantContext({ mode: 'portal', orgId: dpg }, async (client) => {
+    const res = await client.query(`SELECT id, organization_id FROM tickets`);
+    return (res.rows || []).map((r: any) => String(r.organization_id));
+  });
+
+  assert(
+    dpgTicketOrgs.includes(dpg) && !dpgTicketOrgs.includes(other),
+    'unfiltered tickets view under portal(DPG) returns 0 OtherOrg rows',
+  );
+
+  if (embeddingsOk) {
+    const embOrgs: string[] = await withTenantContext(
+      { mode: 'portal', orgId: dpg },
+      async (client) => {
+        const res = await client.query(`SELECT id, organization_id FROM "KnowledgeEmbedding"`);
+        return (res.rows || []).map((r: any) => String(r.organization_id));
+      },
+    );
+    assert(
+      embOrgs.every((id) => id === dpg) && !embOrgs.includes(other),
+      'unfiltered KnowledgeEmbedding under portal(DPG) returns 0 OtherOrg rows',
+    );
+  }
+
+  // Pool bleed: sequential portal contexts must not mix orgs
+  const afterDpg = await withTenantContext({ mode: 'portal', orgId: dpg }, async (client) => {
+    const res = await client.query(
+      `SELECT organization_id FROM tickets WHERE data->>'subject' = $1`,
+      [marker],
+    );
+    return (res.rows || []).map((r: any) => String(r.organization_id));
+  });
+  const afterOther = await withTenantContext({ mode: 'portal', orgId: other }, async (client) => {
+    const res = await client.query(
+      `SELECT organization_id FROM tickets WHERE data->>'subject' = $1`,
+      [marker],
+    );
+    return (res.rows || []).map((r: any) => String(r.organization_id));
+  });
+  assert(
+    assertSetLocalDoesNotBleed({
+      firstOrg: dpg,
+      secondOrg: other,
+      seenAfterFirst: afterDpg,
+      seenAfterSecond: afterOther,
+    }),
+    'connection pooling never leaks SET LOCAL context between DPG and OtherOrg',
+  );
+
+  // Cleanup test rows (as owner / outside RLS role)
+  await queryDb(`DELETE FROM geistdesk_documents WHERE id = ANY($1::text[])`, [
+    [ticketDpg, ticketOther],
+  ]);
+  if (embeddingsOk) {
+    await queryDb(`DELETE FROM "KnowledgeEmbedding" WHERE chunk_content = $1`, [marker]).catch(
+      () => undefined,
+    );
+  }
 }
 
 main().catch((err) => {

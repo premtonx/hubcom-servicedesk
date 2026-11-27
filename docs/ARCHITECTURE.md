@@ -48,6 +48,43 @@ Data durability:
 
 **Shared UI, Separate APIs:** Prefer one shared presentational workbench (`mode: 'staff' | 'portal'` + typed adapter) over a forked portal UI. Portal pages call `/api/portal/*` exclusively; staff keep staff APIs. See `AGENTS.md`.
 
+## Multi-tenant PostgreSQL RLS
+
+Defense-in-depth isolation uses **Row Level Security** plus transaction-local GUCs
+(`app.rls_mode`, `app.current_org_id`, `app.allowed_org_ids`) set via
+`withTenantContext` / `SET LOCAL` (never session-global — pooled connections cannot bleed).
+
+| Mode | Who | Effect |
+|---|---|---|
+| `portal` | `CLIENT_*` | Only rows for `app.current_org_id` |
+| `staff_scoped` | `HUBCOM_ADMIN` / `AGENT` / `USER` | Internal (`organization_id IS NULL`) + allowed org ids |
+| `super_admin` / `system` | `SUPER_ADMIN`, workers | Full access |
+| unset | — | Fail closed (`false`) |
+
+Covered: `geistdesk_documents` (tickets / messages / KB JSONB), `"KnowledgeEmbedding"`,
+`ticket_hardware_returns`, `organizations`, vault/directory/access tables.
+Convenience views: `tickets`, `kb_articles`, `ticket_messages`.
+
+### Optional `hubcom_app` role (`NOBYPASSRLS`)
+
+`initDb` creates role `hubcom_app` and grants it to the migration user. Runtime
+transactions `SET LOCAL ROLE hubcom_app` so RLS applies. For a dedicated runtime
+login, create a passworded role and set `DATABASE_APP_URL` (owner URL stays on
+`DATABASE_URL` for migrations):
+
+```sql
+-- Run as Postgres superuser / table owner once:
+CREATE ROLE hubcom_app LOGIN PASSWORD 'choose-a-strong-secret' NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO hubcom_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO hubcom_app;
+GRANT SELECT, USAGE ON ALL SEQUENCES IN SCHEMA public TO hubcom_app;
+```
+
+Then set `DATABASE_APP_URL=postgresql://hubcom_app:...@db:5432/geistdesk` on the gateway.
+When `DATABASE_APP_URL` is active, init also `FORCE ROW LEVEL SECURITY` on core tables.
+
+Code: `src/lib/security/tenant-rls*.ts`, wired on `/api/portal` + `/api/returns`.
+
 ## Required environment
 
 Core (compose-required):
@@ -58,6 +95,7 @@ Core (compose-required):
 
 Strongly recommended:
 
+- `DATABASE_APP_URL` (optional `hubcom_app` NOBYPASSRLS runtime URL)
 - `AI_SECRETS_KEY`, `MASTER_KEY_SALT`, `EMAIL_CHANNEL_SECRET_KEY`
 - `INBOUND_MAIL_WEBHOOK_SECRET`, `INBOUND_EMAIL_DOMAIN`, `EMAIL_INGESTION_INTERVAL_MS`
 - Graph/OIDC: `MICROSOFT_PROVIDER_CLIENT_ID`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`, `OIDC_*`, `GRAPH_CLIENT_STATE_SECRET`

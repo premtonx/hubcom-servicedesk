@@ -986,6 +986,12 @@ async function startServer() {
   // Alias for SYSTEM_ADMIN banner/branding: POST/DELETE /api/organizations/:id/banner
   app.use("/api/organizations", organizationAdminRoutes);
   app.use("/api/admin", adminRoutes);
+  // Tenant RLS: bind /api/portal/* to SET LOCAL org context for the request txn.
+  {
+    const { tenantRlsMiddleware } = await import("./src/lib/security/tenant-rls.js");
+    app.use("/api/portal", authenticate, tenantRlsMiddleware);
+    app.use("/api/returns", authenticate, tenantRlsMiddleware);
+  }
   app.use("/api/portal/team", clientPortalTeamRoutes);
   app.use("/api/portal/email-channel", clientPortalEmailRoutes);
   const { default: clientPortalKbRoutes } = await import("./src/routes/clientPortalKbRoutes.js");

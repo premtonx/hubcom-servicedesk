@@ -6,11 +6,14 @@
 import pg from 'pg';
 import { randomUUID } from 'crypto';
 import { safeLog } from './safe-log.js';
+import { getTenantRlsClient } from './security/tenant-rls-context.js';
 
 const { Pool } = pg;
 
-// Connection string can come from standard custom env variables
+// Connection string can come from standard custom env variables.
+// DATABASE_APP_URL (optional) connects as hubcom_app (NOBYPASSRLS) for runtime.
 const DATABASE_URL = process.env.DATABASE_URL || process.env.PG_DATABASE_URL;
+const DATABASE_APP_URL = process.env.DATABASE_APP_URL || '';
 
 let pgPool: pg.Pool | null = null;
 let isPostgres = false;
@@ -53,6 +56,8 @@ export async function initDb() {
     DATABASE_URL.includes('sslmode=disable');
   const allowInsecureTls = process.env.DATABASE_SSL_INSECURE === 'true';
 
+  // Owner/migration URL for initDb DDL. Runtime may switch to DATABASE_APP_URL
+  // (hubcom_app / NOBYPASSRLS) after policies are installed.
   // Multi-user concurrency guardrails — never let one slow query starve the pool.
   pgPool = new Pool({
     connectionString: DATABASE_URL,
@@ -916,6 +921,73 @@ export async function initDb() {
     );
   }
 
+  // Multi-tenant RLS policies + hubcom_app role (idempotent).
+  try {
+    const { ensureTenantRlsPolicies } = await import('./security/tenant-rls.js');
+    await ensureTenantRlsPolicies((sql) => pgPool!.query(sql));
+    safeLog('info', '[DB Engine] Tenant RLS policies verified.');
+  } catch (rlsErr: any) {
+    safeLog('warn', '[DB Engine] Tenant RLS setup skipped:', rlsErr?.message || rlsErr);
+  }
+
+  // Optional runtime switch to DATABASE_APP_URL (NOBYPASSRLS hubcom_app).
+  if (DATABASE_APP_URL && DATABASE_APP_URL !== DATABASE_URL) {
+    try {
+      const appIsLocal =
+        DATABASE_APP_URL.includes('localhost') ||
+        DATABASE_APP_URL.includes('127.0.0.1') ||
+        DATABASE_APP_URL.includes('sslmode=disable');
+      const appPool = new Pool({
+        connectionString: DATABASE_APP_URL,
+        ssl: appIsLocal ? false : { rejectUnauthorized: !allowInsecureTls },
+        max: 20,
+        idleTimeoutMillis: 30_000,
+        connectionTimeoutMillis: 5_000,
+        options: '-c statement_timeout=5000',
+      });
+      await appPool.query('SELECT 1');
+      // FORCE RLS when running as dedicated app role (defense-in-depth).
+      try {
+        await pgPool.query(`
+          DO $$
+          DECLARE t text;
+          BEGIN
+            FOREACH t IN ARRAY ARRAY[
+              'geistdesk_documents',
+              'ticket_hardware_returns',
+              'organizations',
+              'organization_vault_secrets',
+              'organization_vault_audit_log',
+              'organization_directory_users',
+              'user_organization_access'
+            ]
+            LOOP
+              IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = 'public' AND table_name = t
+              ) THEN
+                EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+              END IF;
+            END LOOP;
+            IF EXISTS (
+              SELECT 1 FROM information_schema.tables
+               WHERE table_schema = 'public' AND table_name = 'KnowledgeEmbedding'
+            ) THEN
+              EXECUTE 'ALTER TABLE "KnowledgeEmbedding" FORCE ROW LEVEL SECURITY';
+            END IF;
+          END $$;
+        `);
+      } catch (forceErr: any) {
+        safeLog('warn', '[DB Engine] FORCE RLS skipped:', forceErr?.message || forceErr);
+      }
+      await pgPool.end().catch(() => undefined);
+      pgPool = appPool;
+      safeLog('info', '[DB Engine] Runtime pool switched to DATABASE_APP_URL (hubcom_app).');
+    } catch (appErr: any) {
+      safeLog('warn', '[DB Engine] DATABASE_APP_URL unused:', appErr?.message || appErr);
+    }
+  }
+
   safeLog('info', "[DB Engine] PostgreSQL Tables Verified.");
 }
 
@@ -927,10 +999,35 @@ function requirePool(): pg.Pool {
   return pgPool;
 }
 
+/** Public pool accessor for tenant RLS transactions. */
+export function getPgPool(): pg.Pool {
+  return requirePool();
+}
+
+/**
+ * Execute parameterized SQL. When inside withTenantContext, reuses the
+ * transaction client so SET LOCAL RLS GUCs apply (no pool bleed).
+ */
+export async function dbQuery(
+  sql: string,
+  params: unknown[] = [],
+): Promise<pg.QueryResult> {
+  const tenantClient = getTenantRlsClient();
+  if (tenantClient) {
+    return tenantClient.query(sql, params);
+  }
+  return requirePool().query(sql, params);
+}
+
 /** Run a callback inside a single PostgreSQL transaction. */
 export async function withPgTransaction<T>(
   fn: (client: pg.PoolClient) => Promise<T>,
 ): Promise<T> {
+  const existing = getTenantRlsClient();
+  if (existing) {
+    // Already in a tenant transaction — nest without a new BEGIN.
+    return fn(existing);
+  }
   const client = await requirePool().connect();
   try {
     await client.query('BEGIN');
@@ -945,9 +1042,9 @@ export async function withPgTransaction<T>(
   }
 }
 
-/** Execute parameterized SQL against the live pool. */
+/** Execute parameterized SQL against the live pool (tenant-aware). */
 export async function queryDb(sql: string, params: unknown[] = []): Promise<pg.QueryResult> {
-  return requirePool().query(sql, params);
+  return dbQuery(sql, params);
 }
 
 // -----------------------------------------------------------------------------
@@ -955,8 +1052,7 @@ export async function queryDb(sql: string, params: unknown[] = []): Promise<pg.Q
 // -----------------------------------------------------------------------------
 
 async function readAllDocs(collectionName: string): Promise<any[]> {
-  const pool = requirePool();
-  const res = await pool.query(
+  const res = await dbQuery(
     'SELECT id, data FROM geistdesk_documents WHERE collection = $1',
     [collectionName]
   );
@@ -1120,14 +1216,13 @@ export async function getDocDirect(
   id: string,
   options: { tenantId?: string } = {},
 ): Promise<any | null> {
-  const pool = requirePool();
   const params: unknown[] = [collectionName, id];
   let tenantClause = '';
   if (options.tenantId) {
     tenantClause = ` AND COALESCE(geistdesk_documents.data->>'tenantId', geistdesk_documents.data->>'tenant_id', 'default') = $3`;
     params.push(options.tenantId);
   }
-  const res = await pool.query(
+  const res = await dbQuery(
     `SELECT data FROM geistdesk_documents WHERE collection = $1 AND id = $2${tenantClause}`,
     params,
   );
@@ -1143,7 +1238,6 @@ export async function getDocsDirect(
   constraints: any[],
   options: { tenantId?: string } = {},
 ): Promise<any[]> {
-  const pool = requirePool();
   {
     try {
       let queryStr = `SELECT id, data FROM geistdesk_documents WHERE collection = $1`;
@@ -1331,7 +1425,7 @@ export async function getDocsDirect(
         }
       }
 
-      const res = await pool.query(queryStr, queryParams);
+      const res = await dbQuery(queryStr, queryParams);
       const docs = res.rows.map(row => {
         const parsed = safeParseJson(row.data);
         return {
@@ -1359,12 +1453,11 @@ function toJsonbParam(value: unknown): string {
 }
 
 export async function addDocDirect(collectionName: string, data: any): Promise<any> {
-  const pool = requirePool();
   const generatedId = generateDocId();
   const processed = processValueMutations(data);
   processed.id = generatedId;
 
-  await pool.query(
+  await dbQuery(
     `INSERT INTO geistdesk_documents (collection, id, data) VALUES ($1, $2, $3::jsonb)
      ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
     [collectionName, generatedId, toJsonbParam(processed)]
@@ -1433,7 +1526,6 @@ export async function updateDocDirect(
   data: any,
   options: { tenantId?: string } = {},
 ): Promise<void> {
-  const pool = requirePool();
   const { expr, params } = buildAtomicJsonbPatch(data || {});
 
   // When tenant-scoped, only touch rows that belong to the caller's tenant.
@@ -1450,7 +1542,7 @@ export async function updateDocDirect(
   // on an existing row the patch is applied to the live data column so
   // concurrent writers never clobber each other's fields.
   const insertJson = toJsonbParam(processValueMutations(data || {}, {}));
-  await pool.query(
+  await dbQuery(
     `INSERT INTO geistdesk_documents (collection, id, data) VALUES ($1, $2, $3::jsonb)
      ON CONFLICT (collection, id) DO UPDATE SET data = ${expr}, updated_at = NOW()
      WHERE ${whereClause.trim() ? whereClause.slice(5) : 'TRUE'}`,
@@ -1464,7 +1556,6 @@ export async function setDocDirect(
   data: any,
   options: { tenantId?: string } = {},
 ): Promise<void> {
-  const pool = requirePool();
   const processed = processValueMutations(data);
   delete processed.id;
 
@@ -1476,7 +1567,7 @@ export async function setDocDirect(
     : '';
   if (options.tenantId) params.push(options.tenantId);
 
-  await pool.query(
+  await dbQuery(
     `INSERT INTO geistdesk_documents (collection, id, data) VALUES ($1, $2, $3::jsonb)
      ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()${whereClause}`,
     params,
@@ -1488,14 +1579,13 @@ export async function deleteDocDirect(
   id: string,
   options: { tenantId?: string } = {},
 ): Promise<void> {
-  const pool = requirePool();
   const params: unknown[] = [collectionName, id];
   let tenantClause = '';
   if (options.tenantId) {
     tenantClause = ` AND COALESCE(geistdesk_documents.data->>'tenantId', geistdesk_documents.data->>'tenant_id', 'default') = $3`;
     params.push(options.tenantId);
   }
-  await pool.query(
+  await dbQuery(
     `DELETE FROM geistdesk_documents WHERE collection = $1 AND id = $2${tenantClause}`,
     params,
   );
@@ -1526,8 +1616,7 @@ export interface TicketStats {
  * (sandbox or production) sees identical, authoritative figures.
  */
 export async function getTicketStats(): Promise<TicketStats> {
-  const pool = requirePool();
-  const res = await pool.query(`
+  const res = await dbQuery(`
     SELECT
       COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE LOWER(geistdesk_documents.data->>'status') = 'open')::int AS open,
