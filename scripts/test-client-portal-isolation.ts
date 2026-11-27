@@ -166,6 +166,10 @@ import {
   evaluateAdminOrgPortalSettingsAccess,
 } from '../src/lib/client-portal/admin-org-portal-settings-access.js';
 import {
+  assertPortalSettingsPathsSafe,
+  resolvePortalSettingsPaths,
+} from '../src/lib/client-portal/portal-settings-api-base.js';
+import {
   canPortalUserAccessVaultItem,
   isVaultItemInOrganization,
   sanitizeVaultItemForPortal,
@@ -1362,7 +1366,9 @@ function testPortalBrandingBoundaries(): void {
       brandingCardSrc.includes('onFaviconUpload') &&
       brandingCardSrc.includes('Favicon (Browser-Tab)') &&
       brandingCardSrc.includes('Browser-Tab-Titel / Portal-Titel') &&
-      brandingPageSrc.includes('/api/portal/branding/favicon') &&
+      (brandingPageSrc.includes('/api/portal/branding/favicon') ||
+        brandingPageSrc.includes('paths.faviconPost') ||
+        brandingPageSrc.includes('resolvePortalSettingsPaths')) &&
       brandingPageSrc.includes('hubcom-portal-branding-changed') &&
       pgSrc.includes('favicon_url TEXT') &&
       !brandingPageSrc.includes('/api/db') &&
@@ -7666,7 +7672,8 @@ function testPortalModuleTogglesDpg(): void {
       modulesCard.includes('Sicherer Austausch') &&
       modulesCard.includes('Tresor') &&
       brandingPage.includes('PortalModulesCard') &&
-      companyPortal.includes('PortalModulesCard'),
+      (companyPortal.includes('PortalModulesCard') ||
+        companyPortal.includes('ClientBrandingPage')),
     'Portal-Module toggles on branding + staff Kunden portal tab',
   );
 
@@ -8054,6 +8061,101 @@ function testAdminOrgPortalSettingsApiIsolation(): void {
   );
 }
 
+/**
+ * Part 2 — /admin/customers mounts shared portal settings via mode=admin + orgId.
+ */
+function testAdminCustomersPortalSettingsUiIsolation(): void {
+  console.log('\n[Admin Customers UI] Kunden-Portal tab mounts shared portal panels');
+
+  const DPG = 'org-dpg-ui-0001';
+  const adminPaths = resolvePortalSettingsPaths('admin', DPG);
+  const portalPaths = resolvePortalSettingsPaths('portal');
+  assert(
+    assertPortalSettingsPathsSafe(adminPaths) && assertPortalSettingsPathsSafe(portalPaths),
+    'portal settings paths never include /api/db',
+  );
+  assert(
+    adminPaths.brandingGet.includes(`/organizations/${DPG}/portal-branding`) &&
+      adminPaths.membersBase.includes(`/organizations/${DPG}/portal-members`) &&
+      adminPaths.emailGet.includes(`/organizations/${DPG}/portal-email`) &&
+      portalPaths.brandingGet === '/api/portal/organization' &&
+      portalPaths.membersBase === '/api/portal/team' &&
+      portalPaths.emailGet === '/api/portal/email-channel',
+    'admin apiBase vs portal /api/portal/* path split',
+  );
+
+  const customersPage = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/CustomersPage.tsx'),
+    'utf8',
+  );
+  const portalTab = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/companies/CompanyPortalTab.tsx'),
+    'utf8',
+  );
+  const brandingPage = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientBrandingPage.tsx'),
+    'utf8',
+  );
+  const membersPage = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientMembersPage.tsx'),
+    'utf8',
+  );
+  const emailPage = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/client-portal/ClientEmailIntegrationPage.tsx'),
+    'utf8',
+  );
+  const sidebar = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/companies/CompanySidebar.tsx'),
+    'utf8',
+  );
+  const header = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/companies/CompanyHeader.tsx'),
+    'utf8',
+  );
+  const kpi = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/companies/CompanyKPI.tsx'),
+    'utf8',
+  );
+
+  assert(
+    portalTab.includes("mode=\"admin\"") &&
+      portalTab.includes('ClientBrandingPage') &&
+      portalTab.includes('ClientMembersPage') &&
+      portalTab.includes('ClientEmailIntegrationPage') &&
+      portalTab.includes('MandantenKiRagCard') &&
+      portalTab.includes('Branding & Module') &&
+      portalTab.includes('Mitarbeiter & Rollen') &&
+      portalTab.includes('E-Mail, M365 & SSO') &&
+      portalTab.includes('KI & Lokaler Server'),
+    'CompanyPortalTab mounts 4 shared segments with mode=admin',
+  );
+  assert(
+    brandingPage.includes("mode = 'portal'") &&
+      brandingPage.includes('resolvePortalSettingsPaths') &&
+      membersPage.includes('resolvePortalSettingsPaths') &&
+      emailPage.includes('resolvePortalSettingsPaths') &&
+      !brandingPage.includes("'/api/db'") &&
+      !membersPage.includes("'/api/db'") &&
+      !emailPage.includes("'/api/db'"),
+    'shared portal pages accept mode/apiBase and stay off /api/db',
+  );
+  assert(
+    customersPage.includes("value: 'portal'") &&
+      customersPage.includes("value: 'assets-vault'") &&
+      customersPage.includes('flex-wrap') &&
+      customersPage.includes('/api/admin/organizations') &&
+      !customersPage.includes("Kunden-Portal & Branding"),
+    'CustomersPage has 6-tab compact nav + org list logos',
+  );
+  assert(
+    sidebar.includes('offene Tickets') &&
+      header.includes('Portal-Admin einladen') &&
+      kpi.includes('Offene Tickets') &&
+      kpi.includes('SLA-Erfüllung'),
+    'German labels for sidebar/header/KPI',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -8102,6 +8204,7 @@ async function main(): Promise<void> {
   testTicketsWorkbenchSharedUiIsolation();
   testTicketDetailWorkbenchSharedUiIsolation();
   testAdminOrgPortalSettingsApiIsolation();
+  testAdminCustomersPortalSettingsUiIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

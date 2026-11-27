@@ -159,6 +159,10 @@ import {
   evaluateAdminOrgPortalSettingsAccess,
 } from '../src/lib/client-portal/admin-org-portal-settings-access.js';
 import {
+  assertPortalSettingsPathsSafe,
+  resolvePortalSettingsPaths,
+} from '../src/lib/client-portal/portal-settings-api-base.js';
+import {
   applyOrgAiSettingsUpdate,
   defaultOrgAiSettings,
   embeddingRowsOwnedByOrg,
@@ -2686,6 +2690,29 @@ function testAdminOrgPortalSettingsLifecycle(): void {
       adminOrgSrc.includes('ai-settings') &&
       !portalSettingsSrc.includes("'/api/db'"),
     'admin portal-* + ai-settings + CLIENT_* gate + no /api/db',
+  );
+
+  const adminPaths = resolvePortalSettingsPaths('admin', DPG);
+  const portalPaths = resolvePortalSettingsPaths('portal');
+  assert(
+    assertPortalSettingsPathsSafe(adminPaths) &&
+      assertPortalSettingsPathsSafe(portalPaths) &&
+      adminPaths.emailGet.includes('portal-email') &&
+      portalPaths.emailGet === '/api/portal/email-channel',
+    'FE portal settings apiBase adapter isolates admin vs portal',
+  );
+
+  const portalTab = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/companies/CompanyPortalTab.tsx'),
+    'utf8',
+  );
+  assert(
+    portalTab.includes('ClientBrandingPage') &&
+      portalTab.includes('ClientMembersPage') &&
+      portalTab.includes('ClientEmailIntegrationPage') &&
+      portalTab.includes('MandantenKiRagCard') &&
+      portalTab.includes("mode=\"admin\""),
+    'admin customers Kunden-Portal tab mounts shared portal panels',
   );
 }
 

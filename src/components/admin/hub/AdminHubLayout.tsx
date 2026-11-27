@@ -143,10 +143,10 @@ export default function AdminHubLayout() {
         >
           <div className="px-3 pt-4 pb-2">
             <p className="px-2 text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
-              {t('admin.hubNav', 'Sections')}
+              {t('admin.hubNav', 'Bereiche')}
             </p>
           </div>
-          <nav className="flex flex-col gap-0.5 p-2" aria-label={t('admin.hubNav', 'Sections')}>
+          <nav className="flex flex-col gap-0.5 p-2" aria-label={t('admin.hubNav', 'Bereiche')}>
             {ADMIN_HUB_TABS.map((tab) => {
               const isActive = activeSection === tab.id;
               return (

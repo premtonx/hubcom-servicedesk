@@ -60,9 +60,22 @@ export default function CompanySidebar({
 
   // Hydrate all companies for listing
   const hydratedCompanies = useMemo(() => {
-    return companies.map(c => {
+    return companies.map((c) => {
       const tickets = ticketHistoryMap[c.id] || [];
-      return hydrateCompany(c, tickets)!;
+      const hydrated = hydrateCompany(c, tickets)!;
+      const overrideOpen = (c as any).openTicketsCountOverride;
+      const logoFromOrg =
+        (c as any).logoUrl || (c as any).logo_url || hydrated.logoUrl || '';
+      return {
+        ...hydrated,
+        logoUrl: logoFromOrg,
+        openTicketsCount:
+          typeof overrideOpen === 'number' ? overrideOpen : hydrated.openTicketsCount,
+        openReturnsCount:
+          typeof (c as any).openReturnsCountOverride === 'number'
+            ? (c as any).openReturnsCountOverride
+            : 0,
+      };
     });
   }, [companies, ticketHistoryMap]);
 
@@ -189,7 +202,7 @@ export default function CompanySidebar({
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5 px-2 text-[10px] font-bold text-amber-500 uppercase tracking-wider">
               <Star className="w-3 h-3 fill-amber-500 text-amber-500 animate-pulse" />
-              <span>{t('companies.favorites', 'Favorites')}</span>
+              <span>{t('companies.favorites', 'Favoriten')}</span>
             </div>
             <div className="space-y-1">
               {pinnedCompanies.map(c => (
@@ -220,7 +233,7 @@ export default function CompanySidebar({
 
           {filteredCompanies.length === 0 ? (
             <div className="py-8 text-center text-xs text-muted-foreground font-semibold italic">
-              {t('companies.noCompaniesMatchingFilter', 'No companies matching filter')}
+              {t('companies.noCompaniesMatchingFilter', 'Keine Unternehmen für diesen Filter')}
             </div>
           ) : (
             <div className="space-y-1">
@@ -241,16 +254,16 @@ export default function CompanySidebar({
         {/* Dynamic Filters Section */}
         <div className="pt-2 border-t border-muted/85 space-y-1.5">
           <div className="px-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-            {t('companies.filters', 'Filters')}
+            {t('companies.filters', 'Filter')}
           </div>
           <div className="space-y-0.5 text-xs text-muted-foreground font-semibold">
             {[
-              { id: 'all', label: t('companies.allCompaniesFilter', 'All companies'), count: filterCounts.all },
+              { id: 'all', label: t('companies.allCompaniesFilter', 'Alle Unternehmen'), count: filterCounts.all },
               { id: 'enterprise', label: fCountString(filterCounts.enterprise, t('companies.enterpriseFilter', 'Enterprise')), count: filterCounts.enterprise },
               { id: 'pro', label: fCountString(filterCounts.pro, t('companies.proFilter', 'Pro')), count: filterCounts.pro },
-              { id: 'expiring', label: t('companies.contractExpiringFilter', 'Contract expiring'), count: filterCounts.expiring, colorClass: filterCounts.expiring > 0 ? 'text-rose-500 font-bold' : '' },
-              { id: 'slarisk', label: t('companies.slaRiskFilter', 'SLA risk'), count: filterCounts.slarisk, colorClass: filterCounts.slarisk > 0 ? 'text-amber-500 font-bold' : '' },
-              { id: 'active', label: t('companies.recentlyActiveFilter', 'Recently active'), count: filterCounts.active }
+              { id: 'expiring', label: t('companies.contractExpiringFilter', 'Vertrag auslaufend'), count: filterCounts.expiring, colorClass: filterCounts.expiring > 0 ? 'text-rose-500 font-bold' : '' },
+              { id: 'slarisk', label: t('companies.slaRiskFilter', 'SLA-Risiko'), count: filterCounts.slarisk, colorClass: filterCounts.slarisk > 0 ? 'text-amber-500 font-bold' : '' },
+              { id: 'active', label: t('companies.recentlyActiveFilter', 'Kürzlich aktiv'), count: filterCounts.active }
             ].map(f => (
               <button
                 key={f.id}
@@ -320,7 +333,12 @@ function CompanyCard({
             </p>
           </div>
           <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground font-semibold">
-            <span>{t('companies.openTicketsWithCount', '{{count}} open tickets').replace('{{count}}', String(company.openTicketsCount))}</span>
+            <span>
+              {t('companies.openTicketsWithCount', '{{count}} offene Tickets').replace(
+                '{{count}}',
+                String(company.openTicketsCount),
+              )}
+            </span>
             <span>•</span>
             <span className="font-bold text-primary">{company.tier}</span>
           </div>
@@ -332,17 +350,17 @@ function CompanyCard({
         {/* Show active indicators */}
         {company.healthStatus === 'SLA Risk' && (
           <Badge className="text-[7px] font-extrabold bg-rose-500/10 hover:bg-rose-500/10 text-rose-500 border-none uppercase rounded-full px-1.5 h-4 tracking-wider">
-            {t('companies.slaRiskFilter', 'SLA RISK')}
+            {t('companies.slaRiskFilter', 'SLA-Risiko')}
           </Badge>
         )}
         {company.healthStatus === 'Healthy' && (
           <Badge className="text-[7px] font-extrabold bg-emerald-500/10 hover:bg-emerald-500/10 text-emerald-500 border-none uppercase rounded-full px-1.5 h-4 tracking-wider">
-            {t('companies.healthy', 'HEALTHY')}
+            {t('companies.healthy', 'Stabil')}
           </Badge>
         )}
         {company.healthStatus === 'Contract Expiring' && (
           <Badge className="text-[7px] font-extrabold bg-amber-500/10 hover:bg-amber-500/10 text-amber-500 border-none uppercase rounded-full px-1.5 h-4 tracking-wider">
-            {t('companies.contractExpiringFilter', 'EXPIRED')}
+            {t('companies.contractExpiringFilter', 'Auslaufend')}
           </Badge>
         )}
 
