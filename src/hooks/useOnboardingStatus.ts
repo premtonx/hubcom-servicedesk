@@ -27,6 +27,20 @@ export interface OnboardingStatus {
   };
 }
 
+function onboardingStatusFetchErrorMessage(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const status = err.response?.status;
+    if (status === 429) {
+      return 'Onboarding status temporarily rate-limited (429)';
+    }
+    if (!err.response) {
+      return 'Onboarding status network error';
+    }
+    return err.message || `Onboarding status failed (${status})`;
+  }
+  return err instanceof Error ? err.message : 'Failed to load onboarding status';
+}
+
 export function useOnboardingStatus() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -41,7 +55,9 @@ export function useOnboardingStatus() {
       setStatus(res.data);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load onboarding status');
+      // Keep any previously known status. A transient 429/network failure must
+      // never look like "uninitialized" and bounce production to /onboarding.
+      setError(onboardingStatusFetchErrorMessage(err));
     } finally {
       setLoading(false);
     }

@@ -7,6 +7,7 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import { authRateLimiter, credentialRateLimiter } from '../middleware/rate-limiters.js';
 import {
   emailDomainAllowed,
   getEntraSettings,
@@ -72,7 +73,7 @@ router.get('/microsoft/status', async (_req: Request, res: Response) => {
 });
 
 /** Startet den OIDC-Flow (Redirect zu Microsoft). */
-router.get('/microsoft/start', async (req: Request, res: Response) => {
+router.get('/microsoft/start', authRateLimiter, credentialRateLimiter, async (req: Request, res: Response) => {
   try {
     const settings = await getEntraSettings();
     if (!settings.enabled || !settings.clientId || !settings.clientSecret || !settings.tenantId) {
@@ -111,7 +112,7 @@ router.get('/microsoft/start', async (req: Request, res: Response) => {
 });
 
 /** OIDC Callback — Code tauschen, Benutzer verknüpfen/JIT, Session setzen. */
-router.get('/microsoft/callback', async (req: Request, res: Response) => {
+router.get('/microsoft/callback', authRateLimiter, credentialRateLimiter, async (req: Request, res: Response) => {
   const origin = resolveAppOrigin(req);
   const fail = (msg: string) =>
     res.redirect(302, `${origin}/login?error=${encodeURIComponent(msg)}`);

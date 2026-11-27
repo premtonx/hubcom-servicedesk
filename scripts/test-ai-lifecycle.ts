@@ -2832,6 +2832,24 @@ function testSecurityPerimeterLifecycle(): void {
       !page.includes("'/api/db'"),
     'German security monitor uses securityAdminApi without /api/db',
   );
+
+  const rateLimiters = fs.readFileSync(
+    path.join(process.cwd(), 'src/middleware/rate-limiters.ts'),
+    'utf8',
+  );
+  const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
+  assert(
+    rateLimiters.includes('GENERAL_API_RATE_LIMIT_PER_MINUTE = 600') &&
+      rateLimiters.includes('CREDENTIAL_RATE_LIMIT_PER_MINUTE = 30') &&
+      rateLimiters.includes('shouldSkipGeneralApiRateLimit') &&
+      rateLimiters.includes('/admin/onboarding/status'),
+    'general API ≥600/min with session/status skips; auth stays at 30/min',
+  );
+  assert(
+    appSrc.includes('status != null') &&
+      appSrc.includes('Navigate to="/onboarding"'),
+    'onboarding gate requires loaded status (no 429→/onboarding bounce)',
+  );
 }
 
 function testStaffPermissionMatrixUiLifecycle(): void {
