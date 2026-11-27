@@ -10,6 +10,7 @@ import {
   updateDocDirect,
   withPgTransaction,
 } from './postgres-backend.js';
+import { withSystemTenantContext } from './security/tenant-rls.js';
 import { hashPassword } from './crypto.js';
 import {
   DEFAULT_MODULE_CONFIG,
@@ -237,43 +238,55 @@ export async function loadModuleConfigDoc(): Promise<ModuleConfig | null> {
  * Never writes is_initialized=true — that happens only in completeOnboarding().
  * Missing documents (or a missing flag) stay uninitialized so the wizard runs.
  */
+/** Alias used by boot / isolation tests (same as ensureOnboardingState). */
+export async function ensureInitializationFlag(): Promise<OnboardingStatus> {
+  return ensureOnboardingState();
+}
+
 export async function ensureOnboardingState(): Promise<OnboardingStatus> {
-  const existing = await getDocDirect(MODULE_COLLECTION, MODULE_DOC_ID);
+  // FORCE RLS + hubcom_app: boot must run with app.rls_mode=system or 42501.
+  return withSystemTenantContext(async () => {
+    const existing = await getDocDirect(MODULE_COLLECTION, MODULE_DOC_ID);
 
-  if (!existing) {
-    const fresh = emptyModuleConfig();
-    await setDocDirect(MODULE_COLLECTION, MODULE_DOC_ID, {
-      ...fresh,
-      is_initialized: false,
-      updatedAt: new Date().toISOString(),
-    });
-    console.log('[Onboarding] Fresh install detected — is_initialized=false');
-    return toStatus(fresh, false, false);
-  }
-
-  // Undo the former boot heuristic that stamped true with initializedBy=legacy-migration
-  // without the wizard ever completing.
-  const autoMigrated =
-    existing.is_initialized === true && existing.initializedBy === 'legacy-migration';
-
-  if (existing.is_initialized !== true || autoMigrated) {
-    if (existing.is_initialized !== false || autoMigrated) {
-      await updateDocDirect(MODULE_COLLECTION, MODULE_DOC_ID, {
+    if (!existing) {
+      const fresh = emptyModuleConfig();
+      await setDocDirect(MODULE_COLLECTION, MODULE_DOC_ID, {
+        ...fresh,
         is_initialized: false,
-        initializedAt: null,
-        initializedBy: null,
         updatedAt: new Date().toISOString(),
       });
-      console.log(
-        autoMigrated
-          ? '[Onboarding] Reverted legacy-migration auto-init — is_initialized=false'
-          : '[Onboarding] module_config.is_initialized missing — defaulted to false',
+      console.log('[Onboarding] Fresh install detected — is_initialized=false');
+      return toStatus(fresh, false, false);
+    }
+
+    // Undo the former boot heuristic that stamped true with initializedBy=legacy-migration
+    // without the wizard ever completing.
+    const autoMigrated =
+      existing.is_initialized === true && existing.initializedBy === 'legacy-migration';
+
+    if (existing.is_initialized !== true || autoMigrated) {
+      if (existing.is_initialized !== false || autoMigrated) {
+        await updateDocDirect(MODULE_COLLECTION, MODULE_DOC_ID, {
+          is_initialized: false,
+          initializedAt: null,
+          initializedBy: null,
+          updatedAt: new Date().toISOString(),
+        });
+        console.log(
+          autoMigrated
+            ? '[Onboarding] Reverted legacy-migration auto-init — is_initialized=false'
+            : '[Onboarding] module_config.is_initialized missing — defaulted to false',
+        );
+      }
+      return toStatus(
+        normalizeModuleConfig({ ...existing, is_initialized: false }),
+        await hasPrimaryAdmin(),
+        false,
       );
     }
-    return toStatus(normalizeModuleConfig({ ...existing, is_initialized: false }), await hasPrimaryAdmin(), false);
-  }
 
-  return toStatus(normalizeModuleConfig(existing), await hasPrimaryAdmin(), false);
+    return toStatus(normalizeModuleConfig(existing), await hasPrimaryAdmin(), false);
+  });
 }
 
 async function probePgvector(): Promise<boolean> {
@@ -351,16 +364,19 @@ function toStatus(config: ModuleConfig, hasAdmin: boolean, isAuthenticatedAdmin:
 }
 
 export async function getOnboardingStatus(req?: Request): Promise<OnboardingStatus> {
-  const config = (await loadModuleConfigDoc()) || emptyModuleConfig();
-  const user = (req as { user?: { role?: string; is_admin?: boolean } | null } | undefined)?.user;
-  const isAuthenticatedAdmin =
-    user?.role === 'SYSTEM_ADMIN' ||
-    user?.role === 'SUPER_ADMIN' ||
-    user?.role === 'HUBCOM_ADMIN' ||
-    user?.is_admin === true;
-  const status = toStatus(config, await hasPrimaryAdmin(), isAuthenticatedAdmin);
-  status.health.pgvector = await probePgvector();
-  return status;
+  // Pre-auth status probe must see module_config under FORCE RLS + hubcom_app.
+  return withSystemTenantContext(async () => {
+    const config = (await loadModuleConfigDoc()) || emptyModuleConfig();
+    const user = (req as { user?: { role?: string; is_admin?: boolean } | null } | undefined)?.user;
+    const isAuthenticatedAdmin =
+      user?.role === 'SYSTEM_ADMIN' ||
+      user?.role === 'SUPER_ADMIN' ||
+      user?.role === 'HUBCOM_ADMIN' ||
+      user?.is_admin === true;
+    const status = toStatus(config, await hasPrimaryAdmin(), isAuthenticatedAdmin);
+    status.health.pgvector = await probePgvector();
+    return status;
+  });
 }
 
 function normalizeEndpoint(raw: string): string {

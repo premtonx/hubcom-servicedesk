@@ -82,8 +82,16 @@ GRANT SELECT, USAGE ON ALL SEQUENCES IN SCHEMA public TO hubcom_app;
 
 Then set `DATABASE_APP_URL=postgresql://hubcom_app:...@db:5432/geistdesk` on the gateway.
 When `DATABASE_APP_URL` is active, init also `FORCE ROW LEVEL SECURITY` on core tables.
+Owner `DATABASE_URL` stays available for migrations; the runtime pool uses `hubcom_app`.
 
-Code: `src/lib/security/tenant-rls*.ts`, wired on `/api/portal` + `/api/returns`.
+**Boot / pre-auth:** `ensureDefaultTicketConfig`, `ensureOnboardingState` /
+`ensureInitializationFlag`, workers, `/api/auth/*`, `/api/admin/onboarding/*`, and
+system-favicon run inside `withTenantContext({ mode: 'system' })` (or
+`systemRlsMiddleware`) so FORCE RLS never returns `42501` or a false
+uninitialized status. Portal/staff routes keep strict org isolation.
+
+Code: `src/lib/security/tenant-rls*.ts`, wired on `/api/portal` + `/api/returns` +
+system middleware on auth/onboarding.
 
 ## Required environment
 

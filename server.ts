@@ -352,6 +352,14 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  // Pre-auth / boot document access under FORCE RLS + hubcom_app (app.rls_mode=system).
+  {
+    const { systemRlsMiddleware } = await import("./src/lib/security/tenant-rls.js");
+    app.use("/api/auth", systemRlsMiddleware);
+    app.use("/api/admin/onboarding", systemRlsMiddleware);
+    app.use("/api/admin/system-favicon", systemRlsMiddleware);
+  }
+
   // ---------------------------------------------------------------------------
   // AUTHENTICATION (server-side, hashed credentials + signed session tokens)
   // ---------------------------------------------------------------------------

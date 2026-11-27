@@ -6,6 +6,7 @@ import {
   queryDb,
   setDocDirect,
 } from '../postgres-backend.js';
+import { withSystemTenantContext } from '../security/tenant-rls.js';
 import { countTicketsUsingValue, reassignTicketField } from './usage.js';
 import {
   DEFAULT_TICKET_PRIORITIES,
@@ -479,22 +480,24 @@ export async function ensureDefaultTicketConfig(): Promise<{
   priorities: number;
   types: number;
 }> {
-  const statuses = await seedCollection(
-    TICKET_STATUSES_COLLECTION,
-    DEFAULT_TICKET_STATUSES as any,
-    'Status',
-  );
-  const priorities = await seedCollection(
-    TICKET_PRIORITIES_COLLECTION,
-    DEFAULT_TICKET_PRIORITIES as any,
-    'Prioritäten',
-  );
-  const types = await seedCollection(
-    TICKET_TYPES_COLLECTION,
-    DEFAULT_TICKET_TYPES as any,
-    'Typen',
-  );
-  return { statuses, priorities, types };
+  return withSystemTenantContext(async () => {
+    const statuses = await seedCollection(
+      TICKET_STATUSES_COLLECTION,
+      DEFAULT_TICKET_STATUSES as any,
+      'Status',
+    );
+    const priorities = await seedCollection(
+      TICKET_PRIORITIES_COLLECTION,
+      DEFAULT_TICKET_PRIORITIES as any,
+      'Prioritäten',
+    );
+    const types = await seedCollection(
+      TICKET_TYPES_COLLECTION,
+      DEFAULT_TICKET_TYPES as any,
+      'Typen',
+    );
+    return { statuses, priorities, types };
+  });
 }
 
 export async function getUsageForItem(

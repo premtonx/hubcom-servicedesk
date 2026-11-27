@@ -16,7 +16,10 @@ const DATABASE_URL = process.env.DATABASE_URL || process.env.PG_DATABASE_URL;
 const DATABASE_APP_URL = process.env.DATABASE_APP_URL || '';
 
 let pgPool: pg.Pool | null = null;
+/** Owner/migration pool kept when runtime switches to DATABASE_APP_URL. */
+let ownerPgPool: pg.Pool | null = null;
 let isPostgres = false;
+let runtimeUsesAppRole = false;
 
 // Safe JSON Parsing Helper
 function safeParseJson(data: any): any {
@@ -980,8 +983,10 @@ export async function initDb() {
       } catch (forceErr: any) {
         safeLog('warn', '[DB Engine] FORCE RLS skipped:', forceErr?.message || forceErr);
       }
-      await pgPool.end().catch(() => undefined);
+      // Keep owner pool for bootstrap / migrations / FORCE DDL; runtime uses app role.
+      ownerPgPool = pgPool;
       pgPool = appPool;
+      runtimeUsesAppRole = true;
       safeLog('info', '[DB Engine] Runtime pool switched to DATABASE_APP_URL (hubcom_app).');
     } catch (appErr: any) {
       safeLog('warn', '[DB Engine] DATABASE_APP_URL unused:', appErr?.message || appErr);
@@ -1002,6 +1007,19 @@ function requirePool(): pg.Pool {
 /** Public pool accessor for tenant RLS transactions. */
 export function getPgPool(): pg.Pool {
   return requirePool();
+}
+
+/** True when runtime queries use hubcom_app (NOBYPASSRLS) via DATABASE_APP_URL. */
+export function isRuntimeAppRoleActive(): boolean {
+  return runtimeUsesAppRole;
+}
+
+/**
+ * Owner/migration pool (DATABASE_URL). Falls back to the runtime pool when
+ * DATABASE_APP_URL is not configured.
+ */
+export function getOwnerPgPool(): pg.Pool {
+  return ownerPgPool || requirePool();
 }
 
 /**
