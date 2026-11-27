@@ -224,7 +224,7 @@ export default function AdminImportPage() {
 
   const mappingPayload = useMemo(() => {
     const out: Record<string, string> = {};
-    for (const [source, target] of Object.entries(mappings)) {
+    for (const [source, target] of Object.entries(mappings ?? {})) {
       if (target && target !== '__skip__') out[source] = target;
     }
     return out;

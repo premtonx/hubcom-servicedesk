@@ -346,8 +346,10 @@ export function AdminHubAiEngineTab({ telemetry: _telemetry }: AdminHubAiEngineT
   };
 
   const handleSaveSecrets = async () => {
-    const nonEmpty = Object.fromEntries(Object.entries(secrets).filter(([, v]) => v.trim()));
-    if (Object.keys(nonEmpty).length === 0) {
+    const nonEmpty = Object.fromEntries(
+      Object.entries(secrets ?? {}).filter(([, v]) => String(v || '').trim()),
+    );
+    if (Object.keys(nonEmpty ?? {}).length === 0) {
       toast.info(t('admin.hubAi.noKeysToSave', 'No new API keys to save.'));
       return;
     }

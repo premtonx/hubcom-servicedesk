@@ -841,23 +841,44 @@ async function startServer() {
         const scopedConstraints = Array.isArray(constraints) ? [...constraints] : [];
         // Tenant scoping is enforced at query time when the collection is
         // tenant-scoped; the in-process filter below remains as a belt-and-
-        // braces guard for legacy rows.
-        let docs = await getDocsDirect(collection, scopedConstraints, {
-          tenantId: tenantScoped ? tenantId : undefined,
-        });
+        // braces guard for legacy rows. Always return an array so frontend
+        // onSnapshot / subscribeToCustomers never see null payloads.
+        let docs: any[] = [];
+        try {
+          docs = (await getDocsDirect(collection, scopedConstraints, {
+            tenantId: tenantScoped ? tenantId : undefined,
+          })) || [];
+        } catch (queryErr: any) {
+          const msg = String(queryErr?.message || queryErr || "");
+          // RLS / empty-context failures must not 500 the polling loop —
+          // return [] so the UI stays up while the next poll retries.
+          if (
+            msg.includes("42501") ||
+            msg.includes("row-level security") ||
+            msg.includes("permission denied")
+          ) {
+            safeLog(
+              "warn",
+              `[DB Router] get_docs RLS deny for ${collection}; returning empty result:`,
+              msg,
+            );
+            return res.json({ result: [] });
+          }
+          throw queryErr;
+        }
         if (tenantScoped) {
-          docs = (docs || []).filter((d: any) => documentBelongsToTenant(d, tenantId));
+          docs = docs.filter((d: any) => documentBelongsToTenant(d, tenantId));
         }
         if (req.user && isClientPortalRole(req.user.role)) {
           const filtered = await postFilterClientDbResult({
             user: req.user,
             collection,
             action,
-            docs: docs || [],
+            docs,
           });
           docs = filtered.docs || [];
         }
-        const safe = collection === "users" ? (docs || []).map(sanitizeUserDoc) : docs;
+        const safe = collection === "users" ? docs.map(sanitizeUserDoc) : docs;
         return res.json({ result: safe });
       }
       if (action === "add_doc") {

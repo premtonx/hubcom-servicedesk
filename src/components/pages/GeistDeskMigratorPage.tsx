@@ -81,7 +81,8 @@ export default function HubcomMigratorPage() {
     const extension = file.name.split('.').pop()?.toLowerCase();
     
     const flattenObject = (obj: any, prefix = ''): Record<string, any> => {
-      return Object.keys(obj).reduce((acc: any, k: string) => {
+      if (!obj || typeof obj !== 'object') return {};
+      return Object.keys(obj ?? {}).reduce((acc: any, k: string) => {
         const pre = prefix.length ? prefix + '.' : '';
         if (typeof obj[k] === 'object' && obj[k] !== null && !Array.isArray(obj[k])) {
           Object.assign(acc, flattenObject(obj[k], pre + k));
@@ -136,7 +137,9 @@ export default function HubcomMigratorPage() {
           }
 
           const flattenedData = rawData.map(item => flattenObject(item));
-          const headers = Array.from(new Set(flattenedData.flatMap(item => Object.keys(item))));
+          const headers = Array.from(
+            new Set(flattenedData.flatMap((item) => Object.keys(item ?? {}))),
+          );
 
           setImportFile({
             file,

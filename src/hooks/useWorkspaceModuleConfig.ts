@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
   getModuleConfig,
+  normalizeModuleConfig,
   saveModuleConfig,
   syncModuleConfigFromServer,
   type ModuleConfig,
@@ -28,7 +29,7 @@ export function useWorkspaceModuleConfig(options: UseWorkspaceModuleConfigOption
     setSyncing(true);
     void syncModuleConfigFromServer(hydrateAsAdmin).then((next) => {
       if (!active) return;
-      setConfig(next);
+      setConfig(normalizeModuleConfig(next));
       setSyncing(false);
     });
 
@@ -42,9 +43,12 @@ export function useWorkspaceModuleConfig(options: UseWorkspaceModuleConfigOption
 
   const persist = useCallback(async (next: ModuleConfig): Promise<boolean> => {
     const previous = getModuleConfig();
-    setConfig(next);
+    // Always normalize before optimistic UI updates so nested maps
+    // (languages / polyglot.customDictionary) are never null.
+    const normalized = normalizeModuleConfig(next);
+    setConfig(normalized);
     try {
-      await saveModuleConfig(next);
+      await saveModuleConfig(normalized);
       return true;
     } catch (error) {
       console.error('[WorkspaceModuleConfig] Persist failed:', error);

@@ -1,0 +1,44 @@
+# Optional ACME DNS-challenge Caddyfile (wildcard / private DNS).
+# Mount instead of deploy/Caddyfile when using DNS-01, e.g.:
+#   - ./deploy/Caddyfile.acmedns:/etc/caddy/Caddyfile:ro
+# Requires ACME DNS provider env vars for the chosen module.
+#
+# Concurrent POST /api/db polls need the same generous timeouts as the
+# standard Caddyfile so slow RLS queries never drop with 502.
+
+{$DOMAIN:localhost} {
+	encode gzip zstd
+
+	tls {
+		dns {$ACME_DNS_PROVIDER:cloudflare} {$ACME_DNS_TOKEN}
+	}
+
+	handle /api/* {
+		reverse_proxy backend:5000 {
+			transport http {
+				versions 1.1
+				keepalive 30s
+				keepalive_idle_conns 32
+				response_header_timeout 120s
+				read_timeout 120s
+				write_timeout 120s
+				dial_timeout 10s
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

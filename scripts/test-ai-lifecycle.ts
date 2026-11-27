@@ -2801,8 +2801,8 @@ function testSecurityPerimeterLifecycle(): void {
 
   assert(isHoneypotPath('/.env') === true, '/.env honeypot');
   const ban = engine.honeypot('198.51.100.21', '/.env');
-  assert(engine.isBanned('ip', '198.51.100.21'), 'honeypot IP banned (403 path)');
-  engine.unban(ban.id, 'admin');
+  assert(!!ban && engine.isBanned('ip', '198.51.100.21'), 'honeypot IP banned (403 path)');
+  engine.unban(ban!.id, 'admin');
   assert(!engine.isBanned('ip', '198.51.100.21'), 'admin unban restores access');
 
   for (let i = 0; i < 10; i++) engine.record403('198.51.100.22', 'client-user-1', i);

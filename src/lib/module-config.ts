@@ -50,16 +50,24 @@ export function resolvePolyglotTranslationProviderMode(
   return 'dictionary_only';
 }
 
+function asPhraseDictionary(
+  value: unknown,
+): Record<string, Record<string, string>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, Record<string, string>>;
+}
+
 export function normalizePolyglotBridgeSettings(
-  polyglotRaw: Partial<PolyglotBridgeSettings> | Record<string, unknown> | undefined,
+  polyglotRaw: Partial<PolyglotBridgeSettings> | Record<string, unknown> | null | undefined,
 ): PolyglotBridgeSettings {
-  const mode = resolvePolyglotTranslationProviderMode(polyglotRaw);
+  const mode = resolvePolyglotTranslationProviderMode(polyglotRaw ?? undefined);
   const raw = (polyglotRaw ?? {}) as Partial<PolyglotBridgeSettings> & { hasTranslationKey?: boolean };
   return {
     translationProviderMode: mode,
     translationProviderKey: raw.translationProviderKey ?? '',
     hasTranslationKey: raw.hasTranslationKey === true,
-    customDictionary: raw.customDictionary ?? {},
+    // Never leave customDictionary null/undefined — Object.keys/entries crash otherwise.
+    customDictionary: asPhraseDictionary(raw.customDictionary),
     allowAiFallback: mode === 'orchestrator',
   };
 }
@@ -261,10 +269,13 @@ function inferIsoCodeFromLanguage(lang: string): string {
   return 'en';
 }
 
-export function normalizeModuleConfig(parsed: Partial<ModuleConfig> | Record<string, unknown>): ModuleConfig {
-  const source = parsed as Partial<ModuleConfig>;
+export function normalizeModuleConfig(parsed: Partial<ModuleConfig> | Record<string, unknown> | null | undefined): ModuleConfig {
+  const source = (parsed && typeof parsed === 'object' ? parsed : {}) as Partial<ModuleConfig>;
   const polyglotRaw = (source.polyglot ?? {}) as Partial<PolyglotBridgeSettings>;
   const initializedRaw = (source as { is_initialized?: unknown }).is_initialized;
+  const languageSource = Array.isArray(source.languages)
+    ? source.languages
+    : DEFAULT_MODULE_CONFIG.languages;
 
   return {
     ...DEFAULT_MODULE_CONFIG,
@@ -275,13 +286,13 @@ export function normalizeModuleConfig(parsed: Partial<ModuleConfig> | Record<str
     ),
     ai: {
       ...DEFAULT_MODULE_CONFIG.ai,
-      ...(source.ai || {}),
+      ...(source.ai && typeof source.ai === 'object' ? source.ai : {}),
     },
     email: {
       ...DEFAULT_MODULE_CONFIG.email,
-      ...(source.email || {})
+      ...(source.email && typeof source.email === 'object' ? source.email : {}),
     },
-    languages: (source.languages || DEFAULT_MODULE_CONFIG.languages).map((lang: PolyglotLanguage & { isoCode?: string }) => ({
+    languages: languageSource.map((lang: PolyglotLanguage & { isoCode?: string }) => ({
       lang: lang.lang,
       isoCode: lang.isoCode || inferIsoCodeFromLanguage(lang.lang),
       enabled: lang.enabled ?? true,
@@ -294,7 +305,9 @@ export function normalizeModuleConfig(parsed: Partial<ModuleConfig> | Record<str
       : DEFAULT_MODULE_CONFIG.exchangeCustomTemplates,
     exchangeSettings: {
       ...DEFAULT_MODULE_CONFIG.exchangeSettings,
-      ...(source.exchangeSettings ?? {}),
+      ...(source.exchangeSettings && typeof source.exchangeSettings === 'object'
+        ? source.exchangeSettings
+        : {}),
     },
     mcp: normalizeMcpSettings(source.mcp),
   };

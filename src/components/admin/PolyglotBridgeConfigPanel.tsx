@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { FlagIcon } from '../ui/FlagIcon';
 import { useTranslation } from '../../lib/context/I18nContext';
 import {
+  DEFAULT_POLYGLOT_BRIDGE_SETTINGS,
   type ModuleConfig,
   type PolyglotLanguage,
   type PolyglotTranslationProviderMode,
@@ -36,7 +37,7 @@ import {
 } from '../../lib/polyglot-bridge';
 import { cn } from '../../lib/utils';
 
-const ISO_PRESET_OPTIONS = Object.entries(ISO_LANGUAGE_PRESETS);
+const ISO_PRESET_OPTIONS = Object.entries(ISO_LANGUAGE_PRESETS ?? {});
 
 const TRANSLATION_PROVIDER_OPTIONS: {
   value: PolyglotTranslationProviderMode;
@@ -75,10 +76,17 @@ export function PolyglotBridgeConfigPanel({ className }: PolyglotBridgeConfigPan
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const languages = Array.isArray(config.languages) ? config.languages : [];
+  const polyglot = config.polyglot ?? DEFAULT_POLYGLOT_BRIDGE_SETTINGS;
+  const customDictionary =
+    polyglot.customDictionary && typeof polyglot.customDictionary === 'object'
+      ? polyglot.customDictionary
+      : {};
+
   useEffect(() => {
     // The raw key is never echoed back from the server — only the presence flag.
-    if (!config.polyglot.hasTranslationKey) setApiKeyInput('');
-  }, [config.polyglot.hasTranslationKey, config.polyglot.translationProviderKey]);
+    if (!polyglot.hasTranslationKey) setApiKeyInput('');
+  }, [polyglot.hasTranslationKey, polyglot.translationProviderKey]);
 
   useEffect(() => {
     const preset = resolveLanguagePreset(isoInput);
@@ -114,7 +122,7 @@ export function PolyglotBridgeConfigPanel({ className }: PolyglotBridgeConfigPan
       return;
     }
 
-    if (config.languages.some((l) => l.isoCode === isoCode)) {
+    if (languages.some((l) => l.isoCode === isoCode)) {
       toast.error(t('adminHub.polyglot.duplicate', 'This language is already provisioned.'));
       return;
     }
@@ -130,7 +138,7 @@ export function PolyglotBridgeConfigPanel({ className }: PolyglotBridgeConfigPan
     const saved = await persist({
       ...config,
       polyglotEnabled: true,
-      languages: [...config.languages, entry],
+      languages: [...languages, entry],
     });
 
     if (saved) {
@@ -139,7 +147,7 @@ export function PolyglotBridgeConfigPanel({ className }: PolyglotBridgeConfigPan
   };
 
   const handleRemoveLanguage = async (isoCode: string) => {
-    const remaining = config.languages.filter((l) => l.isoCode !== isoCode);
+    const remaining = languages.filter((l) => l.isoCode !== isoCode);
     if (remaining.length === 0) {
       toast.error(t('adminHub.polyglot.minOne', 'At least one language must remain active.'));
       return;
@@ -154,7 +162,7 @@ export function PolyglotBridgeConfigPanel({ className }: PolyglotBridgeConfigPan
   };
 
   const toggleLanguageEnabled = async (isoCode: string) => {
-    const nextLanguages = config.languages.map((l) =>
+    const nextLanguages = languages.map((l) =>
       l.isoCode === isoCode ? { ...l, enabled: !l.enabled } : l,
     );
     if (config.polyglotEnabled && nextLanguages.every((l) => !l.enabled)) {
@@ -180,13 +188,14 @@ export function PolyglotBridgeConfigPanel({ className }: PolyglotBridgeConfigPan
     const saved = await persist({
       ...config,
       polyglot: {
-        ...config.polyglot,
+        ...polyglot,
+        customDictionary,
         translationProviderMode: 'deepl',
         // When the admin clears the field, keep the existing configured key
         // (hasTranslationKey drives the server-side keep). A typed value is a
         // genuine replacement.
         translationProviderKey: trimmed,
-        hasTranslationKey: trimmed.length === 0 ? config.polyglot.hasTranslationKey : true,
+        hasTranslationKey: trimmed.length === 0 ? polyglot.hasTranslationKey : true,
         allowAiFallback: false,
       },
     });
@@ -200,7 +209,8 @@ export function PolyglotBridgeConfigPanel({ className }: PolyglotBridgeConfigPan
     const saved = await persist({
       ...config,
       polyglot: {
-        ...config.polyglot,
+        ...polyglot,
+        customDictionary,
         translationProviderMode: mode,
         allowAiFallback: mode === 'orchestrator',
       },
@@ -223,12 +233,12 @@ export function PolyglotBridgeConfigPanel({ className }: PolyglotBridgeConfigPan
       try {
         const parsed = JSON.parse(String(reader.result || '{}'));
         const localeHint = inferLocaleFromFilename(file.name);
-        const merged = mergeImportedDictionaryJson(config.polyglot.customDictionary, parsed, localeHint);
-        const entryCount = Object.keys(merged).length;
+        const merged = mergeImportedDictionaryJson(customDictionary, parsed, localeHint);
+        const entryCount = Object.keys(merged ?? {}).length;
         const saved = await persist({
           ...config,
           polyglot: {
-            ...config.polyglot,
+            ...polyglot,
             customDictionary: merged,
           },
         });
@@ -247,9 +257,9 @@ export function PolyglotBridgeConfigPanel({ className }: PolyglotBridgeConfigPan
     reader.readAsText(file);
   };
 
-  const activeLanguages = getActiveSupportedLanguages(config.languages);
-  const dictionaryEntryCount = Object.keys(config.polyglot.customDictionary).length;
-  const providerMode = config.polyglot.translationProviderMode ?? 'dictionary_only';
+  const activeLanguages = getActiveSupportedLanguages(languages);
+  const dictionaryEntryCount = Object.keys(customDictionary ?? {}).length;
+  const providerMode = polyglot.translationProviderMode ?? 'dictionary_only';
 
   return (
     <Card className={cn('rounded-[2rem] border-slate-200/80 shadow-sm overflow-hidden', className)}>
@@ -378,7 +388,7 @@ export function PolyglotBridgeConfigPanel({ className }: PolyglotBridgeConfigPan
                   </tr>
                 </thead>
                 <tbody>
-                  {config.languages.map((lang) => (
+                  {languages.map((lang) => (
                     <tr key={lang.isoCode} className="border-t border-slate-100">
                       <td className="p-3 font-medium">{lang.lang}</td>
                       <td className="p-3 font-mono text-xs">{lang.isoCode}</td>
