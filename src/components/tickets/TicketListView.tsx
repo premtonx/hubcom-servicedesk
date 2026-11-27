@@ -257,7 +257,7 @@ export function TicketListView(props: TicketListViewProps) {
                 </div>
               }
             />
-            <div className="px-4 sm:px-6 pb-2 shrink-0">
+            <div className="px-4 sm:px-6 mt-4 shrink-0">
               <div
                 className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-slate-100/80 border border-slate-200/70 max-w-full"
                 role="tablist"
@@ -335,6 +335,7 @@ export function TicketListView(props: TicketListViewProps) {
             </div>
 
             <ModuleToolbar
+              className="mt-3"
               searchPlaceholder={t('tickets.searchPlaceholderShort', 'Suchen...')}
               searchValue={searchQuery}
               onSearchChange={setSearchQuery}
@@ -1216,7 +1217,7 @@ export function TicketListView(props: TicketListViewProps) {
               ) : (
               <>
               {/* Desktop Table Layout (lg and up) */}
-              <div className="hidden lg:block w-full px-4 sm:px-6 py-4">
+              <div className="hidden lg:block w-full px-4 sm:px-6 mt-3 pb-4">
                 <div
                   className={cn(
                     'rounded-xl border border-slate-200/80 bg-white shadow-sm overflow-hidden',
@@ -1230,7 +1231,7 @@ export function TicketListView(props: TicketListViewProps) {
                   showSelection={capabilities.bulkSelection}
                 />
 
-                  <div className="divide-y divide-slate-100">
+                  <div className="divide-y divide-slate-200/60">
                     {paginatedTickets.map(ticket => {
                       return (
                         <motion.div 
@@ -1243,7 +1244,7 @@ export function TicketListView(props: TicketListViewProps) {
                           }}
                           className={cn(
                             getTicketTableGridClass(),
-                            'px-4 overflow-hidden',
+                            'px-4 overflow-hidden divide-x divide-slate-100/80',
                             ticketTableRowClass(selectedTicketIds.includes(ticket.id)),
                           )}
                         >
@@ -1517,8 +1518,8 @@ export function TicketListView(props: TicketListViewProps) {
               )}
             </ScrollArea>
 
-            {/* Data Table Pagination Footer — hidden in Kanban (full board lanes). */}
-            {layoutMode !== 'kanban' ? (
+            {/* Data Table Pagination Footer — hide when all rows fit on one page; never in Kanban. */}
+            {layoutMode !== 'kanban' && totalTicketsCount > pageSize ? (
             <div className="h-14 border-t border-border bg-card px-6 flex items-center justify-between shrink-0 select-none">
               {/* Left Side: Status display (1-based range; empty → "0 Tickets") */}
               <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">

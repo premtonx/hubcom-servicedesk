@@ -14,6 +14,23 @@ interface TicketsTableHeaderProps {
   showSelection?: boolean;
 }
 
+function HeaderLabel({
+  children,
+  divider = false,
+}: {
+  children: React.ReactNode;
+  divider?: boolean;
+}) {
+  return (
+    <div className={cn(TICKET_TABLE_HEADER_CELL, 'flex items-center gap-2 min-w-0')}>
+      {divider ? (
+        <span className="h-3.5 w-px bg-slate-200/80 shrink-0 self-center" aria-hidden />
+      ) : null}
+      <span className="truncate">{children}</span>
+    </div>
+  );
+}
+
 export function TicketsTableHeader({
   headerCheckboxActive,
   onToggleSelectAll,
@@ -27,7 +44,7 @@ export function TicketsTableHeader({
     <div
       className={cn(
         grid,
-        'px-4 h-10 bg-slate-50/95 border-b border-slate-200/80 sticky top-0 z-10 backdrop-blur-sm',
+        'px-4 h-10 bg-slate-50/95 border-b border-slate-200/80 sticky top-0 z-10 backdrop-blur-sm divide-x divide-slate-100/80',
         className,
       )}
     >
@@ -42,13 +59,13 @@ export function TicketsTableHeader({
         ) : null}
       </div>
 
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.customer', 'Kunde')}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.subject', 'Betreff')}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.status', 'Status')}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.priority', 'Priorität')}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.category', 'Kategorie')}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.assignee', 'Zuständiger')}</div>
-      <div className={TICKET_TABLE_HEADER_CELL}>{t('tickets.table.activity', 'Aktivität')}</div>
+      <HeaderLabel>{t('tickets.table.customer', 'Kunde')}</HeaderLabel>
+      <HeaderLabel divider>{t('tickets.table.subject', 'Betreff')}</HeaderLabel>
+      <HeaderLabel divider>{t('tickets.table.status', 'Status')}</HeaderLabel>
+      <HeaderLabel divider>{t('tickets.table.priority', 'Priorität')}</HeaderLabel>
+      <HeaderLabel divider>{t('tickets.table.category', 'Kategorie')}</HeaderLabel>
+      <HeaderLabel divider>{t('tickets.table.assignee', 'Zuständiger')}</HeaderLabel>
+      <HeaderLabel divider>{t('tickets.table.activity', 'Aktivität')}</HeaderLabel>
     </div>
   );
 }

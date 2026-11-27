@@ -5530,6 +5530,19 @@ function testTicketsWorkbenchSharedUiIsolation(): void {
       zeitraumSrc.includes("id: 'created', label: 'Erstellt am'"),
     'tickets list: segmented quick filters, card table, Zeitraum in MASTER-FILTERLISTE',
   );
+  const headerSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/TicketsTableHeader.tsx'),
+    'utf8',
+  );
+  assert(
+    listViewSrc.includes('mt-4') &&
+      listViewSrc.includes('className="mt-3"') &&
+      listViewSrc.includes('divide-y divide-slate-200/60') &&
+      listViewSrc.includes('divide-x divide-slate-100/80') &&
+      listViewSrc.includes('totalTicketsCount > pageSize') &&
+      headerSrc.includes('h-3.5 w-px bg-slate-200/80'),
+    'tickets list: pill-bar spacing, subtle row/column dividers, auto-hide pagination',
+  );
 }
 
 function testTicketDetailWorkbenchSharedUiIsolation(): void {
