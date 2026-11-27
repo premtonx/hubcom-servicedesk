@@ -1,16 +1,11 @@
-import { AdminHubSectionGrid } from './AdminHubSectionGrid';
-import { categoriesForTab } from './adminHubConfig';
-import { AdminHubMcpPanel } from './AdminHubMcpPanel';
+import { Navigate } from 'react-router-dom';
 
 /**
- * Mail & Schnittstellen — integration section cards + on-page API & MCP panel.
- * Shortcut tiles that duplicated those destinations were removed.
+ * Mail & Schnittstellen hub tab — opens the contextual secondary-nav workspace
+ * on E-Mail-Kanäle (Übersicht) instead of the legacy 5-card grid.
  */
 export function AdminHubIntegrationsTab() {
   return (
-    <div className="space-y-8">
-      <AdminHubSectionGrid categories={categoriesForTab('integrations')} />
-      <AdminHubMcpPanel />
-    </div>
+    <Navigate to="/admin/mail?section=email-channels&tab=overview" replace />
   );
 }

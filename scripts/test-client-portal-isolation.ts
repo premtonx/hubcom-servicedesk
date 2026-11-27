@@ -170,6 +170,18 @@ import {
   resolvePortalSettingsPaths,
 } from '../src/lib/client-portal/portal-settings-api-base.js';
 import {
+  buildMailSearch,
+  legacyAdminPathToMailWorkspace,
+  mailWorkspacePath,
+  resolveMailSection,
+  resolveMailSubTab,
+} from '../src/lib/admin/mail-integrations-nav.js';
+import {
+  buildEmailChannelActivities,
+  computeEmailChannelsKpis,
+  formatRelativeTimeDe,
+} from '../src/lib/admin/email-channels-overview-metrics.js';
+import {
   canPortalUserAccessVaultItem,
   isVaultItemInOrganization,
   sanitizeVaultItemForPortal,
@@ -8156,6 +8168,126 @@ function testAdminCustomersPortalSettingsUiIsolation(): void {
   );
 }
 
+function testAdminMailIntegrationsWorkspaceIsolation(): void {
+  console.log('\n--- Admin Mail & Schnittstellen workspace ---');
+
+  assert(resolveMailSection(null) === 'email-channels', 'default section is E-Mail-Kanäle');
+  assert(resolveMailSection('mcp') === 'api-mcp', 'mcp alias → api-mcp');
+  assert(resolveMailSubTab(null) === 'overview', 'default tab is Übersicht');
+  assert(resolveMailSubTab('testen') === 'test', 'testen alias → test');
+  assert(
+    mailWorkspacePath({ section: 'email-channels', tab: 'overview' }) ===
+      '/admin/mail?section=email-channels&tab=overview',
+    'mail workspace deep-link path',
+  );
+  assert(
+    buildMailSearch({ section: 'notifications', tab: 'configuration' }) ===
+      '?section=notifications&tab=configuration',
+    'buildMailSearch encodes section+tab',
+  );
+  assert(
+    legacyAdminPathToMailWorkspace('/admin/email-channels') ===
+      '/admin/mail?section=email-channels&tab=overview',
+    'legacy email-channels redirects into workspace',
+  );
+  assert(
+    legacyAdminPathToMailWorkspace('/admin/integrations') ===
+      '/admin/mail?section=integrations-hub&tab=overview',
+    'legacy integrations redirects into workspace',
+  );
+  assert(
+    legacyAdminPathToMailWorkspace('/admin/mcp') ===
+      '/admin/mail?section=api-mcp&tab=overview',
+    'legacy mcp redirects into workspace',
+  );
+
+  const emptyKpis = computeEmailChannelsKpis([]);
+  assert(emptyKpis.activeChannels === 0, 'empty channels → 0 active');
+  assert(emptyKpis.processedEmails === null, 'no processed-mail ledger → null (UI —)');
+  assert(emptyKpis.successRatePercent === null, 'no tests → null success rate');
+  assert(emptyKpis.avgResponseTimeLabel === null, 'no response-time data → null');
+
+  const kpis = computeEmailChannelsKpis([
+    {
+      id: 'c1',
+      enabled: true,
+      status: 'active',
+      lastTestOk: true,
+      lastTestAt: '2026-01-01T10:00:00.000Z',
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'c2',
+      enabled: false,
+      status: 'disabled',
+      lastTestOk: false,
+      lastTestAt: '2026-01-01T11:00:00.000Z',
+    },
+  ]);
+  assert(kpis.activeChannels === 1, 'one enabled channel counted as active');
+  assert(kpis.successRatePercent === 50, 'success rate from real lastTestOk');
+  assert(kpis.recentlyAdded === 1, 'recent create counted for delta badge');
+
+  const activities = buildEmailChannelActivities(
+    [
+      {
+        id: 'c1',
+        name: 'Support',
+        lastTestOk: true,
+        lastTestAt: '2026-01-02T12:00:00.000Z',
+        lastPolledAt: '2026-01-02T11:00:00.000Z',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+    5,
+  );
+  assert(activities.length >= 2, 'activities built from real channel timestamps');
+  assert(
+    formatRelativeTimeDe(new Date(Date.now() - 5 * 60 * 1000).toISOString()) === 'vor 5 Min.',
+    'German relative time for minutes',
+  );
+
+  const layout = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/admin/hub/AdminHubLayout.tsx'),
+    'utf8',
+  );
+  const integrationsTab = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/admin/hub/AdminHubIntegrationsTab.tsx'),
+    'utf8',
+  );
+  const workspace = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/admin/mail/AdminMailIntegrationsWorkspace.tsx'),
+    'utf8',
+  );
+  const app = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
+
+  assert(
+    layout.includes("/admin/mail?section=email-channels&tab=overview") &&
+      integrationsTab.includes("/admin/mail?section=email-channels&tab=overview"),
+    'Mail & Schnittstellen entry opens E-Mail-Kanäle workspace',
+  );
+  assert(
+    workspace.includes('MAIL_SECTIONS') && workspace.includes('getMailSectionDef'),
+    'workspace uses shared MAIL_SECTIONS nav',
+  );
+  assert(
+    workspace.includes('w-60') &&
+      workspace.includes('Mail & Schnittstellen') &&
+      workspace.includes('Admin'),
+    'workspace has secondary sidebar + breadcrumb chrome',
+  );
+  assert(
+    app.includes('path="mail"') &&
+      app.includes('AdminMailIntegrationsWorkspace') &&
+      app.includes('AdminMailLegacyRedirect'),
+    'App mounts /admin/mail + legacy redirects',
+  );
+  assert(
+    !workspace.includes("'/api/db'") && !workspace.includes('/api/portal/'),
+    'mail workspace shell stays off portal /api/db coupling',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -8205,6 +8337,7 @@ async function main(): Promise<void> {
   testTicketDetailWorkbenchSharedUiIsolation();
   testAdminOrgPortalSettingsApiIsolation();
   testAdminCustomersPortalSettingsUiIsolation();
+  testAdminMailIntegrationsWorkspaceIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
