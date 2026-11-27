@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
 import { startOrchestratorConfigSync, fetchAiStatus, subscribeAiHealth } from '../../lib/aiOrchestratorClient';
-import { AiWorkspaceStatusBanner } from '../ai-orchestrator/AiWorkspaceStatusBanner';
 import { NavLink, Outlet, useLocation, useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -11,46 +10,24 @@ import {
   Search, 
   Plus, 
   LayoutGrid,
-  Bell,
-  HelpCircle,
-  Users,
   Building2,
-  Radio,
-  Share2,
   Lock,
-  ShieldAlert,
-  Key,
-  BarChart3,
-  ShieldCheck,
   Menu,
-  ChevronLeft,
-  ChevronRight,
-  PanelLeftClose,
   PanelLeftOpen,
   ArrowUpRight,
   UploadCloud,
-  Mail,
-  Sparkles,
   MoreVertical,
   BrainCircuit,
-  Clock,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Button } from '../../components/ui/button';
-import { Input } from '../../components/ui/input';
-import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
+import { Avatar, AvatarFallback } from '../../components/ui/avatar';
 import { 
   DropdownMenu, 
   DropdownMenuContent, 
   DropdownMenuItem, 
   DropdownMenuTrigger 
 } from '../ui/dropdown-menu';
-import { 
-  Tooltip, 
-  TooltipContent, 
-  TooltipProvider, 
-  TooltipTrigger 
-} from '../../components/ui/tooltip';
 import { useAdmin, useAuth } from '../../lib/hooks';
 import { useSidebar } from '../../lib/context/SidebarContext';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -66,27 +43,22 @@ import { Ticket as TicketType, Customer } from '../../types';
 
 import { useTranslation } from '../../lib/context/I18nContext';
 import { HubcomLogo } from '../ui/HubcomLogo';
-import { FlagIcon } from '../ui/FlagIcon';
 import { syncModuleConfigFromServer, getModuleConfig } from '../../lib/module-config';
-import { PiiShieldPopover } from './PiiShieldPopover';
-import { SovereigntyStatusPopover } from './SovereigntyStatusPopover';
-import { EMPTY_HEADER_TELEMETRY, fetchHeaderTelemetry } from '../../services/headerTelemetryApi';
-import type { HeaderTelemetrySnapshot } from '../../types/headerTelemetry';
+import { HeaderZeiterfassungPopover } from './HeaderZeiterfassungPopover';
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard', key: 'dashboard' },
   { icon: Ticket, label: 'Tickets', path: '/tickets', key: 'tickets' },
-  { icon: Clock, label: 'Zeiterfassung', path: '/time-tracking', key: 'timeTracking' },
   { icon: BookOpen, label: 'Wissensdatenbank', path: '/kb', key: 'geistKB' },
-  { icon: Lock, label: 'GeistVault', path: '/credentials', key: 'geistVault' },
-  { icon: UploadCloud, label: 'Geist Exchange', path: '/vault', key: 'geistExchange' },
-  { icon: LayoutGrid, label: 'Admin Hub', path: '/admin', key: 'admin' },
+  { icon: Lock, label: 'Tresor', path: '/credentials', key: 'geistVault' },
+  { icon: UploadCloud, label: 'Sicherer Austausch', path: '/vault', key: 'geistExchange' },
+  { icon: LayoutGrid, label: 'Admin-Hub', path: '/admin', key: 'admin' },
 ];
 
 import { WorkTimer } from './WorkTimer';
 
 export default function MainLayout() {
-  const { t, language, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { isAdmin } = useAdmin();
   const { user } = useAuth();
   const { role, userProfile, hasPermission } = usePermissions();
@@ -152,7 +124,6 @@ export default function MainLayout() {
 
   const [aiStatus, setAiStatus] = useState<'loading' | 'healthy' | 'degraded' | 'offline'>('loading');
   const [activeModel, setActiveModel] = useState<string>('');
-  const [headerTelemetry, setHeaderTelemetry] = useState<HeaderTelemetrySnapshot>(EMPTY_HEADER_TELEMETRY);
 
   useEffect(() => {
     if (!user) return;
@@ -171,22 +142,6 @@ export default function MainLayout() {
     };
     void fetchAiStatus().then((h) => h && applyHealth(h));
     return subscribeAiHealth((h) => applyHealth(h));
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    const load = () => {
-      void fetchHeaderTelemetry().then((snapshot) => {
-        if (!cancelled) setHeaderTelemetry(snapshot);
-      });
-    };
-    load();
-    const timer = window.setInterval(load, 60_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
   }, [user]);
 
   // Hydrate workspace module config from PostgreSQL so admin changes persist across sessions.
@@ -296,18 +251,15 @@ export default function MainLayout() {
             <WorkTimer variant="horizontal" />
           </div>
 
-          <SovereigntyStatusPopover telemetry={headerTelemetry} />
-
-          <PiiShieldPopover telemetry={headerTelemetry} />
-
-          <AiWorkspaceStatusBanner />
+          {/* Quick Zeiterfassung clock */}
+          <HeaderZeiterfassungPopover tickets={tickets} />
 
           {/* AI Orchestrator Gateway Global Indicator (with model details on click) */}
           <div className="shrink-0">
             <DropdownMenu>
               <DropdownMenuTrigger render={
                 <button 
-                  title={t('header.aiOrchestratorStatus', 'AI Orchestrator Status')}
+                  title={t('header.aiOrchestratorStatus', 'KI-Orchestrator')}
                   className={cn(
                     "flex items-center justify-center h-9 w-9 rounded-full border transition-all shrink-0 cursor-pointer shadow-xs select-none relative",
                     aiStatus === 'healthy' ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100/70 border-indigo-100/80" :
@@ -333,7 +285,7 @@ export default function MainLayout() {
                   </div>
                   <div>
                     <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">
-                      {t('header.aiOrchestrator', 'AI Orchestrator')}
+                      {t('header.aiOrchestrator', 'KI-Orchestrator')}
                     </h4>
                     <p className="text-[9px] text-slate-500 font-mono">
                       {t('header.coreGatewayRouter', 'Core Gateway Router')}
@@ -400,44 +352,6 @@ export default function MainLayout() {
             <NotificationHub />
           </div>
 
-          {/* Language Selector Dropdown (hidden on mobile) */}
-          <div className="hidden md:block">
-            <DropdownMenu>
-              <DropdownMenuTrigger render={
-                <Button 
-                  variant="ghost"
-                  size="sm"
-                  className="h-9 w-9 p-0 rounded-full text-xs font-bold border border-slate-200 hover:bg-slate-50 flex items-center justify-center shrink-0 select-none cursor-pointer text-slate-700 bg-white shadow-sm"
-                  title={language === 'de' ? t('header.changeLanguageDe', 'Sprache wechseln') : t('header.changeLanguage', 'Change language')}
-                >
-                  <FlagIcon code={language === 'de' ? 'de' : 'en'} className="w-5 h-3.5" />
-                </Button>
-              } />
-              <DropdownMenuContent align="end" className="w-32 bg-white border border-slate-200 shadow-xl rounded-xl p-1 z-50">
-                <DropdownMenuItem 
-                  onClick={() => i18n.changeLanguage('de')} 
-                  className={cn(
-                    "flex items-center gap-2 text-xs font-bold p-2.5 hover:bg-slate-50 rounded-lg cursor-pointer",
-                    language === 'de' ? "text-[#1A73E8] bg-blue-50/50" : "text-slate-700"
-                  )}
-                >
-                  <FlagIcon code="de" className="w-5 h-3.5" />
-                  <span>{t('languages.de', 'Deutsch')}</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem 
-                  onClick={() => i18n.changeLanguage('en')} 
-                  className={cn(
-                    "flex items-center gap-2 text-xs font-bold p-2.5 hover:bg-slate-50 rounded-lg cursor-pointer",
-                    language === 'en' ? "text-[#1A73E8] bg-blue-50/50" : "text-slate-700"
-                  )}
-                >
-                  <FlagIcon code="en" className="w-5 h-3.5" />
-                  <span>{t('languages.en', 'English')}</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-
           {/* Consolidated utilities under Menu for mobile (visible only on mobile) */}
           <div className="flex md:hidden shrink-0">
             <DropdownMenu>
@@ -458,38 +372,6 @@ export default function MainLayout() {
                 >
                   <Search className="w-4 h-4 text-[#1A73E8]" />
                   <span>{t('actions.search', 'Search...')} (⌘K)</span>
-                </DropdownMenuItem>
-
-                <div className="border-t border-slate-100 my-1" />
-
-                <div className="px-2.5 py-1 text-[9px] uppercase font-bold text-slate-400 select-none">{t('header.sovereignCloudStatus', 'Sovereign Cloud Status')}</div>
-                <div className="flex items-center gap-2 px-2.5 py-2 text-xs text-emerald-700 font-extrabold">
-                  <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
-                  <span>{t('header.shielded', 'Shielded')}</span>
-                </div>
-
-                <div className="border-t border-slate-100 my-1" />
-
-                <div className="px-2.5 py-1 text-[9px] uppercase font-bold text-slate-400 select-none">{t('settings.interfaceLanguage', 'Interface Language')}</div>
-                <DropdownMenuItem 
-                  onClick={() => i18n.changeLanguage('en')}
-                  className={cn(
-                    "flex items-center gap-2 text-xs font-bold p-2 hover:bg-slate-50 rounded-lg cursor-pointer",
-                    language === 'en' ? "text-[#1A73E8] bg-blue-50/50" : "text-slate-700"
-                  )}
-                >
-                  <FlagIcon code="en" className="w-5 h-3.5" />
-                  <span>{t('languages.en', 'English')} (EN)</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem 
-                  onClick={() => i18n.changeLanguage('de')}
-                  className={cn(
-                    "flex items-center gap-2 text-xs font-bold p-2 hover:bg-slate-50 rounded-lg cursor-pointer",
-                    language === 'de' ? "text-[#1A73E8] bg-blue-50/45" : "text-slate-700"
-                  )}
-                >
-                  <FlagIcon code="de" className="w-5 h-3.5" />
-                  <span>{t('languages.de', 'Deutsch')} (DE)</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
