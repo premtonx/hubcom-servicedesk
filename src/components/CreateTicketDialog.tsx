@@ -35,15 +35,11 @@ import {
   ChevronDown,
   ChevronLeft,
   Building2,
-  Clock,
-  Info,
-  FileText,
   User as UserIcon,
   Users,
-  Flag,
   HelpCircle,
-  Settings,
   PenSquare,
+  Search,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { customerService } from '../services/customerService';
@@ -63,6 +59,10 @@ import {
   resolveTypeConfig,
   softTintStyles,
 } from '../lib/ticket-config/display';
+import {
+  ticketPriorityDotClass,
+  ticketPriorityPillClass,
+} from '../lib/tickets/ticket-zeitraum-filters';
 
 interface CreateTicketDialogProps {
   isOpen: boolean;
@@ -76,7 +76,13 @@ const SHELL_CLASS =
   'w-full h-full max-w-full max-h-screen sm:max-w-[1100px] sm:max-h-[95vh] rounded-none sm:rounded-xl flex flex-col p-0 overflow-hidden bg-[#F8F9FB] border-none shadow-2xl';
 
 const INLINE_CLASS =
-  'w-full flex flex-col bg-[#F8F9FB] min-h-0 flex-1 border-none shadow-none';
+  'w-full flex flex-col bg-[#f6f8fb] min-h-0 flex-1 border-none shadow-none';
+
+const CARD_CLASS =
+  'rounded-xl border border-slate-200/80 bg-white shadow-sm p-5 sm:p-6 space-y-5';
+
+const FIELD_LABEL =
+  'text-[11px] font-bold text-slate-500 uppercase tracking-wide';
 
 const DRAFT_STORAGE_KEY = 'hubcom.createTicket.draft.v1';
 
@@ -117,6 +123,7 @@ type ContactOption = {
   email: string;
   source: 'contact' | 'portal';
   userId?: string;
+  companyId?: string;
 };
 
 const EMPTY_FORM: FormState = {
@@ -209,8 +216,13 @@ export function CreateTicketDialog({
   const [groups, setGroups] = useState<Group[]>([]);
   const [formData, setFormData] = useState<FormState>(EMPTY_FORM);
   const [baselineJson, setBaselineJson] = useState(() => JSON.stringify(EMPTY_FORM));
+  const [showInternalNotes, setShowInternalNotes] = useState(false);
+  const [showGroupOptions, setShowGroupOptions] = useState(false);
+  const [contactQuery, setContactQuery] = useState('');
+  const [contactMenuOpen, setContactMenuOpen] = useState(false);
   const defaultsAppliedRef = useRef(false);
   const submitLockRef = useRef(false);
+  const contactBoxRef = useRef<HTMLDivElement | null>(null);
 
   const configLoading = statusesLoading || prioritiesLoading || typesLoading || categoriesLoading;
 
@@ -223,6 +235,8 @@ export function CreateTicketDialog({
     setFormData(next);
     setBaselineJson(JSON.stringify(next));
     setTagInput('');
+    setContactQuery(next.customerName || '');
+    setShowInternalNotes(Boolean(String(next.internalNotes || '').trim()));
   }, []);
 
   const buildDefaults = useCallback(
@@ -387,11 +401,13 @@ export function CreateTicketDialog({
     return groupService.subscribeToGroups(setGroups);
   }, []);
 
+  // Load contacts for the selected company, or all CRM contacts when none is chosen
+  // so Kontaktperson can be picked first and auto-fill Unternehmen.
   useEffect(() => {
-    if (formData.companyId) {
-      return customerService.subscribeToContacts(formData.companyId, setContacts);
-    }
-    setContacts([]);
+    return customerService.subscribeToContacts(
+      formData.companyId || null,
+      setContacts,
+    );
   }, [formData.companyId]);
 
   // Resolve organizationId from selected Unternehmen + load portal users.
@@ -460,6 +476,7 @@ export function CreateTicketDialog({
         name: c.name || email,
         email: c.email,
         source: 'contact',
+        companyId: c.companyId || undefined,
       });
     }
     for (const p of portalContacts) {
@@ -473,6 +490,7 @@ export function CreateTicketDialog({
           source: existing.source,
           // Prefer portal user id for requester linkage when available.
           id: existing.id,
+          companyId: existing.companyId || p.companyId,
         });
       } else {
         byEmail.set(email, p);
@@ -482,6 +500,18 @@ export function CreateTicketDialog({
       a.name.localeCompare(b.name, 'de'),
     );
   }, [contacts, portalContacts]);
+
+  const filteredContactOptions = useMemo(() => {
+    const q = contactQuery.trim().toLowerCase();
+    if (!q) return contactOptions.slice(0, 80);
+    return contactOptions
+      .filter(
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          c.email.toLowerCase().includes(q),
+      )
+      .slice(0, 80);
+  }, [contactOptions, contactQuery]);
 
   // Clear contact when it no longer belongs to the selected organization
   useEffect(() => {
@@ -496,8 +526,20 @@ export function CreateTicketDialog({
         customerEmail: '',
         requesterId: '',
       }));
+      setContactQuery('');
     }
   }, [contactOptions, formData.companyId, formData.contactId]);
+
+  useEffect(() => {
+    if (!contactMenuOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (!contactBoxRef.current?.contains(e.target as Node)) {
+        setContactMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [contactMenuOpen]);
 
   useEffect(() => {
     if (!isDirty) return;
@@ -583,25 +625,6 @@ export function CreateTicketDialog({
     if (!allowed.length) return active;
     return active.filter((c) => allowed.includes(c.id));
   }, [ticketCategories, selectedGroup]);
-
-  const slaInfo = useMemo(() => {
-    const hoursByKey: Record<string, number> = {
-      low: 48,
-      medium: 24,
-      high: 4,
-      urgent: 1,
-    };
-    const hours = hoursByKey[formData.priority] ?? 24;
-    const target = new Date(Date.now() + hours * 60 * 60 * 1000);
-    return {
-      date: target.toLocaleDateString('de-DE', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      }),
-      hours,
-    };
-  }, [formData.priority]);
 
   const assigneeLabel = useMemo(() => {
     if (formData.assignee === 'unassigned' || !formData.assignee) {
@@ -816,6 +839,36 @@ export function CreateTicketDialog({
       customerEmail: '',
       requesterId: '',
     }));
+    setContactQuery('');
+    setContactMenuOpen(false);
+  };
+
+  const onContactSelect = (contact: ContactOption) => {
+    const companyFromContact =
+      contact.companyId && companies.find((c) => c.id === contact.companyId);
+    const orgId = companyFromContact
+      ? String(
+          (companyFromContact as any)?.organizationId ||
+            (companyFromContact as any)?.organization_id ||
+            '',
+        ).trim()
+      : '';
+    setFormData((prev) => ({
+      ...prev,
+      contactId: contact.id,
+      customerName: contact.name,
+      customerEmail: contact.email,
+      customerId: contact.userId || contact.id,
+      requesterId: contact.userId || '',
+      ...(companyFromContact
+        ? {
+            companyId: companyFromContact.id,
+            organizationId: orgId || prev.organizationId,
+          }
+        : {}),
+    }));
+    setContactQuery(contact.name);
+    setContactMenuOpen(false);
   };
 
   const onGroupChange = (val: string) => {
@@ -889,17 +942,14 @@ export function CreateTicketDialog({
 
   const content = (
     <>
-      <div className="px-4 sm:px-6 py-3 sm:py-4 shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b bg-white z-10">
+      <div className="px-4 sm:px-6 py-3 sm:py-4 shrink-0 flex items-center justify-between gap-3 border-b border-slate-200 bg-white/95 backdrop-blur z-10">
         <div className="flex items-center gap-3 sm:gap-4 min-w-0">
           {presentation === 'inline' ? closeControl : null}
-          <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center shadow-sm border border-blue-100 shrink-0">
-            <FileText className="w-5 h-5 text-blue-600" aria-hidden />
-          </div>
           <div className="min-w-0">
-            <h2 className="text-base sm:text-lg font-bold text-[#1F2937] tracking-tight truncate">
+            <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight truncate">
               {t('dialog.createNewTicket', 'Neues Ticket erstellen')}
             </h2>
-            <p className="hidden md:block text-[13px] text-slate-500 font-medium truncate">
+            <p className="hidden md:block text-[12px] text-slate-500 font-medium truncate">
               {draftSavedAt
                 ? t('dialog.draftRestoredHint', 'Gespeicherter Entwurf geladen.')
                 : t(
@@ -909,621 +959,586 @@ export function CreateTicketDialog({
             </p>
           </div>
         </div>
-        <div className="flex items-center justify-end gap-2 sm:gap-3 shrink-0">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleSaveDraft}
-            disabled={loading}
-            className="text-[12px] sm:text-[13px] font-semibold text-blue-600 border-blue-100 hover:bg-blue-50/50 rounded-lg px-3 sm:px-5 h-9 sm:h-10"
-          >
-            {t('dialog.saveDraft', 'Entwurf speichern')}
-          </Button>
-          <Button
-            type="button"
-            onClick={() => void handleSubmit()}
-            disabled={loading}
-            className="text-[12px] sm:text-[13px] font-bold bg-[#3B82F6] hover:bg-blue-600 text-white rounded-lg px-4 sm:px-6 h-9 sm:h-10 shadow-lg shadow-blue-500/20"
-          >
-            {loading
-              ? t('dialog.publishing', 'Wird veröffentlicht…')
-              : t('dialog.publishTicket', 'Ticket veröffentlichen')}
-          </Button>
-          {presentation !== 'inline' ? closeControl : null}
-        </div>
+        {presentation !== 'inline' ? closeControl : null}
       </div>
 
       <form
         onSubmit={(e) => void handleSubmit(e)}
-        className="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden"
+        className="flex-1 min-h-0 overflow-y-auto"
       >
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-5 sm:space-y-6">
-          <div className="bg-white border border-slate-200/60 rounded-2xl p-5 sm:p-6 shadow-sm">
-            <div className="flex items-center gap-3 mb-5">
+        <div className="max-w-4xl mx-auto w-full px-4 sm:px-6 py-5 sm:py-6 space-y-5">
+          {/* Card 1 — Worum geht es? */}
+          <section className={CARD_CLASS} aria-labelledby="create-ticket-card-about">
+            <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-[13px] font-bold text-blue-600 border border-blue-100/50">
                 1
               </div>
-              <h3 className="text-[15px] font-bold text-[#374151]">
+              <h3 id="create-ticket-card-about" className="text-[15px] font-bold text-slate-800">
                 {t('dialog.whatIsThisAbout', 'Worum geht es?')}
               </h3>
             </div>
 
-            <div className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="create-ticket-subject" className={FIELD_LABEL}>
+                {t('dialog.subject', 'Betreff')}{' '}
+                <span className="text-rose-600" aria-hidden>
+                  *
+                </span>
+              </Label>
+              <Input
+                id="create-ticket-subject"
+                value={formData.subject}
+                onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
+                placeholder={t('dialog.subjectPlaceholder', 'Kernanliegen kurz zusammenfassen…')}
+                required
+                className="w-full h-11 border-slate-200 bg-white focus-visible:ring-2 focus-visible:ring-blue-100 focus-visible:border-blue-400 rounded-xl text-sm"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="create-ticket-subject" className="text-sm font-semibold text-slate-700">
-                  {t('dialog.subject', 'Betreff')}{' '}
-                  <span className="text-rose-600" aria-hidden>
-                    *
-                  </span>
+                <Label htmlFor="create-ticket-company" className={FIELD_LABEL}>
+                  {t('dialog.company', 'Unternehmen')}
                 </Label>
-                <Input
-                  id="create-ticket-subject"
-                  value={formData.subject}
-                  onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-                  placeholder={t('dialog.subjectPlaceholder', 'Kernanliegen kurz zusammenfassen…')}
-                  required
-                  className="w-full h-11 border-slate-200 bg-white focus-visible:ring-2 focus-visible:ring-blue-100 focus-visible:border-blue-400 rounded-xl text-sm"
-                />
+                <Select value={formData.companyId || undefined} onValueChange={onCompanyChange}>
+                  <SelectTrigger
+                    id="create-ticket-company"
+                    className="w-full h-11 border-slate-200 bg-white rounded-xl text-sm"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Building2 className="w-4 h-4 text-slate-400 shrink-0" aria-hidden />
+                      <SelectValue placeholder={t('dialog.selectOrg', 'Organisation wählen…')} />
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    {companies.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                <div className="space-y-2">
-                  <Label htmlFor="create-ticket-company" className="text-sm font-semibold text-slate-700">
-                    {t('dialog.company', 'Unternehmen')}
-                  </Label>
-                  <Select value={formData.companyId || undefined} onValueChange={onCompanyChange}>
-                    <SelectTrigger
-                      id="create-ticket-company"
-                      className="w-full h-11 border-slate-200 bg-white rounded-xl text-sm"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Building2 className="w-4 h-4 text-slate-400" aria-hidden />
-                        <SelectValue placeholder={t('dialog.selectOrg', 'Organisation wählen…')} />
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent className="rounded-xl">
-                      {companies.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="create-ticket-contact" className="text-sm font-semibold text-slate-700">
-                    {t('dialog.contactEmployee', 'Kontaktperson / Mitarbeiter')}
-                  </Label>
-                  <Select
-                    value={formData.contactId || undefined}
-                    onValueChange={(val) => {
-                      const contact = contactOptions.find((c) => c.id === val);
-                      if (contact) {
-                        setFormData({
-                          ...formData,
-                          contactId: val,
-                          customerName: contact.name,
-                          customerEmail: contact.email,
-                          customerId: contact.userId || contact.id,
-                          requesterId: contact.userId || '',
-                        });
+              <div className="space-y-2" ref={contactBoxRef}>
+                <Label htmlFor="create-ticket-contact" className={FIELD_LABEL}>
+                  {t('dialog.contactEmployee', 'Kontaktperson / Mitarbeiter')}
+                </Label>
+                <div className="relative">
+                  <Search
+                    className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none"
+                    aria-hidden
+                  />
+                  <Input
+                    id="create-ticket-contact"
+                    value={contactQuery}
+                    onChange={(e) => {
+                      setContactQuery(e.target.value);
+                      setContactMenuOpen(true);
+                      if (formData.contactId) {
+                        setFormData((prev) => ({
+                          ...prev,
+                          contactId: '',
+                          customerName: '',
+                          customerId: '',
+                          customerEmail: '',
+                          requesterId: '',
+                        }));
                       }
                     }}
-                    disabled={!formData.companyId}
-                  >
-                    <SelectTrigger
-                      id="create-ticket-contact"
-                      className="w-full h-11 border-slate-200 bg-white rounded-xl text-sm"
-                    >
-                      <div className="flex items-center gap-2">
-                        <UserIcon className="w-4 h-4 text-slate-400" aria-hidden />
-                        <SelectValue
-                          placeholder={
-                            formData.companyId
-                              ? t('dialog.selectEmployee', 'Mitarbeiter wählen…')
-                              : t('dialog.selectCompanyFirst', 'Zuerst Unternehmen wählen')
-                          }
-                        />
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent className="rounded-xl">
-                      {contactOptions.length === 0 ? (
-                        <SelectItem value="__empty" disabled>
-                          {t('dialog.noContacts', 'Keine Kontakte für dieses Unternehmen')}
-                        </SelectItem>
+                    onFocus={() => setContactMenuOpen(true)}
+                    placeholder={t(
+                      'dialog.searchContact',
+                      'Name oder E-Mail suchen…',
+                    )}
+                    className="w-full h-11 pl-9 border-slate-200 bg-white rounded-xl text-sm"
+                    autoComplete="off"
+                  />
+                  {contactMenuOpen ? (
+                    <ul className="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                      {filteredContactOptions.length === 0 ? (
+                        <li className="px-3 py-2.5 text-xs text-slate-500 font-medium">
+                          {formData.companyId
+                            ? t('dialog.noContacts', 'Keine Kontakte für dieses Unternehmen')
+                            : t('dialog.noContactsGlobal', 'Keine Kontakte gefunden')}
+                        </li>
                       ) : (
-                        contactOptions.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.name} ({c.email})
-                            {c.source === 'portal' ? ' · Portal' : ''}
-                          </SelectItem>
-                        ))
+                        filteredContactOptions.map((c) => {
+                          const companyName = c.companyId
+                            ? companies.find((co) => co.id === c.companyId)?.name
+                            : undefined;
+                          return (
+                            <li key={c.id}>
+                              <button
+                                type="button"
+                                className="w-full text-left px-3 py-2.5 hover:bg-sky-50 border-b border-slate-50 last:border-0"
+                                onClick={() => onContactSelect(c)}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-sm font-bold text-slate-900 truncate">
+                                    {c.name}
+                                  </span>
+                                  {c.source === 'portal' ? (
+                                    <span className="rounded-full bg-slate-50 border border-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600 shrink-0">
+                                      Portal
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <p className="text-xs text-slate-500 mt-0.5 truncate">
+                                  {c.email}
+                                  {companyName ? ` · ${companyName}` : ''}
+                                </p>
+                              </button>
+                            </li>
+                          );
+                        })
                       )}
-                    </SelectContent>
-                  </Select>
+                    </ul>
+                  ) : null}
                 </div>
               </div>
             </div>
-          </div>
+          </section>
 
-          <div className="bg-white border border-slate-200/60 rounded-2xl p-5 sm:p-6 shadow-sm">
-            <div className="flex items-center gap-3 mb-5">
+          {/* Card 2 — Beschreibung */}
+          <section className={CARD_CLASS} aria-labelledby="create-ticket-card-desc">
+            <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-[13px] font-bold text-blue-600 border border-blue-100/50">
                 2
               </div>
-              <h3 className="text-[15px] font-bold text-[#374151]">
-                {t('dialog.describeRequest', 'Anfrage beschreiben')}{' '}
+              <h3 id="create-ticket-card-desc" className="text-[15px] font-bold text-slate-800">
+                {t('dialog.describeRequest', 'Beschreibung der Anfrage')}{' '}
                 <span className="text-rose-600 text-sm font-semibold" aria-hidden>
                   *
                 </span>
               </h3>
             </div>
 
-            <div className="space-y-3">
-              <div className="relative group rounded-2xl border border-slate-200 overflow-hidden bg-white">
-                <div className="absolute right-4 top-3 z-10 flex gap-2">
-                  <div className="px-2.5 py-1 bg-slate-50 border border-slate-100 rounded-lg">
-                    <span className="text-[11px] font-semibold text-slate-600">
-                      {aiMeta.sentiment}
-                    </span>
-                  </div>
-                  <div className="px-2.5 py-1 bg-slate-50 border border-slate-100 rounded-lg flex items-center gap-1">
-                    <span className="text-[11px] font-semibold text-slate-600">{aiMeta.language}</span>
-                    <ChevronDown className="w-3.5 h-3.5 text-slate-400" aria-hidden />
-                  </div>
-                </div>
-                {isOpen ? (
-                  <Suspense
-                    fallback={
-                      <div className="min-h-[200px] flex items-center justify-center text-sm text-slate-500">
-                        {t('dialog.loadingEditor', 'Editor wird geladen…')}
-                      </div>
-                    }
-                  >
-                    <RichTextEditor
-                      value={formData.description}
-                      onChange={(v) => setFormData({ ...formData, description: v })}
-                      placeholder={t(
-                        'dialog.descriptionPlaceholder',
-                        'Details, Kontext, bereits versuchte Schritte, erwartetes Ergebnis…',
-                      )}
-                      className="border-none shadow-none focus-within:ring-0 min-h-[200px]"
-                    />
-                  </Suspense>
-                ) : null}
-              </div>
-              <p className="text-xs text-slate-500 ml-0.5">
-                {t(
-                  'dialog.descriptionTip',
-                  'Tipp: Relevante Details beschleunigen die Bearbeitung.',
-                )}
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200/60 rounded-2xl p-5 sm:p-6 shadow-sm">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center border border-slate-100">
-                <PenSquare className="w-5 h-5 text-slate-400" aria-hidden />
-              </div>
-              <div>
-                <h3 className="text-[15px] font-bold text-[#374151]">
-                  {t('dialog.internalNotes', 'Interne Notizen')}{' '}
-                  <span className="text-slate-400 font-normal text-sm">
-                    ({t('dialog.optional', 'optional')})
+            <div className="relative rounded-xl border border-slate-200 overflow-hidden bg-white">
+              <div className="absolute right-3 top-2.5 z-10 flex gap-1.5">
+                <div className="px-2 py-0.5 bg-slate-50 border border-slate-100 rounded-md">
+                  <span className="text-[10px] font-semibold text-slate-600">
+                    {aiMeta.sentiment}
                   </span>
-                </h3>
-                <p className="text-xs text-slate-500 font-medium">
-                  {t(
-                    'dialog.internalNotesDesc',
-                    'Nur für Agenten sichtbar — nicht für externe Kunden.',
-                  )}
-                </p>
+                </div>
+                <div className="px-2 py-0.5 bg-slate-50 border border-slate-100 rounded-md flex items-center gap-1">
+                  <span className="text-[10px] font-semibold text-slate-600">{aiMeta.language}</span>
+                  <ChevronDown className="w-3 h-3 text-slate-400" aria-hidden />
+                </div>
               </div>
-            </div>
-            <Textarea
-              value={formData.internalNotes}
-              onChange={(e) => setFormData({ ...formData, internalNotes: e.target.value })}
-              className="min-h-[100px] border-slate-100 shadow-none text-sm placeholder:text-slate-400 bg-white rounded-xl"
-              placeholder={t(
-                'dialog.internalNotesPlaceholder',
-                'Private Agentennotizen eingeben…',
-              )}
-              aria-label={t('dialog.internalNotes', 'Interne Notizen')}
-            />
-          </div>
-        </div>
-
-        <aside className="w-full lg:w-[320px] xl:w-[340px] bg-white border-t lg:border-t-0 lg:border-l p-4 sm:p-6 space-y-6 shrink-0 lg:overflow-y-auto min-h-0">
-          <div className="flex items-center gap-2.5 text-[#4B5563]">
-            <Settings className="w-4 h-4" aria-hidden />
-            <h3 className="text-[15px] font-bold">
-              {t('dialog.ticketSettings', 'Ticket-Einstellungen')}
-            </h3>
-          </div>
-
-          {configLoading ? (
-            <p className="text-sm text-slate-500" role="status">
-              {t('dialog.loadingConfig', 'Ticket-Konfiguration wird geladen…')}
-            </p>
-          ) : null}
-
-          <div className="space-y-5">
-            <div className="space-y-2">
-              <Label className="text-sm font-semibold text-slate-600">
-                {t('common.status', 'Status')}
-              </Label>
-              <Select
-                value={formData.status}
-                onValueChange={(v) => setFormData({ ...formData, status: v })}
-                disabled={!activeStatuses.length}
-              >
-                <SelectTrigger className="w-full h-11 border-slate-100 rounded-xl bg-[#F9FAFB]">
-                  <div className="flex items-center gap-2.5">
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: statusDisplay.color }}
-                      aria-hidden
-                    />
-                    <span className="text-sm font-semibold text-[#374151]">
-                      {statusDisplay.name}
-                    </span>
-                  </div>
-                </SelectTrigger>
-                <SelectContent className="rounded-xl">
-                  {activeStatuses.length === 0 ? (
-                    <SelectItem value={formData.status || 'open'} disabled>
-                      {t('dialog.noStatuses', 'Keine aktiven Status konfiguriert')}
-                    </SelectItem>
-                  ) : (
-                    activeStatuses.map((s) => (
-                      <SelectItem key={s.id} value={s.key}>
-                        <span className="inline-flex items-center gap-2">
-                          <span
-                            className="w-2 h-2 rounded-full"
-                            style={{ backgroundColor: s.color }}
-                            aria-hidden
-                          />
-                          {s.name}
-                        </span>
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
+              {isOpen ? (
+                <Suspense
+                  fallback={
+                    <div className="min-h-[200px] flex items-center justify-center text-sm text-slate-500">
+                      {t('dialog.loadingEditor', 'Editor wird geladen…')}
+                    </div>
+                  }
+                >
+                  <RichTextEditor
+                    value={formData.description}
+                    onChange={(v) => setFormData({ ...formData, description: v })}
+                    placeholder={t(
+                      'dialog.descriptionPlaceholder',
+                      'Details, Kontext, bereits versuchte Schritte, erwartetes Ergebnis…',
+                    )}
+                    className="border-none shadow-none focus-within:ring-0 min-h-[200px]"
+                  />
+                </Suspense>
+              ) : null}
             </div>
 
-            <div className="space-y-2">
-              <Label className="text-sm font-semibold text-slate-600">
-                {t('common.priority', 'Priorität')}
-              </Label>
-              <Select
-                value={formData.priority}
-                onValueChange={(v) => setFormData({ ...formData, priority: v })}
-                disabled={!activePriorities.length}
-              >
-                <SelectTrigger className="w-full h-11 border-slate-100 rounded-xl bg-[#F9FAFB]">
-                  <div className="flex items-center gap-2.5">
-                    <Flag
-                      className="w-4 h-4 shrink-0"
-                      style={{ color: priorityDisplay.color }}
-                      aria-hidden
-                    />
-                    <span className="text-sm font-semibold text-[#374151]">
-                      {priorityDisplay.name}
+            {showInternalNotes ? (
+              <div className="space-y-2 rounded-xl border border-slate-200/80 bg-slate-50/50 p-3.5">
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="create-ticket-internal-notes" className={FIELD_LABEL}>
+                    {t('dialog.internalNotes', 'Interne Notizen')}{' '}
+                    <span className="normal-case font-medium text-slate-400">
+                      ({t('dialog.optional', 'optional')})
                     </span>
-                  </div>
-                </SelectTrigger>
-                <SelectContent className="rounded-xl">
-                  {activePriorities.length === 0 ? (
-                    <SelectItem value={formData.priority || 'medium'} disabled>
-                      {t('dialog.noPriorities', 'Keine aktiven Prioritäten konfiguriert')}
-                    </SelectItem>
-                  ) : (
-                    activePriorities.map((p) => (
-                      <SelectItem key={p.id} value={p.key}>
-                        <span className="inline-flex items-center gap-2">
-                          <span
-                            className="w-2 h-2 rounded-full"
-                            style={{ backgroundColor: p.color }}
-                            aria-hidden
-                          />
-                          {p.name}
-                        </span>
-                      </SelectItem>
-                    ))
+                  </Label>
+                  <button
+                    type="button"
+                    className="text-[11px] font-semibold text-slate-500 hover:text-slate-800"
+                    onClick={() => {
+                      setShowInternalNotes(false);
+                      setFormData((prev) => ({ ...prev, internalNotes: '' }));
+                    }}
+                  >
+                    {t('common.close', 'Schließen')}
+                  </button>
+                </div>
+                <Textarea
+                  id="create-ticket-internal-notes"
+                  value={formData.internalNotes}
+                  onChange={(e) => setFormData({ ...formData, internalNotes: e.target.value })}
+                  className="min-h-[88px] border-slate-200 shadow-none text-sm placeholder:text-slate-400 bg-white rounded-xl"
+                  placeholder={t(
+                    'dialog.internalNotesPlaceholder',
+                    'Private Agentennotizen eingeben…',
                   )}
-                </SelectContent>
-              </Select>
-            </div>
+                  aria-label={t('dialog.internalNotes', 'Interne Notizen')}
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowInternalNotes(true)}
+                className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-600 hover:text-blue-700 transition-colors"
+              >
+                <PenSquare className="w-3.5 h-3.5" aria-hidden />
+                {t('dialog.addInternalNote', '+ Interne Notiz hinzufügen')}
+              </button>
+            )}
+          </section>
 
-            <div className="space-y-2">
-              <Label className="text-sm font-semibold text-slate-600">
-                {t('dialog.group', 'Team')}
-              </Label>
-              <Select
-                value={formData.groupId || 'none'}
-                onValueChange={onGroupChange}
-              >
-                <SelectTrigger className="w-full h-11 border-slate-100 rounded-xl bg-[#F9FAFB]">
-                  <div className="flex items-center gap-2.5">
-                    <Users className="w-4 h-4 text-slate-400" aria-hidden />
-                    <span className="text-sm font-semibold text-[#374151]">
-                      {formData.groupName ||
-                        t('dialog.selectTeam', 'Team wählen (optional)')}
-                    </span>
-                  </div>
-                </SelectTrigger>
-                <SelectContent className="rounded-xl">
-                  <SelectItem value="none">
-                    {t('dialog.noTeam', 'Kein Team (System-Standard)')}
-                  </SelectItem>
-                  {groups.map((g) => (
-                    <SelectItem key={g.id} value={g.id}>
-                      {g.name}
-                      {g.isDefault ? ` (${t('dialog.defaultTeam', 'Standard')})` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {selectedGroup?.categoryIds?.length ? (
-                <p className="text-xs text-slate-500">
-                  {t(
-                    'dialog.teamCategoryHint',
-                    'Kategorien sind auf die dem Team zugeordneten Kategorien beschränkt.',
-                  )}
+          {/* Card 3 — Klassifizierung & Zuweisung */}
+          <section className={CARD_CLASS} aria-labelledby="create-ticket-card-classify">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-[13px] font-bold text-blue-600 border border-blue-100/50">
+                  3
+                </div>
+                <h3 id="create-ticket-card-classify" className="text-[15px] font-bold text-slate-800 truncate">
+                  {t('dialog.classificationAssignment', 'Klassifizierung & Zuweisung')}
+                </h3>
+              </div>
+              {configLoading ? (
+                <p className="text-xs text-slate-500 shrink-0" role="status">
+                  {t('dialog.loadingConfig', 'Ticket-Konfiguration wird geladen…')}
                 </p>
               ) : null}
             </div>
 
-            <div className="space-y-2">
-              <Label className="text-sm font-semibold text-slate-600">
-                {t('dialog.category', 'Kategorie')}
-              </Label>
-              <Select value={formData.categoryId || 'none'} onValueChange={onCategoryChange}>
-                <SelectTrigger className="w-full h-11 border-slate-100 rounded-xl bg-[#F9FAFB]">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <HelpCircle className="w-4 h-4 text-slate-400 shrink-0" aria-hidden />
-                    <span className="text-sm font-semibold text-[#374151] truncate">
-                      {formData.categoryName ||
-                        t('dialog.selectCategory', 'Kategorie wählen')}
-                    </span>
-                  </div>
-                </SelectTrigger>
-                <SelectContent className="rounded-xl">
-                  <SelectItem value="none">{t('dialog.noCategory', 'Keine Kategorie')}</SelectItem>
-                  {selectableCategories.map((cat) => (
-                    <SelectItem key={cat.id} value={cat.id}>
-                      <span className="inline-flex items-center gap-2">
-                        <span
-                          className="w-2 h-2 rounded-full"
-                          style={{ backgroundColor: cat.color || '#1B6CA8' }}
-                          aria-hidden
-                        />
-                        {cat.name}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-slate-500">
-                {t(
-                  'dialog.categoryHint',
-                  'Klassifikation des Themas — unabhängig vom Tickettyp.',
-                )}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-sm font-semibold text-slate-600">
-                {t('dialog.type', 'Tickettyp')}
-              </Label>
-              <Select
-                value={formData.type}
-                onValueChange={(v) => setFormData({ ...formData, type: v })}
-                disabled={!activeTypes.length}
-              >
-                <SelectTrigger className="w-full h-11 border-slate-100 rounded-xl bg-[#F9FAFB]">
-                  <div className="flex items-center gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label className={FIELD_LABEL}>{t('dialog.type', 'Typ')}</Label>
+                <Select
+                  value={formData.type}
+                  onValueChange={(v) => setFormData({ ...formData, type: v })}
+                  disabled={!activeTypes.length}
+                >
+                  <SelectTrigger className="w-full h-11 border-slate-200 rounded-xl bg-white">
                     <span
                       className="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold"
                       style={softTintStyles(typeDisplay.color)}
                     >
                       {typeDisplay.name}
                     </span>
-                  </div>
-                </SelectTrigger>
-                <SelectContent className="rounded-xl">
-                  {activeTypes.length === 0 ? (
-                    <SelectItem value={formData.type || 'question'} disabled>
-                      {t('dialog.noTypes', 'Keine aktiven Tickettypen konfiguriert')}
-                    </SelectItem>
-                  ) : (
-                    activeTypes.map((ty) => (
-                      <SelectItem key={ty.id} value={ty.key}>
-                        {ty.name}
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    {activeTypes.length === 0 ? (
+                      <SelectItem value={formData.type || 'question'} disabled>
+                        {t('dialog.noTypes', 'Keine aktiven Tickettypen konfiguriert')}
                       </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-slate-500">
-                {t(
-                  'dialog.typeHint',
-                  'Aus der Ticket-Konfiguration (Frage, Vorfall, Problem, …).',
-                )}
-              </p>
-            </div>
+                    ) : (
+                      activeTypes.map((ty) => (
+                        <SelectItem key={ty.id} value={ty.key}>
+                          {ty.name}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="space-y-2">
-              <Label className="text-sm font-semibold text-slate-600">
-                {t('dialog.assignee', 'Zuständig')}
-              </Label>
-              <Select
-                value={formData.assignee}
-                onValueChange={(v) => setFormData({ ...formData, assignee: v })}
-              >
-                <SelectTrigger className="w-full h-11 border-slate-100 rounded-xl bg-[#F9FAFB]">
-                  <div className="flex items-center gap-2.5">
-                    <UserIcon className="w-4 h-4 text-slate-400" aria-hidden />
-                    <span className="text-sm font-semibold text-[#374151]">{assigneeLabel}</span>
-                  </div>
-                </SelectTrigger>
-                <SelectContent className="rounded-xl">
-                  <SelectItem value="unassigned">
-                    {t('tickets.unassigned', 'Nicht zugewiesen')}
-                  </SelectItem>
-                  {user?.uid ? (
-                    <SelectItem value={user.uid}>
-                      {t('dialog.assignToMe', 'Mir zuweisen')}
-                    </SelectItem>
-                  ) : null}
-                  {agents.map((agent) => (
-                    <SelectItem key={agent.id} value={agent.id}>
-                      {agent.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-slate-500">
-                {t(
-                  'dialog.assigneeHint',
-                  '„Nicht zugewiesen“ setzt keinen Status — nur die Zuständigkeit.',
-                )}
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-3 pt-1">
-            <Label htmlFor="create-ticket-tags" className="text-sm font-semibold text-slate-600">
-              {t('dialog.tags', 'Tags')}
-            </Label>
-            <div className="relative">
-              <Input
-                id="create-ticket-tags"
-                placeholder={t('dialog.addTags', 'Tags hinzufügen…')}
-                value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddTag(tagInput);
-                  }
-                }}
-                className="w-full h-10 border-slate-100 pr-10 text-sm rounded-xl bg-[#F9FAFB]"
-              />
-              <button
-                type="button"
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-600 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded"
-                onClick={() => handleAddTag(tagInput)}
-                aria-label={t('dialog.addTag', 'Tag hinzufügen')}
-              >
-                <Plus className="w-4 h-4" aria-hidden />
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {formData.tags.map((tag) => (
-                <div
-                  key={tag}
-                  className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-semibold border border-blue-100"
+              <div className="space-y-2">
+                <Label className={FIELD_LABEL}>{t('common.priority', 'Priorität')}</Label>
+                <Select
+                  value={formData.priority}
+                  onValueChange={(v) => setFormData({ ...formData, priority: v })}
+                  disabled={!activePriorities.length}
                 >
-                  {tag}
-                  <button
-                    type="button"
-                    onClick={() => removeTag(tag)}
-                    aria-label={t('dialog.removeTag', 'Tag entfernen') + `: ${tag}`}
-                    className="hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded"
-                  >
-                    <X className="w-3 h-3" aria-hidden />
-                  </button>
-                </div>
-              ))}
-              {aiMeta.suggestedTags.map(
-                (tag) =>
-                  !formData.tags.includes(tag) && (
-                    <button
-                      type="button"
+                  <SelectTrigger className="w-full h-11 border-slate-200 rounded-xl bg-white">
+                    <span
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                        ticketPriorityPillClass(formData.priority),
+                      )}
+                    >
+                      <span
+                        className={cn('h-1.5 w-1.5 rounded-full shrink-0', ticketPriorityDotClass(formData.priority))}
+                        aria-hidden
+                      />
+                      {priorityDisplay.name}
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    {activePriorities.length === 0 ? (
+                      <SelectItem value={formData.priority || 'medium'} disabled>
+                        {t('dialog.noPriorities', 'Keine aktiven Prioritäten konfiguriert')}
+                      </SelectItem>
+                    ) : (
+                      activePriorities.map((p) => (
+                        <SelectItem key={p.id} value={p.key}>
+                          <span
+                            className={cn(
+                              'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                              ticketPriorityPillClass(p.key),
+                            )}
+                          >
+                            <span
+                              className={cn('h-1.5 w-1.5 rounded-full shrink-0', ticketPriorityDotClass(p.key))}
+                              aria-hidden
+                            />
+                            {p.name}
+                          </span>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label className={FIELD_LABEL}>{t('dialog.category', 'Kategorie')}</Label>
+                <Select value={formData.categoryId || 'none'} onValueChange={onCategoryChange}>
+                  <SelectTrigger className="w-full h-11 border-slate-200 rounded-xl bg-white">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <HelpCircle className="w-4 h-4 text-slate-400 shrink-0" aria-hidden />
+                      <span className="text-sm font-semibold text-slate-700 truncate">
+                        {formData.categoryName ||
+                          t('dialog.selectCategory', 'Kategorie wählen')}
+                      </span>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    <SelectItem value="none">{t('dialog.noCategory', 'Keine Kategorie')}</SelectItem>
+                    {selectableCategories.map((cat) => (
+                      <SelectItem key={cat.id} value={cat.id}>
+                        <span className="inline-flex items-center gap-2">
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: cat.color || '#1B6CA8' }}
+                            aria-hidden
+                          />
+                          {cat.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label className={FIELD_LABEL}>{t('dialog.assignee', 'Zuständiger')}</Label>
+                <Select
+                  value={formData.assignee}
+                  onValueChange={(v) => setFormData({ ...formData, assignee: v })}
+                >
+                  <SelectTrigger className="w-full h-11 border-slate-200 rounded-xl bg-white">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <UserIcon className="w-4 h-4 text-slate-400 shrink-0" aria-hidden />
+                      <span className="text-sm font-semibold text-slate-700 truncate">{assigneeLabel}</span>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    <SelectItem value="unassigned">
+                      {t('tickets.unassigned', 'Nicht zugewiesen')}
+                    </SelectItem>
+                    {user?.uid ? (
+                      <SelectItem value={user.uid}>
+                        {t('dialog.assignToMe', 'Mir zuweisen')}
+                      </SelectItem>
+                    ) : null}
+                    {agents.map((agent) => (
+                      <SelectItem key={agent.id} value={agent.id}>
+                        {agent.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label className={FIELD_LABEL}>{t('common.status', 'Status')}</Label>
+                <Select
+                  value={formData.status}
+                  onValueChange={(v) => setFormData({ ...formData, status: v })}
+                  disabled={!activeStatuses.length}
+                >
+                  <SelectTrigger className="w-full h-11 border-slate-200 rounded-xl bg-white">
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: statusDisplay.color }}
+                        aria-hidden
+                      />
+                      <span className="text-sm font-semibold text-slate-700">
+                        {statusDisplay.name}
+                      </span>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    {activeStatuses.length === 0 ? (
+                      <SelectItem value={formData.status || 'open'} disabled>
+                        {t('dialog.noStatuses', 'Keine aktiven Status konfiguriert')}
+                      </SelectItem>
+                    ) : (
+                      activeStatuses.map((s) => (
+                        <SelectItem key={s.id} value={s.key}>
+                          <span className="inline-flex items-center gap-2">
+                            <span
+                              className="w-2 h-2 rounded-full"
+                              style={{ backgroundColor: s.color }}
+                              aria-hidden
+                            />
+                            {s.name}
+                          </span>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="create-ticket-tags" className={FIELD_LABEL}>
+                  {t('dialog.tags', 'Tags')}
+                </Label>
+                <div className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 min-h-[44px] flex flex-wrap gap-1.5 items-center">
+                  {formData.tags.map((tag) => (
+                    <span
                       key={tag}
-                      onClick={() => handleAddTag(tag)}
-                      className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 text-slate-500 rounded-lg text-xs font-semibold border border-dashed border-slate-200 hover:opacity-100 opacity-80"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-md text-[11px] font-semibold border border-blue-100"
                     >
                       {tag}
-                      <Plus className="w-3 h-3" aria-hidden />
-                    </button>
-                  ),
-              )}
+                      <button
+                        type="button"
+                        onClick={() => removeTag(tag)}
+                        aria-label={t('dialog.removeTag', 'Tag entfernen') + `: ${tag}`}
+                        className="hover:text-rose-600"
+                      >
+                        <X className="w-3 h-3" aria-hidden />
+                      </button>
+                    </span>
+                  ))}
+                  <Input
+                    id="create-ticket-tags"
+                    placeholder={t('dialog.addTags', 'Tags hinzufügen…')}
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddTag(tagInput);
+                      }
+                    }}
+                    className="h-7 min-w-[7rem] flex-1 border-0 shadow-none focus-visible:ring-0 px-1 text-xs bg-transparent"
+                  />
+                  <button
+                    type="button"
+                    className="text-blue-600 hover:text-blue-700 p-1"
+                    onClick={() => handleAddTag(tagInput)}
+                    aria-label={t('dialog.addTag', 'Tag hinzufügen')}
+                  >
+                    <Plus className="w-3.5 h-3.5" aria-hidden />
+                  </button>
+                </div>
+                {aiMeta.suggestedTags.some((tag) => !formData.tags.includes(tag)) ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {aiMeta.suggestedTags.map(
+                      (tag) =>
+                        !formData.tags.includes(tag) && (
+                          <button
+                            type="button"
+                            key={tag}
+                            onClick={() => handleAddTag(tag)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-50 text-slate-500 rounded-md text-[10px] font-semibold border border-dashed border-slate-200"
+                          >
+                            {tag}
+                            <Plus className="w-3 h-3" aria-hidden />
+                          </button>
+                        ),
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="pt-1 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowGroupOptions((v) => !v)}
+                className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-500 hover:text-slate-800"
+                aria-expanded={showGroupOptions}
+              >
+                <ChevronDown
+                  className={cn('w-3.5 h-3.5 transition-transform', showGroupOptions && 'rotate-180')}
+                  aria-hidden
+                />
+                {t('dialog.moreOptionsGroup', 'Weitere Optionen (Gruppe)')}
+              </button>
+              {showGroupOptions ? (
+                <div className="mt-3 max-w-sm space-y-2">
+                  <Label className={FIELD_LABEL}>{t('dialog.group', 'Gruppe')}</Label>
+                  <Select value={formData.groupId || 'none'} onValueChange={onGroupChange}>
+                    <SelectTrigger className="w-full h-11 border-slate-200 rounded-xl bg-white">
+                      <div className="flex items-center gap-2.5">
+                        <Users className="w-4 h-4 text-slate-400" aria-hidden />
+                        <span className="text-sm font-semibold text-slate-700">
+                          {formData.groupName ||
+                            t('dialog.selectTeam', 'Gruppe wählen (optional)')}
+                        </span>
+                      </div>
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl">
+                      <SelectItem value="none">
+                        {t('dialog.noTeam', 'Keine Gruppe (System-Standard)')}
+                      </SelectItem>
+                      {groups.map((g) => (
+                        <SelectItem key={g.id} value={g.id}>
+                          {g.name}
+                          {g.isDefault ? ` (${t('dialog.defaultTeam', 'Standard')})` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+            </div>
+          </section>
+
+          {/* Bottom action bar */}
+          <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <p className="text-xs text-slate-500">
+              {isDirty
+                ? t('dialog.unsavedChanges', 'Ungespeicherte Änderungen')
+                : draftSavedAt
+                  ? t('dialog.draftSavedHint', 'Entwurf gespeichert')
+                  : t('dialog.pressHint', 'Strg+Enter zum Erstellen')}
+            </p>
+            <div className="flex flex-wrap items-center gap-2 justify-end">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={handleDiscard}
+                disabled={loading}
+                className="text-[13px] font-semibold text-slate-600 hover:bg-slate-50 px-4 rounded-lg h-10"
+              >
+                {t('dialog.discardDraft', 'Entwurf verwerfen')}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleSaveDraft}
+                disabled={loading}
+                className="text-[13px] font-semibold text-blue-600 border-blue-100 hover:bg-blue-50/50 rounded-lg px-4 h-10"
+              >
+                {t('dialog.saveDraft', 'Entwurf speichern')}
+              </Button>
+              <Button
+                type="submit"
+                disabled={loading}
+                className="text-[13px] font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-5 h-10 shadow-sm"
+              >
+                {loading
+                  ? t('dialog.publishing', 'Wird erstellt…')
+                  : t('dialog.createTicket', 'Ticket erstellen')}
+              </Button>
             </div>
           </div>
-
-          <div className="p-4 border border-slate-200/60 rounded-2xl space-y-3 bg-white">
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-slate-400" aria-hidden />
-              <h4 className="text-sm font-bold text-slate-700">
-                {t('dialog.estimatedSla', 'Geschätztes SLA')}
-              </h4>
-            </div>
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-slate-500">
-                  {t('dialog.targetResolution', 'Ziel-Auflösung')}
-                </span>
-                <span className="text-slate-800 font-semibold">{slaInfo.date}</span>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-slate-500">
-                  {t('dialog.resolutionWindow', 'Zeitfenster')}
-                </span>
-                <span className="text-slate-800 font-semibold">
-                  {t('dialog.within', 'Innerhalb')} {slaInfo.hours}h
-                </span>
-              </div>
-            </div>
-            <div className="flex items-start gap-2 p-2.5 bg-slate-50 border border-slate-100 rounded-xl">
-              <Info className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" aria-hidden />
-              <p className="text-xs text-slate-600 leading-relaxed">
-                {t('dialog.slaBasedOnPriorityPre', 'Basierend auf Priorität')}{' '}
-                <strong>{priorityDisplay.name}</strong>
-                {'. '}
-                {t(
-                  'dialog.slaHeuristicNote',
-                  'Heuristik nach Prioritäts-Schlüssel — keine Live-SLA-Policy.',
-                )}
-              </p>
-            </div>
-          </div>
-        </aside>
-      </form>
-
-      <div className="px-4 sm:px-6 py-3 sm:py-4 shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t bg-white">
-        <p className="text-xs text-slate-500">
-          {isDirty
-            ? t('dialog.unsavedChanges', 'Ungespeicherte Änderungen')
-            : draftSavedAt
-              ? t('dialog.draftSavedHint', 'Entwurf gespeichert')
-              : t('dialog.pressHint', 'Strg+Enter zum Veröffentlichen')}
-        </p>
-        <div className="flex items-center gap-3 justify-end">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={handleDiscard}
-            disabled={loading}
-            className="text-[13px] font-semibold text-slate-600 hover:bg-slate-50 px-4 rounded-lg"
-          >
-            {t('dialog.discardDraft', 'Entwurf verwerfen')}
-          </Button>
-          <Button
-            type="button"
-            onClick={() => void handleSubmit()}
-            disabled={loading}
-            className="text-[13px] font-bold bg-[#3B82F6] hover:bg-blue-600 text-white rounded-lg px-6 h-10 shadow-lg shadow-blue-500/25"
-          >
-            {loading
-              ? t('dialog.publishing', 'Wird veröffentlicht…')
-              : t('dialog.publishTicket', 'Ticket veröffentlichen')}
-          </Button>
         </div>
-      </div>
+      </form>
     </>
   );
 

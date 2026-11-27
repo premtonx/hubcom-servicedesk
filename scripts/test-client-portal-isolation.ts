@@ -5543,6 +5543,23 @@ function testTicketsWorkbenchSharedUiIsolation(): void {
       headerSrc.includes('h-3.5 w-px bg-slate-200/80'),
     'tickets list: pill-bar spacing, subtle row/column dividers, auto-hide pagination',
   );
+
+  const createTicketDialogSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/CreateTicketDialog.tsx'),
+    'utf8',
+  );
+  assert(
+    createTicketDialogSrc.includes('max-w-4xl mx-auto') &&
+      createTicketDialogSrc.includes('Klassifizierung & Zuweisung') &&
+      createTicketDialogSrc.includes('+ Interne Notiz hinzufügen') &&
+      createTicketDialogSrc.includes('Weitere Optionen (Gruppe)') &&
+      createTicketDialogSrc.includes('ticketPriorityPillClass') &&
+      createTicketDialogSrc.includes('onContactSelect') &&
+      !createTicketDialogSrc.includes('Geschätztes SLA') &&
+      !createTicketDialogSrc.includes('Ticket-Einstellungen') &&
+      createTicketDialogSrc.includes("t('dialog.createTicket', 'Ticket erstellen')"),
+    'staff create ticket: single-column cards, no SLA sidebar, contact-first + priority pills',
+  );
 }
 
 function testTicketDetailWorkbenchSharedUiIsolation(): void {
