@@ -254,7 +254,12 @@ export async function enrichRequestStaffAccess(req: any): Promise<void> {
 
 /**
  * Express middleware: bind the request to a tenant RLS transaction until the
- * response finishes. Mount after authenticate on /api/db, /api/admin, portal, etc.
+ * response finishes.
+ *
+ * Mount globally on `/api` after optionalAuthenticate (so cookie/Bearer sessions
+ * populate req.user). Unauthenticated requests fall back to `{ mode: 'system' }`
+ * so FORCE RLS never fail-closes vault/exchange/dashboard queries.
+ * Portal/returns may remount after authenticate to refine to portal/staff scope.
  */
 export function tenantRlsMiddleware(
   req: any,
@@ -272,11 +277,8 @@ export function tenantRlsMiddleware(
 
   void (async () => {
     await enrichRequestStaffAccess(req);
-    const ctx = resolveTenantContextFromRequest(req);
-    if (!ctx) {
-      next();
-      return;
-    }
+    const ctx: TenantContextInput =
+      resolveTenantContextFromRequest(req) || { mode: 'system' };
     await withTenantContext(ctx, async () => {
       await new Promise<void>((resolve, reject) => {
         const done = () => {

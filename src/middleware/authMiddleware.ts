@@ -481,46 +481,50 @@ export async function optionalAuthenticate(req: AuthenticatedRequest, _res: Resp
     }
 
     if (verifiedUid || verifiedEmail) {
-      let userDoc: any = null;
-      if (verifiedUid) {
-        userDoc = await getDocDirect("users", verifiedUid);
-      }
-      if (!userDoc && verifiedEmail) {
-        const results = await getDocsDirect("users", [
-          { type: "where", field: "email", op: "==", value: verifiedEmail.toLowerCase().trim() },
-        ]);
-        if (results && results.length > 0) {
-          userDoc = results[0];
+      // FORCE RLS + hubcom_app: resolve identity under system before request RLS binds.
+      const { withSystemTenantContext } = await import("../lib/security/tenant-rls.js");
+      await withSystemTenantContext(async () => {
+        let userDoc: any = null;
+        if (verifiedUid) {
+          userDoc = await getDocDirect("users", verifiedUid);
         }
-      }
-      if (userDoc && !userDoc.isDeactivated) {
-        let roleDoc: any = null;
-        if (userDoc.roleId) {
-          try {
-            roleDoc = await getDocDirect("roles", userDoc.roleId);
-          } catch {
-            // Role lookup failure is non-fatal for optional auth.
+        if (!userDoc && verifiedEmail) {
+          const results = await getDocsDirect("users", [
+            { type: "where", field: "email", op: "==", value: verifiedEmail.toLowerCase().trim() },
+          ]);
+          if (results && results.length > 0) {
+            userDoc = results[0];
           }
         }
-        let { computedRole, isAdminClaim } = resolveEffectiveRole(userDoc, roleDoc);
-        if (isServerBetaAutoAdminEnabled() && !isClientPortalRole(computedRole)) {
-          computedRole = "SUPER_ADMIN";
-          isAdminClaim = true;
+        if (userDoc && !userDoc.isDeactivated) {
+          let roleDoc: any = null;
+          if (userDoc.roleId) {
+            try {
+              roleDoc = await getDocDirect("roles", userDoc.roleId);
+            } catch {
+              // Role lookup failure is non-fatal for optional auth.
+            }
+          }
+          let { computedRole, isAdminClaim } = resolveEffectiveRole(userDoc, roleDoc);
+          if (isServerBetaAutoAdminEnabled() && !isClientPortalRole(computedRole)) {
+            computedRole = "SUPER_ADMIN";
+            isAdminClaim = true;
+          }
+          const organizationId = resolveUserOrganizationId(userDoc as Record<string, unknown>);
+          if (!(isClientPortalRole(computedRole) && !organizationId)) {
+            req.user = {
+              id: userDoc.id || verifiedUid,
+              name: userDoc.name || "Default User",
+              email: userDoc.email || verifiedEmail || "",
+              role: computedRole,
+              is_admin: isAdminClaim,
+              tenantId: resolveUserTenantId(userDoc as Record<string, unknown>),
+              organizationId,
+              dbRecord: userDoc,
+            };
+          }
         }
-        const organizationId = resolveUserOrganizationId(userDoc as Record<string, unknown>);
-        if (!(isClientPortalRole(computedRole) && !organizationId)) {
-          req.user = {
-            id: userDoc.id || verifiedUid,
-            name: userDoc.name || "Default User",
-            email: userDoc.email || verifiedEmail || "",
-            role: computedRole,
-            is_admin: isAdminClaim,
-            tenantId: resolveUserTenantId(userDoc as Record<string, unknown>),
-            organizationId,
-            dbRecord: userDoc,
-          };
-        }
-      }
+      });
     }
   } catch {
     // Any failure in optional auth means the caller stays anonymous.
