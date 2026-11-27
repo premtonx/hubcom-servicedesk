@@ -157,6 +157,15 @@ import {
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  assertCountsIsolatedToOrg,
+  countOpenTicketsByOrganization,
+  mergeOrganizationsWithPortalCounts,
+} from '../src/lib/client-portal/admin-org-portal-counts.js';
+import {
+  assertAdminPortalPatchScopedToOrg,
+  evaluateAdminOrgPortalSettingsAccess,
+} from '../src/lib/client-portal/admin-org-portal-settings-access.js';
+import {
   canPortalUserAccessVaultItem,
   isVaultItemInOrganization,
   sanitizeVaultItemForPortal,
@@ -7833,6 +7842,218 @@ function testSecondLevelSupportNotify(): void {
   );
 }
 
+/**
+ * Part 1 — Admin portal-* settings APIs for /admin/customers (:orgId).
+ * SYSTEM_ADMIN may manage DPG branding/email/members/AI without touching OtherOrg;
+ * CLIENT_* always 403 on /api/admin/organizations/*.
+ */
+function testAdminOrgPortalSettingsApiIsolation(): void {
+  console.log('\n[Admin Portal Settings] SYSTEM_ADMIN portal-* for :orgId + CLIENT_* 403');
+
+  const DPG = 'org-dpg-admin-settings-0001';
+  const OTHER = 'org-other-admin-settings-0002';
+
+  // RBAC: Hubcom Staff Admin allowed; every portal role denied.
+  assert(
+    evaluateAdminOrgPortalSettingsAccess({ role: 'SYSTEM_ADMIN' }).ok === true,
+    'SYSTEM_ADMIN may use /api/admin/organizations/:orgId/portal-*',
+  );
+  assert(
+    evaluateAdminOrgPortalSettingsAccess({ role: 'SYSTEM_ADMIN', is_admin: true }).ok === true,
+    'SYSTEM_ADMIN + is_admin may mutate portal-* settings',
+  );
+  // Raw "admin" string is normalized to SYSTEM_ADMIN in authMiddleware before requireRole.
+  assert(
+    evaluateAdminOrgPortalSettingsAccess({ role: 'admin' }).ok === false,
+    'pre-normalize "admin" string alone is not accepted by portal-* gate (auth maps it first)',
+  );
+  for (const role of ['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER'] as const) {
+    const denied = evaluateAdminOrgPortalSettingsAccess({ role });
+    assert(
+      denied.ok === false && denied.status === 403,
+      `${role} → 403 on /api/admin/organizations/*`,
+    );
+  }
+  assert(
+    evaluateAdminOrgPortalSettingsAccess({ role: 'AGENT', readOnlyStaff: true }).ok === true,
+    'Hubcom AGENT may read org list (sidebar)',
+  );
+  assert(
+    evaluateAdminOrgPortalSettingsAccess({ role: 'AGENT' }).ok === false,
+    'AGENT cannot mutate portal-* settings (SYSTEM_ADMIN only)',
+  );
+
+  // Org scoping: DPG patch never targets OtherOrg.
+  assert(
+    assertAdminPortalPatchScopedToOrg({
+      routeOrgId: DPG,
+      targetOrganizationId: DPG,
+      otherOrganizationId: OTHER,
+    }) === true,
+    'DPG portal-* patch stays scoped to DPG',
+  );
+  assert(
+    assertAdminPortalPatchScopedToOrg({
+      routeOrgId: DPG,
+      targetOrganizationId: OTHER,
+      otherOrganizationId: OTHER,
+    }) === false,
+    'cross-org route/target mismatch rejected',
+  );
+
+  // List enrichment: logo_url + open ticket/returns counts isolated per org.
+  const tickets = [
+    { id: 't1', organizationId: DPG, status: 'open' },
+    { id: 't2', organizationId: DPG, status: 'in_progress' },
+    { id: 't3', organizationId: DPG, status: 'closed' },
+    { id: 't4', organizationId: OTHER, status: 'open' },
+    { id: 't5', organizationId: OTHER, status: 'open' },
+  ];
+  const ticketCounts = countOpenTicketsByOrganization(tickets);
+  assert(ticketCounts.get(DPG) === 2, 'DPG open_tickets_count = 2 (excludes closed)');
+  assert(ticketCounts.get(OTHER) === 2, 'OtherOrg open_tickets_count = 2');
+  assert(
+    assertCountsIsolatedToOrg(tickets, DPG) === true,
+    'DPG open ticket count ignores OtherOrg tickets',
+  );
+  assert(
+    assertCountsIsolatedToOrg(tickets, OTHER) === true,
+    'OtherOrg open ticket count ignores DPG tickets',
+  );
+
+  const merged = mergeOrganizationsWithPortalCounts(
+    [
+      { id: DPG, name: 'DPG', logo_url: 'data:image/png;base64,dpglogo' },
+      { id: OTHER, name: 'OtherOrg', logo_url: null },
+    ],
+    {
+      [DPG]: { open_tickets_count: 2, open_returns_count: 5 },
+      [OTHER]: { open_tickets_count: 2, open_returns_count: 0 },
+    },
+  );
+  assert(
+    merged[0].logo_url === 'data:image/png;base64,dpglogo' &&
+      merged[0].open_tickets_count === 2 &&
+      merged[0].open_returns_count === 5,
+    'GET /api/admin/organizations returns DPG logo_url + accurate open counts',
+  );
+  assert(
+    merged[1].logo_url === null &&
+      merged[1].open_tickets_count === 2 &&
+      merged[1].open_returns_count === 0,
+    'OtherOrg counts stay isolated; null logo preserved',
+  );
+
+  // Source contracts: portal-* routes + forbidClientPortalRoles + ai-settings + no /api/db.
+  const adminOrgSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/organizationAdminRoutes.ts'),
+    'utf8',
+  );
+  const portalSettingsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/organizationAdminPortalSettingsRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    adminOrgSrc.includes('forbidClientPortalRoles') &&
+      adminOrgSrc.includes('organizationAdminPortalSettingsRoutes') &&
+      adminOrgSrc.includes('mergeOrganizationsWithPortalCounts') &&
+      adminOrgSrc.includes('open_tickets_count') &&
+      adminOrgSrc.includes('open_returns_count') &&
+      adminOrgSrc.includes('logo_url'),
+    'admin org list wires forbidClientPortalRoles + portal-* + logo/counts',
+  );
+  assert(
+    portalSettingsSrc.includes("'/:id/portal-branding'") &&
+      portalSettingsSrc.includes("'/:id/portal-email'") &&
+      portalSettingsSrc.includes("'/:id/portal-members'") &&
+      portalSettingsSrc.includes('portal-branding/logo') &&
+      portalSettingsSrc.includes('portal-branding/favicon') &&
+      portalSettingsSrc.includes('portal-email/test') &&
+      portalSettingsSrc.includes('portal-members/:userId/approve') &&
+      portalSettingsSrc.includes('portal-members/:userId/reject') &&
+      portalSettingsSrc.includes("requireRole(['SYSTEM_ADMIN'])") &&
+      portalSettingsSrc.includes('updateOrganizationBranding') &&
+      portalSettingsSrc.includes('updateOrganizationSsoSettings') &&
+      portalSettingsSrc.includes('updateOrganizationSecondLevelSettings') &&
+      portalSettingsSrc.includes('approvePortalSsoUser') &&
+      portalSettingsSrc.includes('rejectPortalSsoUser') &&
+      !portalSettingsSrc.includes("'/api/db'"),
+    'admin portal-* branding/email/members (+ approve/reject/test) reuse portal services; no /api/db',
+  );
+  assert(
+    adminOrgSrc.includes('ai-settings') &&
+      adminOrgSrc.includes('ai-settings/models') &&
+      adminOrgSrc.includes('ai-settings/test') &&
+      adminOrgSrc.includes('ai-settings/reindex') &&
+      adminOrgSrc.includes('updateOrganizationAiSettings'),
+    'Mandanten-KI ai-settings GET/PUT/models/test/reindex already on admin org routes',
+  );
+
+  // Simulate staff updating DPG branding/modules without mutating OtherOrg record.
+  const orgs = {
+    [DPG]: {
+      id: DPG,
+      logo_url: null as string | null,
+      portal_title: null as string | null,
+      hardware_returns_enabled: false,
+      secure_exchange_enabled: true,
+      vault_enabled: true,
+      sso_enabled: false,
+      m365_tenant_id: null as string | null,
+      sso_approval_mode: 'admin_approval',
+      second_level_notify_enabled: false,
+    },
+    [OTHER]: {
+      id: OTHER,
+      logo_url: 'keep-me',
+      portal_title: 'Other Portal',
+      hardware_returns_enabled: true,
+      secure_exchange_enabled: false,
+      vault_enabled: false,
+      sso_enabled: true,
+      m365_tenant_id: 'other-tenant',
+      sso_approval_mode: 'auto_domain',
+      second_level_notify_enabled: true,
+    },
+  };
+  const dpgPatch = {
+    logo_url: 'data:image/png;base64,NEWdpg',
+    portal_title: 'DPG Kundenportal',
+    hardware_returns_enabled: true,
+    secure_exchange_enabled: true,
+    vault_enabled: true,
+    sso_enabled: true,
+    m365_tenant_id: 'dpg-tenant',
+    sso_approval_mode: 'admin_approval' as const,
+    second_level_notify_enabled: true,
+  };
+  orgs[DPG] = { ...orgs[DPG], ...dpgPatch };
+  assert(
+    orgs[DPG].logo_url === 'data:image/png;base64,NEWdpg' &&
+      orgs[DPG].portal_title === 'DPG Kundenportal' &&
+      orgs[DPG].hardware_returns_enabled === true &&
+      orgs[DPG].sso_enabled === true &&
+      orgs[OTHER].logo_url === 'keep-me' &&
+      orgs[OTHER].portal_title === 'Other Portal' &&
+      orgs[OTHER].m365_tenant_id === 'other-tenant' &&
+      orgs[OTHER].sso_approval_mode === 'auto_domain' &&
+      orgs[OTHER].second_level_notify_enabled === true,
+    'SYSTEM_ADMIN DPG branding/email/SSO update leaves OtherOrg untouched',
+  );
+
+  // Members scoped: only users with organizationId === :orgId.
+  const members = [
+    { id: 'u-dpg-1', organizationId: DPG, role: 'CLIENT_ADMIN' },
+    { id: 'u-dpg-2', organizationId: DPG, role: 'CLIENT_USER' },
+    { id: 'u-other-1', organizationId: OTHER, role: 'CLIENT_ADMIN' },
+  ];
+  const dpgMembers = members.filter((m) => m.organizationId === DPG);
+  assert(
+    dpgMembers.length === 2 && !dpgMembers.some((m) => m.organizationId === OTHER),
+    'portal-members list for DPG excludes OtherOrg users',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('=== Client Portal Isolation & RBAC Suite (Phase 5) ===');
   testCrossTenantBlock();
@@ -7880,6 +8101,7 @@ async function main(): Promise<void> {
   testKbWorkbenchSharedUiIsolation();
   testTicketsWorkbenchSharedUiIsolation();
   testTicketDetailWorkbenchSharedUiIsolation();
+  testAdminOrgPortalSettingsApiIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

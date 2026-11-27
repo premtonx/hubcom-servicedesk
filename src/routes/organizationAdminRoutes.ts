@@ -65,10 +65,18 @@ import {
   deleteOrganizationContact,
   deletePortalOrganizationUser,
 } from '../lib/client-portal/portal-user-delete.js';
+import {
+  fetchOrganizationPortalListCounts,
+  mergeOrganizationsWithPortalCounts,
+} from '../lib/client-portal/admin-org-portal-counts.js';
+import organizationAdminPortalSettingsRoutes from './organizationAdminPortalSettingsRoutes.js';
 
 const router = Router();
 
 router.use(authenticate, forbidClientPortalRoles);
+
+/** Unified portal-* settings mirrors (branding / email / members) for :orgId. */
+router.use(organizationAdminPortalSettingsRoutes);
 
 /** requireRole(['SYSTEM_ADMIN', …]) rejects every non–SYSTEM_ADMIN — use this for staff reads. */
 function requireHubcomStaff(req: Request, res: Response, next: () => void): any {
@@ -141,10 +149,15 @@ const brandingSchema = z.object({
 router.get('/', requireHubcomStaff, async (_req: Request, res: Response): Promise<any> => {
   try {
     const organizations = await listOrganizations({ includeInactive: true });
+    const counts = await fetchOrganizationPortalListCounts();
+    const withCounts = mergeOrganizationsWithPortalCounts(organizations, counts);
     return res.json({
-      organizations: organizations.map((o) => ({
+      organizations: withCounts.map((o) => ({
         ...o,
+        logo_url: o.logo_url ?? null,
         resolved_portal_title: resolvePortalTitle(o.name, o.portal_title),
+        open_tickets_count: o.open_tickets_count,
+        open_returns_count: o.open_returns_count,
       })),
     });
   } catch (err: any) {

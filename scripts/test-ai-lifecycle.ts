@@ -151,6 +151,14 @@ import {
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  countOpenTicketsByOrganization,
+  mergeOrganizationsWithPortalCounts,
+} from '../src/lib/client-portal/admin-org-portal-counts.js';
+import {
+  assertAdminPortalPatchScopedToOrg,
+  evaluateAdminOrgPortalSettingsAccess,
+} from '../src/lib/client-portal/admin-org-portal-settings-access.js';
+import {
   applyOrgAiSettingsUpdate,
   defaultOrgAiSettings,
   embeddingRowsOwnedByOrg,
@@ -2619,6 +2627,68 @@ function testKbOutdatedRagLifecycle(): void {
   );
 }
 
+/** Admin /admin/customers portal-* settings + org list logo/counts lifecycle. */
+function testAdminOrgPortalSettingsLifecycle(): void {
+  console.log('\n[Admin Portal Settings] lifecycle — portal-* + list counts + CLIENT_* 403');
+
+  const DPG = 'dpg-admin-portal-life';
+  const OTHER = 'other-admin-portal-life';
+
+  assert(
+    evaluateAdminOrgPortalSettingsAccess({ role: 'SYSTEM_ADMIN' }).ok === true,
+    'SYSTEM_ADMIN allowed on admin portal-*',
+  );
+  for (const role of ['CLIENT_ADMIN', 'CLIENT_SUPPORTER', 'CLIENT_USER'] as const) {
+    const r = evaluateAdminOrgPortalSettingsAccess({ role });
+    assert(r.ok === false && r.status === 403, `${role} forbidden on admin organizations API`);
+  }
+  assert(
+    assertAdminPortalPatchScopedToOrg({
+      routeOrgId: DPG,
+      targetOrganizationId: DPG,
+      otherOrganizationId: OTHER,
+    }),
+    'DPG settings patch does not target OtherOrg',
+  );
+
+  const counts = countOpenTicketsByOrganization([
+    { organizationId: DPG, status: 'open' },
+    { organizationId: OTHER, status: 'open' },
+  ]);
+  assert(counts.get(DPG) === 1 && counts.get(OTHER) === 1, 'open ticket counts isolated');
+
+  const list = mergeOrganizationsWithPortalCounts(
+    [{ id: DPG, logo_url: 'https://cdn.example/dpg.png' }],
+    { [DPG]: { open_tickets_count: 3, open_returns_count: 1 } },
+  );
+  assert(
+    list[0].logo_url === 'https://cdn.example/dpg.png' &&
+      list[0].open_tickets_count === 3 &&
+      list[0].open_returns_count === 1,
+    'org list exposes logo_url + open_tickets_count + open_returns_count',
+  );
+
+  const adminOrgSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/organizationAdminRoutes.ts'),
+    'utf8',
+  );
+  const portalSettingsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/organizationAdminPortalSettingsRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    adminOrgSrc.includes('forbidClientPortalRoles') &&
+      adminOrgSrc.includes('organizationAdminPortalSettingsRoutes') &&
+      adminOrgSrc.includes('open_tickets_count') &&
+      portalSettingsSrc.includes('portal-branding') &&
+      portalSettingsSrc.includes('portal-email') &&
+      portalSettingsSrc.includes('portal-members') &&
+      adminOrgSrc.includes('ai-settings') &&
+      !portalSettingsSrc.includes("'/api/db'"),
+    'admin portal-* + ai-settings + CLIENT_* gate + no /api/db',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('AI Request Lifecycle — dry-run test suite');
   console.log('='.repeat(50));
@@ -2661,6 +2731,7 @@ async function main(): Promise<void> {
   testPortalSsoAdminApprovalLifecycle();
   testOrgLocalAiStrictLifecycle();
   testKbOutdatedRagLifecycle();
+  testAdminOrgPortalSettingsLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);
