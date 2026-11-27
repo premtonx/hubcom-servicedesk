@@ -338,7 +338,7 @@ async function startServer() {
   app.use(csrfOriginMiddleware);
   app.use(crossTenant403TrackerMiddleware);
   app.use("/api", generalApiRateLimiter);
-  // Extra AI sliding window for /api/*/ai-* (and /api/ai/*).
+  // Extra AI sliding window for generation endpoints only (status/config/events skipped).
   app.use((req, res, next) => {
     const p = String(req.path || "");
     if (p.startsWith("/api/ai") || /\/ai-/.test(p)) {
@@ -347,18 +347,20 @@ async function startServer() {
     return next();
   });
 
+  // Global request-scoped RLS for every /api/* handler under FORCE RLS + hubcom_app.
+  // optionalAuthenticate populates req.user from cookie/Bearer when present; unauthenticated
+  // requests bind { mode: 'system' }. Portal/returns remount after authenticate to refine.
+  {
+    const { optionalAuthenticate } = await import("./src/middleware/authMiddleware.js");
+    const { tenantRlsMiddleware } = await import("./src/lib/security/tenant-rls.js");
+    app.use("/api", optionalAuthenticate);
+    app.use("/api", tenantRlsMiddleware);
+  }
+
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
-
-  // Pre-auth / boot document access under FORCE RLS + hubcom_app (app.rls_mode=system).
-  {
-    const { systemRlsMiddleware } = await import("./src/lib/security/tenant-rls.js");
-    app.use("/api/auth", systemRlsMiddleware);
-    app.use("/api/admin/onboarding", systemRlsMiddleware);
-    app.use("/api/admin/system-favicon", systemRlsMiddleware);
-  }
 
   // ---------------------------------------------------------------------------
   // AUTHENTICATION (server-side, hashed credentials + signed session tokens)
@@ -548,6 +550,7 @@ async function startServer() {
 
   const { tenantRlsMiddleware } = await import("./src/lib/security/tenant-rls.js");
 
+  // Session still authenticates explicitly; global RLS already bound (refined if needed).
   app.get("/api/auth/session", authenticate, tenantRlsMiddleware, async (req: any, res) => {
     const base = sanitizeUserDoc(
       req.user?.dbRecord || {

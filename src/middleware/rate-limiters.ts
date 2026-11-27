@@ -121,13 +121,40 @@ export const sandboxRateLimiter = rateLimit({
   message: { error: 'Sandbox-Rate-Limit überschritten.' },
 });
 
-/** AI routes — per user or IP sliding window. */
+/** Read-only AI Control Plane polls — must not burn the generation budget. */
+export const AI_ROUTE_RATE_LIMIT_SKIP_PATHS = new Set([
+  '/status',
+  '/config',
+  '/events',
+  '/api/ai/status',
+  '/api/ai/config',
+  '/api/ai/events',
+]);
+
+export function shouldSkipAiRouteRateLimit(req: Request): boolean {
+  const method = String(req.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') return false;
+  const path = String(req.path || '').split('?')[0];
+  const original = String(req.originalUrl || req.url || path).split('?')[0];
+  if (AI_ROUTE_RATE_LIMIT_SKIP_PATHS.has(path)) return true;
+  if (AI_ROUTE_RATE_LIMIT_SKIP_PATHS.has(original)) return true;
+  // Strip trailing slash variants
+  const normalized = original.replace(/\/+$/, '') || '/';
+  return (
+    normalized.endsWith('/api/ai/status') ||
+    normalized.endsWith('/api/ai/config') ||
+    normalized.endsWith('/api/ai/events')
+  );
+}
+
+/** AI generation/inference routes — per user or IP sliding window. */
 export const aiRouteRateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: isProd ? 30 : 300,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: userOrIpKey,
+  skip: shouldSkipAiRouteRateLimit,
   message: { error: 'KI-Rate-Limit überschritten. Bitte kurz warten.' },
 });
 

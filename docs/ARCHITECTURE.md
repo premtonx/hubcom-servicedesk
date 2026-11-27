@@ -91,12 +91,16 @@ system-favicon run inside `withTenantContext({ mode: 'system' })` (or
 `systemRlsMiddleware`) so FORCE RLS never returns `42501` or a false
 uninitialized status.
 
-**Authenticated APIs:** `POST /api/db`, `GET /api/auth/session`, `/api/admin/*`,
-`/api/portal/*`, and `/api/returns` run `tenantRlsMiddleware` after `authenticate`
-so Hubcom admins keep full visibility under FORCE RLS while portal users stay
-org-isolated.
+**Authenticated APIs:** `optionalAuthenticate` + `tenantRlsMiddleware` mount on
+**all `/api/*`** (after cookie/Bearer extraction). Unauthenticated → `system`;
+`HUBCOM_ADMIN` / `SUPER_ADMIN` → `super_admin`; scoped staff → `staff_scoped`;
+portal → `portal`. `/api/portal` and `/api/returns` remount after `authenticate`
+to refine org scope. Covers vault, exchange, dashboard, `/api/db`, Admin-Hub, etc.
 
-Code: `src/lib/security/tenant-rls*.ts`.
+**AI rate limits:** generation/inference stays capped; `GET /api/ai/status|config|events`
+are skipped so Control Plane polling never 429s.
+
+Code: `src/lib/security/tenant-rls*.ts`, `src/middleware/rate-limiters.ts`.
 
 ## Required environment
 
