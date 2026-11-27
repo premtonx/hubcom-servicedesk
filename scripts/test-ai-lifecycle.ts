@@ -3024,6 +3024,7 @@ function testSecurityPerimeterLifecycle(): void {
   assert(
     rateLimiters.includes('GENERAL_API_RATE_LIMIT_PER_MINUTE = 600') &&
       rateLimiters.includes('CREDENTIAL_RATE_LIMIT_PER_MINUTE = 30') &&
+      rateLimiters.includes('AUTHENTICATED_READ_RATE_LIMIT_PER_MINUTE') &&
       rateLimiters.includes('shouldSkipGeneralApiRateLimit') &&
       rateLimiters.includes('/admin/onboarding/status'),
     'general API ≥600/min with session/status skips; auth stays at 30/min',
@@ -3032,6 +3033,38 @@ function testSecurityPerimeterLifecycle(): void {
     appSrc.includes('status != null') &&
       appSrc.includes('Navigate to="/onboarding"'),
     'onboarding gate requires loaded status (no 429→/onboarding bounce)',
+  );
+
+  const perimeter = fs.readFileSync(
+    path.join(process.cwd(), 'src/middleware/security-perimeter.ts'),
+    'utf8',
+  );
+  const fb = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/firebase-custom-client.ts'),
+    'utf8',
+  );
+  const policy = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/security/security-policy.ts'),
+    'utf8',
+  );
+  assert(
+    perimeter.includes('shouldCountForbidden403TowardBan') &&
+      policy.includes('shouldCountForbidden403TowardBan') &&
+      policy.includes("path === '/api/db'"),
+    'authenticated /api/db 403 excluded from IP auto-ban counter',
+  );
+  assert(
+    fb.includes('DB_ADAPTER_MAX_429_RETRIES') &&
+      fb.includes('tripRateLimitCircuit') &&
+      !fb.includes('retries = 5, delayMs = 1500') &&
+      fb.includes('classifyDbHttpStatus'),
+    'Mock DB Adapter: no 401/403 retry; shared 429 circuit (max 2)',
+  );
+  assert(
+    appSrc.includes('path="/login"') &&
+      appSrc.includes('ClientAwareHomeRedirect') &&
+      appSrc.includes('path="/portal/login"'),
+    'post-login /login and /portal/login redirect via ClientAwareHomeRedirect',
   );
 }
 

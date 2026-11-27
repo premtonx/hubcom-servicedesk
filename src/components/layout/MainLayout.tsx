@@ -32,6 +32,7 @@ import { useAdmin, useAuth } from '../../lib/hooks';
 import { useSidebar } from '../../lib/context/SidebarContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { isSystemAdminSession } from '../../lib/beta-admin-bypass';
+import { isClientPortalRole } from '../../lib/client-portal/roles';
 
 import { CreateTicketDialog } from '../CreateTicketDialog';
 import { CommandPalette } from '../CommandPalette';
@@ -64,6 +65,9 @@ export default function MainLayout() {
   const { role, userProfile, hasPermission } = usePermissions();
 
   const isSystemAdmin = isSystemAdminSession(isAdmin, userProfile, role);
+  // Defense in depth: CLIENT_* must never fan out staff /api/db collections
+  // (customers, tickets poll, notifications seed) even if this shell mounts briefly.
+  const isStaff = !isClientPortalRole(userProfile?.role);
 
   const [moduleFlags, setModuleFlags] = useState(() => getModuleConfig().platformModules);
 
@@ -126,7 +130,7 @@ export default function MainLayout() {
   const [activeModel, setActiveModel] = useState<string>('');
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isStaff) return;
     startOrchestratorConfigSync();
     const applyHealth = (data: { status?: string; primaryModel?: string }) => {
       if (data.status === 'healthy') {
@@ -142,32 +146,32 @@ export default function MainLayout() {
     };
     void fetchAiStatus().then((h) => h && applyHealth(h));
     return subscribeAiHealth((h) => applyHealth(h));
-  }, [user]);
+  }, [user, isStaff]);
 
   // Hydrate workspace module config from PostgreSQL so admin changes persist across sessions.
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isStaff) return;
     void syncModuleConfigFromServer(isSystemAdmin);
-  }, [user, isSystemAdmin]);
+  }, [user, isSystemAdmin, isStaff]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isStaff) return;
     const unsubTickets = ticketService.subscribeToTickets(setTickets);
     const unsubCustomers = customerService.subscribeToCustomers(setCustomers);
-    
+
     // Seed mock notifications if none exist (one-time for demo)
     const hasSeeded = localStorage.getItem(`geistdesk_notifications_seeded_${user.uid}`);
     if (!hasSeeded) {
-       notificationService.seedMockNotifications(user.uid).then(() => {
-          localStorage.setItem(`geistdesk_notifications_seeded_${user.uid}`, 'true');
-       });
+      notificationService.seedMockNotifications(user.uid).then(() => {
+        localStorage.setItem(`geistdesk_notifications_seeded_${user.uid}`, 'true');
+      });
     }
 
     return () => {
       unsubTickets();
       unsubCustomers();
     };
-  }, [user]);
+  }, [user, isStaff]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

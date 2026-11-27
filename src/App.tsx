@@ -412,6 +412,9 @@ function AppRoutes() {
                 ) : (
                   <>
                     <Route path="/onboarding" element={<ClientAwareHomeRedirect />} />
+                    {/* Post-login: never leave CLIENT_* on /login → staff catch-all. */}
+                    <Route path="/login" element={<ClientAwareHomeRedirect />} />
+                    <Route path="/portal/login" element={<ClientAwareHomeRedirect />} />
 
                     {/* Kunden-Portal — CLIENT_* roles only */}
                     <Route

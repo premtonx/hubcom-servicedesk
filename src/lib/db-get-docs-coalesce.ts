@@ -15,3 +15,26 @@ export function buildGetDocsCoalesceKey(
     return `${collection}|${String(constraints)}`;
   }
 }
+
+/** Short-lived successful get_docs payload for mount coalescing. */
+export type GetDocsCacheEntry = {
+  result: unknown;
+  expiresAtMs: number;
+};
+
+export function readGetDocsCacheEntry(
+  entry: GetDocsCacheEntry | undefined,
+  nowMs = Date.now(),
+): unknown | undefined {
+  if (!entry) return undefined;
+  if (entry.expiresAtMs <= nowMs) return undefined;
+  return entry.result;
+}
+
+export function buildGetDocsCacheEntry(
+  result: unknown,
+  ttlMs: number,
+  nowMs = Date.now(),
+): GetDocsCacheEntry {
+  return { result, expiresAtMs: nowMs + Math.max(0, ttlMs) };
+}

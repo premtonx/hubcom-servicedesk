@@ -200,3 +200,40 @@ export function isHubcomCoreAdminRole(role: string | null | undefined): boolean 
 export function shouldApplyAdminLoginCooldown(failCountInWindow: number): boolean {
   return failCountInWindow >= LOGIN_FAIL_THRESHOLD;
 }
+
+/**
+ * Cross-tenant auto-ban must only count probe-like 403s.
+ * Authenticated RBAC denials on `/api/db` (collection allow-list) and expected
+ * staff-only endpoints hit by portal sessions must never inflate the IP ban
+ * counter — otherwise a portal dashboard mount that briefly touches staff
+ * routes can lock the user out (`Zugriff gesperrt…`).
+ *
+ * Login brute-force remains separate (`recordFailedLogin` on `/auth/login`).
+ * 429 responses never feed this counter (caller only invokes on status 403).
+ */
+export function shouldCountForbidden403TowardBan(params: {
+  path: string | null | undefined;
+  authenticated: boolean;
+  role?: string | null;
+}): boolean {
+  const path = normalizeRequestPath(params.path);
+  if (isHoneypotPath(path)) return false;
+  if (path.startsWith('/api/auth/')) return false;
+
+  if (params.authenticated) {
+    if (path === '/api/db' || path.startsWith('/api/db/')) return false;
+
+    const role = String(params.role || '').trim().toUpperCase();
+    const isPortal =
+      role.startsWith('CLIENT_') || role === 'PORTAL_USER' || role === 'CUSTOMER';
+    if (isPortal) {
+      if (path.startsWith('/api/admin/')) return false;
+      if (path.startsWith('/api/header')) return false;
+      if (path.startsWith('/api/kb')) return false;
+      if (path.startsWith('/api/ai')) return false;
+      if (path.startsWith('/api/module-config')) return false;
+    }
+  }
+
+  return true;
+}

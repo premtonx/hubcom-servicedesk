@@ -37,8 +37,18 @@ export const GENERAL_API_RATE_LIMIT_SKIP_PATHS = new Set([
 /** Production floor for the general `/api/*` sliding window (per IP). */
 export const GENERAL_API_RATE_LIMIT_PER_MINUTE = 600;
 
+/**
+ * Authenticated portal/staff read fan-out budget (per session/IP).
+ * Enforced by skipping the general limiter for session-backed GETs and
+ * `/api/db` — dashboard mounts must never 429 → IP auto-ban.
+ */
+export const AUTHENTICATED_READ_RATE_LIMIT_PER_MINUTE = 2_000;
+
 /** Auth/credential endpoints: requests per minute per IP. */
 export const CREDENTIAL_RATE_LIMIT_PER_MINUTE = 30;
+
+/** Failed-login / credential abuse window (separate from authenticated reads). */
+export const LOGIN_CREDENTIAL_RATE_LIMIT_PER_MINUTE = CREDENTIAL_RATE_LIMIT_PER_MINUTE;
 
 function hasSessionCookie(req: Request): boolean {
   const fromParser = (req as any).cookies?.[SESSION_COOKIE_NAME];
@@ -54,12 +64,14 @@ export function shouldSkipGeneralApiRateLimit(req: Request): boolean {
   const method = String(req.method || 'GET').toUpperCase();
   const authed = hasSessionCookie(req);
 
-  // Authenticated dashboard/read fan-out (incl. legacy POST /api/db) must never
-  // false-positive 429; login/credential routes keep their own strict limiters.
+  // Strict brute-force protection lives on credentialRateLimiter / authRateLimiter
+  // for `/auth/login` — never fold those into this general window.
+  // Authenticated portal + staff read fan-out (GET /api/portal/*, GET /api/*,
+  // legacy POST /api/db) must never false-positive 429 or feed IP auto-ban.
   if (authed && (method === 'GET' || method === 'HEAD')) {
     return true;
   }
-  if (authed && path === '/db') {
+  if (authed && (path === '/db' || path.startsWith('/portal'))) {
     return true;
   }
   return false;

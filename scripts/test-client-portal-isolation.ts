@@ -180,6 +180,8 @@ import {
 } from '../src/lib/staff-org-access.js';
 import {
   ADMIN_FAILED_LOGIN_COOLDOWN_MS,
+  BAN_ACTIVE_MESSAGE_DE,
+  CROSS_TENANT_BAN_MS,
   evaluateCsrfOrigin,
   isAdminIpAllowlisted,
   isHoneypotPath,
@@ -188,6 +190,7 @@ import {
   parseAdminIpAllowlist,
   progressiveLockoutMs,
   shouldApplyAdminLoginCooldown,
+  shouldCountForbidden403TowardBan,
   shouldTriggerCrossTenantBan,
   shouldTriggerLoginLockout,
 } from '../src/lib/security/security-policy.js';
@@ -201,6 +204,21 @@ import {
   mergeImportedDictionaryJson,
 } from '../src/lib/polyglot-bridge.js';
 import { buildGetDocsCoalesceKey } from '../src/lib/db-get-docs-coalesce.js';
+import {
+  DB_ADAPTER_MAX_429_RETRIES,
+  classifyDbHttpStatus,
+  computeBackoffMs,
+  createRateLimitCircuit,
+  parseRetryAfterMs,
+  rateLimitCircuitWaitMs,
+  shouldRetryDbStatus,
+  tripRateLimitCircuit,
+} from '../src/lib/db-adapter-retry.js';
+import {
+  CLIENT_ADMIN_PORTAL_MOUNT_PATHS,
+  CLIENT_USER_PORTAL_MOUNT_PATHS,
+  simulatePortalMountRequestSet,
+} from '../src/lib/client-portal/portal-mount-requests.js';
 import {
   buildAdminHubNavBereiche,
   findAdminHubSubRoute,
@@ -230,9 +248,11 @@ import {
   withTenantContext,
 } from '../src/lib/security/tenant-rls.js';
 import {
+  AUTHENTICATED_READ_RATE_LIMIT_PER_MINUTE,
   CREDENTIAL_RATE_LIMIT_PER_MINUTE,
   GENERAL_API_RATE_LIMIT_PER_MINUTE,
   GENERAL_API_RATE_LIMIT_SKIP_PATHS,
+  LOGIN_CREDENTIAL_RATE_LIMIT_PER_MINUTE,
   shouldSkipAiRouteRateLimit,
   shouldSkipGeneralApiRateLimit,
 } from '../src/middleware/rate-limiters.js';
@@ -8794,6 +8814,7 @@ async function main(): Promise<void> {
   testStaffOrgPermissionMatrixIsolation();
   testStaffPermissionMatrixUiIsolation();
   testSecurityPerimeterIsolation();
+  testPortalLoginMountNoBanIsolation();
   testAdminHubPolyglotNullSafetyIsolation();
   testPayloadSanitizeUploadGuardIsolation();
   testTenantRlsSourceContracts();
@@ -9688,8 +9709,174 @@ function testAdminHubPolyglotNullSafetyIsolation(): void {
   assert(
     fb.includes('getDocsInFlight') &&
       fb.includes('buildGetDocsCoalesceKey') &&
-      fb.includes("execDbAction('get_docs'"),
-    'frontend DB adapter coalesces identical concurrent get_docs requests',
+      fb.includes("execDbAction('get_docs'") &&
+      fb.includes('getDocsResponseCache'),
+    'frontend DB adapter coalesces identical concurrent get_docs + short response cache',
+  );
+  assert(
+    fb.includes('classifyDbHttpStatus') &&
+      fb.includes('tripRateLimitCircuit') &&
+      fb.includes('DB_ADAPTER_MAX_429_RETRIES') &&
+      !fb.includes('retries = 5, delayMs = 1500'),
+    'Mock DB Adapter uses shared 429 circuit breaker (no 5×1500ms per-call loop)',
+  );
+  assert(
+    classifyDbHttpStatus(401) === 'auth' &&
+      classifyDbHttpStatus(403) === 'auth' &&
+      shouldRetryDbStatus(401, 0) === false &&
+      shouldRetryDbStatus(403, 0) === false,
+    'Mock DB Adapter never retries 401/403',
+  );
+  assert(
+    shouldRetryDbStatus(429, 0) === true &&
+      shouldRetryDbStatus(429, DB_ADAPTER_MAX_429_RETRIES) === false &&
+      DB_ADAPTER_MAX_429_RETRIES === 2,
+    '429 retries capped at 2 via shared policy',
+  );
+  assert(parseRetryAfterMs('3') === 3000, 'Retry-After seconds parsed to ms');
+  const circuit = tripRateLimitCircuit(createRateLimitCircuit(), 5000, 1_000);
+  assert(
+    rateLimitCircuitWaitMs(circuit, 1_000) === 5000 &&
+      rateLimitCircuitWaitMs(circuit, 6_000) === 0,
+    'shared rate-limit circuit opens then closes after wait',
+  );
+  assert(
+    computeBackoffMs(0, { random: () => 0.5, baseMs: 1500, maxMs: 15_000 }) >= 0,
+    'exponential backoff with jitter is non-negative',
+  );
+}
+
+/**
+ * Fresh CLIENT_ADMIN / PORTAL_USER (CLIENT_USER) portal mount under hubcom_app
+ * NOBYPASSRLS semantics: zero staff-only 403 sources, zero 429, zero IP bans.
+ */
+function testPortalLoginMountNoBanIsolation(): void {
+  console.log('\n[Portal Login Mount] zero 403 / 429 / IP ban for CLIENT_* boot');
+
+  for (const role of ['CLIENT_ADMIN', 'CLIENT_USER'] as const) {
+    const paths =
+      role === 'CLIENT_ADMIN'
+        ? [...CLIENT_ADMIN_PORTAL_MOUNT_PATHS]
+        : [...CLIENT_USER_PORTAL_MOUNT_PATHS];
+    const sim = simulatePortalMountRequestSet({ role, paths });
+    assert(sim.would403.length === 0, `${role} clean mount produces zero 403 sources`);
+    assert(sim.would429.length === 0, `${role} clean mount produces zero 429`);
+    assert(sim.wouldIpBan === false, `${role} clean mount produces zero IP bans`);
+    assert(
+      shouldFetchRolesCollection(role) === false,
+      `${role} never fetches /api/db roles on mount`,
+    );
+  }
+
+  // PORTAL_USER alias used in product copy → treat like CLIENT_USER mount set.
+  const portalUserSim = simulatePortalMountRequestSet({
+    role: 'PORTAL_USER',
+    paths: [...CLIENT_USER_PORTAL_MOUNT_PATHS],
+  });
+  assert(
+    portalUserSim.would403.length === 0 &&
+      portalUserSim.would429.length === 0 &&
+      portalUserSim.wouldIpBan === false,
+    'PORTAL_USER alias mount is clean (zero 403/429/ban)',
+  );
+
+  const storm = simulatePortalMountRequestSet({
+    role: 'CLIENT_ADMIN',
+    paths: [
+      ...CLIENT_ADMIN_PORTAL_MOUNT_PATHS,
+      '/api/db',
+      '/api/admin/system-favicon',
+      '/api/header/unread',
+    ],
+  });
+  assert(
+    storm.forbidden.includes('/api/db') &&
+      storm.forbidden.includes('/api/admin/system-favicon'),
+    'staff-only paths are flagged as forbidden for portal mount audit',
+  );
+
+  assert(
+    shouldCountForbidden403TowardBan({
+      path: '/api/db',
+      authenticated: true,
+      role: 'CLIENT_ADMIN',
+    }) === false,
+    'authenticated /api/db 403 does not increment IP auto-ban',
+  );
+  assert(
+    shouldCountForbidden403TowardBan({
+      path: '/api/admin/system-favicon',
+      authenticated: true,
+      role: 'CLIENT_USER',
+    }) === false,
+    'portal session staff-favicon 403 does not increment IP auto-ban',
+  );
+  assert(
+    shouldCountForbidden403TowardBan({
+      path: '/api/tickets/other-tenant',
+      authenticated: true,
+      role: 'AGENT',
+    }) === true,
+    'authenticated non-db probe 403 still counts toward ban',
+  );
+  assert(
+    BAN_ACTIVE_MESSAGE_DE.includes('Zugriff gesperrt'),
+    'German IP ban message matches product copy',
+  );
+  assert(
+    CROSS_TENANT_BAN_MS === 60 * 60 * 1000,
+    'cross-tenant IP ban has 1h TTL (not permanent)',
+  );
+  assert(
+    AUTHENTICATED_READ_RATE_LIMIT_PER_MINUTE >= 600 &&
+      LOGIN_CREDENTIAL_RATE_LIMIT_PER_MINUTE === 30,
+    'authenticated reads separated from strict login credential limit',
+  );
+
+  const brandingSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/DocumentBrandingSync.tsx'),
+    'utf8',
+  );
+  assert(
+    brandingSrc.includes('isClientPortalRole') &&
+      brandingSrc.includes('cachedProfileLooksLikePortalClient'),
+    'DocumentBrandingSync gates staff favicon behind portal-role check',
+  );
+  const mainLayoutSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/layout/MainLayout.tsx'),
+    'utf8',
+  );
+  assert(
+    mainLayoutSrc.includes('isStaff') &&
+      mainLayoutSrc.includes('isClientPortalRole') &&
+      mainLayoutSrc.includes('subscribeToCustomers'),
+    'MainLayout gates customers/tickets/AI fan-out behind isStaff',
+  );
+  const loginSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/LoginPage.tsx'),
+    'utf8',
+  );
+  assert(
+    loginSrc.includes('resolvePostLoginPath') && loginSrc.includes('/portal/dashboard'),
+    'Login redirects CLIENT_* straight to /portal/dashboard',
+  );
+  const perimeterSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/middleware/security-perimeter.ts'),
+    'utf8',
+  );
+  assert(
+    perimeterSrc.includes('shouldCountForbidden403TowardBan'),
+    'cross-tenant tracker uses shouldCountForbidden403TowardBan',
+  );
+
+  // Ban TTL + SUPER_ADMIN clear path still wired in Angriffsschutz UI.
+  const monitorSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/SecurityMonitorPage.tsx'),
+    'utf8',
+  );
+  assert(
+    monitorSrc.includes('unbanSecurityTarget') && monitorSrc.includes('banned_until'),
+    'SUPER_ADMIN Angriffsschutz can view TTL and clear IP bans',
   );
 }
 
