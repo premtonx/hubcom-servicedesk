@@ -1,6 +1,6 @@
 import { useMemo, type MutableRefObject, type MouseEvent } from 'react';
 import {
-  AlertTriangle, Angry, Box, Building2, CheckCircle2, ChevronDown, ChevronLeft,
+  AlertTriangle, Angry, Box, Building2, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft,
   ChevronRight, Clock, FolderTree, Frown, GitMerge, Globe, Hash, History, List, Mail, Meh,
   MessageCircleHeart, MessageSquare, PhoneCall, RefreshCw, Settings2,
   Share2, SlidersHorizontal, Smile, Sparkles, Tag, Ticket, UserCheck, UserRound, Users, X,
@@ -26,7 +26,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../ui/select';
 import {
-  ModulePageTabs, ModuleToolbar, ModuleToolbarSelect,
+  ModuleToolbar, ModuleToolbarSelect,
 } from '../ui/module-page';
 import { ModuleCreateButton } from '../ui/ModuleCreateButton';
 import { TicketsQueueAiChip } from './TicketsQueueAiChip';
@@ -57,6 +57,14 @@ import {
   type TicketsWorkbenchCapabilities,
   type TicketsWorkbenchMode,
 } from '../../lib/tickets/tickets-workbench-adapter';
+import {
+  countActiveTicketFilters,
+  resolveTicketZeitraumPreset,
+  TICKET_DATE_FIELD_OPTIONS,
+  TICKET_ZEITRAUM_OPTIONS,
+  type TicketDateField,
+  type TicketZeitraumPreset,
+} from '../../lib/tickets/ticket-zeitraum-filters';
 
 export interface TicketListViewProps {
   mode?: TicketsWorkbenchMode;
@@ -249,26 +257,82 @@ export function TicketListView(props: TicketListViewProps) {
                 </div>
               }
             />
-            <ModulePageTabs
-              className="border-0 bg-transparent"
-              tabs={[
-                { id: 'all', label: `${t('tickets.allTickets', 'Alle')} (${ticketQueueStats.all})` },
-                { id: 'open', label: `${t('tickets.open', 'Offen')} (${ticketQueueStats.open})` },
-                { id: 'pending', label: `${t('tickets.inProgress', 'In Bearbeitung')} (${ticketQueueStats.pending})` },
-                { id: 'onhold', label: `${t('tickets.pendingOnHold', 'Wartend')} (${ticketQueueStats.onhold})` },
-                { id: 'urgent', label: `${t('tickets.priorityUrgent', 'Dringend')} (${ticketQueueStats.urgent})` },
-                ...(capabilities.unassignedTab
-                  ? [
-                      {
-                        id: 'unassigned',
-                        label: `${t('tickets.unassigned', 'Nicht zugewiesen')} (${ticketQueueStats.unassigned})`,
-                      },
-                    ]
-                  : []),
-              ]}
-              activeId={topStatusFilter}
-              onChange={(id) => setTopStatusFilter(id as typeof topStatusFilter)}
-            />
+            <div className="px-4 sm:px-6 pb-2 shrink-0">
+              <div
+                className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-slate-100/80 border border-slate-200/70 max-w-full"
+                role="tablist"
+                aria-label={t('tickets.quickFilters', 'Schnellfilter')}
+              >
+                {(
+                  [
+                    { id: 'all' as const, label: t('tickets.allTickets', 'Alle'), count: ticketQueueStats.all },
+                    {
+                      id: 'open' as const,
+                      label: t('tickets.open', 'Offen'),
+                      count: ticketQueueStats.open,
+                      dot: 'bg-emerald-500',
+                    },
+                    {
+                      id: 'pending' as const,
+                      label: t('tickets.inProgress', 'In Bearbeitung'),
+                      count: ticketQueueStats.pending,
+                      dot: 'bg-sky-500',
+                    },
+                    {
+                      id: 'onhold' as const,
+                      label: t('tickets.pendingOnHold', 'Wartend'),
+                      count: ticketQueueStats.onhold,
+                      dot: 'bg-amber-500',
+                    },
+                    {
+                      id: 'urgent' as const,
+                      label: t('tickets.priorityUrgent', 'Dringend'),
+                      count: ticketQueueStats.urgent,
+                      dot: 'bg-rose-500',
+                    },
+                    ...(capabilities.unassignedTab
+                      ? [
+                          {
+                            id: 'unassigned' as const,
+                            label: t('tickets.unassigned', 'Nicht zugewiesen'),
+                            count: ticketQueueStats.unassigned,
+                          },
+                        ]
+                      : []),
+                  ] as Array<{ id: typeof topStatusFilter; label: string; count: number; dot?: string }>
+                ).map((tab) => {
+                  const active = topStatusFilter === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setTopStatusFilter(tab.id)}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all cursor-pointer',
+                        active
+                          ? 'bg-white text-slate-900 shadow-sm border border-slate-200/80'
+                          : 'text-slate-500 hover:text-slate-800 hover:bg-white/60 border border-transparent',
+                      )}
+                    >
+                      {tab.dot ? (
+                        <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', tab.dot)} aria-hidden />
+                      ) : null}
+                      <span className="whitespace-nowrap">{tab.label}</span>
+                      <span
+                        className={cn(
+                          'inline-flex min-w-[1.25rem] h-4 items-center justify-center rounded-full px-1 text-[10px] font-bold tabular-nums',
+                          active ? 'bg-slate-900 text-white' : 'bg-slate-200/80 text-slate-600',
+                        )}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
             <ModuleToolbar
               searchPlaceholder={t('tickets.searchPlaceholderShort', 'Suchen...')}
@@ -276,10 +340,9 @@ export function TicketListView(props: TicketListViewProps) {
               onSearchChange={setSearchQuery}
               onFilterClick={() => setIsFilterDrawerOpen(true)}
               filterActive={
-                isFilterDrawerOpen ||
-                filters.teamCategories === 'mine' ||
-                (filters.category && filters.category !== 'any')
+                isFilterDrawerOpen || countActiveTicketFilters(filters) > 0
               }
+              filterActiveCount={countActiveTicketFilters(filters)}
               sortControl={
                 <div className="flex items-center gap-1 shrink-0">
                   <span className="hidden sm:inline text-[11px] font-medium text-slate-500">
@@ -551,6 +614,115 @@ export function TicketListView(props: TicketListViewProps) {
                             />
                           </div>
                         </div>
+
+                        <div className="space-y-3 rounded-2xl border border-slate-200/80 bg-slate-50/60 p-4">
+                          <label className="text-[11px] font-bold text-foreground/70 uppercase tracking-wider flex items-center gap-2">
+                            <CalendarDays className="w-3.5 h-3.5 text-primary" />
+                            {t('tickets.filters.zeitraum', 'Zeitraum (Datum)')}
+                          </label>
+                          <Select
+                            value={String(filters.dateField || 'created')}
+                            onValueChange={(v) =>
+                              setFilters({
+                                ...filters,
+                                dateField: v as TicketDateField,
+                              })
+                            }
+                          >
+                            <SelectTrigger className="w-full bg-white border-border rounded-xl h-10 font-medium">
+                              <SelectValue placeholder={t('tickets.filters.dateField', 'Datumsfeld')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {TICKET_DATE_FIELD_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.id} value={opt.id}>
+                                  {t(
+                                    opt.id === 'created'
+                                      ? 'tickets.filters.dateFieldCreated'
+                                      : 'tickets.filters.dateFieldUpdated',
+                                    opt.label,
+                                  )}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <div className="flex flex-wrap gap-1.5">
+                            {TICKET_ZEITRAUM_OPTIONS.map((opt) => {
+                              const active =
+                                String(filters.zeitraumPreset || 'all') === opt.id;
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    const next = resolveTicketZeitraumPreset(
+                                      opt.id as TicketZeitraumPreset,
+                                      (filters.dateField as TicketDateField) || 'created',
+                                    );
+                                    setFilters({
+                                      ...filters,
+                                      zeitraumPreset: opt.id,
+                                      dateField: next.dateField,
+                                      dateFrom:
+                                        opt.id === 'custom'
+                                          ? filters.dateFrom || ''
+                                          : next.dateFrom,
+                                      dateTo:
+                                        opt.id === 'custom'
+                                          ? filters.dateTo || ''
+                                          : next.dateTo,
+                                    });
+                                  }}
+                                  className={cn(
+                                    'inline-flex items-center rounded-lg px-2.5 py-1.5 text-[11px] font-bold border transition-colors cursor-pointer',
+                                    active
+                                      ? 'bg-slate-900 text-white border-slate-900'
+                                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+                                  )}
+                                >
+                                  {t(`tickets.filters.zeitraum.${opt.id}`, opt.label)}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {String(filters.zeitraumPreset || 'all') === 'custom' ? (
+                            <div className="grid grid-cols-2 gap-3 pt-1">
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                  {t('tickets.filters.dateFrom', 'Von')}
+                                </label>
+                                <Input
+                                  type="date"
+                                  className="h-10 rounded-xl bg-white border-border text-sm font-medium"
+                                  value={filters.dateFrom || ''}
+                                  onChange={(e) =>
+                                    setFilters({
+                                      ...filters,
+                                      zeitraumPreset: 'custom',
+                                      dateFrom: e.target.value,
+                                    })
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                  {t('tickets.filters.dateTo', 'Bis')}
+                                </label>
+                                <Input
+                                  type="date"
+                                  className="h-10 rounded-xl bg-white border-border text-sm font-medium"
+                                  value={filters.dateTo || ''}
+                                  onChange={(e) =>
+                                    setFilters({
+                                      ...filters,
+                                      zeitraumPreset: 'custom',
+                                      dateTo: e.target.value,
+                                    })
+                                  }
+                                />
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
 
@@ -794,7 +966,11 @@ export function TicketListView(props: TicketListViewProps) {
                           product: 'any',
                           language: 'any',
                           aiConfidence: 'any',
-                          slaDue: 'any'
+                          slaDue: 'any',
+                          zeitraumPreset: 'all',
+                          dateField: 'created',
+                          dateFrom: '',
+                          dateTo: '',
                         })}
                       >
                         {t('tickets.filters.resetAll', 'Alle zurücksetzen')}
@@ -1040,15 +1216,21 @@ export function TicketListView(props: TicketListViewProps) {
               ) : (
               <>
               {/* Desktop Table Layout (lg and up) */}
-              <div className="hidden lg:block w-full overflow-x-auto">
-                <div className={cn('border-collapse bg-card', getTicketTableMinWidth())}>
+              <div className="hidden lg:block w-full px-4 sm:px-6 py-4">
+                <div
+                  className={cn(
+                    'rounded-xl border border-slate-200/80 bg-white shadow-sm overflow-hidden',
+                    getTicketTableMinWidth(),
+                  )}
+                >
+                <div className="w-full overflow-x-auto">
                 <TicketsTableHeader
                   headerCheckboxActive={headerCheckboxActive}
                   onToggleSelectAll={toggleSelectAll}
                   showSelection={capabilities.bulkSelection}
                 />
 
-                  <div className="divide-y divide-border">
+                  <div className="divide-y divide-slate-100">
                     {paginatedTickets.map(ticket => {
                       return (
                         <motion.div 
@@ -1174,6 +1356,7 @@ export function TicketListView(props: TicketListViewProps) {
                       );
                     })}
                   </div>
+                </div>
                 </div>
               </div>
 

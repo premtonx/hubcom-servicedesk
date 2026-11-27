@@ -12,6 +12,8 @@ interface ModuleToolbarProps {
   onSearchChange?: (value: string) => void;
   onFilterClick?: () => void;
   filterActive?: boolean;
+  /** When > 0, shown as a compact count pill on Filtern. */
+  filterActiveCount?: number;
   sortControl?: ReactNode;
   filtersSlot?: ReactNode;
   viewsSlot?: ReactNode;
@@ -25,6 +27,7 @@ export function ModuleToolbar({
   onSearchChange,
   onFilterClick,
   filterActive,
+  filterActiveCount,
   sortControl,
   filtersSlot,
   viewsSlot,
@@ -70,6 +73,11 @@ export function ModuleToolbar({
               >
                 <SlidersHorizontal className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline text-xs">{t('actions.filter', 'Filtern')}</span>
+                {typeof filterActiveCount === 'number' && filterActiveCount > 0 ? (
+                  <span className="ml-0.5 inline-flex min-w-[1.15rem] h-4 items-center justify-center rounded-full bg-blue-600 text-white text-[10px] font-bold px-1 tabular-nums">
+                    {filterActiveCount}
+                  </span>
+                ) : null}
               </Button>
             ) : null}
 

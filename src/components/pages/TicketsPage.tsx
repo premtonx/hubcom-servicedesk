@@ -59,6 +59,7 @@ import {
   type TopStatusFilterId,
 } from '../../lib/ticketViewFilters';
 import { filterTicketsByOrganization } from '../../lib/ticket-organization-scope';
+import { ticketMatchesZeitraum } from '../../lib/tickets/ticket-zeitraum-filters';
 import {
   parseResolvedWithinDays,
   resolveTicketsListDeepLink,
@@ -454,7 +455,11 @@ export default function TicketsPage() {
     product: 'any',
     language: 'any',
     aiConfidence: 'any',
-    slaDue: 'any'
+    slaDue: 'any',
+    zeitraumPreset: 'all',
+    dateField: 'created' as 'created' | 'updated',
+    dateFrom: '',
+    dateTo: '',
   });
   const [teamAccess, setTeamAccess] = useState<TeamCategoryAccess>({ categoryIds: [] });
   const [teamCategoryLabels, setTeamCategoryLabels] = useState<string[]>([]);
@@ -866,6 +871,20 @@ export default function TicketsPage() {
       });
     }
 
+    if (
+      filters.zeitraumPreset !== 'all' ||
+      String(filters.dateFrom || '').trim() ||
+      String(filters.dateTo || '').trim()
+    ) {
+      result = result.filter((t) =>
+        ticketMatchesZeitraum(t, {
+          dateField: (filters.dateField as 'created' | 'updated') || 'created',
+          dateFrom: String(filters.dateFrom || ''),
+          dateTo: String(filters.dateTo || ''),
+        }),
+      );
+    }
+
     if (filters.slaDue !== 'any') {
       const now = new Date();
       result = result.filter(t => {
@@ -998,6 +1017,19 @@ export default function TicketsPage() {
     }
     if (filters.contacts !== 'any') {
       extras = extras.filter((t) => t.customerName === filters.contacts);
+    }
+    if (
+      filters.zeitraumPreset !== 'all' ||
+      String(filters.dateFrom || '').trim() ||
+      String(filters.dateTo || '').trim()
+    ) {
+      extras = extras.filter((t) =>
+        ticketMatchesZeitraum(t, {
+          dateField: (filters.dateField as 'created' | 'updated') || 'created',
+          dateFrom: String(filters.dateFrom || ''),
+          dateTo: String(filters.dateTo || ''),
+        }),
+      );
     }
 
     const merged = [...finalRenderedTickets, ...extras];

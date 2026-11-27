@@ -28,6 +28,10 @@ import {
 } from '../../lib/ticket-config/display';
 import { useTicketStatuses } from '../../hooks/useTicketStatuses';
 import { useTicketPriorities } from '../../hooks/useTicketPriorities';
+import {
+  ticketPriorityDotClass,
+  ticketPriorityPillClass,
+} from '../../lib/tickets/ticket-zeitraum-filters';
 
 /** @deprecated Prefer resolveCategoryConfig — kept for callers that only need a colour. */
 export function resolveTicketCategoryColor(
@@ -139,6 +143,8 @@ export function TicketPriorityChip({
   const resolved = resolvePriorityConfig(priority, priorities);
   const options = selectablePrioritiesForValue(priority, priorities);
   const label = resolved.name;
+  const pillClass = ticketPriorityPillClass(resolved.key);
+  const dotClass = ticketPriorityDotClass(resolved.key);
 
   return (
     <DropdownMenu>
@@ -155,39 +161,42 @@ export function TicketPriorityChip({
                     '{{label}} (inaktiv — noch auf Tickets vorhanden)',
                   ).replace('{{label}}', label)
             }
-            className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 transition-colors rounded-md px-1 py-0.5 max-w-full"
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium max-w-full border transition-colors hover:opacity-90',
+              pillClass,
+            )}
           >
-            <span className="text-slate-400 shrink-0" aria-hidden>
-              •
-            </span>
-            <span
-              className="h-1.5 w-1.5 rounded-full shrink-0"
-              style={{ backgroundColor: resolved.color }}
-              aria-hidden
-            />
+            <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', dotClass)} aria-hidden />
             <span className="truncate">{label}</span>
-            <ChevronDown className="w-3 h-3 opacity-40 shrink-0" aria-hidden />
+            <ChevronDown className="w-3 h-3 opacity-50 shrink-0" aria-hidden />
           </button>
         }
       />
-      <DropdownMenuContent align="start" className="w-44 rounded-lg">
-        {options.map((p) => (
-          <DropdownMenuItem
-            key={p.id || p.key}
-            className="text-xs gap-2"
-            onClick={() => onChange(p.key as TicketPriority)}
-          >
-            <span
-              className="h-2 w-2 rounded-full shrink-0"
-              style={{ backgroundColor: p.color }}
-              aria-hidden
-            />
-            <span className="truncate">{p.name}</span>
-            {!p.isActive ? (
-              <span className="text-[9px] uppercase text-slate-400 font-bold ml-auto">inaktiv</span>
-            ) : null}
-          </DropdownMenuItem>
-        ))}
+      <DropdownMenuContent align="start" className="w-48 rounded-lg p-1">
+        {options.map((p) => {
+          const optPill = ticketPriorityPillClass(p.key);
+          const optDot = ticketPriorityDotClass(p.key);
+          return (
+            <DropdownMenuItem
+              key={p.id || p.key}
+              className="text-xs gap-2 rounded-md px-1.5 py-1.5"
+              onClick={() => onChange(p.key as TicketPriority)}
+            >
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium border',
+                  optPill,
+                )}
+              >
+                <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', optDot)} aria-hidden />
+                <span className="truncate">{p.name}</span>
+              </span>
+              {!p.isActive ? (
+                <span className="text-[9px] uppercase text-slate-400 font-bold ml-auto">inaktiv</span>
+              ) : null}
+            </DropdownMenuItem>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );

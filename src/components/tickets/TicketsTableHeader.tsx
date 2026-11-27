@@ -27,7 +27,7 @@ export function TicketsTableHeader({
     <div
       className={cn(
         grid,
-        'px-4 h-9 bg-muted/80 border-b border-border sticky top-0 z-10',
+        'px-4 h-10 bg-slate-50/95 border-b border-slate-200/80 sticky top-0 z-10 backdrop-blur-sm',
         className,
       )}
     >

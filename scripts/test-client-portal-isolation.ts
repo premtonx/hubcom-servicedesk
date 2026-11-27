@@ -5501,6 +5501,35 @@ function testTicketsWorkbenchSharedUiIsolation(): void {
       portalAdapterSrc.includes('/portal/tickets/new'),
     'create CTA stays on adapter openCreateTicket → /portal/tickets/new',
   );
+
+  const cellsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/TicketTableCells.tsx'),
+    'utf8',
+  );
+  const zeitraumSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/tickets/ticket-zeitraum-filters.ts'),
+    'utf8',
+  );
+  assert(
+    cellsSrc.includes('ticketPriorityPillClass') &&
+      zeitraumSrc.includes('bg-rose-50 text-rose-700 border-rose-200') &&
+      zeitraumSrc.includes('bg-orange-50 text-orange-700 border-orange-200') &&
+      zeitraumSrc.includes('bg-sky-50 text-sky-700 border-sky-200') &&
+      zeitraumSrc.includes('bg-slate-100 text-slate-600 border-slate-200'),
+    'PRIORITÄT chips use tinted rose/orange/sky/slate pills',
+  );
+  assert(
+    listViewSrc.includes('bg-slate-100/80') &&
+      listViewSrc.includes('shadow-sm') &&
+      listViewSrc.includes('rounded-xl border border-slate-200/80 bg-white shadow-sm') &&
+      listViewSrc.includes('Zeitraum (Datum)') &&
+      listViewSrc.includes('countActiveTicketFilters') &&
+      listViewSrc.includes('filterActiveCount') &&
+      zeitraumSrc.includes("TicketDateField = 'created'") &&
+      zeitraumSrc.includes('ticketMatchesZeitraum') &&
+      zeitraumSrc.includes("id: 'created', label: 'Erstellt am'"),
+    'tickets list: segmented quick filters, card table, Zeitraum in MASTER-FILTERLISTE',
+  );
 }
 
 function testTicketDetailWorkbenchSharedUiIsolation(): void {

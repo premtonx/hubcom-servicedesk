@@ -21,6 +21,7 @@ import type { Ticket as TicketType, TicketPriority, TicketStatus } from '../../t
 import type { TicketsLayoutMode } from './TicketsViewModeSelector';
 import type { TopStatusFilterId, TicketQueueStats } from '../../lib/ticketViewFilters';
 import { computeTicketQueueStats } from '../../lib/ticketViewFilters';
+import { ticketMatchesZeitraum } from '../../lib/tickets/ticket-zeitraum-filters';
 import {
   ticketMatchesPortalStatusFilter,
   toPortalStatusGroup,
@@ -48,6 +49,10 @@ const EMPTY_FILTERS: Record<string, any> = {
   sentiment: 'any',
   teamCategories: 'any',
   slaDue: 'any',
+  zeitraumPreset: 'all',
+  dateField: 'created',
+  dateFrom: '',
+  dateTo: '',
 };
 
 function computePortalQueueStats(pool: TicketType[]): TicketQueueStats {
@@ -263,6 +268,20 @@ function PortalTicketsWorkbench({
       );
     }
 
+    if (
+      filters.zeitraumPreset !== 'all' ||
+      String(filters.dateFrom || '').trim() ||
+      String(filters.dateTo || '').trim()
+    ) {
+      rows = rows.filter((t) =>
+        ticketMatchesZeitraum(t, {
+          dateField: (filters.dateField as 'created' | 'updated') || 'created',
+          dateFrom: String(filters.dateFrom || ''),
+          dateTo: String(filters.dateTo || ''),
+        }),
+      );
+    }
+
     const q = searchQuery.trim().toLowerCase();
     if (q) {
       rows = rows.filter((t) => {
@@ -293,11 +312,31 @@ function PortalTicketsWorkbench({
     });
 
     return rows;
-  }, [scopeTickets, topStatusFilter, filters.priority, searchQuery, listSort]);
+  }, [
+    scopeTickets,
+    topStatusFilter,
+    filters.priority,
+    filters.zeitraumPreset,
+    filters.dateField,
+    filters.dateFrom,
+    filters.dateTo,
+    searchQuery,
+    listSort,
+  ]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeView, topStatusFilter, searchQuery, listSort, filters.priority, pageSize]);
+  }, [
+    activeView,
+    topStatusFilter,
+    searchQuery,
+    listSort,
+    filters.priority,
+    filters.zeitraumPreset,
+    filters.dateFrom,
+    filters.dateTo,
+    pageSize,
+  ]);
 
   const handleViewChange = (view: PortalQueueViewId) => {
     setActiveView(view);

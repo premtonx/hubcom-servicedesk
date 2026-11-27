@@ -19,7 +19,7 @@ export const TICKET_TABLE_HEADER_CELL =
   'font-semibold text-[10px] text-slate-500 uppercase tracking-wider text-left truncate';
 
 export const TICKET_TABLE_ROW_BASE =
-  'hover:bg-slate-50/80 cursor-pointer group transition-colors duration-150 border-l-2 border-transparent py-2 min-h-[44px]';
+  'hover:bg-slate-50/90 cursor-pointer group transition-colors duration-150 border-l-2 border-transparent py-2.5 min-h-[48px]';
 
 export function ticketTableRowClass(selected: boolean): string {
   return cn(
