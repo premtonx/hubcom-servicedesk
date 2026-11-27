@@ -165,6 +165,14 @@ import {
   normalizeHubcomMatrixRole,
 } from '../src/lib/staff-org-access.js';
 import {
+  isHoneypotPath,
+  LOCKOUT_MESSAGE_DE,
+  progressiveLockoutMs,
+  shouldTriggerCrossTenantBan,
+  shouldTriggerLoginLockout,
+} from '../src/lib/security/security-policy.js';
+import { createMemorySecurityEngine } from '../src/lib/security/security-store.js';
+import {
   assertPortalSettingsPathsSafe,
   resolvePortalSettingsPaths,
 } from '../src/lib/client-portal/portal-settings-api-base.js';
@@ -2769,6 +2777,7 @@ async function main(): Promise<void> {
   testAdminOrgPortalSettingsLifecycle();
   testStaffOrgPermissionMatrixLifecycle();
   testStaffPermissionMatrixUiLifecycle();
+  testSecurityPerimeterLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);
@@ -2776,6 +2785,53 @@ async function main(): Promise<void> {
   if (failed > 0) {
     process.exit(1);
   }
+}
+
+function testSecurityPerimeterLifecycle(): void {
+  console.log('\n[Security Perimeter] lifecycle — autoban + headers + monitor');
+
+  const engine = createMemorySecurityEngine();
+  for (let i = 0; i < 5; i++) engine.recordFailedLogin('198.51.100.20', 'brute@hubcom.test', i);
+  assert(
+    engine.bans.some((b) => b.reason === 'login_brute_force') &&
+      engine.audits.some((a) => a.event_type === 'login_lockout'),
+    '5 failed logins → ban + critical audit (429 path)',
+  );
+  assert(shouldTriggerLoginLockout(5) && progressiveLockoutMs(0) === 900000, 'progressive 15m first strike');
+
+  assert(isHoneypotPath('/.env') === true, '/.env honeypot');
+  const ban = engine.honeypot('198.51.100.21', '/.env');
+  assert(engine.isBanned('ip', '198.51.100.21'), 'honeypot IP banned (403 path)');
+  engine.unban(ban.id, 'admin');
+  assert(!engine.isBanned('ip', '198.51.100.21'), 'admin unban restores access');
+
+  for (let i = 0; i < 10; i++) engine.record403('198.51.100.22', 'client-user-1', i);
+  assert(
+    engine.audits.some((a) => a.event_type === 'cross_tenant_probe_ban' && a.severity === 'critical') &&
+      shouldTriggerCrossTenantBan(10),
+    '10× 403 probes → critical cross_tenant_probe_ban',
+  );
+
+  const serverSrc = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
+  const page = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/SecurityMonitorPage.tsx'),
+    'utf8',
+  );
+  assert(
+    serverSrc.includes('contentSecurityPolicy') &&
+      serverSrc.includes('Permissions-Policy') &&
+      serverSrc.includes('securityBanAndHoneypotMiddleware') &&
+      serverSrc.includes('LOCKOUT_MESSAGE_DE') &&
+      LOCKOUT_MESSAGE_DE.includes('gesperrt'),
+    'security headers + login lockout wired in server',
+  );
+  assert(
+    page.includes('Angriffsschutz & Sperrliste') &&
+      page.includes('Sperre aufheben') &&
+      page.includes('securityAdminApi') &&
+      !page.includes("'/api/db'"),
+    'German security monitor uses securityAdminApi without /api/db',
+  );
 }
 
 function testStaffPermissionMatrixUiLifecycle(): void {

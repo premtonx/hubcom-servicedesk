@@ -48,6 +48,7 @@ const NotificationEnginePage = lazy(() => import('./components/pages/Notificatio
 const CompanySchemaPage = lazy(() => import('./components/pages/CompanySchemaPage'));
 const ContactSchemaPage = lazy(() => import('./components/pages/ContactSchemaPage'));
 const PIIShieldPage = lazy(() => import('./components/pages/PIIShieldPage'));
+const SecurityMonitorPage = lazy(() => import('./components/pages/SecurityMonitorPage'));
 const SovereigntyCenterPage = lazy(() => import('./components/pages/SovereigntyCenterPage'));
 const IntegrationsPage = lazy(() => import('./components/pages/IntegrationsPage'));
 const GroupsPage = lazy(() => import('./components/pages/GroupsPage'));
@@ -700,6 +701,16 @@ function AppRoutes() {
                       <Route path="schema" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Company Schema" />}><LazyPage><CompanySchemaPage /></LazyPage></ErrorBoundary>} />
                       <Route path="contact-schema" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Contact Schema" />}><LazyPage><ContactSchemaPage /></LazyPage></ErrorBoundary>} />
                       <Route path="pii" element={<ErrorBoundary fallback={<ModuleCrashFallback module="PII Shield" />}><LazyPage><PIIShieldPage /></LazyPage></ErrorBoundary>} />
+                      <Route
+                        path="security"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Angriffsschutz" />}>
+                            <LazyPage>
+                              <SecurityMonitorPage />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
                       <Route path="audit" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Audit Log" />}><LazyPage><AuditLogPage /></LazyPage></ErrorBoundary>} />
                       <Route path="sovereignty" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Sovereignty Center" />}><LazyPage><SovereigntyCenterPage /></LazyPage></ErrorBoundary>} />
                       <Route
