@@ -2,6 +2,7 @@
  * Hintergrund-Job für Zeiterfassung:
  * - erzeugt lokale Gesamt-Excel
  * - synct optional nach Microsoft Graph
+ * - monatliche SharePoint-Auto-Sync (Europa/Berlin Tag+Uhrzeit, Period-Lock)
  */
 import {
   completeJob,
@@ -14,14 +15,21 @@ import {
 import { safeErrorMessage } from '../safe-log.js';
 import { writeTimeEntriesExportFile } from './excel-export.js';
 import { syncTimeEntriesToGraph } from './graph-sync.js';
-import { loadTimeTrackingSettings } from './settings.js';
+import {
+  loadTimeTrackingSettings,
+  monthlySyncPeriodKey,
+  saveTimeTrackingSettings,
+  shouldRunMonthlySharePointSync,
+} from './settings.js';
 import { listAllTimeEntries } from './store.js';
 
 export const TIME_EXPORT_JOB_TYPE: BackgroundJobType = 'TIME_EXPORT_SYNC';
 
 let enqueueInterval: ReturnType<typeof setInterval> | null = null;
 let drainInterval: ReturnType<typeof setInterval> | null = null;
+let monthlyCheckInterval: ReturnType<typeof setInterval> | null = null;
 let started = false;
+let monthlyLock = false;
 
 async function runTimeExportJob(): Promise<{ filePath: string; graphMessage?: string }> {
   const entries = await listAllTimeEntries();
@@ -52,9 +60,10 @@ export async function drainTimeExportQueue(): Promise<void> {
   }
 }
 
-function intervalMsForSettings(interval: 'hourly' | 'daily' | 'disabled'): number | null {
+function intervalMsForSettings(interval: 'hourly' | 'daily' | 'monthly' | 'disabled'): number | null {
   if (interval === 'hourly') return 60 * 60 * 1000;
   if (interval === 'daily') return 24 * 60 * 60 * 1000;
+  // monthly handled by dedicated Berlin-calendar checker
   return null;
 }
 
@@ -69,6 +78,54 @@ async function maybeEnqueueScheduledJob(): Promise<void> {
   }
 }
 
+/** Monthly SharePoint sync — once per configured Berlin day/time (DB period lock). */
+export async function maybeRunMonthlySharePointSync(force = false): Promise<{
+  ran: boolean;
+  exported: number;
+  error?: string;
+}> {
+  if (monthlyLock && !force) return { ran: false, exported: 0 };
+  monthlyLock = true;
+  try {
+    const settings = await loadTimeTrackingSettings();
+    if (!force && !shouldRunMonthlySharePointSync(settings)) {
+      return { ran: false, exported: 0 };
+    }
+    const period = monthlySyncPeriodKey(settings.monthlySharePointSync);
+    try {
+      const result = await syncTimeEntriesToGraph({ onlyUnsynced: true });
+      await saveTimeTrackingSettings({
+        monthlySharePointSync: {
+          ...settings.monthlySharePointSync,
+          lastRunAt: new Date().toISOString(),
+          lastRunExported: result.added + result.updated,
+          lastRunError: result.ok ? null : result.message,
+          lastRunPeriodKey: period,
+        },
+      });
+      console.info(
+        `[time-export] Monthly SharePoint sync ${period}: +${result.added} ~${result.updated} (${result.message})`,
+      );
+      return { ran: true, exported: result.added + result.updated };
+    } catch (err) {
+      const message = safeErrorMessage(err);
+      await saveTimeTrackingSettings({
+        monthlySharePointSync: {
+          ...settings.monthlySharePointSync,
+          lastRunAt: new Date().toISOString(),
+          lastRunExported: 0,
+          lastRunError: message,
+          lastRunPeriodKey: period,
+        },
+      });
+      console.warn('[time-export] Monthly SharePoint sync failed:', message);
+      return { ran: true, exported: 0, error: message };
+    }
+  } finally {
+    monthlyLock = false;
+  }
+}
+
 /** Startet Scheduler + Drain-Worker. */
 export function startTimeExportScheduler(): void {
   if (started) return;
@@ -76,17 +133,14 @@ export function startTimeExportScheduler(): void {
 
   void recoverOrphanedJobs('time-export', 15).catch(() => undefined);
 
-  // Drain alle 30s
   drainInterval = setInterval(() => {
     void drainTimeExportQueue().catch(() => undefined);
   }, 30_000);
 
-  // Periodisches Enqueue gemäß Admin-Einstellung (prüft stündlich die Config)
   enqueueInterval = setInterval(() => {
     void (async () => {
       const settings = await loadTimeTrackingSettings();
-      if (settings.syncInterval === 'disabled') return;
-      // daily: nur einmal pro Tag um ~02:00 UTC enqueuen
+      if (settings.syncInterval === 'disabled' || settings.syncInterval === 'monthly') return;
       if (settings.syncInterval === 'daily') {
         const hour = new Date().getUTCHours();
         if (hour !== 2) return;
@@ -95,18 +149,27 @@ export function startTimeExportScheduler(): void {
     })().catch(() => undefined);
   }, 60 * 60 * 1000);
 
-  // Sofort einmal prüfen
+  // Hourly check for monthly Berlin-calendar SharePoint sync
+  monthlyCheckInterval = setInterval(() => {
+    void maybeRunMonthlySharePointSync(false).catch(() => undefined);
+  }, 60 * 60 * 1000);
+
   void maybeEnqueueScheduledJob();
   void drainTimeExportQueue().catch(() => undefined);
+  void maybeRunMonthlySharePointSync(false).catch(() => undefined);
 
-  console.info('[time-export] Scheduler gestartet (Drain 30s, Config-Check stündlich).');
+  console.info(
+    '[time-export] Scheduler gestartet (Drain 30s, Config-Check stündlich, Monthly SharePoint stündlich).',
+  );
 }
 
 export function stopTimeExportScheduler(): void {
   if (enqueueInterval) clearInterval(enqueueInterval);
   if (drainInterval) clearInterval(drainInterval);
+  if (monthlyCheckInterval) clearInterval(monthlyCheckInterval);
   enqueueInterval = null;
   drainInterval = null;
+  monthlyCheckInterval = null;
   started = false;
 }
 

@@ -220,9 +220,11 @@ export async function syncTimeEntriesToGraph(options?: {
   );
   const existing = await loadExistingEntryIdMap(token, driveId, itemId, tableName);
 
-  let entries = await listAllTimeEntries();
+  let entries = await listAllTimeEntries(
+    options?.onlyUnsynced ? { onlyUnsynced: true } : undefined,
+  );
   if (options?.onlyUnsynced) {
-    entries = entries.filter((e) => !e.graphSyncedAt);
+    entries = entries.filter((e) => !e.sharepointSyncedAt && !e.graphSyncedAt);
   }
 
   let added = 0;

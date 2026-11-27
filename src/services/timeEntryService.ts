@@ -8,6 +8,15 @@ async function parseJson(res: Response): Promise<any> {
   return data;
 }
 
+export type TimeEntryListParams = {
+  ticketId?: string;
+  organizationId?: string;
+  userId?: string;
+  from?: string;
+  to?: string;
+  type?: 'all' | 'with_ticket' | 'without_ticket';
+};
+
 export const timeEntryService = {
   async getSettings(): Promise<TimeTrackingSettings> {
     const res = await fetch('/api/time-entries/settings', { credentials: 'include' });
@@ -29,31 +38,38 @@ export const timeEntryService = {
   async getDefaults(): Promise<{
     kuerzel: string;
     agentName: string;
+    isAdmin?: boolean;
     rates: { standardHourlyRate: number; specialHourlyRate: number };
   }> {
     const res = await fetch('/api/time-entries/me/defaults', { credentials: 'include' });
     return parseJson(res);
   },
 
-  async list(params?: { ticketId?: string; from?: string; to?: string }): Promise<{
+  async list(params?: TimeEntryListParams): Promise<{
     entries: TimeEntry[];
     summary: { totalHours: number; totalAmount: number; count: number };
+    scope?: 'mine' | 'all';
   }> {
     const qs = new URLSearchParams();
     if (params?.ticketId) qs.set('ticketId', params.ticketId);
+    if (params?.organizationId) qs.set('organizationId', params.organizationId);
+    if (params?.userId) qs.set('userId', params.userId);
     if (params?.from) qs.set('from', params.from);
     if (params?.to) qs.set('to', params.to);
+    if (params?.type && params.type !== 'all') qs.set('type', params.type);
     const res = await fetch(`/api/time-entries?${qs.toString()}`, { credentials: 'include' });
     return parseJson(res);
   },
 
   async create(input: {
-    ticketId: string;
+    ticketId?: string | null;
+    organizationId?: string | null;
     ticketNumber?: string;
     ticketSubject?: string;
     customerCompany?: string;
     kuerzel: string;
     hours: number;
+    minutes?: number;
     sonderzahlung?: boolean;
     description?: string;
     date?: string;
@@ -73,9 +89,12 @@ export const timeEntryService = {
     patch: Partial<{
       kuerzel: string;
       hours: number;
+      minutes: number;
       sonderzahlung: boolean;
       description: string;
       date: string;
+      ticketId: string | null;
+      organizationId: string | null;
     }>,
   ): Promise<TimeEntry> {
     const res = await fetch(`/api/time-entries/${encodeURIComponent(id)}`, {
@@ -96,16 +115,35 @@ export const timeEntryService = {
     await parseJson(res);
   },
 
-  downloadExportUrl(params?: { ticketId?: string; from?: string; to?: string }): string {
+  downloadExportUrl(params?: TimeEntryListParams): string {
     const qs = new URLSearchParams();
     if (params?.ticketId) qs.set('ticketId', params.ticketId);
+    if (params?.organizationId) qs.set('organizationId', params.organizationId);
+    if (params?.userId) qs.set('userId', params.userId);
     if (params?.from) qs.set('from', params.from);
     if (params?.to) qs.set('to', params.to);
+    if (params?.type && params.type !== 'all') qs.set('type', params.type);
     return `/api/time-entries/export.xlsx?${qs.toString()}`;
   },
 
-  async syncGraph(): Promise<{ ok: boolean; message: string; added: number; updated: number; skipped: number }> {
+  async syncGraph(onlyUnsynced = true): Promise<{
+    ok: boolean;
+    message: string;
+    added: number;
+    updated: number;
+    skipped: number;
+  }> {
     const res = await fetch('/api/time-entries/sync-graph', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ onlyUnsynced }),
+    });
+    return parseJson(res);
+  },
+
+  async runMonthlySync(): Promise<{ ok: boolean; ran?: boolean; exported?: number; error?: string }> {
+    const res = await fetch('/api/time-entries/run-monthly-sync', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

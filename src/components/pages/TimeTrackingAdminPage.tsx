@@ -7,7 +7,11 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Switch } from '../ui/switch';
 import { timeEntryService } from '../../services/timeEntryService';
-import type { TimeTrackingSettings, TimeSyncInterval } from '../../lib/time-tracking/types';
+import type {
+  TimeMonthlySyncDay,
+  TimeTrackingSettings,
+  TimeSyncInterval,
+} from '../../lib/time-tracking/types';
 import { DEFAULT_TIME_TRACKING_SETTINGS } from '../../lib/time-tracking/types';
 import { useTranslation } from '../../lib/context/I18nContext';
 
@@ -17,6 +21,7 @@ export default function TimeTrackingAdminPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [monthlyRunning, setMonthlyRunning] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -48,12 +53,29 @@ export default function TimeTrackingAdminPage() {
   const onSyncGraph = async () => {
     setSyncing(true);
     try {
-      const result = await timeEntryService.syncGraph();
+      const result = await timeEntryService.syncGraph(true);
       toast.success(result.message || 'Graph-Sync abgeschlossen.');
+      const refreshed = await timeEntryService.getSettings();
+      setSettings(refreshed);
     } catch (err: any) {
       toast.error(err?.message || 'Graph-Sync fehlgeschlagen.');
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const onRunMonthly = async () => {
+    setMonthlyRunning(true);
+    try {
+      const result = await timeEntryService.runMonthlySync();
+      if (result.error) toast.error(result.error);
+      else toast.success(`Monats-Sync: ${result.exported ?? 0} Einträge exportiert.`);
+      const refreshed = await timeEntryService.getSettings();
+      setSettings(refreshed);
+    } catch (err: any) {
+      toast.error(err?.message || 'Monats-Sync fehlgeschlagen.');
+    } finally {
+      setMonthlyRunning(false);
     }
   };
 
@@ -164,6 +186,7 @@ export default function TimeTrackingAdminPage() {
                 >
                   <option value="hourly">Stündlich</option>
                   <option value="daily">Täglich (ca. 02:00 UTC)</option>
+                  <option value="monthly">Monatlich (siehe SharePoint Auto-Sync)</option>
                   <option value="disabled">Deaktiviert</option>
                 </select>
               </div>
@@ -177,9 +200,121 @@ export default function TimeTrackingAdminPage() {
             <CardHeader>
               <div className="flex items-center justify-between gap-4">
                 <div>
+                  <CardTitle>SharePoint Excel Auto-Sync</CardTitle>
+                  <CardDescription>
+                    Automatische monatliche Synchronisation unsynchronisierter Einträge
+                    (Europe/Berlin) — einmal pro Ausführungstag.
+                  </CardDescription>
+                </div>
+                <Switch
+                  checked={settings.monthlySharePointSync.enabled}
+                  onCheckedChange={(enabled) =>
+                    setSettings((s) => ({
+                      ...s,
+                      monthlySharePointSync: { ...s.monthlySharePointSync, enabled },
+                    }))
+                  }
+                />
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm font-semibold text-slate-700">
+                Automatische monatliche SharePoint-Synchronisation{' '}
+                <span
+                  className={
+                    settings.monthlySharePointSync.enabled
+                      ? 'text-emerald-600'
+                      : 'text-slate-400'
+                  }
+                >
+                  ({settings.monthlySharePointSync.enabled ? 'aktiv' : 'aus'})
+                </span>
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label>Ausführungstag im Monat</Label>
+                  <select
+                    className="w-full h-10 rounded-xl border border-input bg-background px-3 text-sm"
+                    value={String(settings.monthlySharePointSync.dayOfMonth)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const dayOfMonth: TimeMonthlySyncDay =
+                        v === 'last' ? 'last' : (Number(v) as TimeMonthlySyncDay);
+                      setSettings((s) => ({
+                        ...s,
+                        monthlySharePointSync: { ...s.monthlySharePointSync, dayOfMonth },
+                      }));
+                    }}
+                  >
+                    {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                      <option key={d} value={d}>
+                        {d}.
+                      </option>
+                    ))}
+                    <option value="last">Letzter Tag des Monats</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Uhrzeit (Europe/Berlin)</Label>
+                  <Input
+                    type="time"
+                    value={settings.monthlySharePointSync.timeBerlin}
+                    onChange={(e) =>
+                      setSettings((s) => ({
+                        ...s,
+                        monthlySharePointSync: {
+                          ...s.monthlySharePointSync,
+                          timeBerlin: e.target.value || '23:00',
+                        },
+                      }))
+                    }
+                    className="rounded-xl"
+                  />
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600 space-y-1">
+                <p className="font-bold text-slate-800">Letzter Lauf</p>
+                <p>
+                  {settings.monthlySharePointSync.lastRunAt
+                    ? new Date(settings.monthlySharePointSync.lastRunAt).toLocaleString('de-DE', {
+                        timeZone: 'Europe/Berlin',
+                      })
+                    : 'Noch kein Lauf'}
+                  {typeof settings.monthlySharePointSync.lastRunExported === 'number'
+                    ? ` · ${settings.monthlySharePointSync.lastRunExported} Einträge`
+                    : ''}
+                </p>
+                {settings.monthlySharePointSync.lastRunError ? (
+                  <p className="text-rose-600 font-semibold">
+                    Fehler: {settings.monthlySharePointSync.lastRunError}
+                  </p>
+                ) : null}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-xl"
+                disabled={monthlyRunning || !settings.graph.enabled}
+                onClick={() => void onRunMonthly()}
+              >
+                {monthlyRunning ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <CloudUpload className="w-4 h-4 mr-2" />
+                )}
+                Jetzt synchronisieren
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-[2rem] shadow-sm border-slate-200">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-4">
+                <div>
                   <CardTitle>Microsoft Graph Excel-Synchronisation</CardTitle>
                   <CardDescription>
-                    OAuth2 Client Credentials · Upsert über Spalte „Entry-ID“.
+                    OAuth2 Client Credentials · Upsert über Spalte „Entry-ID“. Site / Drive /
+                    Workbook & Worksheet / Table.
                   </CardDescription>
                 </div>
                 <Switch

@@ -179,11 +179,15 @@ export function TimeTrackingTabContent({
       } else {
         await timeEntryService.create({
           ticketId: ticket.id,
+          organizationId:
+            String((ticket as any).organizationId || (ticket as any).organization_id || '').trim() ||
+            null,
           ticketNumber,
           ticketSubject: ticket.subject || '',
           customerCompany: ticket.company || '',
           kuerzel: kuerzel.trim().toUpperCase(),
           hours: previewHours,
+          minutes: minutesPart,
           sonderzahlung,
           description: description.trim(),
           date,

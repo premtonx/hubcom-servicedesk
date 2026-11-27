@@ -222,6 +222,7 @@ BEGIN
   FOREACH t IN ARRAY ARRAY[
     'geistdesk_documents',
     'ticket_hardware_returns',
+    'time_entries',
     'organizations',
     'organization_vault_secrets',
     'organization_vault_audit_log',
@@ -271,6 +272,31 @@ BEGIN
         FOR ALL
         USING (app_rls_org_column_allowed(organization_id::text))
         WITH CHECK (app_rls_org_column_allowed(organization_id::text))
+    $p$;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'time_entries'
+  ) THEN
+    EXECUTE 'DROP POLICY IF EXISTS time_entries_staff_isolation ON time_entries';
+    EXECUTE $p$
+      CREATE POLICY time_entries_staff_isolation ON time_entries
+        FOR ALL
+        USING (
+          CASE COALESCE(current_setting('app.rls_mode', true), '')
+            WHEN 'super_admin' THEN TRUE
+            WHEN 'system' THEN TRUE
+            ELSE user_id = NULLIF(current_setting('app.current_user_id', true), '')
+          END
+        )
+        WITH CHECK (
+          CASE COALESCE(current_setting('app.rls_mode', true), '')
+            WHEN 'super_admin' THEN TRUE
+            WHEN 'system' THEN TRUE
+            ELSE user_id = NULLIF(current_setting('app.current_user_id', true), '')
+          END
+        )
     $p$;
   END IF;
 

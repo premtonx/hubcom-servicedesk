@@ -62,6 +62,9 @@ const HelpCenterPage = lazy(() => import('./components/pages/HelpCenterPage'));
 const SecretViewerPage = lazy(() => import('./components/pages/SecretViewerPage'));
 const TimeTrackingAdminPage = lazy(() => import('./components/pages/TimeTrackingAdminPage'));
 const TimeTrackingOverviewPage = lazy(() => import('./components/pages/TimeTrackingOverviewPage'));
+const TimeTrackingWorkspacePage = lazy(
+  () => import('./components/pages/TimeTrackingWorkspacePage'),
+);
 const TicketCategoriesAdminPage = lazy(() => import('./components/pages/TicketCategoriesAdminPage'));
 /** Hubcom legacy customer portal (role === customer) — keep alongside Phase 2–5 CLIENT_* portal. */
 const PortalLayout = lazy(() => import('./components/portal/PortalLayout'));
@@ -599,6 +602,16 @@ function AppRoutes() {
                     >
                     <Route index element={<Navigate to="/dashboard" replace />} />
                     <Route path="dashboard" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Dashboard" />}><LazyPage><DashboardPage /></LazyPage></ErrorBoundary>} />
+                    <Route
+                      path="time-tracking"
+                      element={
+                        <ErrorBoundary fallback={<ModuleCrashFallback module="Zeiterfassung" />}>
+                          <LazyPage>
+                            <TimeTrackingWorkspacePage />
+                          </LazyPage>
+                        </ErrorBoundary>
+                      }
+                    />
                     <Route path="tickets" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Tickets" />}><LazyPage><TicketsPage /></LazyPage></ErrorBoundary>} />
                     <Route
                       path="tickets/kunden/:orgId/returns/new"

@@ -5577,6 +5577,109 @@ function testTicketsWorkbenchSharedUiIsolation(): void {
   );
 }
 
+function testZeiterfassungStandaloneAndOwnershipIsolation(): void {
+  console.log('\n[Zeiterfassung] standalone entries + staff ownership vs HUBCOM_ADMIN');
+
+  const storeSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/time-tracking/store.ts'),
+    'utf8',
+  );
+  const routesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/timeEntryRoutes.ts'),
+    'utf8',
+  );
+  const typesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/time-tracking/types.ts'),
+    'utf8',
+  );
+  const backendSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/postgres-backend.ts'),
+    'utf8',
+  );
+  const rlsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/security/tenant-rls-ddl.ts'),
+    'utf8',
+  );
+  const formSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/time-tracking/ZeiterfassungForm.tsx'),
+    'utf8',
+  );
+  const workspaceSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/TimeTrackingWorkspacePage.tsx'),
+    'utf8',
+  );
+  const adminSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/TimeTrackingAdminPage.tsx'),
+    'utf8',
+  );
+  const schedulerSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/time-tracking/scheduler.ts'),
+    'utf8',
+  );
+  const layoutSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/layout/MainLayout.tsx'),
+    'utf8',
+  );
+  const customersSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/CustomersPage.tsx'),
+    'utf8',
+  );
+  const exportSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/time-tracking/excel-export.ts'),
+    'utf8',
+  );
+  const graphSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/time-tracking/graph-sync.ts'),
+    'utf8',
+  );
+
+  assert(
+    backendSrc.includes('CREATE TABLE IF NOT EXISTS time_entries') &&
+      backendSrc.includes('ticket_id TEXT') &&
+      backendSrc.includes('sharepoint_synced_at') &&
+      backendSrc.includes("'time_entries'") &&
+      backendSrc.includes('time_entries_ticket_or_org_chk') &&
+      rlsSrc.includes('time_entries_staff_isolation') &&
+      rlsSrc.includes('app.current_user_id'),
+    'time_entries SQL DDL + FORCE RLS policy present',
+  );
+  assert(
+    storeSrc.includes('ticket_id oder organization_id ist erforderlich') &&
+      storeSrc.includes('ticket_id IS NULL') &&
+      typesSrc.includes('ticketId: string | null') &&
+      exportSrc.includes("'Ohne Ticket'") &&
+      graphSrc.includes('entryToRow') &&
+      graphSrc.includes('markEntriesGraphSynced'),
+    'standalone (ticket_id NULL) entries persist and export properly',
+  );
+  assert(
+    routesSrc.includes('isTimeAdmin') &&
+      routesSrc.includes('userId: admin ? userIdFilter : a.userId') &&
+      routesSrc.includes('Nur eigene Zeiteinträge') &&
+      routesSrc.includes('canManageHubcomCore') &&
+      rlsSrc.includes("user_id = NULLIF(current_setting('app.current_user_id', true), '')"),
+    'regular staff scoped to own entries; HUBCOM_ADMIN/SUPER_ADMIN see all',
+  );
+  assert(
+    formSrc.includes('ZeiterfassungForm') &&
+      formSrc.includes('Sonder-Stundensatz') &&
+      workspaceSrc.includes('Meine Zeiterfassung') &&
+      workspaceSrc.includes('Zeiterfassung Gesamt') &&
+      layoutSrc.includes("path: '/time-tracking'") &&
+      customersSrc.includes('CompanyTimeTrackingTab') &&
+      customersSrc.includes("value: 'time-tracking'"),
+    'shared form + nav workspace + Kunden Zeiterfassung tab wired',
+  );
+  assert(
+    adminSrc.includes('SharePoint Excel Auto-Sync') &&
+      adminSrc.includes('Ausführungstag im Monat') &&
+      adminSrc.includes('Jetzt synchronisieren') &&
+      schedulerSrc.includes('maybeRunMonthlySharePointSync') &&
+      schedulerSrc.includes('onlyUnsynced: true'),
+    'monthly SharePoint auto-sync config + scheduler lock present',
+  );
+}
+
 function testTicketDetailWorkbenchSharedUiIsolation(): void {
   console.log('\n[Ticket Detail Workbench] Shared UI adapter — staff shell, portal APIs only');
 
@@ -8556,6 +8659,7 @@ async function main(): Promise<void> {
   testPortalSsoAdminApprovalFreigabe();
   testKbWorkbenchSharedUiIsolation();
   testTicketsWorkbenchSharedUiIsolation();
+  testZeiterfassungStandaloneAndOwnershipIsolation();
   testTicketDetailWorkbenchSharedUiIsolation();
   testAdminOrgPortalSettingsApiIsolation();
   testAdminCustomersPortalSettingsUiIsolation();

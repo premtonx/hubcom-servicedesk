@@ -574,6 +574,37 @@ export async function initDb() {
         returned_at,
         created_at
       );
+
+    CREATE TABLE IF NOT EXISTS time_entries (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      ticket_id TEXT,
+      organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
+      user_id TEXT NOT NULL,
+      agent_name TEXT NOT NULL DEFAULT '',
+      kuerzel TEXT NOT NULL DEFAULT '',
+      hours NUMERIC(8,2) NOT NULL DEFAULT 0,
+      minutes INT NOT NULL DEFAULT 0,
+      entry_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      hourly_rate NUMERIC(10,2) NOT NULL DEFAULT 0,
+      is_special_rate BOOLEAN NOT NULL DEFAULT FALSE,
+      total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      note TEXT NOT NULL DEFAULT '',
+      ticket_number TEXT NOT NULL DEFAULT '',
+      ticket_subject TEXT NOT NULL DEFAULT '',
+      customer_company TEXT NOT NULL DEFAULT '',
+      sharepoint_synced_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT time_entries_ticket_or_org_chk CHECK (
+        ticket_id IS NOT NULL OR organization_id IS NOT NULL
+      )
+    );
+    CREATE INDEX IF NOT EXISTS idx_time_entries_user_date ON time_entries (user_id, entry_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_time_entries_org_date ON time_entries (organization_id, entry_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_time_entries_ticket ON time_entries (ticket_id) WHERE ticket_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_time_entries_unsynced ON time_entries (entry_date)
+      WHERE sharepoint_synced_at IS NULL;
+
     CREATE TABLE IF NOT EXISTS organization_directory_users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -958,6 +989,7 @@ export async function initDb() {
             FOREACH t IN ARRAY ARRAY[
               'geistdesk_documents',
               'ticket_hardware_returns',
+              'time_entries',
               'organizations',
               'organization_vault_secrets',
               'organization_vault_audit_log',

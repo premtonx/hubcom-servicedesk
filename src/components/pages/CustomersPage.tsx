@@ -66,6 +66,7 @@ import CompanyPortalTab, {
   COMPANY_PORTAL_SEGMENTS,
   type CompanyPortalSegment,
 } from './companies/CompanyPortalTab';
+import CompanyTimeTrackingTab from './companies/CompanyTimeTrackingTab';
 import { CompanyStaffAssignmentsCard } from '../companies/CompanyStaffAssignmentsCard';
 import { hydrateCompany } from './companies/utils';
 import axios from 'axios';
@@ -881,6 +882,11 @@ export default function CustomersPage() {
                           }))
                         : []),
                       {
+                        value: 'time-tracking',
+                        label: t('timeTracking.tabTitle', 'Zeiterfassung'),
+                        icon: Clock,
+                      },
+                      {
                         value: 'activity',
                         label: t('companies.activityTimeline', 'Aktivitätschronik'),
                         icon: History,
@@ -947,6 +953,16 @@ export default function CustomersPage() {
                   segment={activeSubTab as CompanyPortalSegment}
                   focusInvite={portalFocusInvite && activeSubTab === 'members'}
                   onOpenEmailConfig={() => navigate('/admin/email-channels')}
+                />
+              ) : activeSubTab === 'time-tracking' &&
+                (hydratedCompany.organizationId ||
+                  (hydratedCompany as any).organization_id) ? (
+                <CompanyTimeTrackingTab
+                  organizationId={String(
+                    hydratedCompany.organizationId ||
+                      (hydratedCompany as any).organization_id,
+                  )}
+                  companyName={hydratedCompany.name}
                 />
               ) : (
                 <CompanyOtherTabs 
