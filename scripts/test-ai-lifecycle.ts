@@ -151,6 +151,11 @@ import {
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  buildTicketsScopeQuery,
+  resolveTicketViewDisplayLabel,
+} from '../src/lib/tickets/ticket-view-label.js';
+import { htmlToAuditPlainText } from '../src/lib/email-html-prepare.js';
+import {
   countOpenTicketsByOrganization,
   mergeOrganizationsWithPortalCounts,
 } from '../src/lib/client-portal/admin-org-portal-counts.js';
@@ -2779,6 +2784,7 @@ async function main(): Promise<void> {
   testStaffPermissionMatrixUiLifecycle();
   testSecurityPerimeterLifecycle();
   testOutboundReplyThreadToastLifecycle();
+  testTicketsSidebarFilterPersistLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);
@@ -2786,6 +2792,72 @@ async function main(): Promise<void> {
   if (failed > 0) {
     process.exit(1);
   }
+}
+
+function testTicketsSidebarFilterPersistLifecycle(): void {
+  console.log('\n[Tickets] sidebar collapse + view labels + filter persist lifecycle');
+
+  assert(
+    resolveTicketViewDisplayLabel({ viewId: 'team_all_open' }) === 'Alle Tickets',
+    'team_all_open → Alle Tickets',
+  );
+  assert(
+    resolveTicketViewDisplayLabel({ viewId: 'assigned_me' }) === 'Mir zugewiesen',
+    'assigned_me → Mir zugewiesen',
+  );
+  assert(
+    resolveTicketViewDisplayLabel({
+      viewId: 'team_all_open',
+      organizationName: 'Citadelle AG',
+    }) === 'Citadelle AG',
+    'Kunden org name wins over view key',
+  );
+  assert(
+    buildTicketsScopeQuery({
+      organizationId: 'org-1',
+      view: 'team_all_open',
+    }) === 'organizationId=org-1&view=team_all_open',
+    'scope query carries org + view',
+  );
+
+  const nbspSnippet = htmlToAuditPlainText('Outlook&nbsp;Probleme').replace(/\s+/g, ' ').trim();
+  assert(nbspSnippet === 'Outlook Probleme', 'HTML entities decoded in plain-text snippets');
+
+  const root = process.cwd();
+  const ticketsPage = fs.readFileSync(path.join(root, 'src/components/pages/TicketsPage.tsx'), 'utf8');
+  const sidebar = fs.readFileSync(
+    path.join(root, 'src/components/tickets/TicketsLeftSidebar.tsx'),
+    'utf8',
+  );
+  const rail = fs.readFileSync(
+    path.join(root, 'src/components/tickets/TicketsDetailRail.tsx'),
+    'utf8',
+  );
+  const de = fs.readFileSync(path.join(root, 'src/locales/de/common.json'), 'utf8');
+  assert(
+    ticketsPage.includes('onToggleCollapsed={togglePipelineSidebar}') &&
+      ticketsPage.includes('effectiveCollapsed = isPipelineCollapsed && !isMobile') &&
+      !ticketsPage.includes('detailQueueExpanded') &&
+      sidebar.includes('onToggleCollapsed') &&
+      sidebar.includes('PanelLeftClose'),
+    'collapse toggle on list + preference-only effectiveCollapsed (no auto-expand)',
+  );
+  assert(
+    ticketsPage.includes('navigateToTicketDetail') &&
+      ticketsPage.includes('ticketsScopeQuery') &&
+      ticketsPage.includes('activeViewLabel') &&
+      !ticketsPage.includes('String(activeView)'),
+    'detail navigation preserves scope query; rail uses German activeViewLabel',
+  );
+  assert(
+    rail.includes('htmlToAuditPlainText') &&
+      rail.includes('snippetFromTicket') &&
+      de.includes('"title": "Ticket-Details"') &&
+      de.includes('"dispatchCaseStatus": "Status"') &&
+      !de.includes('Eigenschaften Dispatch-Desk') &&
+      !de.includes('Dispatch-Fallstatus'),
+    'rail snippet decode + properties sidebar German labels cleaned',
+  );
 }
 
 function testOutboundReplyThreadToastLifecycle(): void {

@@ -67,6 +67,10 @@ import {
   TICKETS_DEEP_LINK_VIEWS,
 } from '../../lib/dashboard-ticket-nav';
 import {
+  buildTicketsScopeQuery,
+  resolveTicketViewDisplayLabel,
+} from '../../lib/tickets/ticket-view-label';
+import {
   customViewId,
   useTicketsSidebarPreferences,
 } from '../../lib/ticketsSidebarPreferences';
@@ -208,11 +212,8 @@ export default function TicketsPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(ticketId || null);
-  /** Auto-collapse KI-SUPPORT-OPERATIONEN into icon rail when a ticket detail is open. */
-  const [detailQueueExpanded, setDetailQueueExpanded] = useState(false);
-  const effectiveCollapsed =
-    (isPipelineCollapsed && !isMobile) ||
-    (Boolean(selectedTicketId) && !detailQueueExpanded && !isMobile);
+  /** Collapsed preference only — queue icon clicks must never auto-expand. */
+  const effectiveCollapsed = isPipelineCollapsed && !isMobile;
   const [replyText, setReplyText] = useState('');
   const [isMobilePropertiesOpen, setIsMobilePropertiesOpen] = useState(false);
   const [activeView, setActiveView] = useState<string>(() => {
@@ -1080,9 +1081,48 @@ export default function TicketsPage() {
     return map;
   }, [kundenOrgs]);
 
-  useEffect(() => {
-    if (!selectedTicketId) setDetailQueueExpanded(false);
-  }, [selectedTicketId]);
+  const ticketsScopeQuery = useMemo(
+    () =>
+      buildTicketsScopeQuery({
+        organizationId: selectedOrganizationId,
+        view: activeView || urlViewParam,
+        status: urlStatusParam,
+        panel: urlPanelParam,
+        resolvedWithin: searchParams.get('resolvedWithin'),
+      }),
+    [
+      selectedOrganizationId,
+      activeView,
+      urlViewParam,
+      urlStatusParam,
+      urlPanelParam,
+      searchParams,
+    ],
+  );
+
+  const activeViewLabel = useMemo(() => {
+    const orgName = selectedOrganizationId
+      ? organizationNameById[selectedOrganizationId] || null
+      : null;
+    return resolveTicketViewDisplayLabel({
+      viewId: activeView,
+      organizationName: orgName,
+      t,
+    });
+  }, [activeView, selectedOrganizationId, organizationNameById, t]);
+
+  const navigateToTicketDetail = useCallback(
+    (id: string) => {
+      const qs = ticketsScopeQuery;
+      navigate(qs ? `/tickets/${id}?${qs}` : `/tickets/${id}`);
+    },
+    [navigate, ticketsScopeQuery],
+  );
+
+  const navigateToTicketsList = useCallback(() => {
+    const qs = ticketsScopeQuery;
+    navigate(qs ? `/tickets?${qs}` : '/tickets');
+  }, [navigate, ticketsScopeQuery]);
 
   const getFilteredTickets = () => {
     return layoutMode === 'kanban' ? kanbanBoardTickets : finalRenderedTickets;
@@ -1141,11 +1181,17 @@ export default function TicketsPage() {
   }, [selectedTicket?.companyId, selectedTicket?.contactId]);
 
   useEffect(() => {
-    if (selectedTicketId) {
-      navigate(`/tickets/${selectedTicketId}`);
-      updateSummary();
+    if (!selectedTicketId) return;
+    const qs = ticketsScopeQuery;
+    const target = qs ? `/tickets/${selectedTicketId}?${qs}` : `/tickets/${selectedTicketId}`;
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current !== target) {
+      navigate(target, { replace: true });
     }
-  }, [selectedTicketId, selectedTicket, messages.length]); // Added dependencies
+    updateSummary();
+    // Preserve scope query; avoid depending on messages.length (was stripping filters).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTicketId, ticketsScopeQuery]);
 
   // Polyglot Bridge: Native UI Translation
   useEffect(() => {
@@ -1362,7 +1408,7 @@ export default function TicketsPage() {
     setGhostDraft('');
     setAiSources([]);
     ticketService.setPresence(id, true);
-    navigate(`/tickets/${id}`);
+    navigateToTicketDetail(id);
     autoGenerateZeroDraft(id);
   };
 
@@ -1372,7 +1418,7 @@ export default function TicketsPage() {
     }
     setDrawerTicketId(null);
     setSelectedTicketId(null);
-    navigate('/tickets');
+    navigateToTicketsList();
   };
 
   const closeCreateTicket = useCallback(() => {
@@ -1385,9 +1431,9 @@ export default function TicketsPage() {
     }
     setDrawerTicketId(null);
     setSelectedTicketId(null);
-    navigate('/tickets');
+    navigateToTicketsList();
     setIsCreateTicketOpen(true);
-  }, [navigate, selectedTicketId]);
+  }, [navigateToTicketsList, selectedTicketId]);
 
   const staffTicketsAdapter = useStaffTicketsAdapter({
     onOpenTicket: openFullTicketView,
@@ -2023,7 +2069,7 @@ export default function TicketsPage() {
       setSelectedTicketIds([]);
       if (selectedTicketId && sourceIds.includes(selectedTicketId)) {
         setSelectedTicketId(primaryId);
-        navigate(`/tickets/${primaryId}`);
+        navigateToTicketDetail(primaryId);
       }
     } catch (e) {
       toast.error(t('tickets.merge.failed', 'Zusammenführen fehlgeschlagen.'), { id: loadingToast });
@@ -2098,6 +2144,7 @@ export default function TicketsPage() {
         hiddenGroupIds={sidebarPrefs.hiddenGroupIds}
         customViews={sidebarPrefs.customViews}
         onOpenManageViews={() => setIsManageViewsOpen(true)}
+        onToggleCollapsed={togglePipelineSidebar}
         selectedTicketId={selectedTicketId}
         isMobileSidebarOpen={isMobileSidebarOpen}
         kundenOrgs={isStaffUser ? kundenOrgsWithCounts : undefined}
@@ -2184,7 +2231,7 @@ export default function TicketsPage() {
                     selectedTicketId={selectedTicket.id}
                     onSelectTicket={(id) => {
                       setSelectedTicketId(id);
-                      navigate(`/tickets/${id}`);
+                      navigateToTicketDetail(id);
                     }}
                     onRefresh={() => {
                       void ticketService
@@ -2198,13 +2245,33 @@ export default function TicketsPage() {
                         })
                         .catch(() => {});
                     }}
-                    onToggleQueueMenu={() => setDetailQueueExpanded((v) => !v)}
+                    onToggleQueueMenu={togglePipelineSidebar}
                     ticketQueueStats={ticketQueueStats}
-                    activeViewLabel={
-                      activeView === 'all'
-                        ? t('tickets.allTickets', 'Alle Tickets')
-                        : String(activeView)
-                    }
+                    activeViewLabel={activeViewLabel}
+                    viewOptions={[
+                      {
+                        id: 'all',
+                        label: t('tickets.allTickets', 'Alle Tickets'),
+                        active: !selectedOrganizationId && (activeView === 'team_all_open' || activeView === 'all'),
+                      },
+                      ...(isStaffUser
+                        ? kundenOrgs.map((org) => ({
+                            id: org.id,
+                            label: org.name,
+                            active: selectedOrganizationId === org.id,
+                          }))
+                        : []),
+                    ]}
+                    onSelectViewOption={(optionId) => {
+                      if (optionId === 'all') {
+                        // Clear Kunden scope and return to Alle Tickets list (preserve collapse pref).
+                        setActiveView('team_all_open');
+                        setSelectedTicketId(null);
+                        navigate('/tickets?view=team_all_open');
+                        return;
+                      }
+                      selectOrganizationTickets(optionId);
+                    }}
                     organizationNameById={organizationNameById}
                     organizationLogoById={organizationLogoById}
                   />

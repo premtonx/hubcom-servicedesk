@@ -10061,6 +10061,30 @@ function testTenantRlsSourceContracts(): void {
       ticketServiceSrc.includes('listMessages:'),
     'FE reply UX: German toast, composer collapse, highlight, coalesce bypass refetch',
   );
+
+  const ticketsPageSidebar = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/TicketsPage.tsx'),
+    'utf8',
+  );
+  const leftSidebar = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/TicketsLeftSidebar.tsx'),
+    'utf8',
+  );
+  const viewLabel = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/tickets/ticket-view-label.ts'),
+    'utf8',
+  );
+  assert(
+    ticketsPageSidebar.includes('effectiveCollapsed = isPipelineCollapsed && !isMobile') &&
+      ticketsPageSidebar.includes('onToggleCollapsed={togglePipelineSidebar}') &&
+      !ticketsPageSidebar.includes('detailQueueExpanded') &&
+      leftSidebar.includes('onToggleCollapsed') &&
+      viewLabel.includes('Alle Tickets') &&
+      viewLabel.includes('buildTicketsScopeQuery') &&
+      ticketsPageSidebar.includes('navigateToTicketDetail') &&
+      ticketsPageSidebar.includes('ticketsScopeQuery'),
+    'tickets sidebar collapse preference + German view labels + filter persist into detail',
+  );
 }
 
 /**

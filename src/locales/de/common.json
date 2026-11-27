@@ -578,7 +578,7 @@
       "help": "HILFE"
     },
     "sidebar": {
-      "title": "Eigenschaften Dispatch-Desk",
+      "title": "Ticket-Details",
       "dynamicRag": "Dynamisches RAG",
       "agentAssignment": "Agenten-Zuweisung",
       "activelyAssigned": "Aktiv zugewiesen",
@@ -587,7 +587,7 @@
       "clickToAssign": "Klicken Sie unten, um das Ticket zuzuweisen",
       "selectDispatchAgent": "Dispatch-Agenten auswählen",
       "transferTicket": "Ticket übergeben",
-      "dispatchCaseStatus": "Dispatch-Fallstatus",
+      "dispatchCaseStatus": "Status",
       "slaHelpEscalation": "SLA-Hilfeeskalation",
       "supportAccountContext": "Support & Konto",
       "aiAccountHealth": "KI-Einschätzung",

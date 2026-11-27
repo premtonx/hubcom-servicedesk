@@ -431,15 +431,16 @@ export function RedesignedSidebar({
     return t('tickets.channel.email', 'E-Mail');
   })();
 
-  const fieldRowClass = 'flex items-start justify-between gap-3 py-2.5';
-  const fieldLabelClass = 'text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0 pt-1 w-[6.5rem]';
+  const fieldRowClass = 'flex items-start justify-between gap-2 sm:gap-3 py-2.5 min-w-0';
+  const fieldLabelClass =
+    'text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0 pt-1 w-[5.5rem] sm:w-[6.5rem]';
 
   return (
-    <aside className="relative isolate w-full min-w-0 bg-white flex flex-col shrink-0 h-full min-h-0 overflow-hidden select-none">
-      <div className="relative z-20 shrink-0 px-4 py-3 border-b border-slate-200 flex items-center justify-between bg-white">
-        <span className="text-xs font-bold text-slate-900 tracking-tight flex items-center gap-2">
-          <Settings2 className="w-4 h-4 text-muted-foreground" />
-          <span>{t('tickets.sidebar.title', 'Ticket-Details')}</span>
+    <aside className="relative isolate w-full min-w-0 max-w-full bg-white flex flex-col shrink-0 h-full min-h-0 overflow-hidden select-none">
+      <div className="relative z-20 shrink-0 px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-2 bg-white min-w-0">
+        <span className="text-xs font-bold text-slate-900 tracking-tight flex items-center gap-2 min-w-0">
+          <Settings2 className="w-4 h-4 text-muted-foreground shrink-0" />
+          <span className="truncate">{t('tickets.sidebar.title', 'Ticket-Details')}</span>
         </span>
         {onCloseMobile ? (
           <Button
@@ -453,10 +454,10 @@ export function RedesignedSidebar({
         ) : null}
       </div>
 
-      <div className="relative z-0 flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 pb-4">
+      <div className="relative z-0 flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-3 sm:px-4 pb-4 min-w-0">
         {/* Kunde / Unternehmen — click to assign */}
         {!portalMode ? (
-          <div className="pt-3 pb-3 border-b border-slate-100 relative">
+          <div className="pt-3 pb-3 border-b border-slate-100 relative min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
               <Building2 className="w-3.5 h-3.5" />
               {t('tickets.sidebar.customerCompany', 'Kunde / Unternehmen')}
@@ -466,7 +467,7 @@ export function RedesignedSidebar({
               disabled={!canEditProperties}
               onClick={() => setCompanyMenuOpen((o) => !o)}
               className={cn(
-                'w-full flex items-center gap-2.5 rounded-lg px-1 py-1 text-left hover:bg-slate-50 transition-colors',
+                'w-full min-w-0 flex items-center gap-2.5 rounded-lg px-1 py-1 text-left hover:bg-slate-50 transition-colors',
                 !canEditProperties && 'opacity-70 cursor-default',
               )}
             >
@@ -527,15 +528,17 @@ export function RedesignedSidebar({
         ) : null}
 
         {/* Flat property rows */}
-        <div className="divide-y divide-slate-100">
+        <div className="divide-y divide-slate-100 min-w-0">
           <div className={fieldRowClass}>
             <span className={fieldLabelClass}>{t('tickets.sidebar.channel', 'Kanal')}</span>
-            <span className="text-xs font-semibold text-slate-800 pt-0.5">{channelLabel}</span>
+            <span className="text-xs font-semibold text-slate-800 pt-0.5 min-w-0 truncate text-right">
+              {channelLabel}
+            </span>
           </div>
 
           <div className={fieldRowClass}>
             <span className={fieldLabelClass}>{t('tickets.sidebar.category', 'Kategorie')}</span>
-            <div className="min-w-0 flex-1 flex justify-end">
+            <div className="min-w-0 flex-1 flex justify-end overflow-hidden">
               <TicketCategoryChip
                 categoryId={ticket.categoryId}
                 categoryName={ticket.categoryName}
@@ -549,7 +552,7 @@ export function RedesignedSidebar({
 
           <div className={fieldRowClass}>
             <span className={fieldLabelClass}>{t('tickets.sidebar.priority', 'Priorität')}</span>
-            <div className="min-w-0 flex-1 flex justify-end">
+            <div className="min-w-0 flex-1 flex justify-end overflow-hidden">
               <TicketPriorityChip
                 priority={ticket.priority ?? 'medium'}
                 priorities={ticketPriorities}
@@ -564,7 +567,7 @@ export function RedesignedSidebar({
 
           <div className={fieldRowClass}>
             <span className={fieldLabelClass}>{t('tickets.sidebar.dispatchCaseStatus', 'Status')}</span>
-            <div className="min-w-0 flex-1 flex items-center justify-end gap-1.5">
+            <div className="min-w-0 flex-1 flex items-center justify-end gap-1.5 flex-wrap overflow-hidden">
               <TicketStatusChip
                 status={ticket.status ?? 'open'}
                 statuses={ticketStatuses}
@@ -703,39 +706,45 @@ export function RedesignedSidebar({
           </div>
 
           <div className={fieldRowClass}>
-            <span className={fieldLabelClass}>{t('tickets.sidebar.ticketType', 'Typ')}</span>
-            <select
-              className="bg-transparent border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary max-w-[12rem]"
-              value={ticket.type || 'incident'}
-              disabled={!canEditProperties}
-              onChange={(e) => onUpdateTicketField({ type: e.target.value as any })}
-            >
-              <option value="incident">{t('tickets.typeLabels.incident', 'Vorfall')}</option>
-              <option value="question">{t('tickets.typeLabels.question', 'Frage')}</option>
-              <option value="problem">{t('tickets.typeLabels.problem', 'Problem')}</option>
-              <option value="feature_request">
-                {t('tickets.typeLabels.feature_request', 'Feature-Anfrage')}
-              </option>
-            </select>
+            <span className={fieldLabelClass}>{t('tickets.sidebar.ticketType', 'Tickettyp')}</span>
+            <div className="min-w-0 flex-1 flex justify-end">
+              <select
+                className="bg-transparent border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary w-full max-w-[11rem] min-w-0"
+                value={ticket.type || 'incident'}
+                disabled={!canEditProperties}
+                onChange={(e) => onUpdateTicketField({ type: e.target.value as any })}
+              >
+                <option value="incident">{t('tickets.typeLabels.incident', 'Vorfall')}</option>
+                <option value="question">{t('tickets.typeLabels.question', 'Frage')}</option>
+                <option value="problem">{t('tickets.typeLabels.problem', 'Problem')}</option>
+                <option value="feature_request">
+                  {t('tickets.typeLabels.feature_request', 'Feature-Anfrage')}
+                </option>
+              </select>
+            </div>
           </div>
 
           {!portalMode ? (
             <div className={fieldRowClass}>
-              <span className={fieldLabelClass + ' flex items-center gap-1'}>
-                <Clock3 className="w-3.5 h-3.5" />
-                {t('tickets.sidebar.timeTracking', 'Zeiterfassung')}
+              <span className={cn(fieldLabelClass, 'flex items-center gap-1')}>
+                <Clock3 className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">{t('tickets.sidebar.timeTracking', 'Zeiterfassung')}</span>
               </span>
               <button
                 type="button"
-                className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 hover:text-indigo-700"
+                className="min-w-0 flex-1 inline-flex flex-wrap items-center justify-end gap-x-2 gap-y-0.5 text-xs font-semibold text-slate-700 hover:text-indigo-700 text-right"
                 onClick={() => {
                   window.dispatchEvent(
                     new CustomEvent('hubcom-ticket-open-view', { detail: { tab: 'time' } }),
                   );
                 }}
               >
-                <span>{hoursLabel === '—' ? t('tickets.sidebar.noTimeLogged', '0,00 Std. erfasst') : hoursLabel}</span>
-                <span className="text-[10px] font-bold text-indigo-700">
+                <span className="truncate">
+                  {hoursLabel === '—'
+                    ? t('tickets.sidebar.noTimeLogged', '0,00 Std. erfasst')
+                    : hoursLabel}
+                </span>
+                <span className="text-[10px] font-bold text-indigo-700 shrink-0">
                   {t('tickets.sidebar.addTime', '+ Zeit')}
                 </span>
               </button>

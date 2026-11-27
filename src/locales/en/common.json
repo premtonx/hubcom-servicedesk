@@ -578,7 +578,7 @@
       "help": "HELP"
     },
     "sidebar": {
-      "title": "Dispatch desk properties",
+      "title": "Ticket-Details",
       "dynamicRag": "Dynamic RAG",
       "agentAssignment": "Agent assignment",
       "activelyAssigned": "Actively assigned",
@@ -587,7 +587,7 @@
       "clickToAssign": "Click below to assign this ticket",
       "selectDispatchAgent": "Select dispatch agent",
       "transferTicket": "Transfer ticket",
-      "dispatchCaseStatus": "Dispatch case status",
+      "dispatchCaseStatus": "Status",
       "slaHelpEscalation": "SLA help escalation",
       "supportAccountContext": "Support & account",
       "aiAccountHealth": "AI assessment",

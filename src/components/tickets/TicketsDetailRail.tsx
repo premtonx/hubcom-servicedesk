@@ -17,8 +17,15 @@ import { isResolvedQueueTicket } from '../../lib/ticket-status-groups';
 import { CustomerOrgAvatar, resolveTicketOrgLogo } from './CustomerOrgAvatar';
 import { resolveStatusConfig, softTintStyles } from '../../lib/ticket-config/display';
 import { useTicketStatuses } from '../../hooks/useTicketStatuses';
+import { htmlToAuditPlainText } from '../../lib/email-html-prepare';
 
 type RailFilterId = TopStatusFilterId | 'resolved'; // includes Gelöst beyond list top filters
+
+export type TicketsDetailRailViewOption = {
+  id: string;
+  label: string;
+  active?: boolean;
+};
 
 function relativeTime(value: unknown): string {
   try {
@@ -43,9 +50,10 @@ function relativeTime(value: unknown): string {
   }
 }
 
-function snippetFromTicket(ticket: TicketType): string {
-  const raw = String(ticket.description || ticket.aiSummary || '').replace(/<[^>]+>/g, ' ');
-  const cleaned = raw.replace(/\s+/g, ' ').trim();
+/** Plain-text preview for the rail — decode entities (&nbsp; → space) and collapse whitespace. */
+export function snippetFromTicket(ticket: TicketType): string {
+  const raw = String(ticket.description || ticket.aiSummary || '');
+  const cleaned = htmlToAuditPlainText(raw).replace(/\s+/g, ' ').trim();
   if (cleaned) return cleaned.slice(0, 72) + (cleaned.length > 72 ? '…' : '');
   return safeString(ticket.customerName, '');
 }
@@ -58,6 +66,8 @@ export type TicketsDetailRailProps = {
   onToggleQueueMenu?: () => void;
   ticketQueueStats: TicketQueueStats;
   activeViewLabel?: string;
+  viewOptions?: TicketsDetailRailViewOption[];
+  onSelectViewOption?: (optionId: string) => void;
   organizationNameById?: Record<string, string>;
   organizationLogoById?: Record<string, string | null>;
 };
@@ -78,6 +88,8 @@ export function TicketsDetailRail({
   onToggleQueueMenu,
   ticketQueueStats,
   activeViewLabel = 'Alle Tickets',
+  viewOptions = [],
+  onSelectViewOption,
   organizationNameById = {},
   organizationLogoById = {},
 }: TicketsDetailRailProps) {
@@ -111,17 +123,22 @@ export function TicketsDetailRail({
     return 0;
   };
 
+  const options =
+    viewOptions.length > 0
+      ? viewOptions
+      : [{ id: 'current', label: activeViewLabel, active: true }];
+
   return (
-    <aside className="hidden md:flex w-[290px] shrink-0 border-r border-slate-200 bg-white flex-col min-h-0 h-full">
+    <aside className="hidden md:flex w-[290px] shrink-0 border-r border-slate-200 bg-white flex-col min-h-0 h-full min-w-0">
       <div className="shrink-0 px-3 pt-3 pb-2 border-b border-slate-100 space-y-2">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0">
           {onToggleQueueMenu ? (
             <Button
               type="button"
               variant="outline"
               size="icon"
               className="h-8 w-8 shrink-0"
-              title={t('tickets.rail.toggleQueue', 'Warteschlangen-Menü')}
+              title={t('tickets.rail.toggleQueue', 'Seitenleiste ein-/ausklappen')}
               onClick={onToggleQueueMenu}
             >
               <Menu className="w-3.5 h-3.5" />
@@ -130,21 +147,31 @@ export function TicketsDetailRail({
           <div className="relative flex-1 min-w-0">
             <button
               type="button"
-              className="w-full h-8 px-2.5 rounded-lg border border-slate-200 bg-slate-50 text-left text-xs font-semibold text-slate-800 flex items-center justify-between gap-1"
+              className="w-full h-8 px-2.5 rounded-lg border border-slate-200 bg-slate-50 text-left text-xs font-semibold text-slate-800 flex items-center justify-between gap-1 min-w-0"
               onClick={() => setViewOpen((o) => !o)}
             >
               <span className="truncate">{activeViewLabel}</span>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             </button>
             {viewOpen ? (
-              <div className="absolute left-0 right-0 top-full mt-1 z-30 rounded-lg border border-slate-200 bg-white shadow-lg p-1">
-                <button
-                  type="button"
-                  className="w-full text-left px-2.5 py-1.5 rounded-md text-xs font-semibold hover:bg-slate-50"
-                  onClick={() => setViewOpen(false)}
-                >
-                  {activeViewLabel}
-                </button>
+              <div className="absolute left-0 right-0 top-full mt-1 z-30 rounded-lg border border-slate-200 bg-white shadow-lg p-1 max-h-64 overflow-y-auto">
+                {options.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    className={cn(
+                      'w-full text-left px-2.5 py-1.5 rounded-md text-xs font-semibold hover:bg-slate-50 truncate',
+                      opt.active && 'bg-sky-50 text-sky-900',
+                    )}
+                    onClick={() => {
+                      setViewOpen(false);
+                      if (opt.active) return;
+                      onSelectViewOption?.(opt.id);
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
             ) : null}
           </div>
@@ -206,7 +233,7 @@ export function TicketsDetailRail({
                     type="button"
                     onClick={() => onSelectTicket(ticket.id)}
                     className={cn(
-                      'w-full text-left px-3 py-2.5 flex gap-2.5 transition-colors',
+                      'w-full text-left px-3 py-2.5 flex gap-2.5 transition-colors min-w-0',
                       active
                         ? 'bg-sky-50 border-l-2 border-sky-500'
                         : 'hover:bg-slate-50 border-l-2 border-transparent',
@@ -219,28 +246,26 @@ export function TicketsDetailRail({
                       size="sm"
                     />
                     <div className="min-w-0 flex-1 space-y-0.5">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-[12px] font-bold text-slate-900 truncate leading-snug">
-                          {safeString(ticket.subject, '—')}
-                        </p>
-                        <span className="text-[9px] text-slate-400 font-medium shrink-0 tabular-nums">
+                      <div className="flex items-center justify-between gap-2 min-w-0">
+                        <span className="text-[11px] font-semibold text-slate-500 truncate">
+                          {company}
+                        </span>
+                        <span className="text-[10px] text-slate-400 shrink-0 tabular-nums">
                           {when}
                         </span>
                       </div>
-                      <p className="text-[10px] text-slate-500 truncate">
-                        {snippetFromTicket(ticket) || safeString(ticket.customerName)}
+                      <p className="text-xs font-bold text-slate-900 truncate">
+                        {safeString(ticket.subject, 'Ohne Betreff')}
                       </p>
-                      <div className="flex items-center justify-between gap-2 pt-0.5">
-                        <span className="text-[10px] font-semibold text-slate-600 truncate">
-                          {company}
-                        </span>
-                        <span
-                          className="inline-flex h-4 items-center px-1.5 rounded-full text-[9px] font-bold border shrink-0"
-                          style={tint}
-                        >
-                          {status.name}
-                        </span>
-                      </div>
+                      <p className="text-[11px] text-slate-500 line-clamp-2 leading-snug">
+                        {snippetFromTicket(ticket)}
+                      </p>
+                      <span
+                        className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide"
+                        style={tint}
+                      >
+                        {status.name}
+                      </span>
                     </div>
                   </button>
                 </li>

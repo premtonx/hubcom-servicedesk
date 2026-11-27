@@ -7,6 +7,8 @@ import {
   Hourglass,
   MoreHorizontal,
   Package,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings2,
   Star,
   Ticket,
@@ -356,6 +358,8 @@ interface TicketsLeftSidebarProps {
   onSelectOrganizationTickets?: (organizationId: string) => void;
   /** Open Rücklieferungen workbench for an org (nested under expandable client). */
   onSelectOrganizationReturns?: (organizationId: string) => void;
+  /** Explicit collapse/expand for KI-SUPPORT-OPERATIONEN (never tied to queue clicks). */
+  onToggleCollapsed?: () => void;
 }
 
 export function TicketsLeftSidebar({
@@ -379,6 +383,7 @@ export function TicketsLeftSidebar({
   kundenPanel,
   onSelectOrganizationTickets,
   onSelectOrganizationReturns,
+  onToggleCollapsed,
 }: TicketsLeftSidebarProps) {
   const { t } = useTranslation();
   const favoriteAriaLabel = t('tickets.sidebar.toggleFavorite', 'Toggle favorite');
@@ -535,21 +540,54 @@ export function TicketsLeftSidebar({
         className,
       )}
     >
-      {!effectiveCollapsed && (
-        <div className="px-3 pb-1 pt-3 flex items-center justify-between gap-2 shrink-0">
-          <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate pl-1 select-none">
-            {t('tickets.aiSupportOperations', 'AI Support Operations')}
+      <div
+        className={cn(
+          'px-2 pb-1 pt-3 flex items-center gap-1 shrink-0',
+          effectiveCollapsed ? 'flex-col' : 'justify-between px-3',
+        )}
+      >
+        {!effectiveCollapsed ? (
+          <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate pl-1 select-none min-w-0 flex-1">
+            {t('tickets.aiSupportOperations', 'KI-Support-Operationen')}
           </h2>
-          <button
-            type="button"
-            onClick={onOpenManageViews}
-            className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 shrink-0"
-            title={t('tickets.sidebar.manageViews', 'Manage views')}
-          >
-            <Settings2 className="w-3.5 h-3.5" />
-          </button>
+        ) : null}
+        <div className={cn('flex items-center gap-0.5 shrink-0', effectiveCollapsed && 'flex-col')}>
+          {onToggleCollapsed ? (
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 shrink-0"
+              title={
+                effectiveCollapsed
+                  ? t('tickets.sidebar.expandPipeline', 'Seitenleiste ausklappen')
+                  : t('tickets.sidebar.collapsePipeline', 'Seitenleiste einklappen')
+              }
+              aria-label={
+                effectiveCollapsed
+                  ? t('tickets.sidebar.expandPipeline', 'Seitenleiste ausklappen')
+                  : t('tickets.sidebar.collapsePipeline', 'Seitenleiste einklappen')
+              }
+              aria-expanded={!effectiveCollapsed}
+            >
+              {effectiveCollapsed ? (
+                <PanelLeftOpen className="w-3.5 h-3.5" />
+              ) : (
+                <PanelLeftClose className="w-3.5 h-3.5" />
+              )}
+            </button>
+          ) : null}
+          {!effectiveCollapsed ? (
+            <button
+              type="button"
+              onClick={onOpenManageViews}
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 shrink-0"
+              title={t('tickets.sidebar.manageViews', 'Ansichten verwalten')}
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+            </button>
+          ) : null}
         </div>
-      )}
+      </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 py-1">
         {favoriteItems.length > 0 && (
