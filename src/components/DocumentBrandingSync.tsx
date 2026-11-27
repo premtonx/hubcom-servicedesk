@@ -18,6 +18,18 @@ import {
   isPortalPath,
 } from '../lib/document-branding';
 import { useAuth } from '../lib/hooks';
+import { isClientPortalRole } from '../lib/client-portal/roles';
+
+function cachedProfileLooksLikePortalClient(): boolean {
+  try {
+    const raw = localStorage.getItem('geistdesk_cached_user_profile');
+    if (!raw) return false;
+    const profile = JSON.parse(raw) as { role?: string };
+    return isClientPortalRole(profile?.role);
+  } catch {
+    return false;
+  }
+}
 
 export function DocumentBrandingSync() {
   const location = useLocation();
@@ -37,7 +49,31 @@ export function DocumentBrandingSync() {
 
     void (async () => {
       try {
-        if (onPortal) {
+        // After login, CLIENT_* briefly sit on `/` or `/tickets` before the
+        // StaffShellRedirect sends them to /portal — never hit staff-only
+        // /api/admin/system-favicon (403 → auto-ban counter).
+        let treatAsPortal = onPortal;
+        if (!treatAsPortal && user) {
+          if (cachedProfileLooksLikePortalClient()) {
+            treatAsPortal = true;
+          } else {
+            try {
+              const sessionRes = await fetch('/api/auth/session', {
+                credentials: 'include',
+              });
+              if (sessionRes.ok) {
+                const data = (await sessionRes.json()) as { user?: { role?: string } };
+                if (isClientPortalRole(data.user?.role)) {
+                  treatAsPortal = true;
+                }
+              }
+            } catch {
+              /* fall through to staff path */
+            }
+          }
+        }
+
+        if (treatAsPortal) {
           let portalTitle: string = brandConfig.productName;
           let faviconUrl: string | null = null;
 
@@ -84,7 +120,7 @@ export function DocumentBrandingSync() {
           return;
         }
 
-        // Staff / non-portal routes
+        // Staff / non-portal routes only
         applyDocumentTitle(brandConfig.documentTitle);
 
         if (!user) {
@@ -118,7 +154,7 @@ export function DocumentBrandingSync() {
   // Re-apply immediately when admin saves a new system favicon while on staff routes.
   useEffect(() => {
     const handler = () => {
-      if (isPortalPath(location.pathname)) return;
+      if (isPortalPath(location.pathname) || cachedProfileLooksLikePortalClient()) return;
       void axios
         .get('/api/admin/system-favicon', { withCredentials: true })
         .then((res) => {

@@ -15,9 +15,31 @@
 
 import platformConfig from '../../geistdesk-platform-config.json';
 import { applySessionAuthHeader } from './session-auth';
-import { buildGetDocsCoalesceKey } from './db-get-docs-coalesce.js';
+import {
+  buildGetDocsCacheEntry,
+  buildGetDocsCoalesceKey,
+  readGetDocsCacheEntry,
+  type GetDocsCacheEntry,
+} from './db-get-docs-coalesce.js';
+import {
+  DB_ADAPTER_MAX_429_RETRIES,
+  GET_DOCS_RESPONSE_CACHE_TTL_MS,
+  classifyDbHttpStatus,
+  clearRateLimitCircuit,
+  createRateLimitCircuit,
+  rateLimitCircuitWaitMs,
+  resolveRateLimitWaitMs,
+  shouldRetryDbStatus,
+  tripRateLimitCircuit,
+  type RateLimitCircuitState,
+} from './db-adapter-retry.js';
 
 export { buildGetDocsCoalesceKey } from './db-get-docs-coalesce.js';
+export {
+  DB_ADAPTER_MAX_429_RETRIES,
+  classifyDbHttpStatus,
+  shouldRetryDbStatus,
+} from './db-adapter-retry.js';
 
 // Simple Auth State Store. Session JWT is stored in an httpOnly cookie by the server.
 const USER_KEY = 'geistdesk_auth_user';
@@ -314,17 +336,50 @@ export function getDocFromServer(ref: DocumentReference) {
   return getDoc(ref);
 }
 
-// Low-level HTTP requests to Express generic SQL coordinator backend with transient retry logic
-async function execDbAction(action: string, payload: any, retries = 5, delayMs = 1500) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
+/** Shared global rate-limit circuit — one open window for all /api/db callers. */
+let rateLimitCircuit: RateLimitCircuitState = createRateLimitCircuit();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientNetworkMessage(errMsg: string): boolean {
+  const m = errMsg.toLowerCase();
+  return (
+    m.includes('failed to fetch') ||
+    m.includes('networkerror') ||
+    m.includes('fetch failed') ||
+    m.includes('network error') ||
+    m.includes('load failed') ||
+    m.includes('type error') ||
+    m.includes('cors')
+  );
+}
+
+/**
+ * Low-level HTTP to Express `/api/db`.
+ * - Never retries 401 / 403 (authz noise must not multiply into auto-ban).
+ * - 429 uses a shared circuit breaker + Retry-After / exponential backoff + jitter
+ *   with at most {@link DB_ADAPTER_MAX_429_RETRIES} retries (not 5×1500ms per call).
+ */
+async function execDbAction(action: string, payload: any) {
+  let rateLimitAttempts = 0;
+  let transientAttempts = 0;
+
+  while (true) {
+    const waitMs = rateLimitCircuitWaitMs(rateLimitCircuit);
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+
     try {
       const res = await fetch('/api/db', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ action, ...payload })
+        body: JSON.stringify({ action, ...payload }),
       });
-      
+
       let errorBody = '';
       let data: any = null;
       try {
@@ -332,40 +387,86 @@ async function execDbAction(action: string, payload: any, retries = 5, delayMs =
         if (data && data.error) {
           errorBody = data.error;
         }
-      } catch (e) {
+      } catch {
         // ignore JSON parse error
       }
 
+      const kind = classifyDbHttpStatus(res.status);
+
+      if (kind === 'auth') {
+        // Never retry — collection RBAC / session denials.
+        throw new Error(
+          `DB Server error (${res.status}): ${errorBody || res.statusText || 'Forbidden'}`,
+        );
+      }
+
+      if (kind === 'rate_limit') {
+        const delay = resolveRateLimitWaitMs({
+          attempt: rateLimitAttempts,
+          retryAfterHeader: res.headers.get('Retry-After'),
+        });
+        rateLimitCircuit = tripRateLimitCircuit(rateLimitCircuit, delay);
+        if (!shouldRetryDbStatus(429, rateLimitAttempts)) {
+          throw new Error(
+            `DB Server error (429): ${errorBody || res.statusText || 'Too Many Requests'}`,
+          );
+        }
+        rateLimitAttempts += 1;
+        console.warn(
+          `[Mock DB Adapter] Action ${action} rate-limited (429 attempt ${rateLimitAttempts}/${DB_ADAPTER_MAX_429_RETRIES}). Shared circuit open ${delay}ms…`,
+        );
+        await sleep(delay);
+        continue;
+      }
+
+      if (kind === 'transient') {
+        if (!shouldRetryDbStatus(res.status, transientAttempts)) {
+          throw new Error(
+            `DB Server error (${res.status}): ${errorBody || res.statusText || 'Unavailable'}`,
+          );
+        }
+        const delay = resolveRateLimitWaitMs({ attempt: transientAttempts });
+        transientAttempts += 1;
+        console.warn(
+          `[Mock DB Adapter] Action ${action} transient ${res.status} (attempt ${transientAttempts}/${DB_ADAPTER_MAX_429_RETRIES}). Retrying in ${delay}ms…`,
+        );
+        await sleep(delay);
+        continue;
+      }
+
       if (!res.ok) {
-        throw new Error(`DB Server error (${res.status}): ${errorBody || res.statusText || 'Unknown Error'}`);
+        throw new Error(
+          `DB Server error (${res.status}): ${errorBody || res.statusText || 'Unknown Error'}`,
+        );
       }
       if (data && data.error) {
         throw new Error(data.error);
       }
+
+      rateLimitCircuit = clearRateLimitCircuit(rateLimitCircuit);
       return data ? data.result : null;
     } catch (err: any) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const isTransientNetwork = 
-        errMsg.includes('Failed to fetch') || 
-        errMsg.includes('NetworkError') || 
-        errMsg.includes('fetch failed') ||
-        errMsg.includes('network error') ||
-        errMsg.includes('Load failed') ||
-        errMsg.includes('type error') ||
-        errMsg.includes('CORS') ||
-        errMsg.includes('429') ||
-        errMsg.includes('502') ||
-        errMsg.includes('503') ||
-        errMsg.includes('504') ||
-        errMsg.includes('rate-limit') ||
-        errMsg.includes('Too Many Requests');
-
-      if (isTransientNetwork && attempt < retries) {
-        console.warn(`[Mock DB Adapter] Action ${action} failed due to transient state/rate-limit (attempt ${attempt}/${retries}). Retrying in ${delayMs}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+      // Auth errors thrown above — never retry.
+      if (/\(401\)|\(403\)/.test(errMsg)) {
+        console.error(`[Mock DB Adapter Exception] Action ${action} auth denial (no retry):`, err);
+        throw err;
+      }
+      // Already-exhausted 429 / fatal HTTP — rethrow.
+      if (errMsg.includes('DB Server error')) {
+        console.error(`[Mock DB Adapter Exception] Action ${action} failed:`, err);
+        throw err;
+      }
+      if (isTransientNetworkMessage(errMsg) && transientAttempts < DB_ADAPTER_MAX_429_RETRIES) {
+        const delay = resolveRateLimitWaitMs({ attempt: transientAttempts });
+        transientAttempts += 1;
+        console.warn(
+          `[Mock DB Adapter] Action ${action} network blip (attempt ${transientAttempts}/${DB_ADAPTER_MAX_429_RETRIES}). Retrying in ${delay}ms…`,
+        );
+        await sleep(delay);
         continue;
       }
-      console.error(`[Mock DB Adapter Exception] Action ${action} failed after ${attempt} attempts:`, err);
+      console.error(`[Mock DB Adapter Exception] Action ${action} failed:`, err);
       throw err;
     }
   }
@@ -412,6 +513,8 @@ export async function getDoc(ref: DocumentReference): Promise<DocumentSnapshot> 
 
 /** In-flight get_docs promises keyed by collection + constraints (dedupe bursts). */
 const getDocsInFlight = new Map<string, Promise<any>>();
+/** Short TTL success cache so mount fan-out reuses identical reads. */
+const getDocsResponseCache = new Map<string, GetDocsCacheEntry>();
 
 /**
  * Drop coalesced in-flight get_docs so the next read hits the network.
@@ -420,27 +523,44 @@ const getDocsInFlight = new Map<string, Promise<any>>();
 export function invalidateGetDocsCoalesce(collectionPrefix?: string): void {
   if (!collectionPrefix) {
     getDocsInFlight.clear();
+    getDocsResponseCache.clear();
     return;
   }
   const needle = String(collectionPrefix);
   for (const key of [...getDocsInFlight.keys()]) {
     if (key.includes(needle)) getDocsInFlight.delete(key);
   }
+  for (const key of [...getDocsResponseCache.keys()]) {
+    if (key.includes(needle)) getDocsResponseCache.delete(key);
+  }
 }
 
 export async function getDocs(q: Query): Promise<QuerySnapshot> {
   const key = buildGetDocsCoalesceKey(q.rawPath, q.constraints);
+  const cached = readGetDocsCacheEntry(getDocsResponseCache.get(key));
+  if (cached !== undefined) {
+    return new QuerySnapshot(cached as any[]);
+  }
+
   let pending = getDocsInFlight.get(key);
   if (!pending) {
     pending = execDbAction('get_docs', {
       collection: q.rawPath,
       constraints: q.constraints,
-    }).finally(() => {
-      // Only clear if we are still the active entry for this key.
-      if (getDocsInFlight.get(key) === pending) {
-        getDocsInFlight.delete(key);
-      }
-    });
+    })
+      .then((result) => {
+        getDocsResponseCache.set(
+          key,
+          buildGetDocsCacheEntry(result, GET_DOCS_RESPONSE_CACHE_TTL_MS),
+        );
+        return result;
+      })
+      .finally(() => {
+        // Only clear if we are still the active entry for this key.
+        if (getDocsInFlight.get(key) === pending) {
+          getDocsInFlight.delete(key);
+        }
+      });
     getDocsInFlight.set(key, pending);
   }
   const result = await pending;
@@ -524,9 +644,14 @@ export function onSnapshot(
       }
     } catch (e: any) {
       const errMsg = e instanceof Error ? e.message : String(e);
-      const isTransientNetwork = 
-        errMsg.includes('Failed to fetch') || 
-        errMsg.includes('NetworkError') || 
+      // Never treat 401/403 as soft-retry noise — surface once via onError.
+      if (/\(401\)|\(403\)/.test(errMsg)) {
+        if (onError) onError(e);
+        return;
+      }
+      const isTransientNetwork =
+        errMsg.includes('Failed to fetch') ||
+        errMsg.includes('NetworkError') ||
         errMsg.includes('fetch failed') ||
         errMsg.includes('network error') ||
         errMsg.includes('Load failed') ||
@@ -538,9 +663,11 @@ export function onSnapshot(
         errMsg.includes('504') ||
         errMsg.includes('rate-limit') ||
         errMsg.includes('Too Many Requests');
-      
+
       if (isTransientNetwork) {
-        console.warn(`[onSnapshot] Database rate-limited, offline or server restarting (${errMsg}). Retrying on next background poll...`);
+        console.warn(
+          `[onSnapshot] Database rate-limited, offline or server restarting (${errMsg}). Retrying on next background poll...`,
+        );
         return;
       }
       if (onError) onError(e);

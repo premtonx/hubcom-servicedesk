@@ -15,6 +15,7 @@ import {
   isHubcomCoreAdminRole,
   isSecurityAutobanDisabled,
   normalizeRequestPath,
+  shouldCountForbidden403TowardBan,
 } from '../lib/security/security-policy.js';
 import {
   applyCrossTenantBan,
@@ -122,15 +123,24 @@ export function crossTenant403TrackerMiddleware(
   }
 
   res.on('finish', () => {
+    // Only probe-like 403s count. Never 429 / auth RBAC noise / honeypot.
     if (res.statusCode !== 403) return;
     const path = normalizeRequestPath(req.path || req.url);
-    // Skip honeypot / auth SSO gate 403 noise that is intentional product UX
-    if (isHoneypotPath(path)) return;
-    if (path.startsWith('/api/auth/')) return;
-
-    const ip = (req as any).clientIp || getTrustedClientIp(req);
     const userId = (req as any).user?.id || null;
     const role = (req as any).user?.role || null;
+    const authenticated = Boolean(userId || (req as any).user);
+
+    if (
+      !shouldCountForbidden403TowardBan({
+        path,
+        authenticated,
+        role,
+      })
+    ) {
+      return;
+    }
+
+    const ip = (req as any).clientIp || getTrustedClientIp(req);
 
     void (async () => {
       try {

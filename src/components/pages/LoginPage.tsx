@@ -48,6 +48,23 @@ import { useTranslation } from '../../lib/context/I18nContext';
 import { cn } from '../../lib/utils';
 import { FlagIcon, languageToFlagCode } from '../ui/FlagIcon';
 import { isDemoLoginEnabled } from '../../lib/runtime-env';
+import { isClientPortalRole } from '../../lib/client-portal/roles';
+
+/** Prefer /portal/dashboard for CLIENT_* so staff shell never mounts post-login. */
+async function resolvePostLoginPath(): Promise<string> {
+  try {
+    const res = await fetch('/api/auth/session', { credentials: 'include' });
+    if (res.ok) {
+      const data = (await res.json()) as { user?: { role?: string } };
+      if (isClientPortalRole(data.user?.role)) {
+        return '/portal/dashboard';
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return '/';
+}
 import { useOnboardingStatus } from '../../hooks/useOnboardingStatus';
 import { Link } from 'react-router-dom';
 
@@ -323,7 +340,7 @@ export default function LoginPage() {
           : 'Password set — you are signed in.',
       );
       window.history.replaceState({}, '', window.location.pathname);
-      window.location.assign('/');
+      window.location.assign(await resolvePostLoginPath());
     } catch (error: any) {
       toast.error(error.message || texts.toasts.authFailed);
     } finally {
@@ -346,6 +363,7 @@ export default function LoginPage() {
         await signInWithEmailAndPassword(auth, email, password);
         toast.success(texts.toasts.credentialsVerified);
       }
+      window.location.assign(await resolvePostLoginPath());
     } catch (error: any) {
       console.error(error);
       toast.error(error.message || texts.toasts.authFailed);
@@ -393,6 +411,7 @@ export default function LoginPage() {
     try {
       await signInWithEmailAndPassword(auth, DEMO_EMAIL, DEMO_PASSWORD);
       toast.success(texts.toasts.workspaceAuth);
+      window.location.assign(await resolvePostLoginPath());
     } catch (error: any) {
       console.error(error);
       toast.error(error.message || texts.toasts.authFailed);
