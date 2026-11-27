@@ -53,6 +53,7 @@ const IntegrationsPage = lazy(() => import('./components/pages/IntegrationsPage'
 const GroupsPage = lazy(() => import('./components/pages/GroupsPage'));
 const WorkforcePage = lazy(() => import('./components/pages/WorkforcePage'));
 const UserManagementPage = lazy(() => import('./components/pages/UserManagementPage'));
+const StaffPermissionsPage = lazy(() => import('./components/pages/StaffPermissionsPage'));
 const RolesPage = lazy(() => import('./components/pages/RolesPage'));
 const VaultPortfolioManagementPage = lazy(() => import('./components/pages/VaultPortfolioManagementPage'));
 const AdminImportPage = lazy(() => import('./components/pages/AdminImportPage'));
@@ -718,8 +719,34 @@ function AppRoutes() {
                         }
                       />
                       <Route path="groups" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Groups" />}><LazyPage><GroupsPage /></LazyPage></ErrorBoundary>} />
-                      <Route path="workforce" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Benutzerverwaltung" />}><LazyPage><UserManagementPage /></LazyPage></ErrorBoundary>} />
-                      <Route path="users" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Benutzerverwaltung" />}><LazyPage><UserManagementPage /></LazyPage></ErrorBoundary>} />
+                      <Route
+                        path="staff"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Mitarbeiter & Berechtigungen" />}>
+                            <LazyPage>
+                              <StaffPermissionsPage />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
+                      <Route
+                        path="workforce"
+                        element={<Navigate to="/admin/staff" replace />}
+                      />
+                      <Route
+                        path="users"
+                        element={<Navigate to="/admin/staff" replace />}
+                      />
+                      <Route
+                        path="users-legacy"
+                        element={
+                          <ErrorBoundary fallback={<ModuleCrashFallback module="Benutzerverwaltung" />}>
+                            <LazyPage>
+                              <UserManagementPage />
+                            </LazyPage>
+                          </ErrorBoundary>
+                        }
+                      />
                       <Route path="workforce-legacy" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Workforce" />}><LazyPage><WorkforcePage /></LazyPage></ErrorBoundary>} />
                       <Route path="roles" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Roles" />}><LazyPage><RolesPage /></LazyPage></ErrorBoundary>} />
                       <Route path="vault-portfolio" element={<ErrorBoundary fallback={<ModuleCrashFallback module="Vault Portfolio" />}><LazyPage><VaultPortfolioManagementPage /></LazyPage></ErrorBoundary>} />

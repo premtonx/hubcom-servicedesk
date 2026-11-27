@@ -23,6 +23,11 @@ import {
 export const ADMIN_HUB_TABS = [
   { id: 'uebersicht', label: 'Übersicht', labelKey: 'admin.hubTabs.overview' },
   { id: 'kunden', label: 'Kunden', labelKey: 'admin.hubTabs.kunden' },
+  {
+    id: 'staff',
+    label: 'Mitarbeiter & Berechtigungen',
+    labelKey: 'admin.hubTabs.staff',
+  },
   { id: 'ai-engine', label: 'Kern-KI & Modelle', labelKey: 'admin.hubTabs.aiEngine' },
   { id: 'rag', label: 'RAG & Wissensbasis', labelKey: 'admin.hubTabs.rag' },
   { id: 'governance', label: 'PII & Compliance', labelKey: 'admin.hubTabs.governance' },
@@ -32,12 +37,22 @@ export const ADMIN_HUB_TABS = [
 
 export type AdminHubTabId = (typeof ADMIN_HUB_TABS)[number]['id'];
 
+/** Hubcom-core-only sections — hidden for HUBCOM_AGENT / HUBCOM_USER. */
+export const ADMIN_HUB_CORE_ONLY_TABS: ReadonlyArray<AdminHubTabId> = [
+  'staff',
+  'ai-engine',
+  'integrations',
+];
+
 const TAB_ALIASES: Record<string, AdminHubTabId> = {
   uebersicht: 'uebersicht',
   overview: 'uebersicht',
   kunden: 'kunden',
   customers: 'kunden',
   unternehmen: 'kunden',
+  staff: 'staff',
+  mitarbeiter: 'staff',
+  berechtigungen: 'staff',
   'ai-engine': 'ai-engine',
   ai: 'ai-engine',
   ki: 'ai-engine',
@@ -75,8 +90,9 @@ export const ADMIN_HUB_SUBROUTES: Array<{ path: string; meta: AdminHubSubRouteMe
   { path: '/admin/ticket-categories', meta: { parentTab: 'system', label: 'Ticket Configuration' } },
   { path: '/admin/vault-portfolio', meta: { parentTab: 'system', label: 'Vault-Portfoliomanagement' } },
   { path: '/admin/workforce-legacy', meta: { parentTab: 'system', label: 'Workforce (Legacy)' } },
-  { path: '/admin/workforce', meta: { parentTab: 'system', label: 'Benutzerverwaltung' } },
-  { path: '/admin/users', meta: { parentTab: 'system', label: 'Benutzerverwaltung' } },
+  { path: '/admin/staff', meta: { parentTab: 'staff', label: 'Mitarbeiter & Berechtigungen' } },
+  { path: '/admin/workforce', meta: { parentTab: 'staff', label: 'Mitarbeiter & Berechtigungen' } },
+  { path: '/admin/users', meta: { parentTab: 'staff', label: 'Mitarbeiter & Berechtigungen' } },
   { path: '/admin/groups', meta: { parentTab: 'system', label: 'Functional Teams' } },
   { path: '/admin/roles', meta: { parentTab: 'system', label: 'RBAC Command' } },
   { path: '/admin/import', meta: { parentTab: 'system', label: 'Data Import & Migration' } },

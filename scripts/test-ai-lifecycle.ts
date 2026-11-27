@@ -2768,6 +2768,7 @@ async function main(): Promise<void> {
   testKbOutdatedRagLifecycle();
   testAdminOrgPortalSettingsLifecycle();
   testStaffOrgPermissionMatrixLifecycle();
+  testStaffPermissionMatrixUiLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);
@@ -2775,6 +2776,48 @@ async function main(): Promise<void> {
   if (failed > 0) {
     process.exit(1);
   }
+}
+
+function testStaffPermissionMatrixUiLifecycle(): void {
+  console.log('\n[Staff Matrix UI] lifecycle — German Admin-Hub page + Kunden scope');
+
+  const page = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/StaffPermissionsPage.tsx'),
+    'utf8',
+  );
+  const customers = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/CustomersPage.tsx'),
+    'utf8',
+  );
+  const serverSrc = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
+
+  assert(
+    page.includes('Berechtigungen bearbeiten') &&
+      page.includes('organization_access') &&
+      page.includes('staffUsersApi'),
+    'matrix drawer saves via staffUsersApi',
+  );
+  assert(
+    customers.includes('Zuständige Hubcom-Mitarbeiter') === false
+      ? customers.includes('CompanyStaffAssignmentsCard')
+      : true,
+    'company overview mounts Zuständige Hubcom-Mitarbeiter card',
+  );
+  assert(
+    serverSrc.includes('staffAccess') &&
+      serverSrc.includes('accessibleOrganizationIds') &&
+      serverSrc.includes('canManageHubcomCore'),
+    'session exposes staffAccess for realtime Admin-Hub scoping',
+  );
+  assert(
+    canManageHubcomCore({ role: 'HUBCOM_USER' }) === false &&
+      evaluateCanManageOrganization({
+        role: 'HUBCOM_USER',
+        organizationId: 'dpg',
+        accessRows: [{ organization_id: 'dpg', access_role: 'ORG_ADMIN' }],
+      }) === true,
+    'HUBCOM_USER + ORG_ADMIN pattern still holds for UI gating',
+  );
 }
 
 /** Part 1 — Hubcom staff role matrix + per-org ORG_ADMIN lifecycle contracts. */

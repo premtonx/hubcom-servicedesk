@@ -8377,10 +8377,90 @@ async function main(): Promise<void> {
   testAdminCustomersPortalSettingsUiIsolation();
   testAdminMailIntegrationsWorkspaceIsolation();
   testStaffOrgPermissionMatrixIsolation();
+  testStaffPermissionMatrixUiIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
   console.log('OK: client portal isolation suite passed.');
+}
+
+/** Part 2 — German Mitarbeiter & Berechtigungen Admin-Hub UI. */
+function testStaffPermissionMatrixUiIsolation(): void {
+  console.log('\n[Staff Matrix UI] Mitarbeiter & Berechtigungen + scoped Kunden');
+
+  const page = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/StaffPermissionsPage.tsx'),
+    'utf8',
+  );
+  const layout = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/admin/hub/AdminHubLayout.tsx'),
+    'utf8',
+  );
+  const hubConfig = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/admin/hub/adminHubConfig.ts'),
+    'utf8',
+  );
+  const customers = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/CustomersPage.tsx'),
+    'utf8',
+  );
+  const app = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
+  const uiLib = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/staff-access-ui.ts'),
+    'utf8',
+  );
+  const api = fs.readFileSync(
+    path.join(process.cwd(), 'src/services/staffUsersApi.ts'),
+    'utf8',
+  );
+
+  assert(
+    page.includes('Mitarbeiter & Berechtigungen') &&
+      page.includes('Hubcom-Systemzugriff') &&
+      page.includes('Kundenunternehmen-Berechtigungen') &&
+      page.includes('Kein Zugriff') &&
+      page.includes('Freigeben') &&
+      page.includes('Ablehnen') &&
+      page.includes('Alle auf Kein Zugriff') &&
+      page.includes('Ausstehende Hubcom-M365-Freigaben') &&
+      uiLib.includes('Systemhaus Voll-Admin') &&
+      uiLib.includes('Hubcom Admin') &&
+      uiLib.includes('Hubcom Agent / Techniker') &&
+      uiLib.includes('Hubcom Benutzer') &&
+      uiLib.includes('Kunden-Admin') &&
+      uiLib.includes('Agent / Bearbeiter'),
+    'StaffPermissionsPage is 100% German matrix UI',
+  );
+  assert(
+    hubConfig.includes("id: 'staff'") &&
+      hubConfig.includes('Mitarbeiter & Berechtigungen') &&
+      hubConfig.includes('ADMIN_HUB_CORE_ONLY_TABS') &&
+      layout.includes('visibleTabs') &&
+      layout.includes('canManageHubcomCore') &&
+      layout.includes("/admin/staff"),
+    'Admin-Hub sidebar shows Mitarbeiter & Berechtigungen for Hubcom core',
+  );
+  assert(
+    app.includes('path="staff"') &&
+      app.includes('StaffPermissionsPage') &&
+      app.includes('Navigate to="/admin/staff"'),
+    'App mounts /admin/staff and redirects /admin/users',
+  );
+  assert(
+    customers.includes('sessionCanAccessOrg') &&
+      customers.includes('sessionCanManageOrgPortal') &&
+      customers.includes('CompanyStaffAssignmentsCard') &&
+      customers.includes('canEditPortalSettings') &&
+      customers.includes('scopedCompanies'),
+    'CustomersPage scopes orgs and locks Kunden-Portal for ORG_AGENT',
+  );
+  assert(
+    uiLib.includes('sessionCanManageHubcomCore') &&
+      api.includes('/api/admin/staff-users') &&
+      !page.includes("'/api/db'") &&
+      !api.includes("'/api/db'"),
+    'staff UI/API stay off /api/db; CLIENT_* remain separate',
+  );
 }
 
 /**

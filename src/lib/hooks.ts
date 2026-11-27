@@ -56,11 +56,28 @@ export function useAdmin() {
           if (active) setIsAdmin(false);
           return;
         }
-        const data = (await res.json()) as { user?: { role?: string; is_admin?: boolean } };
+        const data = (await res.json()) as {
+          user?: {
+            role?: string;
+            is_admin?: boolean;
+            staffAccess?: { canManageHubcomCore?: boolean } | null;
+          };
+        };
         const role = data.user?.role ?? '';
+        // Hubcom Admin-Hub: SUPER_ADMIN / HUBCOM_ADMIN (and legacy SYSTEM_ADMIN / is_admin).
+        // Agents/users still enter Admin-Hub for Kunden, but core sections are filtered in layout.
         const sessionIsAdmin =
+          data.user?.staffAccess?.canManageHubcomCore === true ||
+          role === 'SUPER_ADMIN' ||
+          role === 'HUBCOM_ADMIN' ||
+          role === 'HUBCOM_AGENT' ||
+          role === 'HUBCOM_USER' ||
           role === 'SYSTEM_ADMIN' ||
           role === 'admin' ||
+          role === 'agent' ||
+          role === 'AGENT' ||
+          role === 'team_lead' ||
+          role === 'TEAM_LEAD' ||
           data.user?.is_admin === true;
         if (active) setIsAdmin(!!sessionIsAdmin);
       } catch {
