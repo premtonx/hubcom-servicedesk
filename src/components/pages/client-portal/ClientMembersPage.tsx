@@ -24,12 +24,17 @@ import {
 import { DeletePortalUserDialog } from '../../ui/DeletePortalUserDialog';
 import { cn } from '../../../lib/utils';
 import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
+import axios from 'axios';
 import {
   clientPortalApi,
   type PortalMember,
   type PortalTeamRole,
   type PortalTeamSummary,
 } from '../../../services/clientPortalApi';
+import {
+  resolvePortalSettingsPaths,
+  type PortalSettingsMode,
+} from '../../../lib/client-portal/portal-settings-api-base';
 
 const ROLE_META: Record<
   PortalTeamRole,
@@ -63,9 +68,31 @@ const EMPTY_SUMMARY: PortalTeamSummary = {
   total: 0,
 };
 
-export default function ClientMembersPage() {
+export type ClientMembersPageProps = {
+  mode?: PortalSettingsMode;
+  organizationId?: string | null;
+  embedded?: boolean;
+  /** When true, open the invite dialog on mount (admin quick action). */
+  focusInvite?: boolean;
+  className?: string;
+};
+
+export default function ClientMembersPage({
+  mode = 'portal',
+  organizationId = null,
+  embedded = false,
+  focusInvite = false,
+  className,
+}: ClientMembersPageProps = {}) {
   const { session } = useClientPortalSession();
-  const selfId = String(session?.id || '');
+  const selfId = mode === 'admin' ? '' : String(session?.id || '');
+  const paths = (() => {
+    try {
+      return resolvePortalSettingsPaths(mode, organizationId);
+    } catch {
+      return null;
+    }
+  })();
   const [members, setMembers] = useState<PortalMember[]>([]);
   const [summary, setSummary] = useState<PortalTeamSummary>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(true);
@@ -91,21 +118,50 @@ export default function ClientMembersPage() {
   const [pendingDeactivate, setPendingDeactivate] = useState<PortalMember | null>(null);
 
   const load = useCallback(async () => {
+    if (!paths) return;
     setLoading(true);
     try {
-      const data = await clientPortalApi.listTeam();
-      setMembers(data.members);
-      setSummary(data.summary);
+      if (mode === 'portal') {
+        const data = await clientPortalApi.listTeam();
+        setMembers(data.members);
+        setSummary(data.summary);
+      } else {
+        const res = await axios.get(paths.membersBase, { withCredentials: true });
+        const members = (res.data?.members || []).map((m: any) => ({
+          ...m,
+          isDeactivated: m.isActive === false,
+          isActive: m.isActive !== false && m.isDeactivated !== true,
+        }));
+        setMembers(members);
+        setSummary(
+          res.data?.summary || {
+            totalActive: members.filter((m: any) => m.isActive !== false).length,
+            clientAdmins: members.filter((m: any) => m.role === 'CLIENT_ADMIN').length,
+            clientSupporters: members.filter((m: any) => m.role === 'CLIENT_SUPPORTER').length,
+            clientUsers: members.filter((m: any) => m.role === 'CLIENT_USER').length,
+            total: members.length,
+          },
+        );
+      }
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Team konnte nicht geladen werden');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [mode, paths]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!focusInvite) return;
+    setFormName('');
+    setFormEmail('');
+    setFormRole('CLIENT_ADMIN');
+    setInviteResult(null);
+    setAddOpen(true);
+  }, [focusInvite]);
 
   const pendingSso = useMemo(
     () => members.filter((m) => m.approvalStatus === 'pending_approval'),
@@ -131,7 +187,11 @@ export default function ClientMembersPage() {
     const role = pendingRoles[member.id] || (member.role as PortalTeamRole) || 'CLIENT_USER';
     setApprovingId(member.id);
     try {
-      await clientPortalApi.approveTeamMember(member.id, role);
+      if (mode === 'portal') {
+        await clientPortalApi.approveTeamMember(member.id, role);
+      } else if (paths) {
+        await axios.post(paths.memberApprove(member.id), { role }, { withCredentials: true });
+      }
       toast.success(`${member.name || member.email} freigegeben als ${ROLE_META[role].label}.`);
       await load();
     } catch (err: any) {
@@ -145,7 +205,11 @@ export default function ClientMembersPage() {
     if (!confirm(`Zugriffsanfrage von ${member.email} ablehnen?`)) return;
     setApprovingId(member.id);
     try {
-      await clientPortalApi.rejectTeamMember(member.id);
+      if (mode === 'portal') {
+        await clientPortalApi.rejectTeamMember(member.id);
+      } else if (paths) {
+        await axios.post(paths.memberReject(member.id), {}, { withCredentials: true });
+      }
       toast.success('Zugriffsanfrage abgelehnt.');
       await load();
     } catch (err: any) {
@@ -177,11 +241,27 @@ export default function ClientMembersPage() {
     }
     setSaving(true);
     try {
-      const result = await clientPortalApi.createTeamMember({
-        name: formName.trim(),
-        email: formEmail.trim(),
-        role: formRole,
-      });
+      const result =
+        mode === 'portal'
+          ? await clientPortalApi.createTeamMember({
+              name: formName.trim(),
+              email: formEmail.trim(),
+              role: formRole,
+            })
+          : await (async () => {
+              const res = await axios.post(
+                paths!.membersBase,
+                { name: formName.trim(), email: formEmail.trim(), role: formRole },
+                { withCredentials: true },
+              );
+              return {
+                member: res.data?.member,
+                setupLink: res.data?.setupLink ?? null,
+                emailSent: res.data?.emailSent,
+                emailReason: res.data?.emailReason ?? null,
+                invitationStatus: res.data?.invitationStatus,
+              };
+            })();
       setInviteResult({
         setupLink: result.setupLink,
         emailSent: result.emailSent,
@@ -209,10 +289,18 @@ export default function ClientMembersPage() {
     if (!selected) return;
     setSaving(true);
     try {
-      await clientPortalApi.updateTeamMember(selected.id, {
-        name: formName.trim(),
-        role: formRole,
-      });
+      if (mode === 'portal') {
+        await clientPortalApi.updateTeamMember(selected.id, {
+          name: formName.trim(),
+          role: formRole,
+        });
+      } else if (paths) {
+        await axios.patch(
+          paths.memberById(selected.id),
+          { name: formName.trim(), role: formRole },
+          { withCredentials: true },
+        );
+      }
       toast.success('Mitarbeiter aktualisiert.');
       setEditOpen(false);
       await load();
@@ -233,7 +321,15 @@ export default function ClientMembersPage() {
     const nextActive = pendingDeactivate.isActive === false || pendingDeactivate.isDeactivated === true;
     setSaving(true);
     try {
-      await clientPortalApi.updateTeamMember(pendingDeactivate.id, { isActive: nextActive });
+      if (mode === 'portal') {
+        await clientPortalApi.updateTeamMember(pendingDeactivate.id, { isActive: nextActive });
+      } else if (paths) {
+        await axios.patch(
+          paths.memberById(pendingDeactivate.id),
+          { isActive: nextActive },
+          { withCredentials: true },
+        );
+      }
       toast.success(nextActive ? 'Mitarbeiter aktiviert.' : 'Mitarbeiter deaktiviert.');
       setConfirmOpen(false);
       setPendingDeactivate(null);
@@ -249,7 +345,22 @@ export default function ClientMembersPage() {
     if (!confirm(`Passwort-Reset für ${member.email} auslösen?`)) return;
     setSaving(true);
     try {
-      const result = await clientPortalApi.resetTeamMemberPassword(member.id);
+      const result =
+        mode === 'portal'
+          ? await clientPortalApi.resetTeamMemberPassword(member.id)
+          : await (async () => {
+              const res = await axios.post(
+                paths!.memberResetPassword(member.id),
+                {},
+                { withCredentials: true },
+              );
+              return {
+                setupLink: res.data?.setupLink ?? null,
+                emailSent: res.data?.emailSent,
+                emailReason: res.data?.emailReason ?? null,
+                invitationStatus: res.data?.invitationStatus,
+              };
+            })();
       if (result.emailSent) {
         toast.success('Reset-/Einladungs-E-Mail gesendet.');
       } else {
@@ -269,14 +380,30 @@ export default function ClientMembersPage() {
     }
   };
 
+  if (mode === 'admin' && !paths) {
+    return (
+      <div className="p-10 text-center text-sm text-slate-500">
+        Organisation nicht ausgewählt.
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-5xl mx-auto p-6 lg:p-10 space-y-6">
+    <div className={embedded ? `space-y-6 ${className || ''}` : `max-w-5xl mx-auto p-6 lg:p-10 space-y-6 ${className || ''}`}>
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-black tracking-tight">Mitarbeiter & Rollen</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Verwalten Sie Kollegen Ihrer Organisation — nur Client-Rollen, keine Hubcom-Rechte.
-          </p>
+          {!embedded ? (
+            <>
+              <h1 className="text-2xl font-black tracking-tight">Mitarbeiter & Rollen</h1>
+              <p className="text-sm text-slate-500 mt-1">
+                Verwalten Sie Kollegen Ihrer Organisation — nur Client-Rollen, keine Hubcom-Rechte.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-slate-500 font-medium">
+              Benutzerliste, Rollen und offene M365-SSO-Zugriffsanfragen für diese Organisation.
+            </p>
+          )}
         </div>
         <Button type="button" className="gap-2" onClick={openAdd}>
           <UserPlus className="w-4 h-4" />
@@ -512,7 +639,11 @@ export default function ClientMembersPage() {
           if (!deleteMember) return;
           setDeleting(true);
           try {
-            await clientPortalApi.deleteTeamMember(deleteMember.id);
+            if (mode === 'portal') {
+        await clientPortalApi.deleteTeamMember(deleteMember.id);
+      } else if (paths) {
+        await axios.delete(paths.memberById(deleteMember.id), { withCredentials: true });
+      }
             toast.success(
               `Portal-Benutzer entfernt: ${deleteMember.name || deleteMember.email}`,
             );

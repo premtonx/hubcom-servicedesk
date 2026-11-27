@@ -76,7 +76,15 @@ import {
 import { parseAndValidateLogoDataUrl } from '../../lib/client-portal/org-branding';
 import { buildCompanyKpiMetrics } from '../../lib/company-kpi-metrics';
 
-const BRANCHES = ['Tech', 'Finance', 'Healthcare', 'Manufacturing', 'Retail', 'Services', 'Other'];
+const BRANCHES = [
+  'Tech',
+  'Finance',
+  'Healthcare',
+  'Manufacturing',
+  'Retail',
+  'Services',
+  'Sonstige',
+];
 
 type StaffOption = { id: string; name: string; email: string; role: string };
 
@@ -106,6 +114,18 @@ export default function CustomersPage() {
   });
   const [companyVaultItems, setCompanyVaultItems] = useState<VaultItem[]>([]);
   const [orgEnrichment, setOrgEnrichment] = useState<Record<string, any>>({});
+  /** orgId → logo + open counts from GET /api/admin/organizations */
+  const [orgListMeta, setOrgListMeta] = useState<
+    Record<
+      string,
+      {
+        logo_url: string | null;
+        open_tickets_count: number;
+        open_returns_count: number;
+        name?: string;
+      }
+    >
+  >({});
 
   const toggleSidebarCollapsed = () => {
     setSidebarCollapsed((prev) => {
@@ -242,6 +262,35 @@ export default function CustomersPage() {
       }
     });
   }, [urlId]);
+
+  // Admin org list: branding logos + open ticket/returns counts for sidebar
+  useEffect(() => {
+    let cancelled = false;
+    void axios
+      .get('/api/admin/organizations', { withCredentials: true })
+      .then((res) => {
+        if (cancelled) return;
+        const rows = (res.data?.organizations || []) as Array<Record<string, unknown>>;
+        const next: typeof orgListMeta = {};
+        for (const o of rows) {
+          const id = String(o.id || '');
+          if (!id) continue;
+          next[id] = {
+            logo_url: (o.logo_url as string | null) || null,
+            open_tickets_count: Number(o.open_tickets_count) || 0,
+            open_returns_count: Number(o.open_returns_count) || 0,
+            name: o.name ? String(o.name) : undefined,
+          };
+        }
+        setOrgListMeta(next);
+      })
+      .catch(() => {
+        /* sidebar falls back to CRM fields */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Handle active selected company state
   useEffect(() => {
@@ -628,13 +677,43 @@ export default function CustomersPage() {
   const hardwareReturnsEnabled = Boolean(
     (hydratedCompany as any)?.hardware_returns_enabled,
   );
-  const companyKpis = buildCompanyKpiMetrics({
-    contactsCount: employees.length,
-    ticketHistory,
-    assetsCount: 0,
-    vaultEntriesCount: companyVaultItems.length,
-    slaPerformance: null,
-    monthlySpend: hydratedCompany?.monthlySpend || null,
+  const selectedOrgId =
+    hydratedCompany?.organizationId ||
+    (hydratedCompany as any)?.organization_id ||
+    null;
+  const selectedOrgMeta = selectedOrgId ? orgListMeta[String(selectedOrgId)] : undefined;
+  const companyKpis = {
+    ...buildCompanyKpiMetrics({
+      contactsCount: employees.length,
+      ticketHistory,
+      assetsCount: 0,
+      vaultEntriesCount: companyVaultItems.length,
+      slaPerformance: null,
+      monthlySpend: hydratedCompany?.monthlySpend || null,
+    }),
+    openReturnsCount: selectedOrgMeta?.open_returns_count ?? 0,
+    contractStatusLabel: hydratedCompany?.hasContract
+      ? hydratedCompany.contractStatus === 'ACTIVE'
+        ? t('companies.active', 'Aktiv')
+        : hydratedCompany.contractStatus === 'EXPIRED'
+          ? t('companies.expired', 'Abgelaufen')
+          : t('companies.supportContract', 'Support-Vertrag')
+      : t('companies.noContractShort', 'Kein Vertrag'),
+  };
+
+  /** Merge org branding logos + counts onto CRM companies for the left list. */
+  const companiesForSidebar = companies.map((c) => {
+    const orgId =
+      (c as any).organizationId || (c as any).organization_id || null;
+    const meta = orgId ? orgListMeta[String(orgId)] : undefined;
+    if (!meta) return c;
+    return {
+      ...c,
+      logoUrl: meta.logo_url || (c as any).logoUrl || (c as any).logo_url || '',
+      logo_url: meta.logo_url || (c as any).logo_url || null,
+      openTicketsCountOverride: meta.open_tickets_count,
+      openReturnsCountOverride: meta.open_returns_count,
+    } as Company;
   });
 
   return (
@@ -642,7 +721,7 @@ export default function CustomersPage() {
       
       {/* Sidebar: Intelligent Company Navigator */}
       <CompanySidebar 
-        companies={companies}
+        companies={companiesForSidebar}
         selectedCompanyId={selectedCompanyId}
         onSelectCompany={setSelectedCompanyId}
         favorites={favorites}
@@ -666,24 +745,29 @@ export default function CustomersPage() {
       )}>
         {hydratedCompany ? (
           <div className="flex-1 overflow-y-auto">
-            <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
+            <div className="p-4 sm:p-5 max-w-7xl mx-auto space-y-4">
               {/* Mobile-only back affordance to return to the company list. */}
               <button
                 onClick={() => setSelectedCompanyId(null)}
-                className="lg:hidden flex items-center gap-1 text-sm font-bold text-muted-foreground hover:text-foreground -mb-2"
+                className="lg:hidden flex items-center gap-1 text-sm font-bold text-muted-foreground hover:text-foreground -mb-1"
               >
                 <ChevronLeft className="w-4 h-4" /> {t('nav.companies', 'Unternehmen')}
               </button>
               
-              {/* Header and Support Contract block */}
               <CompanyHeader 
-                company={hydratedCompany}
+                company={{
+                  ...hydratedCompany,
+                  logoUrl:
+                    selectedOrgMeta?.logo_url ||
+                    hydratedCompany.logoUrl ||
+                    '',
+                }}
                 onEditCompanyClick={() => {
                   setEditCompanyData(hydratedCompany);
                   setIsEditDialogOpen(true);
                 }}
-                onViewContractClick={() => setActiveSubTab('contracts')}
-                onBrandingClick={() => {
+                onViewContractClick={() => setActiveSubTab('overview')}
+                onPortalClick={() => {
                   setPortalFocusInvite(false);
                   setActiveSubTab('portal');
                 }}
@@ -693,14 +777,13 @@ export default function CustomersPage() {
                 }}
                 sidebarCollapsed={sidebarCollapsed}
                 onExpandSidebar={toggleSidebarCollapsed}
-                companies={companies}
+                companies={companiesForSidebar}
                 onSelectCompany={setSelectedCompanyId}
               />
 
-              {/* KPI Cards Grid Component */}
-              <CompanyKPI metrics={companyKpis} />
+              <CompanyKPI metrics={companyKpis} showReturns={hardwareReturnsEnabled} />
 
-              {/* Navigation Tabs */}
+              {/* 6 primary tabs — wrap, never clip */}
               <div className="border-b border-muted">
                 <Tabs
                   value={activeSubTab}
@@ -710,33 +793,47 @@ export default function CustomersPage() {
                   }}
                   className="w-full"
                 >
-                  <TabsList className="bg-transparent border-none p-0 h-auto flex gap-4 sm:gap-6 select-none w-full max-w-full overflow-x-auto flex-nowrap whitespace-nowrap no-scrollbar">
+                  <TabsList className="bg-transparent border-none p-0 h-auto flex flex-wrap gap-x-4 gap-y-1 select-none w-full max-w-full">
                     {[
                       { value: 'overview', label: t('nav.overview', 'Übersicht') },
-                      { value: 'contacts', label: t('companies.contacts', 'Kontakte'), count: employees.length },
-                      { value: 'tickets', label: t('nav.tickets', 'Tickets'), count: ticketHistory.length },
-                      { value: 'assets', label: t('companies.assetOverview', 'Asset-Übersicht'), count: companyKpis.assetsCount ?? 0 },
-                      { value: 'contracts', label: t('companies.supportContract', 'Support-Vertrag') },
-                      { value: 'vault', label: t('nav.vault', 'Tresor'), count: companyKpis.vaultEntriesCount ?? 0 },
+                      {
+                        value: 'portal',
+                        label: t('companies.portalTab', 'Kunden-Portal'),
+                        icon: Globe,
+                      },
+                      {
+                        value: 'tickets',
+                        label: t('nav.tickets', 'Tickets'),
+                        count: ticketHistory.length,
+                      },
                       ...(hardwareReturnsEnabled
                         ? [
                             {
                               value: 'returns',
                               label: t('companies.returnsTab', 'Rücklieferungen'),
+                              count: companyKpis.openReturnsCount ?? 0,
                               icon: Package,
                             },
                           ]
                         : []),
-                      { value: 'insights', label: t('companies.aiInsights', 'KI-Erkenntnisse'), icon: Sparkles },
-                      { value: 'activity', label: t('companies.activityTimeline', 'Aktivitätschronik') },
-                      { value: 'portal', label: t('companies.portalTab', 'Kunden-Portal & Branding'), icon: Globe },
+                      {
+                        value: 'assets-vault',
+                        label: t('companies.assetsAndVault', 'Assets & Tresor'),
+                        count:
+                          (companyKpis.assetsCount ?? 0) +
+                          (companyKpis.vaultEntriesCount ?? 0),
+                      },
+                      {
+                        value: 'activity',
+                        label: t('companies.activityTimeline', 'Verlauf'),
+                      },
                     ].map(tab => {
                       const Icon = tab.icon;
                       return (
                         <TabsTrigger
                           key={tab.value}
                           value={tab.value}
-                          className="px-1.5 py-2.5 text-xs font-bold bg-transparent border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary text-muted-foreground hover:text-foreground hover:border-muted-foreground/30 rounded-none transition-all flex items-center gap-1.5 cursor-pointer"
+                          className="px-1.5 py-2 text-xs font-bold bg-transparent border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary text-muted-foreground hover:text-foreground hover:border-muted-foreground/30 rounded-none transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
                         >
                           {Icon && <Icon className="w-3.5 h-3.5 text-indigo-500" />}
                           <span>{tab.label}</span>
@@ -758,8 +855,18 @@ export default function CustomersPage() {
                   company={hydratedCompany}
                   ticketHistory={ticketHistory}
                   vaultItems={companyVaultItems}
-                  onTabChange={setActiveSubTab}
-                  onOpenVaultClick={() => setActiveSubTab('vault')}
+                  onTabChange={(tab) => {
+                    if (tab === 'vault' || tab === 'assets') {
+                      setActiveSubTab('assets-vault');
+                      return;
+                    }
+                    if (tab === 'contracts' || tab === 'contacts' || tab === 'insights') {
+                      setActiveSubTab('overview');
+                      return;
+                    }
+                    setActiveSubTab(tab);
+                  }}
+                  onOpenVaultClick={() => setActiveSubTab('assets-vault')}
                   onViewAllTicketsClick={() => setActiveSubTab('tickets')}
                 />
               ) : activeSubTab === 'portal' ? (
@@ -781,6 +888,43 @@ export default function CustomersPage() {
                     null
                   }
                 />
+              ) : activeSubTab === 'assets-vault' ? (
+                <div className="space-y-8">
+                  <CompanyOtherTabs
+                    activeSubTab="assets"
+                    company={hydratedCompany}
+                    employees={employees}
+                    contactSchema={contactSchema}
+                    ticketHistory={ticketHistory}
+                    onAddContactClick={() => setIsContactDialogOpen(true)}
+                    onSelectTicket={(ticketId) => navigate(`/tickets/${ticketId}`)}
+                    onVaultItemsChange={setCompanyVaultItems}
+                  />
+                  <CompanyOtherTabs
+                    activeSubTab="vault"
+                    company={hydratedCompany}
+                    employees={employees}
+                    contactSchema={contactSchema}
+                    ticketHistory={ticketHistory}
+                    onAddContactClick={() => setIsContactDialogOpen(true)}
+                    onSelectTicket={(ticketId) => navigate(`/tickets/${ticketId}`)}
+                    onVaultItemsChange={setCompanyVaultItems}
+                    onContactsChanged={() => {
+                      if (!selectedCompanyId) return;
+                      setOrgEnrichment((prev) => ({ ...prev }));
+                    }}
+                    onCompanyUpdated={(patch) => {
+                      if (!selectedCompanyId) return;
+                      setOrgEnrichment((prev) => ({
+                        ...prev,
+                        [selectedCompanyId]: {
+                          ...(prev[selectedCompanyId] || {}),
+                          ...patch,
+                        },
+                      }));
+                    }}
+                  />
+                </div>
               ) : (
                 <CompanyOtherTabs 
                   activeSubTab={activeSubTab}
@@ -792,7 +936,6 @@ export default function CustomersPage() {
                   onSelectTicket={(ticketId) => navigate(`/tickets/${ticketId}`)}
                   onVaultItemsChange={setCompanyVaultItems}
                   onContactsChanged={() => {
-                    // Snapshot subscription refreshes employees; bump enrichment so badge re-renders.
                     if (!selectedCompanyId) return;
                     setOrgEnrichment((prev) => ({ ...prev }));
                   }}

@@ -20,6 +20,10 @@ import {
   type PortalEmailChannel,
   type PortalEmailOrgSettings,
 } from '../../../services/clientPortalApi';
+import {
+  resolvePortalSettingsPaths,
+  type PortalSettingsMode,
+} from '../../../lib/client-portal/portal-settings-api-base';
 import { OrgPortalBrandingCard } from '../../client-portal/OrgPortalBrandingCard';
 import { EmailSignatureEditor } from '../../email/EmailSignatureEditor';
 import { DEFAULT_HUBCOM_SIGNATURE_HTML } from '../../../lib/email-signature';
@@ -27,8 +31,27 @@ import { useClientPortalSession } from '../../../hooks/useClientPortalSession';
 
 const MASK = '••••••••';
 
-export default function ClientEmailIntegrationPage() {
+export type ClientEmailIntegrationPageProps = {
+  mode?: PortalSettingsMode;
+  organizationId?: string | null;
+  embedded?: boolean;
+  className?: string;
+};
+
+export default function ClientEmailIntegrationPage({
+  mode = 'portal',
+  organizationId = null,
+  embedded = false,
+  className,
+}: ClientEmailIntegrationPageProps = {}) {
   const { session } = useClientPortalSession();
+  const paths = (() => {
+    try {
+      return resolvePortalSettingsPaths(mode, organizationId);
+    } catch {
+      return null;
+    }
+  })();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -73,9 +96,19 @@ export default function ClientEmailIntegrationPage() {
   } | null>(null);
 
   const load = useCallback(async () => {
+    if (!paths) return;
     setLoading(true);
     try {
-      const data = await clientPortalApi.getEmailChannel();
+      const data =
+        mode === 'portal'
+          ? await clientPortalApi.getEmailChannel()
+          : await (async () => {
+              const res = await axios.get(paths.emailGet, { withCredentials: true });
+              return {
+                channel: res.data?.channel || null,
+                organization: res.data?.organization || null,
+              };
+            })();
       const ch = data.channel;
       setChannelMeta(ch);
       setSupportEmail(ch?.mailbox || ch?.email || '');
@@ -116,8 +149,10 @@ export default function ClientEmailIntegrationPage() {
         });
       }
       try {
-        const brandRes = await axios.get('/api/portal/organization', { withCredentials: true });
-        const o = brandRes.data?.organization;
+        const brandUrl =
+          mode === 'portal' ? '/api/portal/organization' : paths.brandingGet;
+        const brandRes = await axios.get(brandUrl, { withCredentials: true });
+        const o = brandRes.data?.organization || brandRes.data?.branding;
         if (o) {
           setBranding({
             name: o.name || data.organization?.name || '',
@@ -139,7 +174,7 @@ export default function ClientEmailIntegrationPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [mode, paths]);
 
   useEffect(() => {
     void load();
@@ -176,10 +211,19 @@ export default function ClientEmailIntegrationPage() {
       if (secretDirty && clientSecret && clientSecret !== MASK) {
         payload.clientSecret = clientSecret;
       }
-      const channel = await clientPortalApi.saveEmailChannel(payload);
-      setChannelMeta(channel);
-      setHasClientSecret(Boolean(channel.hasClientSecret));
-      setClientSecret(channel.hasClientSecret ? MASK : '');
+      if (mode === 'portal') {
+        const channel = await clientPortalApi.saveEmailChannel(payload);
+        setChannelMeta(channel);
+        setHasClientSecret(Boolean(channel.hasClientSecret));
+        setClientSecret(channel.hasClientSecret ? MASK : '');
+      } else if (paths) {
+        const res = await axios.put(paths.emailPut, payload, { withCredentials: true });
+        const channel = res.data?.channel;
+        setChannelMeta(channel);
+        setHasClientSecret(Boolean(channel?.hasClientSecret));
+        setClientSecret(channel?.hasClientSecret ? MASK : '');
+        if (res.data?.organization) setOrg(res.data.organization);
+      }
       setSecretDirty(false);
       toast.success('E-Mail-Kanal gespeichert.');
     } catch (err: any) {
@@ -202,7 +246,18 @@ export default function ClientEmailIntegrationPage() {
       if (secretDirty && clientSecret && clientSecret !== MASK) {
         payload.clientSecret = clientSecret;
       }
-      const result = await clientPortalApi.testEmailChannel(payload);
+      const result =
+        mode === 'portal'
+          ? await clientPortalApi.testEmailChannel(payload)
+          : await (async () => {
+              const res = await axios.post(paths!.emailTest, payload, {
+                withCredentials: true,
+              });
+              return {
+                ok: Boolean(res.data?.ok ?? res.data?.success),
+                message: res.data?.message || res.data?.error || '',
+              };
+            })();
       setTestResult({ ok: result.ok, message: result.message });
       if (result.ok) toast.success('Verbindung erfolgreich.');
       else toast.error(result.message || 'Verbindungstest fehlgeschlagen.');
@@ -222,11 +277,25 @@ export default function ClientEmailIntegrationPage() {
   const handleSaveSso = async () => {
     setSavingSso(true);
     try {
-      const updated = await clientPortalApi.updateEmailSso({
-        m365TenantId: m365TenantId.trim() || null,
-        ssoEnabled,
-        ssoApprovalMode,
-      });
+      let updated: PortalEmailOrgSettings | null = null;
+      if (mode === 'portal') {
+        updated = await clientPortalApi.updateEmailSso({
+          m365TenantId: m365TenantId.trim() || null,
+          ssoEnabled,
+          ssoApprovalMode,
+        });
+      } else if (paths) {
+        const res = await axios.put(
+          paths.emailPut,
+          {
+            m365TenantId: m365TenantId.trim() || null,
+            ssoEnabled,
+            ssoApprovalMode,
+          },
+          { withCredentials: true },
+        );
+        updated = res.data?.organization || null;
+      }
       setOrg(updated);
       setM365TenantId(updated?.m365TenantId || '');
       setSsoEnabled(Boolean(updated?.ssoEnabled));
@@ -242,11 +311,25 @@ export default function ClientEmailIntegrationPage() {
   const handleSaveSecondLevel = async () => {
     setSavingSecondLevel(true);
     try {
-      const updated = await clientPortalApi.updateSecondLevelNotify({
-        second_level_notify_enabled: secondLevelEnabled,
-        second_level_support_emails: secondLevelEmails,
-        second_level_label: secondLevelLabel.trim() || '2nd-Level-Support',
-      });
+      let updated: PortalEmailOrgSettings | null = null;
+      if (mode === 'portal') {
+        updated = await clientPortalApi.updateSecondLevelNotify({
+          second_level_notify_enabled: secondLevelEnabled,
+          second_level_support_emails: secondLevelEmails,
+          second_level_label: secondLevelLabel.trim() || '2nd-Level-Support',
+        });
+      } else if (paths) {
+        const res = await axios.put(
+          paths.emailPut,
+          {
+            second_level_notify_enabled: secondLevelEnabled,
+            second_level_support_emails: secondLevelEmails,
+            second_level_label: secondLevelLabel.trim() || '2nd-Level-Support',
+          },
+          { withCredentials: true },
+        );
+        updated = res.data?.organization || null;
+      }
       const sl = updated?.secondLevelNotify || {
         second_level_notify_enabled: Boolean(updated?.second_level_notify_enabled),
         second_level_support_emails: updated?.second_level_support_emails || [],
@@ -275,22 +358,43 @@ export default function ClientEmailIntegrationPage() {
     setTestingSecondLevel(true);
     try {
       // Persist current draft first so the test uses the addresses on screen.
-      await clientPortalApi.updateSecondLevelNotify({
-        second_level_notify_enabled: secondLevelEnabled,
-        second_level_support_emails: secondLevelEmails,
-        second_level_label: secondLevelLabel.trim() || '2nd-Level-Support',
-      });
-      const result = await clientPortalApi.sendSecondLevelTestEmail({
-        to: secondLevelEmails,
-      });
-      if (result.ok) toast.success(result.message || 'Test-E-Mail gesendet.');
-      else toast.error(result.message || 'Test-E-Mail fehlgeschlagen.');
+      if (mode === 'portal') {
+        await clientPortalApi.updateSecondLevelNotify({
+          second_level_notify_enabled: secondLevelEnabled,
+          second_level_support_emails: secondLevelEmails,
+          second_level_label: secondLevelLabel.trim() || '2nd-Level-Support',
+        });
+        const result = await clientPortalApi.sendSecondLevelTestEmail({
+          to: secondLevelEmails,
+        });
+        if (result.ok) toast.success(result.message || 'Test-E-Mail gesendet.');
+        else toast.error(result.message || 'Test-E-Mail fehlgeschlagen.');
+      } else if (paths) {
+        await axios.put(
+          paths.emailPut,
+          {
+            second_level_notify_enabled: secondLevelEnabled,
+            second_level_support_emails: secondLevelEmails,
+            second_level_label: secondLevelLabel.trim() || '2nd-Level-Support',
+          },
+          { withCredentials: true },
+        );
+        toast.success('2nd-Level-Einstellungen gespeichert (Admin — Test-Mail über Portal).');
+      }
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Test-E-Mail fehlgeschlagen.');
     } finally {
       setTestingSecondLevel(false);
     }
   };
+
+  if (mode === 'admin' && !paths) {
+    return (
+      <div className="p-10 text-center text-sm text-slate-500">
+        Organisation nicht ausgewählt.
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -301,22 +405,28 @@ export default function ClientEmailIntegrationPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-6 lg:p-10 space-y-8">
-      <div>
-        <h1 className="text-2xl font-black tracking-tight">E-Mail & M365 Integration</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Verbinden Sie Ihr Microsoft-365-Postfach für eingehende Tickets und Send-As-Antworten
-          {org?.name ? ` (${org.name})` : ''}.
+    <div className={embedded ? `space-y-6 ${className || ''}` : `max-w-3xl mx-auto p-6 lg:p-10 space-y-8 ${className || ''}`}>
+      {!embedded ? (
+        <div>
+          <h1 className="text-2xl font-black tracking-tight">E-Mail & M365 Integration</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Verbinden Sie Ihr Microsoft-365-Postfach für eingehende Tickets und Send-As-Antworten
+            {org?.name ? ` (${org.name})` : ''}.
+          </p>
+        </div>
+      ) : (
+        <p className="text-sm text-slate-500 font-medium">
+          M365/SMTP-Anbindung, Entra-ID-Tenant, SSO-Freigabe und 2nd-Level-Support für diese Organisation.
         </p>
-      </div>
+      )}
 
-      {branding ? (
+      {!embedded && branding ? (
         <OrgPortalBrandingCard
           organizationName={branding.name || org?.name || 'Organisation'}
           logoUrl={branding.logo_url}
           portalTitle={branding.portal_title}
           onSave={async (payload) => {
-            const res = await axios.put('/api/portal/organization/branding', payload, {
+            const res = await axios.put((paths?.brandingPut || '/api/portal/organization/branding'), payload, {
               withCredentials: true,
             });
             const o = res.data?.organization;
