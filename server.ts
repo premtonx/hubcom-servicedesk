@@ -121,7 +121,22 @@ import {
   vaultRevealRateLimiter,
   webhookRateLimiter,
   sandboxRateLimiter,
+  aiRouteRateLimiter,
+  generalApiRateLimiter,
 } from "./src/middleware/rate-limiters.js";
+import { resolveExpressTrustProxy } from "./src/lib/security/client-ip.js";
+import {
+  applyProgressiveLoginLockout,
+  recordFailedLoginAttempt,
+  writeSecurityAuditLog,
+} from "./src/lib/security/security-store.js";
+import {
+  assertLoginNotBanned,
+  crossTenant403TrackerMiddleware,
+  csrfOriginMiddleware,
+  LOCKOUT_MESSAGE_DE,
+  securityBanAndHoneypotMiddleware,
+} from "./src/middleware/security-perimeter.js";
 
 const IS_PROD = process.env.NODE_ENV === "production";
 
@@ -277,28 +292,60 @@ async function startServer() {
   // Compose / Traefik / Dockerfile healthchecks use PORT=5000; honor the env.
   const PORT = Number.parseInt(String(process.env.PORT || "5000"), 10) || 5000;
 
+  // Only trust X-Forwarded-For / CF-Connecting-IP when TRUST_PROXY is set —
+  // otherwise bans/rate-limits would target the Docker/Nginx hop.
+  app.set("trust proxy", resolveExpressTrustProxy());
+
   app.use(requestLoggingMiddleware);
 
-  app.use(helmet({
-    contentSecurityPolicy: IS_PROD
-      ? {
-          useDefaults: true,
-          directives: {
-            // External bootstrap only — no unsafe-inline scripts (see public/storage-bootstrap.js).
-            // GeistVault derives master keys in-browser via hash-wasm (Argon2id → WebAssembly.compile).
-            scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
-            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-            imgSrc: ["'self'", "data:", "blob:", "https:"],
-            connectSrc: ["'self'", "https:", "wss:"],
-            fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-            objectSrc: ["'none'"],
-          },
-        }
-      : false,
-  }));
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          // External bootstrap only — no unsafe-inline scripts (see public/storage-bootstrap.js).
+          // GeistVault derives master keys in-browser via hash-wasm (Argon2id → WebAssembly.compile).
+          "script-src": ["'self'", "'wasm-unsafe-eval'"],
+          "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          "img-src": ["'self'", "data:", "blob:", "https:"],
+          "connect-src": ["'self'", "https:", "wss:"],
+          "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
+          "object-src": ["'none'"],
+          "base-uri": ["'self'"],
+          "frame-ancestors": ["'none'"],
+        },
+      },
+      strictTransportSecurity: IS_PROD
+        ? { maxAge: 31536000, includeSubDomains: true }
+        : false,
+      referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+      xContentTypeOptions: true,
+    }),
+  );
+  app.use((_req, res, next) => {
+    res.setHeader(
+      "Permissions-Policy",
+      "camera=(), microphone=(), geolocation=()",
+    );
+    next();
+  });
   app.use(cookieParser());
   // 5mb: SharePoint Returns / KB CSV import payloads (Ticketsystem_DPG*.csv).
   app.use(express.json({ limit: "5mb" }));
+
+  // Perimeter: active bans, honeypot traps, CSRF/origin, 403 strike tracking.
+  app.use(securityBanAndHoneypotMiddleware);
+  app.use(csrfOriginMiddleware);
+  app.use(crossTenant403TrackerMiddleware);
+  app.use("/api", generalApiRateLimiter);
+  // Extra AI sliding window for /api/*/ai-* (and /api/ai/*).
+  app.use((req, res, next) => {
+    const p = String(req.path || "");
+    if (p.startsWith("/api/ai") || /\/ai-/.test(p)) {
+      return aiRouteRateLimiter(req, res, next);
+    }
+    return next();
+  });
 
   // Health check
   app.get("/api/health", (req, res) => {
@@ -359,6 +406,11 @@ async function startServer() {
       return res.status(400).json({ error: "email and password are required" });
     }
     const cleanEmail = String(email).toLowerCase().trim();
+    const clientIp = String(req.clientIp || req.ip || "");
+    const banCheck = await assertLoginNotBanned({ ip: clientIp, email: cleanEmail });
+    if (banCheck.banned) {
+      return res.status(429).json({ error: banCheck.message || LOCKOUT_MESSAGE_DE, ban: true });
+    }
     if (cleanEmail === DEMO_LOGIN_EMAIL && !isDemoLoginEnabled()) {
       return res.status(401).json({ error: "Invalid credentials." });
     }
@@ -380,6 +432,26 @@ async function startServer() {
       if (!userDoc) {
         // Burn a verification cycle to dampen account-enumeration timing signals.
         await verifyPassword(password, matches?.[0]?.passwordHash || "");
+        await writeSecurityAuditLog({
+          event_type: "failed_login",
+          severity: "warning",
+          ip_address: clientIp,
+          path: "/api/auth/login",
+          method: "POST",
+          details: { email: cleanEmail },
+        });
+        const attempt = recordFailedLoginAttempt({ ip: clientIp, email: cleanEmail });
+        if (attempt.lockoutTriggered) {
+          for (const t of attempt.lockoutTargets) {
+            await applyProgressiveLoginLockout({
+              ban_type: t.ban_type,
+              target: t.target,
+              ip: clientIp,
+              path: "/api/auth/login",
+            });
+          }
+          return res.status(429).json({ error: LOCKOUT_MESSAGE_DE, ban: true });
+        }
         return res.status(401).json({ error: "Invalid credentials." });
       }
       if (userDoc.isDeactivated) {
@@ -906,6 +978,8 @@ async function startServer() {
   app.use("/api/admin", userAdminRoutes);
   const { default: staffUsersRoutes } = await import("./src/routes/staffUsersRoutes.js");
   app.use("/api/admin", staffUsersRoutes);
+  const { default: securityAdminRoutes } = await import("./src/routes/securityAdminRoutes.js");
+  app.use("/api/admin/security", securityAdminRoutes);
   const { default: microsoftAuthRoutes } = await import("./src/routes/microsoftAuthRoutes.js");
   app.use("/api/auth", microsoftAuthRoutes);
   app.use("/api/admin/organizations", organizationAdminRoutes);
@@ -945,7 +1019,7 @@ async function startServer() {
   );
   app.use("/api/portal", clientPortalTicketRoutes);
   app.use("/api/admin/import", importRoutes);
-  app.use("/api/ai", aiRoutes);
+  app.use("/api/ai", aiRouteRateLimiter, aiRoutes);
   app.use("/api/kb/articles", kbArticleRoutes);
   app.use("/api/kb/categories", kbCategoryRoutes);
   app.use("/api/kb/dashboard", kbDashboardRoutes);

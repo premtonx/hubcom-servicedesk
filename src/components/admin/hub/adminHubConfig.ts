@@ -103,6 +103,10 @@ export const ADMIN_HUB_SUBROUTES: Array<{ path: string; meta: AdminHubSubRouteMe
   { path: '/admin/insights', meta: { parentTab: 'ai-engine', label: 'Sovereign AI Insights' } },
   { path: '/admin/sovereignty', meta: { parentTab: 'governance', label: 'Sovereignty Center' } },
   { path: '/admin/pii', meta: { parentTab: 'governance', label: 'PII Shield' } },
+  {
+    path: '/admin/security',
+    meta: { parentTab: 'governance', label: 'Angriffsschutz & Sperrliste' },
+  },
   { path: '/admin/legal', meta: { parentTab: 'governance', label: 'Legal & Risk' } },
   { path: '/admin/audit', meta: { parentTab: 'governance', label: 'Reports & Auditing' } },
   { path: '/admin/schema', meta: { parentTab: 'governance', label: 'Company Schema' } },
@@ -316,6 +320,18 @@ export const ADMIN_HUB_CATEGORIES: AdminHubCategory[] = [
         bgColor: 'bg-emerald-50',
         borderColor: 'border-emerald-105',
         badge: 'Security',
+        module: 'legal',
+      },
+      {
+        title: 'Angriffsschutz & Sperrliste',
+        description:
+          'Aktive IP-/Konto-Sperren, Honeypot-Fallen und kritische Sicherheitsereignisse.',
+        icon: Lock,
+        path: '/admin/security',
+        color: 'text-rose-600',
+        bgColor: 'bg-rose-50',
+        borderColor: 'border-rose-105',
+        badge: 'Perimeter',
         module: 'legal',
       },
       {

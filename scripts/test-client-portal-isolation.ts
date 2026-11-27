@@ -172,6 +172,20 @@ import {
   normalizeHubcomMatrixRole,
 } from '../src/lib/staff-org-access.js';
 import {
+  evaluateCsrfOrigin,
+  isHoneypotPath,
+  LOCKOUT_MESSAGE_DE,
+  progressiveLockoutMs,
+  shouldTriggerCrossTenantBan,
+  shouldTriggerLoginLockout,
+} from '../src/lib/security/security-policy.js';
+import { createMemorySecurityEngine } from '../src/lib/security/security-store.js';
+import {
+  isTrustProxyEnabled,
+  resolveExpressTrustProxy,
+} from '../src/lib/security/client-ip.js';
+import { sessionCookieSecure } from '../src/lib/session-cookie.js';
+import {
   assertPortalSettingsPathsSafe,
   resolvePortalSettingsPaths,
 } from '../src/lib/client-portal/portal-settings-api-base.js';
@@ -8378,6 +8392,7 @@ async function main(): Promise<void> {
   testAdminMailIntegrationsWorkspaceIsolation();
   testStaffOrgPermissionMatrixIsolation();
   testStaffPermissionMatrixUiIsolation();
+  testSecurityPerimeterIsolation();
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
@@ -8648,6 +8663,181 @@ function testStaffOrgPermissionMatrixIsolation(): void {
       !portalPaths.brandingGet.includes('/api/db'),
     'CLIENT_* portal settings paths stay on /api/portal/* with zero /api/db',
   );
+}
+
+/** Part 1 — HTTP perimeter hardening + auto-ban + German security monitor. */
+function testSecurityPerimeterIsolation(): void {
+  console.log('\n[Security Perimeter] headers + autoban + Angriffsschutz UI');
+
+  const engine = createMemorySecurityEngine();
+  const testIp = '203.0.113.50';
+  const testEmail = 'attacker@example.com';
+
+  // 1) Five failed logins → lockout + ban + critical audit
+  for (let i = 0; i < 4; i++) {
+    const mid = engine.recordFailedLogin(testIp, testEmail, 1_000 + i);
+    assert(mid.lockouts.length === 0, `failed login ${i + 1}/5 does not lock yet`);
+  }
+  const fifth = engine.recordFailedLogin(testIp, testEmail, 1_000 + 4);
+  assert(fifth.lockouts.length >= 1, '5 failed logins trigger automatic lockout');
+  assert(
+    engine.bans.some((b) => b.reason === 'login_brute_force' && b.is_active),
+    'login lockout writes security_bans record',
+  );
+  assert(
+    engine.audits.some(
+      (a) => a.event_type === 'login_lockout' && a.severity === 'critical',
+    ),
+    'login lockout writes critical security_audit_logs record',
+  );
+  assert(shouldTriggerLoginLockout(5) === true, 'login lockout threshold is 5');
+  assert(progressiveLockoutMs(0) === 15 * 60 * 1000, '1st lockout = 15 min');
+  assert(progressiveLockoutMs(1) === 60 * 60 * 1000, '2nd lockout = 1 hour');
+  assert(progressiveLockoutMs(2) === 24 * 60 * 60 * 1000, '3rd+ lockout = 24 hours');
+  assert(
+    LOCKOUT_MESSAGE_DE.includes('fehlgeschlagene Anmeldeversuche'),
+    'German lockout message present',
+  );
+
+  // 2) Honeypot /.env → immediate IP ban; subsequent blocked until unban
+  assert(isHoneypotPath('/.env') === true, '/.env is honeypot');
+  assert(isHoneypotPath('/wp-login.php') === true, '/wp-login.php is honeypot');
+  assert(isHoneypotPath('/tickets') === false, 'normal paths are not honeypot');
+  const honeyIp = '198.51.100.9';
+  const honeyBan = engine.honeypot(honeyIp, '/.env');
+  assert(
+    honeyBan.reason === 'honeypot_probe' &&
+      engine.isBanned('ip', honeyIp) &&
+      engine.audits.some((a) => a.event_type === 'honeypot_probe'),
+    'hitting /.env immediately triggers IP ban + audit',
+  );
+  assert(engine.isBanned('ip', honeyIp) === true, 'subsequent requests from honeypot IP stay banned');
+  const lifted = engine.unban(honeyBan.id, 'admin-1');
+  assert(
+    lifted?.is_active === false && engine.isBanned('ip', honeyIp) === false,
+    'admin unban clears honeypot IP ban',
+  );
+
+  // 3) Ten cross-tenant 403 probes → lockout + critical alert
+  const probeIp = '203.0.113.77';
+  const probeUser = 'portal-user-dpg-1';
+  for (let i = 0; i < 9; i++) {
+    const mid = engine.record403(probeIp, probeUser, 2_000 + i);
+    assert(mid.lockouts.length === 0, `403 probe ${i + 1}/10 does not ban yet`);
+  }
+  const tenth = engine.record403(probeIp, probeUser, 2_000 + 9);
+  assert(tenth.lockouts.length >= 1, '10 cross-tenant 403 probes trigger ban');
+  assert(
+    engine.audits.some(
+      (a) => a.event_type === 'cross_tenant_probe_ban' && a.severity === 'critical',
+    ),
+    'cross-tenant probe logs critical alert',
+  );
+  assert(shouldTriggerCrossTenantBan(10) === true, 'cross-tenant threshold is 10');
+
+  // 4) Security headers + CSRF + trust proxy contracts in source
+  const serverSrc = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
+  const cookieSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/session-cookie.ts'),
+    'utf8',
+  );
+  const pgSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/postgres-backend.ts'),
+    'utf8',
+  );
+  const page = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/SecurityMonitorPage.tsx'),
+    'utf8',
+  );
+  const hubConfig = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/admin/hub/adminHubConfig.ts'),
+    'utf8',
+  );
+  const routesSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/securityAdminRoutes.ts'),
+    'utf8',
+  );
+  const apiSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/services/securityAdminApi.ts'),
+    'utf8',
+  );
+
+  assert(
+    serverSrc.includes('contentSecurityPolicy') &&
+      serverSrc.includes("object-src") &&
+      serverSrc.includes('base-uri') &&
+      serverSrc.includes('frame-ancestors') &&
+      serverSrc.includes('strict-origin-when-cross-origin') &&
+      serverSrc.includes('Permissions-Policy') &&
+      serverSrc.includes('camera=(), microphone=(), geolocation=()') &&
+      serverSrc.includes('xContentTypeOptions') &&
+      serverSrc.includes('securityBanAndHoneypotMiddleware') &&
+      serverSrc.includes('csrfOriginMiddleware') &&
+      serverSrc.includes('trust proxy'),
+    'Security headers (CSP, X-Content-Type-Options, Referrer-Policy) wired on responses',
+  );
+  assert(
+    cookieSrc.includes('httpOnly: true') &&
+      cookieSrc.includes("sameSite: 'lax'") &&
+      cookieSrc.includes('sessionCookieSecure'),
+    'session cookies enforce HttpOnly + SameSite=Lax + Secure when HTTPS/prod',
+  );
+  assert(
+    pgSrc.includes('CREATE TABLE IF NOT EXISTS security_audit_logs') &&
+      pgSrc.includes('CREATE TABLE IF NOT EXISTS security_bans') &&
+      pgSrc.includes("severity IN ('info', 'warning', 'critical')") &&
+      pgSrc.includes("ban_type IN ('ip', 'account')"),
+    'idempotent security_audit_logs + security_bans DDL present',
+  );
+  assert(
+    page.includes('Angriffsschutz & Sperrliste') &&
+      page.includes('Sperre aufheben') &&
+      page.includes('Fehlgeschlagene Logins') &&
+      page.includes('Honeypot-Angriffe') &&
+      page.includes('Unbefugte Mandanten-Zugriffe') &&
+      page.includes('Rollenänderungen') &&
+      page.includes('M365-SSO-Freigaben') &&
+      !page.includes("'/api/db'") &&
+      !apiSrc.includes("'/api/db'"),
+    'German Angriffsschutz monitor stays off /api/db',
+  );
+  assert(
+    hubConfig.includes('/admin/security') &&
+      hubConfig.includes('Angriffsschutz & Sperrliste') &&
+      routesSrc.includes('/overview') &&
+      routesSrc.includes('/audit-logs') &&
+      routesSrc.includes('/bans') &&
+      routesSrc.includes('/bans/:id/unban') &&
+      serverSrc.includes('securityAdminRoutes'),
+    'Admin security APIs + PII & Compliance section mounted for Hubcom core',
+  );
+  assert(
+    evaluateCsrfOrigin({
+      method: 'POST',
+      origin: 'https://evil.example',
+      host: 'app.hubcom.local',
+    }).ok === false,
+    'CSRF blocks mismatched Origin on state-changing requests',
+  );
+  assert(
+    evaluateCsrfOrigin({
+      method: 'POST',
+      origin: 'https://app.hubcom.local',
+      host: 'app.hubcom.local',
+    }).ok === true,
+    'CSRF allows same-origin state changes',
+  );
+
+  const prevTrust = process.env.TRUST_PROXY;
+  delete process.env.TRUST_PROXY;
+  assert(isTrustProxyEnabled() === false, 'trust proxy off by default');
+  assert(resolveExpressTrustProxy() === false, 'express trust proxy false by default');
+  process.env.TRUST_PROXY = '1';
+  assert(isTrustProxyEnabled() === true, 'TRUST_PROXY=1 enables trusted client IP');
+  if (prevTrust === undefined) delete process.env.TRUST_PROXY;
+  else process.env.TRUST_PROXY = prevTrust;
+
+  void sessionCookieSecure;
 }
 
 main().catch((err) => {
