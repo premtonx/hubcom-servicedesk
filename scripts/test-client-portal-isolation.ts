@@ -8152,6 +8152,38 @@ function testAdminCustomersPortalSettingsUiIsolation(): void {
     'shared portal pages accept mode/apiBase and stay off /api/db',
   );
   assert(
+    membersPage.includes('useMemo') &&
+      membersPage.includes('AbortController') &&
+      membersPage.includes('[mode, orgIdKey, membersBase]') &&
+      !membersPage.includes('}, [mode, paths]);') &&
+      !membersPage.includes('}, [load]);'),
+    'ClientMembersPage stabilizes paths + fetch deps (no infinite load loop)',
+  );
+  assert(
+    emailPage.includes('useMemo') &&
+      emailPage.includes('AbortController') &&
+      emailPage.includes('[mode, orgIdKey, emailGet]') &&
+      !emailPage.includes('}, [mode, paths]);'),
+    'ClientEmailIntegrationPage stabilizes paths + fetch deps',
+  );
+  assert(
+    brandingPage.includes('AbortController') &&
+      brandingPage.includes('[mode, orgIdKey, brandingGet]'),
+    'ClientBrandingPage uses primitive-gated AbortController fetch',
+  );
+
+  const portalSettingsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/routes/organizationAdminPortalSettingsRoutes.ts'),
+    'utf8',
+  );
+  assert(
+    portalSettingsSrc.includes("router.get('/:id/portal-members'") &&
+      portalSettingsSrc.includes('pendingApprovals') &&
+      portalSettingsSrc.includes('invites') &&
+      portalSettingsSrc.includes("requireRole(['SYSTEM_ADMIN'])"),
+    'GET portal-members returns members/pendingApprovals/invites under SYSTEM_ADMIN',
+  );
+  assert(
     customersPage.includes("value: 'portal'") &&
       customersPage.includes("value: 'assets-vault'") &&
       customersPage.includes('flex-wrap') &&

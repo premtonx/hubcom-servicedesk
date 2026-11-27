@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   CheckCircle2,
@@ -45,13 +45,17 @@ export default function ClientEmailIntegrationPage({
   className,
 }: ClientEmailIntegrationPageProps = {}) {
   const { session } = useClientPortalSession();
-  const paths = (() => {
+  const orgIdKey = String(organizationId || '').trim();
+  const paths = useMemo(() => {
     try {
       return resolvePortalSettingsPaths(mode, organizationId);
     } catch {
       return null;
     }
-  })();
+  }, [mode, orgIdKey]);
+  const emailGet = paths?.emailGet ?? '';
+  const brandingGet = paths?.brandingGet ?? '';
+  const fetchGenRef = useRef(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -95,90 +99,129 @@ export default function ClientEmailIntegrationPage({
     message: string;
   } | null>(null);
 
-  const load = useCallback(async () => {
-    if (!paths) return;
-    setLoading(true);
-    try {
-      const data =
-        mode === 'portal'
-          ? await clientPortalApi.getEmailChannel()
-          : await (async () => {
-              const res = await axios.get(paths.emailGet, { withCredentials: true });
-              return {
-                channel: res.data?.channel || null,
-                organization: res.data?.organization || null,
-              };
-            })();
-      const ch = data.channel;
-      setChannelMeta(ch);
-      setSupportEmail(ch?.mailbox || ch?.email || '');
-      setTenantId(ch?.tenantId || '');
-      setClientId(ch?.clientId || '');
-      setHasClientSecret(Boolean(ch?.hasClientSecret));
-      setClientSecret(ch?.hasClientSecret ? MASK : '');
-      setSecretDirty(false);
-      setInboundEnabled(ch?.inboundEnabled !== false);
-      setSendAsEnabled(Boolean(ch?.sendAsEnabled));
-      setOrg(data.organization);
-      setM365TenantId(data.organization?.m365TenantId || '');
-      setSsoEnabled(Boolean(data.organization?.ssoEnabled));
-      setSsoApprovalMode(data.organization?.ssoApprovalMode || 'admin_approval');
-      const sl =
-        data.organization?.secondLevelNotify ||
-        ({
-          second_level_notify_enabled: Boolean(
-            data.organization?.second_level_notify_enabled,
-          ),
-          second_level_support_emails: data.organization?.second_level_support_emails || [],
-          second_level_label:
-            data.organization?.second_level_label || '2nd-Level-Support',
-        } as const);
-      setSecondLevelEnabled(Boolean(sl.second_level_notify_enabled));
-      setSecondLevelEmails(
-        Array.isArray(sl.second_level_support_emails)
-          ? sl.second_level_support_emails.join(', ')
-          : '',
-      );
-      setSecondLevelLabel(sl.second_level_label || '2nd-Level-Support');
-      if (ch) {
-        setSignature({
-          signature_enabled: ch.signature_enabled !== false,
-          signature_html: ch.signature_html || DEFAULT_HUBCOM_SIGNATURE_HTML,
-          signature_logo_data: ch.signature_logo_data || null,
-          signature_logo_mime: ch.signature_logo_mime || null,
-        });
-      }
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!emailGet) return;
+      const gen = ++fetchGenRef.current;
+      setLoading(true);
       try {
-        const brandUrl =
-          mode === 'portal' ? '/api/portal/organization' : paths.brandingGet;
-        const brandRes = await axios.get(brandUrl, { withCredentials: true });
-        const o = brandRes.data?.organization || brandRes.data?.branding;
-        if (o) {
-          setBranding({
-            name: o.name || data.organization?.name || '',
-            logo_url: o.logo_url || null,
-            portal_title: o.portal_title || null,
+        const data =
+          mode === 'portal'
+            ? await clientPortalApi.getEmailChannel()
+            : await (async () => {
+                const res = await axios.get(emailGet, {
+                  withCredentials: true,
+                  signal,
+                });
+                return {
+                  channel: res.data?.channel || null,
+                  organization: res.data?.organization || null,
+                };
+              })();
+        if (signal?.aborted || gen !== fetchGenRef.current) return;
+        const ch = data.channel;
+        setChannelMeta(ch);
+        setSupportEmail(ch?.mailbox || ch?.email || '');
+        setTenantId(ch?.tenantId || '');
+        setClientId(ch?.clientId || '');
+        setHasClientSecret(Boolean(ch?.hasClientSecret));
+        setClientSecret(ch?.hasClientSecret ? MASK : '');
+        setSecretDirty(false);
+        setInboundEnabled(ch?.inboundEnabled !== false);
+        setSendAsEnabled(Boolean(ch?.sendAsEnabled));
+        setOrg(data.organization);
+        setM365TenantId(data.organization?.m365TenantId || '');
+        setSsoEnabled(Boolean(data.organization?.ssoEnabled));
+        setSsoApprovalMode(data.organization?.ssoApprovalMode || 'admin_approval');
+        const sl =
+          data.organization?.secondLevelNotify ||
+          ({
+            second_level_notify_enabled: Boolean(
+              data.organization?.second_level_notify_enabled,
+            ),
+            second_level_support_emails: data.organization?.second_level_support_emails || [],
+            second_level_label:
+              data.organization?.second_level_label || '2nd-Level-Support',
+          } as const);
+        setSecondLevelEnabled(Boolean(sl.second_level_notify_enabled));
+        setSecondLevelEmails(
+          Array.isArray(sl.second_level_support_emails)
+            ? sl.second_level_support_emails.join(', ')
+            : '',
+        );
+        setSecondLevelLabel(sl.second_level_label || '2nd-Level-Support');
+        if (ch) {
+          setSignature({
+            signature_enabled: ch.signature_enabled !== false,
+            signature_html: ch.signature_html || DEFAULT_HUBCOM_SIGNATURE_HTML,
+            signature_logo_data: ch.signature_logo_data || null,
+            signature_logo_mime: ch.signature_logo_mime || null,
           });
         }
-      } catch {
-        /* branding optional on this page */
+        try {
+          const brandUrl = mode === 'portal' ? '/api/portal/organization' : brandingGet;
+          if (brandUrl) {
+            const brandRes = await axios.get(brandUrl, {
+              withCredentials: true,
+              signal,
+            });
+            if (signal?.aborted || gen !== fetchGenRef.current) return;
+            const o = brandRes.data?.organization || brandRes.data?.branding;
+            if (o) {
+              setBranding({
+                name: o.name || data.organization?.name || '',
+                logo_url: o.logo_url || null,
+                portal_title: o.portal_title || null,
+              });
+            }
+          }
+        } catch (brandErr: any) {
+          if (
+            signal?.aborted ||
+            brandErr?.code === 'ERR_CANCELED' ||
+            brandErr?.name === 'CanceledError'
+          ) {
+            return;
+          }
+          /* branding optional on this page */
+        }
+        if (ch?.lastTestOk != null) {
+          setTestResult({
+            ok: Boolean(ch.lastTestOk),
+            message: ch.lastError || (ch.lastTestOk ? 'Zuletzt erfolgreich getestet.' : ''),
+          });
+        }
+      } catch (err: any) {
+        if (
+          signal?.aborted ||
+          gen !== fetchGenRef.current ||
+          err?.code === 'ERR_CANCELED' ||
+          err?.name === 'CanceledError' ||
+          axios.isCancel?.(err)
+        ) {
+          return;
+        }
+        toast.error(err?.response?.data?.error || 'E-Mail-Kanal konnte nicht geladen werden.');
+      } finally {
+        if (gen === fetchGenRef.current && !signal?.aborted) setLoading(false);
       }
-      if (ch?.lastTestOk != null) {
-        setTestResult({
-          ok: Boolean(ch.lastTestOk),
-          message: ch.lastError || (ch.lastTestOk ? 'Zuletzt erfolgreich getestet.' : ''),
-        });
-      }
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'E-Mail-Kanal konnte nicht geladen werden.');
-    } finally {
-      setLoading(false);
-    }
-  }, [mode, paths]);
+    },
+    [mode, emailGet, brandingGet],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!emailGet) {
+      setLoading(false);
+      return;
+    }
+    const ac = new AbortController();
+    void load(ac.signal);
+    return () => {
+      ac.abort();
+      fetchGenRef.current += 1;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional primitive gate
+  }, [mode, orgIdKey, emailGet]);
 
   const handleSave = async () => {
     if (!supportEmail.trim() || !supportEmail.includes('@')) {
