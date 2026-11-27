@@ -10085,6 +10085,25 @@ function testTenantRlsSourceContracts(): void {
       ticketsPageSidebar.includes('ticketsScopeQuery'),
     'tickets sidebar collapse preference + German view labels + filter persist into detail',
   );
+
+  const workspaceModeSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/tickets/ticket-workspace-mode.ts'),
+    'utf8',
+  );
+  const railSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/tickets/TicketsDetailRail.tsx'),
+    'utf8',
+  );
+  assert(
+    workspaceModeSrc.includes("'classic' | 'outlook'") &&
+      ticketsPageSidebar.includes('isClassicMode') &&
+      ticketsPageSidebar.includes('isOutlookMode') &&
+      ticketsPageSidebar.includes('TicketsWorkspaceModeToggle') &&
+      railSrc.includes('flex-wrap gap-1.5') &&
+      railSrc.includes('Alle Unternehmen') &&
+      railSrc.includes('Tickets durchsuchen'),
+    'ticket workspace mode classic|outlook mutual exclusion + Outlook rail filters',
+  );
 }
 
 /**

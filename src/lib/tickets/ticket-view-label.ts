@@ -73,6 +73,16 @@ export function resolveTicketViewDisplayLabel(opts: TicketViewLabelOptions): str
   return fallback;
 }
 
+/** Canonical Ansicht options for the Outlook rail (German labels). */
+export const OUTLOOK_ANSICHT_OPTIONS: Array<{ id: string; fallback: string }> = [
+  { id: 'team_all_open', fallback: 'Alle Tickets' },
+  { id: 'status_open', fallback: 'Offen' },
+  { id: 'assigned_me', fallback: 'Mir zugewiesen' },
+  { id: 'unassigned', fallback: 'Nicht zugewiesen' },
+  { id: 'sla_risk', fallback: 'SLA-Risiko' },
+  { id: 'escalations', fallback: 'Eskalationen' },
+];
+
 /** Build the list-scope query string to carry into /tickets/:id and back. */
 export function buildTicketsScopeQuery(params: {
   organizationId?: string | null;

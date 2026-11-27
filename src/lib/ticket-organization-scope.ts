@@ -4,6 +4,9 @@
  */
 
 import type { Ticket } from '../types';
+import { UNASSIGNED_ORG_FILTER_ID } from './tickets/ticket-workspace-mode';
+
+export { UNASSIGNED_ORG_FILTER_ID };
 
 export function ticketOrganizationId(ticket: Pick<Ticket, 'organizationId'> & {
   organization_id?: string | null;
@@ -21,6 +24,9 @@ export function ticketBelongsToOrganization(
 ): boolean {
   const oid = String(organizationId || '').trim();
   if (!oid) return true;
+  if (oid === UNASSIGNED_ORG_FILTER_ID) {
+    return !ticketOrganizationId(ticket);
+  }
   return ticketOrganizationId(ticket) === oid;
 }
 

@@ -152,9 +152,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   buildTicketsScopeQuery,
+  OUTLOOK_ANSICHT_OPTIONS,
   resolveTicketViewDisplayLabel,
 } from '../src/lib/tickets/ticket-view-label.js';
 import { htmlToAuditPlainText } from '../src/lib/email-html-prepare.js';
+import {
+  parseTicketWorkspaceMode,
+  UNASSIGNED_ORG_FILTER_ID,
+} from '../src/lib/tickets/ticket-workspace-mode.js';
+import {
+  filterTicketsByOrganization,
+  ticketBelongsToOrganization,
+} from '../src/lib/ticket-organization-scope.js';
 import {
   countOpenTicketsByOrganization,
   mergeOrganizationsWithPortalCounts,
@@ -2785,6 +2794,7 @@ async function main(): Promise<void> {
   testSecurityPerimeterLifecycle();
   testOutboundReplyThreadToastLifecycle();
   testTicketsSidebarFilterPersistLifecycle();
+  testTicketsWorkspaceModeOutlookLifecycle();
 
   console.log('\n' + '='.repeat(50));
   console.log(`Results: ${passed} passed, ${failed} failed`);
@@ -2792,6 +2802,67 @@ async function main(): Promise<void> {
   if (failed > 0) {
     process.exit(1);
   }
+}
+
+function testTicketsWorkspaceModeOutlookLifecycle(): void {
+  console.log('\n[Tickets] workspace mode classic|outlook + rail filters lifecycle');
+
+  assert(parseTicketWorkspaceMode('outlook') === 'outlook', 'parse outlook mode');
+  assert(parseTicketWorkspaceMode('classic') === 'classic', 'parse classic mode');
+  assert(parseTicketWorkspaceMode('weird') === 'classic', 'unknown mode defaults classic');
+  assert(
+    ticketBelongsToOrganization({ organizationId: null } as any, UNASSIGNED_ORG_FILTER_ID) &&
+      !ticketBelongsToOrganization(
+        { organizationId: 'org-dpg' } as any,
+        UNASSIGNED_ORG_FILTER_ID,
+      ),
+    'Privat / Ohne Unternehmen filter matches null-org tickets only',
+  );
+  assert(
+    filterTicketsByOrganization(
+      [
+        { id: '1', organizationId: null } as any,
+        { id: '2', organizationId: 'org-dpg' } as any,
+      ],
+      UNASSIGNED_ORG_FILTER_ID,
+    ).map((t: any) => t.id).join(',') === '1',
+    'filterTicketsByOrganization supports __unassigned__',
+  );
+  assert(
+    OUTLOOK_ANSICHT_OPTIONS.some((o) => o.id === 'team_all_open') &&
+      OUTLOOK_ANSICHT_OPTIONS.every((o) => !o.id.includes(' ') && o.fallback && !o.fallback.includes('_')),
+    'Outlook Ansicht options use German fallbacks, not raw keys',
+  );
+
+  const root = process.cwd();
+  const ticketsPage = fs.readFileSync(path.join(root, 'src/components/pages/TicketsPage.tsx'), 'utf8');
+  const rail = fs.readFileSync(
+    path.join(root, 'src/components/tickets/TicketsDetailRail.tsx'),
+    'utf8',
+  );
+  const toggle = fs.readFileSync(
+    path.join(root, 'src/components/tickets/TicketsWorkspaceModeToggle.tsx'),
+    'utf8',
+  );
+  assert(
+    ticketsPage.includes('isClassicMode') &&
+      ticketsPage.includes('isOutlookMode') &&
+      ticketsPage.includes('TicketsWorkspaceModeToggle') &&
+      ticketsPage.includes('{isClassicMode ? (') &&
+      ticketsPage.includes('{isOutlookMode ? (') &&
+      toggle.includes('Klassisch') &&
+      toggle.includes('Outlook'),
+    'classic hides rail / outlook hides KI sidebar; toggle wired',
+  );
+  assert(
+    rail.includes('Tickets durchsuchen') &&
+      rail.includes('Alle Unternehmen') &&
+      rail.includes('Privat / Ohne Unternehmen') &&
+      rail.includes('flex-wrap gap-1.5') &&
+      rail.includes('Dringend') &&
+      rail.includes('htmlToAuditPlainText'),
+    'Outlook rail: search, Unternehmen, wrap chips, Dringend, entity decode',
+  );
 }
 
 function testTicketsSidebarFilterPersistLifecycle(): void {
@@ -2845,9 +2916,8 @@ function testTicketsSidebarFilterPersistLifecycle(): void {
   assert(
     ticketsPage.includes('navigateToTicketDetail') &&
       ticketsPage.includes('ticketsScopeQuery') &&
-      ticketsPage.includes('activeViewLabel') &&
       !ticketsPage.includes('String(activeView)'),
-    'detail navigation preserves scope query; rail uses German activeViewLabel',
+    'detail navigation preserves scope query',
   );
   assert(
     rail.includes('htmlToAuditPlainText') &&

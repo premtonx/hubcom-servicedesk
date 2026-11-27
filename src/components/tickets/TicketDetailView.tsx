@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, SetStateAction } from 'react';
+import { useEffect, useState, type Dispatch, SetStateAction, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
   BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Forward, GitMerge, MessageSquare, Plus,
@@ -139,6 +139,8 @@ export interface TicketDetailViewProps {
   organizationNameById?: Record<string, string>;
   /** Scroll/highlight target after a successful public reply. */
   highlightMessageId?: string | null;
+  /** Klassisch | Outlook toggle (staff detail — especially when rail is hidden). */
+  workspaceModeSlot?: ReactNode;
   organizationLogoById?: Record<string, string | null>;
 }
 
@@ -210,6 +212,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
     organizationNameById = {},
     organizationLogoById = {},
     highlightMessageId = null,
+    workspaceModeSlot = null,
   } = props;
 
   const useInjectedTaxonomy = Boolean(statusConfigsProp && priorityConfigsProp) || portalMode;
@@ -384,6 +387,7 @@ export function TicketDetailView(props: TicketDetailViewProps) {
                           </span>
                         </nav>
                         <div className="flex items-center gap-2 flex-shrink-0 h-8">
+                          {workspaceModeSlot}
                           <div className="relative">
                             <button
                               type="button"

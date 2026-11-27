@@ -66,10 +66,7 @@ import {
   resolveTicketsListDeepLink,
   TICKETS_DEEP_LINK_VIEWS,
 } from '../../lib/dashboard-ticket-nav';
-import {
-  buildTicketsScopeQuery,
-  resolveTicketViewDisplayLabel,
-} from '../../lib/tickets/ticket-view-label';
+import { buildTicketsScopeQuery } from '../../lib/tickets/ticket-view-label';
 import {
   customViewId,
   useTicketsSidebarPreferences,
@@ -91,6 +88,7 @@ import { TicketDetailContextPane } from '../tickets/TicketDetailContextPane';
 import { TicketDetailView } from '../tickets/TicketDetailView';
 import { TicketDetailWorkbench } from '../tickets/TicketDetailWorkbench';
 import { TicketsDetailRail } from '../tickets/TicketsDetailRail';
+import { TicketsWorkspaceModeToggle } from '../tickets/TicketsWorkspaceModeToggle';
 import { useStaffTicketDetailAdapter } from '../../hooks/useStaffTicketDetailAdapter';
 import { STAFF_TICKET_DETAIL_CAPABILITIES } from '../../lib/tickets/ticket-detail-workbench-adapter';
 import { TicketDialogs } from '../tickets/TicketDialogs';
@@ -101,6 +99,12 @@ import { isReadonlyTerminalStatus } from '../../lib/ticket-status';
 import { ticketsShareCustomer } from '../../lib/ticketMerge';
 import { isClientPortalRole, isHubcomStaffRole } from '../../lib/client-portal/roles';
 import { buildAssigneePayload, isTicketAssignedToUser } from '../../lib/ticketAssignee';
+import {
+  readTicketWorkspaceMode,
+  writeTicketWorkspaceMode,
+  type TicketWorkspaceMode,
+  UNASSIGNED_ORG_FILTER_ID,
+} from '../../lib/tickets/ticket-workspace-mode';
 
 /** Sidebar views that already scope to the signed-in agent — Kanban Gelöst extras must respect that. */
 const KANBAN_MINE_VIEWS = new Set([
@@ -233,6 +237,14 @@ export default function TicketsPage() {
   const [pendingResolveIncludeRag, setPendingResolveIncludeRag] = useState(true);
   const [layoutMode, setLayoutMode] = useState<TicketsLayoutMode>('list');
   const [listSort, setListSort] = useState<'newest' | 'oldest' | 'priority'>('newest');
+  const [workspaceMode, setWorkspaceMode] = useState<TicketWorkspaceMode>(() =>
+    readTicketWorkspaceMode(),
+  );
+
+  const handleWorkspaceModeChange = useCallback((mode: TicketWorkspaceMode) => {
+    setWorkspaceMode(mode);
+    writeTicketWorkspaceMode(mode);
+  }, []);
 
   const [isManageViewsOpen, setIsManageViewsOpen] = useState(false);
 
@@ -1100,16 +1112,8 @@ export default function TicketsPage() {
     ],
   );
 
-  const activeViewLabel = useMemo(() => {
-    const orgName = selectedOrganizationId
-      ? organizationNameById[selectedOrganizationId] || null
-      : null;
-    return resolveTicketViewDisplayLabel({
-      viewId: activeView,
-      organizationName: orgName,
-      t,
-    });
-  }, [activeView, selectedOrganizationId, organizationNameById, t]);
+  const isOutlookMode = workspaceMode === 'outlook';
+  const isClassicMode = workspaceMode === 'classic';
 
   const navigateToTicketDetail = useCallback(
     (id: string) => {
@@ -1123,6 +1127,47 @@ export default function TicketsPage() {
     const qs = ticketsScopeQuery;
     navigate(qs ? `/tickets?${qs}` : '/tickets');
   }, [navigate, ticketsScopeQuery]);
+
+  /** Outlook rail: change Ansicht while staying on the open ticket when possible. */
+  const handleAnsichtFromRail = useCallback(
+    (viewId: string) => {
+      setActiveView(viewId);
+      const next = new URLSearchParams(searchParams);
+      next.delete('status');
+      next.set('view', viewId);
+      if (selectedOrganizationId) next.set('organizationId', selectedOrganizationId);
+      else next.delete('organizationId');
+      const qs = next.toString();
+      if (selectedTicketId) {
+        navigate(qs ? `/tickets/${selectedTicketId}?${qs}` : `/tickets/${selectedTicketId}`, {
+          replace: true,
+        });
+      } else {
+        navigate(qs ? `/tickets?${qs}` : '/tickets');
+      }
+    },
+    [navigate, searchParams, selectedOrganizationId, selectedTicketId],
+  );
+
+  /** Outlook rail: Unternehmen filter (incl. Privat / Ohne Unternehmen). */
+  const handleOrganizationFromRail = useCallback(
+    (organizationId: string | null) => {
+      const next = new URLSearchParams(searchParams);
+      next.delete('panel');
+      if (organizationId) next.set('organizationId', organizationId);
+      else next.delete('organizationId');
+      if (!next.get('view')) next.set('view', activeView || 'team_all_open');
+      const qs = next.toString();
+      if (selectedTicketId) {
+        navigate(qs ? `/tickets/${selectedTicketId}?${qs}` : `/tickets/${selectedTicketId}`, {
+          replace: true,
+        });
+      } else {
+        navigate(qs ? `/tickets?${qs}` : '/tickets');
+      }
+    },
+    [activeView, navigate, searchParams, selectedTicketId],
+  );
 
   const getFilteredTickets = () => {
     return layoutMode === 'kanban' ? kanbanBoardTickets : finalRenderedTickets;
@@ -1142,6 +1187,23 @@ export default function TicketsPage() {
   );
   const canBulkMerge =
     selectedTicketsForMerge.length >= 2 && ticketsShareCustomer(selectedTicketsForMerge);
+
+  // Outlook mode: /tickets without a selection opens the 3-pane split on the first match.
+  const firstOutlookTicketId = tickets[0]?.id || null;
+  useEffect(() => {
+    if (!isOutlookMode) return;
+    if (selectedTicketId || isCreateTicketOpen || showReturnsWorkbench) return;
+    if (!firstOutlookTicketId) return;
+    setSelectedTicketId(firstOutlookTicketId);
+    navigateToTicketDetail(firstOutlookTicketId);
+  }, [
+    isOutlookMode,
+    selectedTicketId,
+    isCreateTicketOpen,
+    showReturnsWorkbench,
+    firstOutlookTicketId,
+    navigateToTicketDetail,
+  ]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -2130,6 +2192,8 @@ export default function TicketsPage() {
 
   return (
     <div className="flex flex-1 min-h-0 min-w-0 w-full overflow-hidden bg-slate-50">
+      {/* Klassisch only — Outlook mode never shows KI-SUPPORT-OPERATIONEN (no duplicate Alle Tickets). */}
+      {isClassicMode ? (
       <TicketsLeftSidebar
         effectiveCollapsed={effectiveCollapsed}
         collapsedGroups={collapsedGroups}
@@ -2148,12 +2212,15 @@ export default function TicketsPage() {
         selectedTicketId={selectedTicketId}
         isMobileSidebarOpen={isMobileSidebarOpen}
         kundenOrgs={isStaffUser ? kundenOrgsWithCounts : undefined}
-        selectedOrganizationId={selectedOrganizationId}
+        selectedOrganizationId={
+          selectedOrganizationId === UNASSIGNED_ORG_FILTER_ID ? null : selectedOrganizationId
+        }
         onSelectOrganization={isStaffUser ? setSelectedOrganizationId : undefined}
         kundenPanel={isStaffUser ? kundenPanel : null}
         onSelectOrganizationTickets={isStaffUser ? selectOrganizationTickets : undefined}
         onSelectOrganizationReturns={isStaffUser ? selectOrganizationReturns : undefined}
       />
+      ) : null}
 
       <TicketsSidebarManageSheet
         open={isManageViewsOpen}
@@ -2226,6 +2293,7 @@ export default function TicketsPage() {
               capabilities={STAFF_TICKET_DETAIL_CAPABILITIES}
               staffDetailSlot={
                 <div className="flex-1 min-w-0 min-h-0 h-full flex flex-row overflow-hidden">
+                  {isOutlookMode ? (
                   <TicketsDetailRail
                     tickets={tickets}
                     selectedTicketId={selectedTicket.id}
@@ -2245,36 +2313,20 @@ export default function TicketsPage() {
                         })
                         .catch(() => {});
                     }}
-                    onToggleQueueMenu={togglePipelineSidebar}
                     ticketQueueStats={ticketQueueStats}
-                    activeViewLabel={activeViewLabel}
-                    viewOptions={[
-                      {
-                        id: 'all',
-                        label: t('tickets.allTickets', 'Alle Tickets'),
-                        active: !selectedOrganizationId && (activeView === 'team_all_open' || activeView === 'all'),
-                      },
-                      ...(isStaffUser
-                        ? kundenOrgs.map((org) => ({
-                            id: org.id,
-                            label: org.name,
-                            active: selectedOrganizationId === org.id,
-                          }))
-                        : []),
-                    ]}
-                    onSelectViewOption={(optionId) => {
-                      if (optionId === 'all') {
-                        // Clear Kunden scope and return to Alle Tickets list (preserve collapse pref).
-                        setActiveView('team_all_open');
-                        setSelectedTicketId(null);
-                        navigate('/tickets?view=team_all_open');
-                        return;
-                      }
-                      selectOrganizationTickets(optionId);
-                    }}
+                    activeViewId={activeView}
+                    onSelectAnsicht={handleAnsichtFromRail}
+                    selectedOrganizationId={selectedOrganizationId}
+                    onSelectOrganization={
+                      isStaffUser ? handleOrganizationFromRail : undefined
+                    }
+                    kundenOrgs={isStaffUser ? kundenOrgsWithCounts : []}
+                    workspaceMode={workspaceMode}
+                    onWorkspaceModeChange={handleWorkspaceModeChange}
                     organizationNameById={organizationNameById}
                     organizationLogoById={organizationLogoById}
                   />
+                  ) : null}
                   <TicketDetailView
                     selectedTicket={selectedTicket}
                     ticketContact={ticketContact}
@@ -2283,6 +2335,14 @@ export default function TicketsPage() {
                     contactSchema={contactSchema}
                     messages={messages}
                     highlightMessageId={highlightMessageId}
+                    workspaceModeSlot={
+                      isClassicMode ? (
+                        <TicketsWorkspaceModeToggle
+                          value={workspaceMode}
+                          onChange={handleWorkspaceModeChange}
+                        />
+                      ) : null
+                    }
                     allTickets={allTickets}
                     activeDetailTab={activeDetailTab}
                     setActiveDetailTab={setActiveDetailTab}
@@ -2388,6 +2448,12 @@ export default function TicketsPage() {
           setListSort,
           layoutMode,
           setLayoutMode,
+          workspaceModeSlot: (
+            <TicketsWorkspaceModeToggle
+              value={workspaceMode}
+              onChange={handleWorkspaceModeChange}
+            />
+          ),
           openCreateTicket: () => staffTicketsAdapter.openCreateTicket(),
           tickets,
           filters,

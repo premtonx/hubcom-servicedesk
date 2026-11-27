@@ -1,4 +1,4 @@
-import { useMemo, type MutableRefObject, type MouseEvent } from 'react';
+import { useMemo, type MutableRefObject, type MouseEvent, type ReactNode } from 'react';
 import {
   AlertTriangle, Angry, Box, Building2, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft,
   ChevronRight, Clock, FolderTree, Frown, GitMerge, Globe, Hash, History, List, Mail, Meh,
@@ -81,6 +81,8 @@ export interface TicketListViewProps {
   setListSort: (s: 'newest' | 'oldest' | 'priority') => void;
   layoutMode: TicketsLayoutMode;
   setLayoutMode: (m: TicketsLayoutMode) => void;
+  /** Klassisch | Outlook workspace mode toggle (staff). */
+  workspaceModeSlot?: ReactNode;
   openCreateTicket: () => void;
   tickets: TicketType[];
   filters: Record<string, any>;
@@ -148,6 +150,7 @@ export function TicketListView(props: TicketListViewProps) {
     setListSort,
     layoutMode,
     setLayoutMode,
+    workspaceModeSlot,
     openCreateTicket,
     tickets,
     filters,
@@ -362,7 +365,10 @@ export function TicketListView(props: TicketListViewProps) {
                 </div>
               }
               viewsSlot={
-                <TicketsViewModeSelector value={layoutMode} onChange={setLayoutMode} />
+                <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                  <TicketsViewModeSelector value={layoutMode} onChange={setLayoutMode} />
+                  {workspaceModeSlot}
+                </div>
               }
             />
             {capabilities.aiSummaryChip && ticketQueueStats.critical > 0 ? (
