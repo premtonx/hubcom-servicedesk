@@ -1,9 +1,7 @@
 import type { ReactNode } from 'react';
 import { Database, HardDrive, ShieldCheck } from 'lucide-react';
 import { useTranslation } from '../../../lib/context/I18nContext';
-import { AdminHubSectionGrid } from './AdminHubSectionGrid';
 import { AdminHubDemoDataCard } from './AdminHubDemoDataCard';
-import { categoriesForTab } from './adminHubConfig';
 import { overallStateLabelDe, type AdminHubTelemetry } from './adminHubTelemetry';
 
 interface AdminHubSystemTabProps {
@@ -47,8 +45,6 @@ export function AdminHubSystemTab({ telemetry, onTelemetryRefresh }: AdminHubSys
       </div>
 
       <AdminHubDemoDataCard onChanged={onTelemetryRefresh} />
-
-      <AdminHubSectionGrid categories={categoriesForTab('system')} />
     </div>
   );
 }

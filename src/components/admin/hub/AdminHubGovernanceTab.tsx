@@ -1,14 +1,11 @@
-import { AdminHubSectionGrid } from './AdminHubSectionGrid';
-import { categoriesForTab } from './adminHubConfig';
+import { Navigate } from 'react-router-dom';
+import { buildAdminHubNavBereiche, firstNavChildPath } from './adminHubConfig';
 
 /**
- * PII & Compliance tab — governance section cards only.
- * Detailed PII settings and audit tools live on their nested Admin-Hub routes.
+ * PII & Compliance — no card-grid overview; bounce to the first submenu item.
  */
 export function AdminHubGovernanceTab() {
-  return (
-    <div className="space-y-6">
-      <AdminHubSectionGrid categories={categoriesForTab('governance')} />
-    </div>
-  );
+  const bereich = buildAdminHubNavBereiche().find((b) => b.id === 'governance');
+  const target = bereich ? firstNavChildPath(bereich) : '/admin/sovereignty';
+  return <Navigate to={target || '/admin/sovereignty'} replace />;
 }

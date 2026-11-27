@@ -6,8 +6,6 @@ import { Input } from '../../ui/input';
 import { Badge } from '../../ui/badge';
 import { Switch } from '../../ui/switch';
 import { useTranslation } from '../../../lib/context/I18nContext';
-import { AdminHubSectionGrid } from './AdminHubSectionGrid';
-import { categoriesForTab } from './adminHubConfig';
 import { cn } from '../../../lib/utils';
 import { kbDocumentsApi, type KbExternalSource } from '../../../services/kbDocumentsApi';
 import { RagEmbeddingAlert } from './rag/RagEmbeddingAlert';
@@ -885,7 +883,6 @@ export function AdminHubRagTab() {
         )}
       </div>
 
-      <AdminHubSectionGrid categories={categoriesForTab('rag')} />
     </div>
   );
 }

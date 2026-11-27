@@ -49,8 +49,6 @@ import {
   type DetectedLocalModel,
 } from '../../../types/ai-orchestrator';
 import { cn } from '../../../lib/utils';
-import { AdminHubSectionGrid } from './AdminHubSectionGrid';
-import { categoriesForTab } from './adminHubConfig';
 import type { AdminHubTelemetry } from './adminHubTelemetry';
 import {
   classifyProviderStatus,
@@ -1210,7 +1208,6 @@ export function AdminHubAiEngineTab({ telemetry: _telemetry }: AdminHubAiEngineT
         </div>
       )}
 
-      <AdminHubSectionGrid categories={categoriesForTab('ai-engine')} />
     </div>
   );
 }

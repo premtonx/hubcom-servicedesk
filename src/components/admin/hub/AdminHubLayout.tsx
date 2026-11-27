@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Link, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { Home } from 'lucide-react';
+import { ChevronDown, Home, Lock } from 'lucide-react';
 import { useTranslation } from '../../../lib/context/I18nContext';
 import { cn } from '../../../lib/utils';
+import { usePermissions } from '../../../hooks/usePermissions';
+import { useStaffSession } from '../../../hooks/useStaffSession';
 import {
   ADMIN_HUB_CORE_ONLY_TABS,
-  ADMIN_HUB_TABS,
+  buildAdminHubNavBereiche,
+  findActiveAdminHubNavChild,
   findAdminHubSubRoute,
+  isAdminHubNavChildActive,
   resolveActiveAdminHubSection,
   tabLabel,
+  type AdminHubNavBereich,
+  type AdminHubNavChild,
   type AdminHubTabId,
 } from './adminHubConfig';
 import {
@@ -18,7 +24,6 @@ import {
   type AdminHubSubsystemState,
   type AdminHubTelemetry,
 } from './adminHubTelemetry';
-import { useStaffSession } from '../../../hooks/useStaffSession';
 
 function controlPlaneBadge(state: AdminHubSubsystemState): {
   label: string;
@@ -54,6 +59,22 @@ function controlPlaneBadge(state: AdminHubSubsystemState): {
   }
 }
 
+function navigateToPath(
+  navigate: ReturnType<typeof useNavigate>,
+  path: string,
+  scrollTargetId?: string,
+) {
+  navigate(path);
+  if (scrollTargetId) {
+    queueMicrotask(() => {
+      document.getElementById(scrollTargetId)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+  }
+}
+
 export default function AdminHubLayout() {
   const { t } = useTranslation();
   const location = useLocation();
@@ -61,18 +82,31 @@ export default function AdminHubLayout() {
   const [searchParams] = useSearchParams();
   const [telemetry, setTelemetry] = useState<AdminHubTelemetry>(EMPTY_TELEMETRY);
   const { canManageHubcomCore } = useStaffSession();
+  const { hasPermission } = usePermissions();
 
   const activeSection = resolveActiveAdminHubSection(location.pathname, searchParams);
   const subRoute = findAdminHubSubRoute(location.pathname);
   const isHubIndex = /^\/admin\/?$/.test(location.pathname);
+  const search = location.search || '';
 
-  const visibleTabs = useMemo(
-    () =>
-      ADMIN_HUB_TABS.filter(
-        (tab) => canManageHubcomCore || !ADMIN_HUB_CORE_ONLY_TABS.includes(tab.id),
-      ),
-    [canManageHubcomCore],
-  );
+  const navTree = useMemo(() => {
+    const all = buildAdminHubNavBereiche();
+    return all
+      .filter((b) => canManageHubcomCore || !ADMIN_HUB_CORE_ONLY_TABS.includes(b.id))
+      .map((b) => {
+        if (b.kind !== 'group') return b;
+        const children = b.children.filter((c) => hasPermission(c.module || 'rbac', 'view'));
+        return { ...b, children };
+      })
+      .filter((b) => b.kind === 'leaf' || b.children.length > 0) as AdminHubNavBereich[];
+  }, [canManageHubcomCore, hasPermission]);
+
+  const [expandedId, setExpandedId] = useState<AdminHubTabId | null>(activeSection);
+
+  // Deep links / route changes auto-expand the parent Bereich.
+  useEffect(() => {
+    setExpandedId(activeSection);
+  }, [activeSection]);
 
   const refreshTelemetry = () => {
     void axios
@@ -87,30 +121,39 @@ export default function AdminHubLayout() {
     return () => clearInterval(interval);
   }, []);
 
-  const goToSection = (tabId: AdminHubTabId) => {
-    // Kunden is a first-class workspace — open the directory directly.
-    if (tabId === 'kunden') {
-      navigate('/admin/customers');
+  const goToBereich = (bereich: AdminHubNavBereich) => {
+    if (bereich.kind === 'leaf') {
+      setExpandedId(bereich.id);
+      navigateToPath(navigate, bereich.path);
       return;
     }
-    // Mitarbeiter & Berechtigungen workspace.
-    if (tabId === 'staff') {
-      navigate('/admin/staff');
-      return;
+    setExpandedId(bereich.id);
+    const first = bereich.children[0];
+    if (first) {
+      navigateToPath(navigate, first.path, first.scrollTargetId);
     }
-    // Mail & Schnittstellen opens the secondary-nav workspace on E-Mail-Kanäle.
-    if (tabId === 'integrations') {
-      navigate('/admin/mail?section=email-channels&tab=overview');
-      return;
-    }
-    navigate(`/admin?tab=${tabId}`);
+  };
+
+  const goToChild = (child: AdminHubNavChild, parentId: AdminHubTabId) => {
+    setExpandedId(parentId);
+    navigateToPath(navigate, child.path, child.scrollTargetId);
   };
 
   const plane = controlPlaneBadge(telemetry.overallState ?? 'unknown');
 
+  const activeChild =
+    navTree
+      .filter((b): b is Extract<AdminHubNavBereich, { kind: 'group' }> => b.kind === 'group')
+      .map((b) => findActiveAdminHubNavChild(b, location.pathname, search))
+      .find(Boolean) ?? null;
+
+  const breadcrumbBereichLabel = tabLabel(activeSection);
+  const breadcrumbChildLabel = activeChild?.label || subRoute?.label || null;
+  const showBreadcrumb =
+    !isHubIndex && activeSection !== 'uebersicht' && Boolean(breadcrumbChildLabel);
+
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-[#fafafa]">
-      {/* Compact single-line Admin-Hub header */}
       <header className="shrink-0 px-4 lg:px-6 h-12 border-b border-slate-200/80 bg-white/90 backdrop-blur-sm flex items-center gap-3 min-w-0">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <Link
@@ -157,9 +200,8 @@ export default function AdminHubLayout() {
       </header>
 
       <div className="flex-1 min-h-0 w-full flex overflow-hidden">
-        {/* Persistent left sidebar — never unmounts across Admin-Hub sub-routes */}
         <aside
-          className="shrink-0 w-56 sm:w-60 lg:w-64 border-r border-slate-200/80 bg-white/80 backdrop-blur-sm flex flex-col min-h-0 overflow-y-auto"
+          className="shrink-0 w-[260px] border-r border-slate-200/80 bg-white/80 backdrop-blur-sm flex flex-col min-h-0 overflow-y-auto"
           aria-label={t('nav.admin', 'Admin Hub')}
         >
           <div className="px-3 pt-4 pb-2">
@@ -167,48 +209,129 @@ export default function AdminHubLayout() {
               {t('admin.hubNav', 'Bereiche')}
             </p>
           </div>
-          <nav className="flex flex-col gap-0.5 p-2" aria-label={t('admin.hubNav', 'Bereiche')}>
-            {visibleTabs.map((tab) => {
-              const isActive = activeSection === tab.id;
+          <nav className="flex flex-col gap-0.5 p-2 pb-6" aria-label={t('admin.hubNav', 'Bereiche')}>
+            {navTree.map((bereich) => {
+              const isActiveBereich = activeSection === bereich.id;
+              const isExpanded = expandedId === bereich.id;
+
+              if (bereich.kind === 'leaf') {
+                return (
+                  <button
+                    key={bereich.id}
+                    type="button"
+                    onClick={() => goToBereich(bereich)}
+                    aria-current={isActiveBereich ? 'page' : undefined}
+                    className={cn(
+                      'w-full flex items-center gap-2 text-left h-auto min-h-10 px-3 py-2.5 rounded-xl text-[12px] tracking-wide transition-colors',
+                      isActiveBereich
+                        ? 'bg-primary/10 text-primary font-bold'
+                        : 'bg-transparent text-slate-500 font-semibold hover:text-slate-900 hover:bg-slate-50',
+                    )}
+                  >
+                    <span className="truncate">{t(bereich.labelKey, bereich.label)}</span>
+                  </button>
+                );
+              }
+
               return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => goToSection(tab.id)}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={cn(
-                    'w-full flex-none shrink-0 justify-start text-left whitespace-normal',
-                    'h-auto min-h-10 px-3 py-2.5 rounded-xl text-[12px] tracking-wide transition-colors',
-                    isActive
-                      ? 'bg-primary/10 text-primary font-bold shadow-none'
-                      : 'bg-transparent text-slate-500 font-semibold hover:text-slate-900 hover:bg-slate-50',
-                  )}
-                >
-                  {t(tab.labelKey, tab.label)}
-                </button>
+                <div key={bereich.id} className="flex flex-col gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => goToBereich(bereich)}
+                    aria-expanded={isExpanded}
+                    className={cn(
+                      'w-full flex items-center gap-2 text-left h-auto min-h-10 px-3 py-2.5 rounded-xl text-[12px] tracking-wide transition-colors',
+                      isActiveBereich
+                        ? 'bg-primary/10 text-primary font-bold'
+                        : 'bg-transparent text-slate-500 font-semibold hover:text-slate-900 hover:bg-slate-50',
+                    )}
+                  >
+                    <span className="truncate flex-1 min-w-0">
+                      {t(bereich.labelKey, bereich.label)}
+                    </span>
+                    <ChevronDown
+                      className={cn(
+                        'w-3.5 h-3.5 shrink-0 text-slate-400 transition-transform duration-200',
+                        isExpanded && 'rotate-180 text-primary',
+                      )}
+                      aria-hidden
+                    />
+                  </button>
+                  <div
+                    className={cn(
+                      'grid transition-[grid-template-rows] duration-200 ease-out',
+                      isExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+                    )}
+                  >
+                    <div className="overflow-hidden min-h-0">
+                      <ul className="flex flex-col gap-0.5 pl-2 pb-1 pt-0.5">
+                        {bereich.children.map((child) => {
+                          const childActive = isAdminHubNavChildActive(
+                            child.path,
+                            location.pathname,
+                            search,
+                            child.navMatchQueryKeys,
+                          );
+                          const Icon = child.icon || Lock;
+                          return (
+                            <li key={child.id}>
+                              <button
+                                type="button"
+                                onClick={() => goToChild(child, bereich.id)}
+                                aria-current={childActive ? 'page' : undefined}
+                                className={cn(
+                                  'w-full flex items-center gap-2 text-left rounded-lg px-2.5 py-2 text-[11px] transition-colors',
+                                  childActive
+                                    ? 'bg-slate-900 text-white font-bold shadow-sm'
+                                    : 'text-slate-600 font-semibold hover:bg-slate-50 hover:text-slate-900',
+                                )}
+                              >
+                                <Icon
+                                  className={cn(
+                                    'w-3.5 h-3.5 shrink-0',
+                                    childActive ? 'text-white/90' : 'text-slate-400',
+                                  )}
+                                />
+                                <span className="truncate">{child.label}</span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
               );
             })}
           </nav>
         </aside>
 
-        {/* Right content panel only — swaps via <Outlet /> */}
         <div className="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col">
-          {/* Kunden / Mail workspace have their own chrome — skip hub breadcrumb. */}
-          {subRoute &&
-          !isHubIndex &&
-          subRoute.parentTab !== 'kunden' &&
-          !location.pathname.startsWith('/admin/mail') ? (
-            <div className="shrink-0 px-6 lg:px-8 pt-4 pb-1">
-              <nav className="text-xs text-muted-foreground flex items-center gap-1.5 min-w-0">
+          {showBreadcrumb && breadcrumbChildLabel ? (
+            <div className="shrink-0 px-6 lg:px-8 pt-3 pb-1">
+              <nav
+                className="text-xs text-muted-foreground flex items-center gap-1.5 min-w-0"
+                aria-label="Breadcrumb"
+              >
+                <Link
+                  to="/admin?tab=uebersicht"
+                  className="hover:text-primary transition-colors font-semibold text-slate-500 shrink-0"
+                >
+                  Admin
+                </Link>
+                <span className="text-slate-300 shrink-0">›</span>
                 <button
                   type="button"
-                  onClick={() => goToSection(subRoute.parentTab)}
+                  onClick={() => {
+                    const b = navTree.find((x) => x.id === activeSection);
+                    if (b) goToBereich(b);
+                  }}
                   className="hover:text-primary transition-colors font-semibold text-slate-600 truncate"
                 >
-                  ← {tabLabel(subRoute.parentTab)}
+                  {breadcrumbBereichLabel}
                 </button>
-                <span className="text-slate-300 shrink-0">/</span>
-                <span className="text-slate-900 font-bold truncate">{subRoute.label}</span>
+                <span className="text-slate-300 shrink-0">›</span>
+                <span className="text-slate-900 font-bold truncate">{breadcrumbChildLabel}</span>
               </nav>
             </div>
           ) : null}

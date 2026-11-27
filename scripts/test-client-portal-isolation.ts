@@ -195,6 +195,12 @@ import {
 } from '../src/lib/polyglot-bridge.js';
 import { buildGetDocsCoalesceKey } from '../src/lib/db-get-docs-coalesce.js';
 import {
+  buildAdminHubNavBereiche,
+  findAdminHubSubRoute,
+  firstNavChildPath,
+  isAdminHubNavChildActive,
+} from '../src/components/admin/hub/adminHubConfig.js';
+import {
   isTrustProxyEnabled,
   resolveExpressTrustProxy,
 } from '../src/lib/security/client-ip.js';
@@ -8350,7 +8356,14 @@ function testAdminMailIntegrationsWorkspaceIsolation(): void {
   const app = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
 
   assert(
-    layout.includes("/admin/mail?section=email-channels&tab=overview") &&
+    layout.includes('buildAdminHubNavBereiche') &&
+      layout.includes('w-[260px]') &&
+      layout.includes('aria-expanded') &&
+      layout.includes('ChevronDown'),
+    'Admin-Hub uses unified 260px accordion sidebar under Bereiche',
+  );
+  assert(
+    layout.includes("/admin/mail?section=email-channels") ||
       integrationsTab.includes("/admin/mail?section=email-channels&tab=overview"),
     'Mail & Schnittstellen entry opens E-Mail-Kanäle workspace',
   );
@@ -8359,10 +8372,10 @@ function testAdminMailIntegrationsWorkspaceIsolation(): void {
     'workspace uses shared MAIL_SECTIONS nav',
   );
   assert(
-    workspace.includes('w-60') &&
-      workspace.includes('Mail & Schnittstellen') &&
-      workspace.includes('Admin'),
-    'workspace has secondary sidebar + breadcrumb chrome',
+    !workspace.includes('hidden md:flex w-60') &&
+      workspace.includes('md:hidden') &&
+      workspace.includes('Admin-Hub accordion'),
+    'mail workspace no longer mounts a dual-column drawer (accordion owns section nav)',
   );
   assert(
     app.includes('path="mail"') &&
@@ -8426,6 +8439,7 @@ async function main(): Promise<void> {
   testAdminOrgPortalSettingsApiIsolation();
   testAdminCustomersPortalSettingsUiIsolation();
   testAdminMailIntegrationsWorkspaceIsolation();
+  testAdminHubAccordionSidebarIsolation();
   testStaffOrgPermissionMatrixIsolation();
   testStaffPermissionMatrixUiIsolation();
   testSecurityPerimeterIsolation();
@@ -8441,6 +8455,88 @@ async function main(): Promise<void> {
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
   console.log('OK: client portal isolation suite passed.');
+}
+
+/** Admin-Hub accordion sidebar + Kunden submenu placement. */
+function testAdminHubAccordionSidebarIsolation(): void {
+  console.log('\n[Admin Hub] accordion sidebar + Kunden schema placement');
+
+  const tree = buildAdminHubNavBereiche();
+  const uebersicht = tree.find((b) => b.id === 'uebersicht');
+  const kunden = tree.find((b) => b.id === 'kunden');
+  const governance = tree.find((b) => b.id === 'governance');
+  const system = tree.find((b) => b.id === 'system');
+  const staff = tree.find((b) => b.id === 'staff');
+
+  assert(uebersicht?.kind === 'leaf', 'Übersicht stays a leaf (no empty submenu)');
+  assert(staff?.kind === 'leaf' && staff.path === '/admin/staff', 'Staff is a leaf to /admin/staff');
+  assert(kunden?.kind === 'group', 'Kunden is a multi-item Bereich');
+  if (kunden?.kind === 'group') {
+    const labels = kunden.children.map((c) => c.label);
+    assert(
+      labels.includes('Client Organizations') &&
+        labels.includes('Kontaktprofil') &&
+        labels.includes('Unternehmensschema'),
+      'Kunden submenu holds Client Organizations, Kontaktprofil, Unternehmensschema',
+    );
+    assert(
+      firstNavChildPath(kunden) === '/admin/customers',
+      'Kunden expands to Client Organizations first',
+    );
+  }
+  if (governance?.kind === 'group') {
+    assert(
+      !governance.children.some((c) => c.path === '/admin/schema'),
+      'Unternehmensschema removed from PII & Compliance',
+    );
+  }
+  if (system?.kind === 'group') {
+    assert(
+      !system.children.some((c) => c.path === '/admin/contact-schema') &&
+        !system.children.some((c) => c.path === '/admin/customers' && c.label === 'Client Organizations'),
+      'Kontaktprofil / Client Organizations removed from Infrastruktur',
+    );
+  }
+
+  assert(
+    findAdminHubSubRoute('/admin/schema')?.parentTab === 'kunden' &&
+      findAdminHubSubRoute('/admin/contact-schema')?.parentTab === 'kunden',
+    'schema + contact-schema deep links resolve parent Bereich Kunden',
+  );
+  assert(
+    isAdminHubNavChildActive(
+      '/admin/mail?section=email-channels&tab=overview',
+      '/admin/mail',
+      '?section=email-channels&tab=configuration',
+      ['section'],
+    ),
+    'mail accordion item stays active across mail sub-tabs',
+  );
+
+  const hubPage = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/pages/AdminHubPage.tsx'),
+    'utf8',
+  );
+  const aiTab = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/admin/hub/AdminHubAiEngineTab.tsx'),
+    'utf8',
+  );
+  const ragTab = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/admin/hub/AdminHubRagTab.tsx'),
+    'utf8',
+  );
+  const sysTab = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/admin/hub/AdminHubSystemTab.tsx'),
+    'utf8',
+  );
+  assert(
+    hubPage.includes('REDIRECT_ONLY_TABS') &&
+      hubPage.includes('firstNavChildPath') &&
+      !aiTab.includes('AdminHubSectionGrid') &&
+      !ragTab.includes('AdminHubSectionGrid') &&
+      !sysTab.includes('AdminHubSectionGrid'),
+    'card-grid overviews removed; redirect-only tabs bounce to first submenu item',
+  );
 }
 
 /** Part 2 — German Mitarbeiter & Berechtigungen Admin-Hub UI. */
@@ -8494,9 +8590,10 @@ function testStaffPermissionMatrixUiIsolation(): void {
     hubConfig.includes("id: 'staff'") &&
       hubConfig.includes('Mitarbeiter & Berechtigungen') &&
       hubConfig.includes('ADMIN_HUB_CORE_ONLY_TABS') &&
-      layout.includes('visibleTabs') &&
+      hubConfig.includes("/admin/staff") &&
+      layout.includes('buildAdminHubNavBereiche') &&
       layout.includes('canManageHubcomCore') &&
-      layout.includes("/admin/staff"),
+      layout.includes('ADMIN_HUB_CORE_ONLY_TABS'),
     'Admin-Hub sidebar shows Mitarbeiter & Berechtigungen for Hubcom core',
   );
   assert(
