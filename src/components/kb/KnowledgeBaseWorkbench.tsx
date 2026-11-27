@@ -281,8 +281,6 @@ export function KnowledgeBaseWorkbench({
   const [filterTenantOrg, setFilterTenantOrg] = useState<string>('All');
   const [filterLanguage, setFilterLanguage] = useState<string>('All');
   const [filterTag, setFilterTag] = useState<string>('All');
-  /** Portal scope tabs: Alle / Firmen-Anleitungen / Hubcom Guides */
-  const [portalScope, setPortalScope] = useState<'all' | 'organization' | 'shared_portal'>('all');
 
   const [aiSearchQuery, setAiSearchQuery] = useState<string | null>(null);
   const [aiSearchSummary, setAiSearchSummary] = useState<string | null>(null);
@@ -1020,9 +1018,6 @@ export function KnowledgeBaseWorkbench({
           return false;
         }
       }
-    }
-    if (mode === 'portal' && portalScope !== 'all') {
-      if (normalizeKbVisibility(art.visibility) !== portalScope) return false;
     }
     if (filterLanguage !== 'All' && art.language !== filterLanguage) return false;
     if (filterTag !== 'All' && !(art.tags && art.tags.includes(filterTag))) return false;
@@ -1957,32 +1952,6 @@ export function KnowledgeBaseWorkbench({
                         : undefined
                     }
                   />
-
-                  {mode === 'portal' ? (
-                    <div className="inline-flex flex-wrap bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1 text-[11px] font-black">
-                      {(
-                        [
-                          { id: 'all' as const, label: 'Alle Artikel' },
-                          { id: 'organization' as const, label: 'Firmen-Anleitungen' },
-                          { id: 'shared_portal' as const, label: 'Hubcom Guides' },
-                        ] as const
-                      ).map((tab) => (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          onClick={() => setPortalScope(tab.id)}
-                          className={cn(
-                            'px-3.5 py-1.5 rounded-lg transition-all cursor-pointer',
-                            portalScope === tab.id
-                              ? 'bg-white text-indigo-650 shadow-sm'
-                              : 'text-slate-400 hover:text-slate-600',
-                          )}
-                        >
-                          {tab.label}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
 
                   {/* Artikel / Dokumente / Datenquellen — staff-only chrome */}
                   {showDocsSourcesTabs ? (

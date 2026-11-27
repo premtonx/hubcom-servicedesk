@@ -5723,8 +5723,11 @@ function testKbWorkbenchSharedUiIsolation(): void {
       workbenchSrc.includes('filterTenantOrg') &&
       workbenchSrc.includes('KBKpiCards') &&
       workbenchSrc.includes("categories.length > 0") &&
-      !workbenchSrc.includes('<KBActivitySidebar'),
-    'article-first workbench: Alle Artikel landing, staff tenant filter, KPIs in Analytik, no activity sidebar',
+      !workbenchSrc.includes('<KBActivitySidebar') &&
+      !workbenchSrc.includes('setPortalScope') &&
+      !workbenchSrc.includes("label: 'Firmen-Anleitungen'") &&
+      !workbenchSrc.includes("label: 'Hubcom Guides'"),
+    'article-first workbench: Alle Artikel landing, no portal scope pills, no activity sidebar',
   );
   const portalApiPaths = collectApiPathLiteralsFromSource(portalAdapterSrc);
   assert(
