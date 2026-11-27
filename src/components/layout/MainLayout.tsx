@@ -32,7 +32,8 @@ import {
   Mail,
   Sparkles,
   MoreVertical,
-  BrainCircuit
+  BrainCircuit,
+  Clock,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Button } from '../../components/ui/button';
@@ -75,6 +76,7 @@ import type { HeaderTelemetrySnapshot } from '../../types/headerTelemetry';
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard', key: 'dashboard' },
   { icon: Ticket, label: 'Tickets', path: '/tickets', key: 'tickets' },
+  { icon: Clock, label: 'Zeiterfassung', path: '/time-tracking', key: 'timeTracking' },
   { icon: BookOpen, label: 'Wissensdatenbank', path: '/kb', key: 'geistKB' },
   { icon: Lock, label: 'GeistVault', path: '/credentials', key: 'geistVault' },
   { icon: UploadCloud, label: 'Geist Exchange', path: '/vault', key: 'geistExchange' },

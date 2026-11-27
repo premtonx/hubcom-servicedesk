@@ -26,8 +26,14 @@ export function getTimeExportDir(): string {
 }
 
 function entryToRow(entry: TimeEntry): (string | number)[] {
+  const ticketRef =
+    entry.ticketId && entry.ticketNumber
+      ? entry.ticketNumber
+      : entry.ticketId
+        ? entry.ticketId
+        : 'Ohne Ticket';
   return [
-    entry.ticketNumber,
+    ticketRef,
     entry.ticketSubject,
     entry.customerCompany,
     entry.date,

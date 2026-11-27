@@ -24,6 +24,8 @@ export type TenantContextInput = {
   mode: TenantRlsMode;
   orgId?: string | null;
   allowedOrgIds?: string[] | 'ALL' | null;
+  /** Staff user id for personal row filters (e.g. time_entries). */
+  userId?: string | null;
 };
 
 let rlsReady = false;
@@ -49,6 +51,9 @@ async function applyTenantLocalSettings(
   }
 
   await client.query(`SELECT set_config('app.rls_mode', $1, true)`, [ctx.mode]);
+  await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [
+    String(ctx.userId || ''),
+  ]);
 
   if (ctx.mode === 'portal') {
     await client.query(`SELECT set_config('app.current_org_id', $1, true)`, [
@@ -182,11 +187,12 @@ export function systemRlsMiddleware(
  */
 export function resolveTenantContextFromUser(user: any): TenantContextInput | null {
   if (!user) return null;
+  const userId = String(user.uid || user.id || user.sub || '').trim() || null;
 
   if (isClientPortalRole(user.role)) {
     const orgId = resolveOrganizationIdFromUser(user);
     if (!orgId) return null;
-    return { mode: 'portal', orgId };
+    return { mode: 'portal', orgId, userId };
   }
 
   const matrix = normalizeHubcomMatrixRole(user.role, user.is_admin === true);
@@ -196,13 +202,13 @@ export function resolveTenantContextFromUser(user: any): TenantContextInput | nu
     matrix === 'HUBCOM_ADMIN' ||
     canManageHubcomCore(user)
   ) {
-    return { mode: 'super_admin' };
+    return { mode: 'super_admin', userId };
   }
 
   const staffAccess = user.staffAccess;
   const accessible = staffAccess?.accessibleOrganizationIds;
   if (accessible === 'ALL') {
-    return { mode: 'super_admin' };
+    return { mode: 'super_admin', userId };
   }
   const allowed = Array.isArray(accessible)
     ? accessible.map(String)
@@ -213,10 +219,10 @@ export function resolveTenantContextFromUser(user: any): TenantContextInput | nu
       : [];
 
   if (matrix === 'HUBCOM_AGENT' || matrix === 'HUBCOM_USER') {
-    return { mode: 'staff_scoped', allowedOrgIds: allowed };
+    return { mode: 'staff_scoped', allowedOrgIds: allowed, userId };
   }
 
-  return { mode: 'system' };
+  return { mode: 'system', userId };
 }
 
 /** Resolve RLS context from an authenticated Express request. */
