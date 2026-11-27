@@ -3,8 +3,8 @@
 #   - ./deploy/Caddyfile.acmedns:/etc/caddy/Caddyfile:ro
 # Requires ACME DNS provider env vars for the chosen module.
 #
-# Concurrent POST /api/db polls need the same generous timeouts as the
-# standard Caddyfile so slow RLS queries never drop with 502.
+# Upstream keepalive idle (30s) must stay strictly below Node's
+# keepAliveTimeout (65s) — same contract as deploy/Caddyfile.
 
 {$DOMAIN:localhost} {
 	encode gzip zstd

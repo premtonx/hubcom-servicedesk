@@ -15,6 +15,9 @@
 
 import platformConfig from '../../geistdesk-platform-config.json';
 import { applySessionAuthHeader } from './session-auth';
+import { buildGetDocsCoalesceKey } from './db-get-docs-coalesce.js';
+
+export { buildGetDocsCoalesceKey } from './db-get-docs-coalesce.js';
 
 // Simple Auth State Store. Session JWT is stored in an httpOnly cookie by the server.
 const USER_KEY = 'geistdesk_auth_user';
@@ -407,8 +410,25 @@ export async function getDoc(ref: DocumentReference): Promise<DocumentSnapshot> 
   return new DocumentSnapshot(ref.id, result, !!result);
 }
 
+/** In-flight get_docs promises keyed by collection + constraints (dedupe bursts). */
+const getDocsInFlight = new Map<string, Promise<any>>();
+
 export async function getDocs(q: Query): Promise<QuerySnapshot> {
-  const result = await execDbAction('get_docs', { collection: q.rawPath, constraints: q.constraints });
+  const key = buildGetDocsCoalesceKey(q.rawPath, q.constraints);
+  let pending = getDocsInFlight.get(key);
+  if (!pending) {
+    pending = execDbAction('get_docs', {
+      collection: q.rawPath,
+      constraints: q.constraints,
+    }).finally(() => {
+      // Only clear if we are still the active entry for this key.
+      if (getDocsInFlight.get(key) === pending) {
+        getDocsInFlight.delete(key);
+      }
+    });
+    getDocsInFlight.set(key, pending);
+  }
+  const result = await pending;
   return new QuerySnapshot(result);
 }
 

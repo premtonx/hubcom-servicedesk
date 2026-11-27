@@ -6,9 +6,10 @@
 {$DOMAIN:localhost} {
 	encode gzip zstd
 
-	# Concurrent POST /api/db polls (onSnapshot / subscribeToCustomers) need
-	# generous read timeouts + HTTP/1.1 keepalive so slow DB/RLS work never
-	# surfaces as 502 Bad Gateway at the edge.
+	# Upstream keepalive idle (30s) must stay strictly below Node's
+	# keepAliveTimeout (65s) so Caddy retires sockets before the backend
+	# closes them — otherwise POST /api/db hits intermittent 502s.
+	# Read/write timeouts stay generous for slow RLS / get_docs work.
 	handle /api/* {
 		reverse_proxy backend:5000 {
 			transport http {

@@ -2719,13 +2719,20 @@ Example output format:
     safeLog('warn', '[directory-sync] Scheduler fehlgeschlagen:', dirErr?.message || String(dirErr));
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  // Caddy/Nginx retire idle upstream sockets at ~30s. Node's default
+  // keepAliveTimeout (5s) closes the socket first, so the proxy reuses a
+  // half-closed connection and POST /api/db fails with intermittent 502.
+  // keepAliveTimeout must exceed the proxy idle window; headersTimeout must
+  // exceed keepAliveTimeout (Node requirement).
+  const server = app.listen(PORT, "0.0.0.0", () => {
     const publicBase =
       process.env.PUBLIC_APP_URL ||
       process.env.VITE_PUBLIC_APP_URL ||
       `http://0.0.0.0:${PORT}`;
     safeLog('info', `Ready: Server listening on 0.0.0.0:${PORT} (PUBLIC_APP_URL=${publicBase})`);
   });
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
 }
 
 async function runServerLifecycleAi(

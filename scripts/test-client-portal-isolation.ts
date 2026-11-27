@@ -193,6 +193,7 @@ import {
   getActiveSupportedLanguages,
   mergeImportedDictionaryJson,
 } from '../src/lib/polyglot-bridge.js';
+import { buildGetDocsCoalesceKey } from '../src/lib/db-get-docs-coalesce.js';
 import {
   isTrustProxyEnabled,
   resolveExpressTrustProxy,
@@ -9195,14 +9196,43 @@ function testAdminHubPolyglotNullSafetyIsolation(): void {
   );
   assert(
     caddy.includes('read_timeout 120s') &&
-      caddy.includes('keepalive') &&
+      caddy.includes('keepalive 30s') &&
+      caddy.includes('keepalive_idle_conns 32') &&
       caddy.includes('versions 1.1') &&
       caddyAcme.includes('read_timeout 120s') &&
-      caddyAcme.includes('keepalive') &&
+      caddyAcme.includes('keepalive 30s') &&
+      nginx.includes('upstream geistdesk_gateway') &&
+      nginx.includes('keepalive_timeout 30s') &&
+      nginx.includes('keepalive 32') &&
+      nginx.includes('proxy_pass http://geistdesk_gateway') &&
       nginx.includes('proxy_read_timeout 120s') &&
       nginx.includes('proxy_send_timeout 120s') &&
-      nginx.includes('proxy_http_version 1.1'),
-    'Caddy + Caddyfile.acmedns + nginx harden /api proxy timeouts against 502',
+      nginx.includes('proxy_http_version 1.1') &&
+      nginx.includes('proxy_set_header Connection ""'),
+    'Caddy + Caddyfile.acmedns + nginx keep upstream idle at 30s (< Node 65s)',
+  );
+  assert(
+    serverSrc.includes('keepAliveTimeout = 65_000') &&
+      serverSrc.includes('headersTimeout = 66_000'),
+    'Node HTTP server keepAliveTimeout 65s / headersTimeout 66s outlive proxy idle',
+  );
+
+  const keyA = buildGetDocsCoalesceKey('customers', [
+    { type: 'orderBy', field: 'name', direction: 'asc' },
+  ]);
+  const keyB = buildGetDocsCoalesceKey('customers', [
+    { type: 'orderBy', field: 'name', direction: 'asc' },
+  ]);
+  const keyC = buildGetDocsCoalesceKey('tickets', [
+    { type: 'orderBy', field: 'name', direction: 'asc' },
+  ]);
+  assert(keyA === keyB, 'identical get_docs collection+constraints share coalesce key');
+  assert(keyA !== keyC, 'different collections do not share get_docs coalesce key');
+  assert(
+    fb.includes('getDocsInFlight') &&
+      fb.includes('buildGetDocsCoalesceKey') &&
+      fb.includes("execDbAction('get_docs'"),
+    'frontend DB adapter coalesces identical concurrent get_docs requests',
   );
 }
 
