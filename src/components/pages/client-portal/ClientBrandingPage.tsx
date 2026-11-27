@@ -19,6 +19,18 @@ type OrgBranding = {
   portal_title: string | null;
   portal_banner_url: string | null;
   favicon_url: string | null;
+  primaryColor?: string;
+  secondaryColor?: string;
+  sidebarColor?: string | null;
+  themeMode?: 'light' | 'dark' | 'system';
+  allowUserThemeToggle?: boolean;
+  portal_theme?: {
+    primaryColor: string;
+    secondaryColor: string;
+    sidebarColor: string | null;
+    themeMode: 'light' | 'dark' | 'system';
+    allowUserThemeToggle: boolean;
+  };
   secure_exchange_enabled?: boolean;
   vault_enabled?: boolean;
   hardware_returns_enabled?: boolean;
@@ -251,6 +263,15 @@ export default function ClientBrandingPage({
             portalTitle={org.portal_title}
             bannerUrl={org.portal_banner_url}
             faviconUrl={org.favicon_url}
+            theme={
+              org.portal_theme || {
+                primaryColor: org.primaryColor,
+                secondaryColor: org.secondaryColor,
+                sidebarColor: org.sidebarColor,
+                themeMode: org.themeMode,
+                allowUserThemeToggle: org.allowUserThemeToggle,
+              }
+            }
             saving={saving}
             onSave={async (payload) => {
               setSaving(true);
@@ -266,6 +287,21 @@ export default function ClientBrandingPage({
                         : {}),
                       ...(payload.portal_title !== undefined
                         ? { portal_title: payload.portal_title }
+                        : {}),
+                      ...(payload.primaryColor !== undefined
+                        ? { primaryColor: payload.primaryColor }
+                        : {}),
+                      ...(payload.secondaryColor !== undefined
+                        ? { secondaryColor: payload.secondaryColor }
+                        : {}),
+                      ...(payload.sidebarColor !== undefined
+                        ? { sidebarColor: payload.sidebarColor }
+                        : {}),
+                      ...(payload.themeMode !== undefined
+                        ? { themeMode: payload.themeMode }
+                        : {}),
+                      ...(payload.allowUserThemeToggle !== undefined
+                        ? { allowUserThemeToggle: payload.allowUserThemeToggle }
                         : {}),
                     },
                     { withCredentials: true },

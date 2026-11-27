@@ -23,6 +23,7 @@ import {
   parseAndValidateLogoDataUrl,
   resolvePortalTitle,
 } from '../lib/client-portal/org-branding.js';
+import { parsePortalThemePatch } from '../lib/client-portal/portal-theme.js';
 import { parseAndValidateDashboardBannerDataUrl } from '../lib/dashboard-banner-validate.js';
 import {
   createEmailChannel,
@@ -149,6 +150,11 @@ const brandingPutSchema = z.object({
   hardware_returns_enabled: z.boolean().optional(),
   secure_exchange_enabled: z.boolean().optional(),
   vault_enabled: z.boolean().optional(),
+  primaryColor: z.string().optional(),
+  secondaryColor: z.string().optional(),
+  sidebarColor: z.string().nullable().optional(),
+  themeMode: z.enum(['light', 'dark', 'system']).optional(),
+  allowUserThemeToggle: z.boolean().optional(),
 });
 
 router.get('/:id/portal-branding', requireStaffAdmin, async (req, res): Promise<any> => {
@@ -156,11 +162,17 @@ router.get('/:id/portal-branding', requireStaffAdmin, async (req, res): Promise<
     const org = await requireOrg(req, res);
     if (!org) return;
     const modules = organizationEnabledModules(org);
+    const theme = org.portal_theme;
     return res.json({
       organization: {
         ...org,
         resolved_portal_title: resolvePortalTitle(org.name, org.portal_title),
         enabledModules: modules,
+        primaryColor: theme.primaryColor,
+        secondaryColor: theme.secondaryColor,
+        sidebarColor: theme.sidebarColor,
+        themeMode: theme.themeMode,
+        allowUserThemeToggle: theme.allowUserThemeToggle,
       },
       branding: {
         logo_url: org.logo_url,
@@ -168,6 +180,12 @@ router.get('/:id/portal-branding', requireStaffAdmin, async (req, res): Promise<
         portal_title: org.portal_title,
         portal_banner_url: org.portal_banner_url,
         resolved_portal_title: resolvePortalTitle(org.name, org.portal_title),
+        primaryColor: theme.primaryColor,
+        secondaryColor: theme.secondaryColor,
+        sidebarColor: theme.sidebarColor,
+        themeMode: theme.themeMode,
+        allowUserThemeToggle: theme.allowUserThemeToggle,
+        portal_theme: theme,
       },
       modules: {
         hardware_returns_enabled: modules.hardwareReturns,
@@ -195,9 +213,15 @@ router.put('/:id/portal-branding', requireStaffAdmin, async (req, res): Promise<
     if (!org) return;
     const id = org.id;
 
+    const themeParsed = parsePortalThemePatch(parsed.data);
+    if (themeParsed.ok === false) {
+      return res.status(400).json({ error: themeParsed.error });
+    }
+
     const patch: {
       logo_url?: string | null;
       portal_title?: string | null;
+      portal_theme?: typeof themeParsed.patch;
     } = {};
     if (parsed.data.clearLogo) {
       patch.logo_url = null;
@@ -210,6 +234,9 @@ router.put('/:id/portal-branding', requireStaffAdmin, async (req, res): Promise<
     }
     if (parsed.data.portal_title !== undefined) {
       patch.portal_title = parsed.data.portal_title;
+    }
+    if (Object.keys(themeParsed.patch).length > 0) {
+      patch.portal_theme = themeParsed.patch;
     }
     let organization = await updateOrganizationBranding(id, patch);
 
