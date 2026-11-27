@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrainCircuit, Loader2, RefreshCw, Wifi } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
@@ -177,41 +177,63 @@ export function MandantenKiRagCard({
   const [ragStatus, setRagStatus] = useState({ indexedCount: 0, totalCount: 0 });
   const [embeddingChanged, setEmbeddingChanged] = useState(false);
 
+  const orgIdKey = String(organizationId || '').trim();
   const basePath =
     mode === 'admin'
-      ? `/api/admin/organizations/${encodeURIComponent(organizationId || '')}/ai-settings`
+      ? `/api/admin/organizations/${encodeURIComponent(orgIdKey)}/ai-settings`
       : '/api/portal/ai-settings';
+  const fetchGenRef = useRef(0);
 
-  const load = useCallback(async () => {
-    if (mode === 'admin' && !organizationId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await axios.get(basePath, { withCredentials: true });
-      const next = res.data?.settings as MandantenKiSettings | undefined;
-      if (next) setSettings({ ...emptySettings(), ...next });
-      if (res.data?.ragStatus) {
-        setRagStatus({
-          indexedCount: Number(res.data.ragStatus.indexedCount || 0),
-          totalCount: Number(res.data.ragStatus.totalCount || 0),
-        });
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      if (mode === 'admin' && !orgIdKey) {
+        setLoading(false);
+        return;
       }
-      setApiKeyDraft('');
-      setEmbeddingChanged(false);
-    } catch (err: any) {
-      toast.error(
-        err?.response?.data?.error || 'KI-Einstellungen konnten nicht geladen werden.',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [basePath, mode, organizationId]);
+      const gen = ++fetchGenRef.current;
+      setLoading(true);
+      try {
+        const res = await axios.get(basePath, { withCredentials: true, signal });
+        if (signal?.aborted || gen !== fetchGenRef.current) return;
+        const next = res.data?.settings as MandantenKiSettings | undefined;
+        if (next) setSettings({ ...emptySettings(), ...next });
+        if (res.data?.ragStatus) {
+          setRagStatus({
+            indexedCount: Number(res.data.ragStatus.indexedCount || 0),
+            totalCount: Number(res.data.ragStatus.totalCount || 0),
+          });
+        }
+        setApiKeyDraft('');
+        setEmbeddingChanged(false);
+      } catch (err: any) {
+        if (
+          signal?.aborted ||
+          gen !== fetchGenRef.current ||
+          err?.code === 'ERR_CANCELED' ||
+          err?.name === 'CanceledError' ||
+          axios.isCancel?.(err)
+        ) {
+          return;
+        }
+        toast.error(
+          err?.response?.data?.error || 'KI-Einstellungen konnten nicht geladen werden.',
+        );
+      } finally {
+        if (gen === fetchGenRef.current && !signal?.aborted) setLoading(false);
+      }
+    },
+    [basePath, mode, orgIdKey],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    const ac = new AbortController();
+    void load(ac.signal);
+    return () => {
+      ac.abort();
+      fetchGenRef.current += 1;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional primitive gate
+  }, [mode, orgIdKey, basePath]);
 
   const save = async () => {
     if (mode === 'admin' && !organizationId) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { Loader2, Palette } from 'lucide-react';
 import { toast } from 'sonner';
@@ -56,52 +56,79 @@ export default function ClientBrandingPage({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const orgIdKey = String(organizationId || '').trim();
   const paths = useMemo(() => {
     try {
       return resolvePortalSettingsPaths(mode, organizationId);
     } catch {
       return null;
     }
-  }, [mode, organizationId]);
+  }, [mode, orgIdKey]);
+  const brandingGet = paths?.brandingGet ?? '';
+  const fetchGenRef = useRef(0);
 
   const showAi = includeAi ?? mode === 'portal';
   const showHardware = showHardwareModule ?? mode === 'admin';
 
-  const load = useCallback(async () => {
-    if (!paths) return;
-    setLoading(true);
-    try {
-      const res = await axios.get(paths.brandingGet, { withCredentials: true });
-      const organization =
-        res.data?.organization ||
-        (res.data?.branding
-          ? {
-              id: organizationId || '',
-              name: res.data?.organization?.name || '',
-              ...res.data.branding,
-              ...res.data.modules,
-            }
-          : null);
-      if (res.data?.modules && organization) {
-        organization.hardware_returns_enabled =
-          res.data.modules.hardware_returns_enabled ?? organization.hardware_returns_enabled;
-        organization.secure_exchange_enabled =
-          res.data.modules.secure_exchange_enabled ?? organization.secure_exchange_enabled;
-        organization.vault_enabled =
-          res.data.modules.vault_enabled ?? organization.vault_enabled;
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!brandingGet) return;
+      const gen = ++fetchGenRef.current;
+      setLoading(true);
+      try {
+        const res = await axios.get(brandingGet, { withCredentials: true, signal });
+        if (signal?.aborted || gen !== fetchGenRef.current) return;
+        const organization =
+          res.data?.organization ||
+          (res.data?.branding
+            ? {
+                id: organizationId || '',
+                name: res.data?.organization?.name || '',
+                ...res.data.branding,
+                ...res.data.modules,
+              }
+            : null);
+        if (res.data?.modules && organization) {
+          organization.hardware_returns_enabled =
+            res.data.modules.hardware_returns_enabled ?? organization.hardware_returns_enabled;
+          organization.secure_exchange_enabled =
+            res.data.modules.secure_exchange_enabled ?? organization.secure_exchange_enabled;
+          organization.vault_enabled =
+            res.data.modules.vault_enabled ?? organization.vault_enabled;
+        }
+        setOrg(organization);
+      } catch (err: any) {
+        if (
+          signal?.aborted ||
+          gen !== fetchGenRef.current ||
+          err?.code === 'ERR_CANCELED' ||
+          err?.name === 'CanceledError' ||
+          axios.isCancel?.(err)
+        ) {
+          return;
+        }
+        toast.error(err?.response?.data?.error || 'Branding konnte nicht geladen werden.');
+        setOrg(null);
+      } finally {
+        if (gen === fetchGenRef.current && !signal?.aborted) setLoading(false);
       }
-      setOrg(organization);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Branding konnte nicht geladen werden.');
-      setOrg(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [paths, organizationId]);
+    },
+    [brandingGet, organizationId],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!brandingGet) {
+      setLoading(false);
+      return;
+    }
+    const ac = new AbortController();
+    void load(ac.signal);
+    return () => {
+      ac.abort();
+      fetchGenRef.current += 1;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional primitive gate
+  }, [mode, orgIdKey, brandingGet]);
 
   if (mode === 'portal' && !isClientAdmin) {
     return (

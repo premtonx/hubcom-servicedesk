@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   KeyRound,
   Loader2,
@@ -86,18 +86,22 @@ export default function ClientMembersPage({
 }: ClientMembersPageProps = {}) {
   const { session } = useClientPortalSession();
   const selfId = mode === 'admin' ? '' : String(session?.id || '');
-  const paths = (() => {
+  const orgIdKey = String(organizationId || '').trim();
+  /** Memoize so load/useEffect deps stay stable (object identity must not change every render). */
+  const paths = useMemo(() => {
     try {
       return resolvePortalSettingsPaths(mode, organizationId);
     } catch {
       return null;
     }
-  })();
+  }, [mode, orgIdKey]);
+  const membersBase = paths?.membersBase ?? '';
   const [members, setMembers] = useState<PortalMember[]>([]);
   const [summary, setSummary] = useState<PortalTeamSummary>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
+  const fetchGenRef = useRef(0);
 
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -117,42 +121,74 @@ export default function ClientMembersPage({
   } | null>(null);
   const [pendingDeactivate, setPendingDeactivate] = useState<PortalMember | null>(null);
 
-  const load = useCallback(async () => {
-    if (!paths) return;
-    setLoading(true);
-    try {
-      if (mode === 'portal') {
-        const data = await clientPortalApi.listTeam();
-        setMembers(data.members);
-        setSummary(data.summary);
-      } else {
-        const res = await axios.get(paths.membersBase, { withCredentials: true });
-        const members = (res.data?.members || []).map((m: any) => ({
-          ...m,
-          isDeactivated: m.isActive === false,
-          isActive: m.isActive !== false && m.isDeactivated !== true,
-        }));
-        setMembers(members);
-        setSummary(
-          res.data?.summary || {
-            totalActive: members.filter((m: any) => m.isActive !== false).length,
-            clientAdmins: members.filter((m: any) => m.role === 'CLIENT_ADMIN').length,
-            clientSupporters: members.filter((m: any) => m.role === 'CLIENT_SUPPORTER').length,
-            clientUsers: members.filter((m: any) => m.role === 'CLIENT_USER').length,
-            total: members.length,
-          },
-        );
-      }
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Team konnte nicht geladen werden');
-    } finally {
-      setLoading(false);
-    }
-  }, [mode, paths]);
+  const applyTeamPayload = useCallback((data: any) => {
+    const nextMembers = (data?.members || []).map((m: any) => ({
+      ...m,
+      isDeactivated: m.isActive === false,
+      isActive: m.isActive !== false && m.isDeactivated !== true,
+    }));
+    setMembers(nextMembers);
+    setSummary(
+      data?.summary || {
+        totalActive: nextMembers.filter((m: any) => m.isActive !== false).length,
+        clientAdmins: nextMembers.filter((m: any) => m.role === 'CLIENT_ADMIN').length,
+        clientSupporters: nextMembers.filter((m: any) => m.role === 'CLIENT_SUPPORTER').length,
+        clientUsers: nextMembers.filter((m: any) => m.role === 'CLIENT_USER').length,
+        total: nextMembers.length,
+      },
+    );
+  }, []);
 
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!membersBase) return;
+      const gen = ++fetchGenRef.current;
+      setLoading(true);
+      try {
+        if (mode === 'portal') {
+          const data = await clientPortalApi.listTeam();
+          if (signal?.aborted || gen !== fetchGenRef.current) return;
+          applyTeamPayload(data);
+        } else {
+          const res = await axios.get(membersBase, {
+            withCredentials: true,
+            signal,
+          });
+          if (signal?.aborted || gen !== fetchGenRef.current) return;
+          applyTeamPayload(res.data);
+        }
+      } catch (err: any) {
+        if (
+          signal?.aborted ||
+          gen !== fetchGenRef.current ||
+          err?.code === 'ERR_CANCELED' ||
+          err?.name === 'CanceledError' ||
+          axios.isCancel?.(err)
+        ) {
+          return;
+        }
+        toast.error(err?.response?.data?.error || 'Team konnte nicht geladen werden');
+      } finally {
+        if (gen === fetchGenRef.current && !signal?.aborted) setLoading(false);
+      }
+    },
+    [mode, membersBase, applyTeamPayload],
+  );
+
+  // Primitive deps only: remount fetch when mode / org / api path changes — never on object identity.
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!membersBase) {
+      setLoading(false);
+      return;
+    }
+    const ac = new AbortController();
+    void load(ac.signal);
+    return () => {
+      ac.abort();
+      fetchGenRef.current += 1;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional primitive gate
+  }, [mode, orgIdKey, membersBase]);
 
   useEffect(() => {
     if (!focusInvite) return;

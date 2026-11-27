@@ -630,6 +630,14 @@ router.get('/:id/portal-members', requireStaffAdmin, async (req, res): Promise<a
     const org = await requireOrg(req, res);
     if (!org) return;
     const members = await listOrganizationUsers(org.id);
+    const pendingApprovals = members.filter((m) => m.approvalStatus === 'pending_approval');
+    // Outstanding invites are tracked on the member rows; empty array when none.
+    const invites = members.filter(
+      (m) =>
+        m.approvalStatus !== 'pending_approval' &&
+        m.isActive === false &&
+        !m.lastLoginAt,
+    );
     const summary = {
       totalActive: members.filter((m) => m.isActive).length,
       clientAdmins: members.filter((m) => m.role === 'CLIENT_ADMIN' && m.isActive).length,
@@ -637,8 +645,16 @@ router.get('/:id/portal-members', requireStaffAdmin, async (req, res): Promise<a
         .length,
       clientUsers: members.filter((m) => m.role === 'CLIENT_USER' && m.isActive).length,
       total: members.length,
+      pendingApprovals: pendingApprovals.length,
+      invites: invites.length,
     };
-    return res.json({ members, summary, organizationId: org.id });
+    return res.json({
+      members,
+      pendingApprovals,
+      invites,
+      summary,
+      organizationId: org.id,
+    });
   } catch (err: any) {
     return res
       .status(500)
