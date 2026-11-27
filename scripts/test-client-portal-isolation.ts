@@ -1756,6 +1756,21 @@ function testPortalKbIsolation(): void {
     'optional Kategorie + portal hides owner/reviewer; auto-assist gated',
   );
   assert(
+    editorSrc.includes('max-w-4xl mx-auto') &&
+      editorSrc.includes('Titel & Einordnung') &&
+      editorSrc.includes('Inhalt & Schlagwörter') &&
+      editorSrc.includes('Sichtbarkeit, KI & Freigabe') &&
+      editorSrc.includes('Schnellstart-Vorlagen') &&
+      editorSrc.includes('Problemlösung (SOP)') &&
+      editorSrc.includes('portalOrgLocked') &&
+      !editorSrc.includes('workflowStatus') &&
+      !editorSrc.includes('publishingParams') &&
+      !editorSrc.includes('Geschätztes SLA') &&
+      workbenchSrc.includes('!isAddingArticle') &&
+      editorSrc.includes('bg-blue-600 hover:bg-blue-700'),
+    'KB editor: centered cards, templates, visibility icons, no STATUS/Einstellungen rail',
+  );
+  assert(
     kbRouteSrc.includes('authorId: req.user!.id') &&
       kbRouteSrc.includes("reviewer: ''") &&
       kbRouteSrc.includes('uncategorized'),

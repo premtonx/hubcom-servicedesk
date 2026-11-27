@@ -13,7 +13,6 @@ import {
   Zap,
   ChevronDown,
   ChevronRight,
-  ChevronLeft,
   Bookmark,
   MoreHorizontal,
   Calendar,
@@ -1848,41 +1847,33 @@ export function KnowledgeBaseWorkbench({
           renderCoverageDashboard()
         ) : (
           <div className="flex-1 flex min-h-0 overflow-hidden bg-[#F8F9FA] print:block print:overflow-visible print:bg-white">
-            <KBLeftSidebar
-              active={kbNav}
-              onNavigate={handleKbNavigate}
-              onOpenSettings={
-                capabilities.categoryAdmin ? () => setIsCategoryAdminOpen(true) : undefined
-              }
-              categories={categories}
-              counts={sidebarCounts}
-              healthScore={
-                capabilities.kbHealthTelemetry && workspaceArticles.length > 0
-                  ? healthScore
-                  : undefined
-              }
-              workspaceItemIds={workspaceNavIds}
-              showHealthScore={capabilities.kbHealthTelemetry}
-              smartItemIds={capabilities.smartItemIds}
-              canManageCategories={capabilities.categoryAdmin}
-              onCreateCategory={
-                capabilities.categoryAdmin ? () => setIsCategoryCreateOpen(true) : undefined
-              }
-              onRenameCategory={capabilities.categoryAdmin ? openRenameCategory : undefined}
-              onDeleteCategory={capabilities.categoryAdmin ? openDeleteCategory : undefined}
-            />
+            {!isAddingArticle ? (
+              <KBLeftSidebar
+                active={kbNav}
+                onNavigate={handleKbNavigate}
+                onOpenSettings={
+                  capabilities.categoryAdmin ? () => setIsCategoryAdminOpen(true) : undefined
+                }
+                categories={categories}
+                counts={sidebarCounts}
+                healthScore={
+                  capabilities.kbHealthTelemetry && workspaceArticles.length > 0
+                    ? healthScore
+                    : undefined
+                }
+                workspaceItemIds={workspaceNavIds}
+                showHealthScore={capabilities.kbHealthTelemetry}
+                smartItemIds={capabilities.smartItemIds}
+                canManageCategories={capabilities.categoryAdmin}
+                onCreateCategory={
+                  capabilities.categoryAdmin ? () => setIsCategoryCreateOpen(true) : undefined
+                }
+                onRenameCategory={capabilities.categoryAdmin ? openRenameCategory : undefined}
+                onDeleteCategory={capabilities.categoryAdmin ? openDeleteCategory : undefined}
+              />
+            ) : null}
             {isAddingArticle ? (
-              <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#F8F9FB] overflow-hidden">
-                <div className="px-4 sm:px-6 pt-4 pb-3 border-b border-slate-100 bg-white shrink-0">
-                  <button
-                    type="button"
-                    onClick={closeArticleDraft}
-                    className="flex items-center gap-1 text-slate-500 hover:text-slate-800 font-extrabold text-xs cursor-pointer transition-colors select-none group"
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5 text-slate-450 group-hover:text-slate-650 transition-colors" />
-                    {t('kb.editor.backToOverview', 'Zurück zur Wissensdatenbank')}
-                  </button>
-                </div>
+              <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#f6f8fb] overflow-hidden">
                 <KBArticleEditorWorkspace
                   editingArticleId={editingArticleId}
                   selectedCategory={selectedCategory}
